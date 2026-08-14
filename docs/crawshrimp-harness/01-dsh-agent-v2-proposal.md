@@ -450,6 +450,13 @@ P0 进展(2026-08-14,macOS arm64 本机):✅ 锁版安装可重复;✅ Electron-
 - 后端孤儿进程启动自清理、端口自愈与 `_settle_web_port` 真实端口探测、SSE 自动重连、HTTP 级探活、backendController 对已就绪后端的瞬时校验容忍(不杀正在跑任务的实例)。
 - 已知竞态修复:restartBackend 与 controller respawn 双实例、`ctx.emit_event` 曾是 no-op、Vue props/watch 响应性异常(改用直接 postMessage 绕开)。
 
-### 18.5 仍待拍板/遗留(交接 Codex)
+### 18.5 深夜迭代(任务展示/审批人话/附件桥接/多窗口浏览器)
+
+- 任务卡与任务中心显示任务中文正式名称(manifest name);历史实例兜底替换;审批卡标题/内容中文人话(运行任务/发布脚本/写入文件/执行命令/任务控制各型文案)。
+- 附件 → 任务参数桥接:task_prepare 对 file_excel/file 参数自动解析(attachment_id 或本地路径 → rows/headers/sheets),修复「上传表格跑任务输入 0 行」的流程断点;attachment_read 返回 local_path 与传法提示。
+- 修复 task_wait/data_analyze/fs_exec 三处工具缺陷,以及 ParamType 枚举匹配导致的桥接静默失效。
+- 实时浏览器多窗口:按浏览器页面(tab)绑定,一个页面一个窗口,活跃页面置顶,级联排列;截图流按 targetId 独立。
+
+### 18.6 仍待拍板/遗留(交接 Codex)
 
 见 `04-codex-handover.md`。

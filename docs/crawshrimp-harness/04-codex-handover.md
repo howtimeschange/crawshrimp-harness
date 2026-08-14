@@ -15,6 +15,9 @@
 6. 脚本创作硬性规范(抓虾适配包)+ 双闸门(审批卡 + 审核页「先测试后审批」,页内嵌 TaskRunner 真实运行)。
 7. dont-stop 技能 submodule 装入(11 个技能包)。
 8. 稳定性:端口自愈/孤儿清理/SSE 重连/探活自恢复/backendController 容忍重试。
+9. 任务卡/任务中心中文任务名 + 审批卡中文人话(各型专属文案)。
+10. 附件→任务参数桥接(file_excel 自动解析,attachment_id 或本地路径)+ 三个工具 bug 修复(task_wait/data_analyze/fs_exec/ParamType 枚举)。
+11. 实时浏览器多窗口:按页面(tab)绑定,一个页面一个窗口,活跃置顶、级联排列、流独立。
 
 ## 2. 本轮 code review 已修复的问题
 
@@ -34,6 +37,9 @@
 | medium | 浏览器窗口 minimize/maximize 状态互斥缺失 | minimize 清 maximized;unmount 清理 drag/resize 监听 |
 | medium | agentBrowser 双 WebSocket 竞态、pending 永不 resolve | starting 串行 + onclose reject 全部 pending |
 | medium | SSE live id 恒 0 | 内存单调 seq(与 db 持久化 seq 解耦) |
+| high | task_wait `await` 同步返回值 / data_analyze bytes 进文本预览 / fs_exec uuid 未 import | 已修(f55e8c6) |
+| high | task_prepare 的 ParamType 枚举匹配失败致附件桥接静默失效 | 已修:str(enum.value) 归一(f55e8c6) |
+| high | 上传表格跑任务「输入行数 0」流程断点 | 已修:附件桥接 + attachment_read 暴露 local_path + PERSONA 指引(f55e8c6) |
 
 验证:877 pytest 全过;媒体端点 media token 200;后缀 Range 206;test-install→reject 循环干净无残留。
 
@@ -57,6 +63,13 @@
 11. 审核页只显示 manifest.yaml 全文,任务脚本文件(真正执行副作用代码)不可见;建议详情返回全部适配包文件。
 12. 附件 inbox 绑定「最近更新会话」(含已归档),上传时机与当前显示会话可能不一致;建议支持显式 session_id 传递。
 13. preload apiCall 60s 全局超时:AbortError 原文透出给用户,超时后服务端可能已完成(重试双执行);建议可感知错误文案 + 长操作白名单。
+
+### 新增遗留(最近迭代引入)
+
+21. **多窗口浏览器与任务的绑定是「全部页面快照」**:browser.activity 广播 9222 全部 page tabs,窗口跟随「浏览器全局页面集合」而非「会话级页面子集」;多会话并行时,会话 A 操作会连带为会话 B 的页面也开窗口。若要严格按会话绑定,需产品侧维护「会话/任务 → tab」映射(grant.tab_id 已有雏形)并在广播中只带本会话 tabs。
+22. **tab 关闭后窗口残留**:页面在 Chrome 中被关闭后,广播快照里消失,但 shell 的窗口列表只在下次广播时收缩(窗口会短暂保留,流在 ws 断开后停);可加轮询 tabs 快照清理僵尸窗口。
+23. **附件表格解析大小上限未显式声明**:_read_local_excel 全量解析,超大 xlsx(>1GB)可能内存压力;建议限制行数/文件大小并明确报错。
+24. **审批卡跨会话可见性**:审批卡挂在发起工具调用的会话界面,用户在别的会话看不到;需要「全局审批提示」(现有:会话标题会变为「等待审批」)。
 
 ### 低优先级(顺手可做)
 

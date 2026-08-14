@@ -258,6 +258,29 @@ GET  /settings/chrome-tabs
 - 附件上传:composer 原生「加号」按钮改造为上传(📎),旁开「@」命令按钮;支持拖入/粘贴;上传注册为会话附件,输入框插入 `[附件: name (attachment_id)]` 供模型 attachment_read。
 - iframe 重载/端口漂移后经 artifact-replay 双向重放,去重以 DOM 为准。
 
+## 16. 最近迭代增补(2026-08-14 深夜)
+
+### 16.1 任务展示与审批人话化
+
+- 任务实例标题使用适配器 manifest 的中文任务名(创建时注入;历史实例在 detail/list 返回时兜底替换),任务卡/任务中心显示「MOP-唯品商品上新资料检查」而非英文 task_id。
+- 审批卡(DSH 原生)标题与内容中文人话:「运行任务:中文名」+「运行任务「中文名」(adapter/task)。参数:days=7。」;发布脚本/写入文件/执行命令/任务控制各有专属文案。
+
+### 16.2 附件 → 任务参数桥接
+
+- `attachment_read` 返回内容 + `local_path` + 任务参数传法提示。
+- `task_prepare` 对 `file_excel`/`file` 参数自动解析:值可为 attachment_id(`att-*`)或本地路径(或 `{"path": ...}`),后端用产品同款 `_read_local_excel` 注入 `rows/headers/sheet_name/sheets`,智能体无需手工构造解析对象。
+- 上传表格跑任务的正确流程:attachment_read → tasks_search/task_describe → task_prepare(文件参数传 `att-*`)→ task_run → 审批卡 → 执行。
+
+### 16.3 实时浏览器多窗口
+
+- 后端 `browser_*` 工具每次调用广播 `browser.activity`(活跃 tab id + 全部页面快照)。
+- 前端为每个浏览器页面(tab)渲染一个实时浏览器窗口(标题带页面 ID 后 4 位),活跃页面窗口置顶,多窗口级联偏移 36px 排列;窗口独立拖动/缩放/最小化/关闭(关闭停对应截图流)。
+- 截图流按 targetId 独立(agentBrowser 多流),URL 实时更新(Page.frameNavigated + SPA 定期回读)。
+
+### 16.4 工具缺陷修复
+
+- task_wait 误 `await` 同步返回值;data_analyze bytes 直接进文本预览;fs_exec 函数内 uuid 未 import;task_prepare 的 ParamType 枚举匹配(此前桥接静默失效)。
+
 ## 15. 与 §4/§5 的关系
 
 - 智能体按 §4(manifest)与 §5(JS 协议)编写适配包;§4/§5 为唯一脚本规范。
