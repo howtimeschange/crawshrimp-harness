@@ -108,6 +108,14 @@ if (!upToDate) {
       spawnSync(process.platform === 'win32' ? 'xcopy' : 'cp', ['-R', src, stageRoot], { stdio: 'inherit', shell: true })
     }
   }
+  // CLI 技能包本体(项目根 skills/cli 的 submodule 内容)随安装包分发:
+  // SKILL.md 内路径 skills/cli/<name> 在发布态即 Resources/deepseek-harness/skills/cli
+  const cliSource = join(repoRoot, 'skills', 'cli')
+  const cliDest = join(stageRoot, 'skills', 'cli')
+  if (existsSync(cliSource)) {
+    spawnSync(process.platform === 'win32' ? 'xcopy' : 'cp', ['-R', cliSource, join(stageRoot, 'skills')], { stdio: 'inherit', shell: true })
+    if (!existsSync(join(cliDest, 'tmall-cli'))) fail('CLI 技能包本体拷贝不完整')
+  }
   writeFileSync(markerFile, `${lockHash}\n`)
   console.log('[stage-runtime] staging complete')
 } else {
