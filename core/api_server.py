@@ -42,6 +42,9 @@ from core import script_favorites
 from core import bala_ai_model_library
 from core import bala_ai_video_materials
 from core import bala_ai_video_review
+from core.agent import db as agent_db
+from core.agent import api as agent_api
+from core.agent.service import AgentService
 from core.config import load_config, patch_config, save_config
 from core.cloud_approval_client import CloudApprovalClient, CloudApprovalError
 from core.cloud_approval_url import (
@@ -7326,6 +7329,7 @@ async def lifespan(app: FastAPI):
         _get_api_token()
     # Init DB
     data_sink.init_db()
+    agent_db.init_agent_db()
     owns_backend_instance = bool(instance_lock.acquired)
     app.state.owns_backend_instance = owns_backend_instance
     if not owns_backend_instance:
@@ -7381,10 +7385,36 @@ async def lifespan(app: FastAPI):
             ai_video_generation_service.ensure_worker_started()
         except Exception:
             logger.exception("ai video generation recovery failed; continuing without active video recovery")
+    # Agent(Harness)服务:仅在持有 backend 实例锁时启动
+    if owns_backend_instance:
+        try:
+            _agent = AgentService()
+            _agent.bind_callbacks(
+                create_task_instance=lambda adapter_id, task_id, title, params:
+                    data_sink.create_task_instance(adapter_id, task_id, title, params),
+                get_task_instance=data_sink.get_task_instance_detail,
+                run_task_instance=_agent_run_task_instance,
+                control_task_instance=_agent_control_task_instance,
+                list_task_artifacts=lambda uid:
+                    (data_sink.get_task_instance_detail(uid) or {}).get("artifacts") or [],
+                read_artifact_bytes=_agent_read_artifact_bytes,
+            )
+            agent_api.set_agent_service(_agent)
+            app.state.agent_service = _agent
+            await _agent.start()
+            logger.info("agent service started")
+        except Exception:
+            logger.exception("agent service startup failed; continuing without agent")
     logger.info("crawshrimp core started")
     try:
         yield
     finally:
+        agent_service = getattr(app.state, "agent_service", None)
+        if agent_service is not None:
+            try:
+                await agent_service.stop()
+            except Exception:
+                logger.exception("agent service shutdown failed")
         try:
             if owns_backend_instance:
                 sched_module.shutdown()
@@ -7399,6 +7429,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="crawshrimp", version=API_VERSION, lifespan=lifespan)
+app.include_router(agent_api.router)
+# MCP 网关由 AgentService 在独立端口(18768)以 uvicorn 服务
+# (MCP SDK 2.0 session manager 需要自身 lifespan,不能挂 FastAPI 子路由)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_cors_origins(),
@@ -11270,6 +11303,59 @@ async def run_task(adapter_id: str, task_id: str, req: RunTaskRequest = RunTaskR
         req.params or {},
         {"current_tab_id": req.current_tab_id},
     )
+
+
+async def _agent_run_task_instance(instance_uid: str, params: dict, tab_id: Optional[str] = None):
+    """智能体网关回调:以服务层语义启动既有 Task Instance。"""
+    instance = data_sink.get_task_instance(instance_uid)
+    if not instance:
+        raise ValueError(f"Task instance not found: {instance_uid}")
+    merged = _parse_json_object(instance.get("params_json"))
+    merged.update(dict(params or {}))
+    merged["__task_instance_uid"] = instance_uid
+    runtime_options = {"current_tab_id": tab_id}
+    data_sink.update_task_instance(instance_uid, status="running", current_step="config", params=merged)
+    await _start_task_run(instance["adapter_id"], instance["task_id"], merged, runtime_options)
+
+
+async def _agent_control_task_instance(instance_uid: str, action: str):
+    _get_task_instance_or_404(instance_uid)
+    if action == "pause":
+        return await _pause_run_jid(_instance_jid(instance_uid))
+    if action == "resume":
+        return await _resume_run_jid(_instance_jid(instance_uid))
+    if action == "stop":
+        return await _stop_run_jid(_instance_jid(instance_uid))
+    raise ValueError(f"unknown action: {action}")
+
+
+def _agent_read_artifact_bytes(artifact_id):
+    """智能体网关回调:按 artifact id 读取产物字节(上限 20MB)。"""
+    try:
+        artifact_id = int(artifact_id)
+    except (TypeError, ValueError):
+        return None
+    conn = data_sink._get_conn()
+    try:
+        row = conn.execute("SELECT * FROM task_instance_artifacts WHERE id = ?", (artifact_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    row = dict(row)
+    raw_path = str(row.get("path") or "")
+    if not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = data_sink._data_root() / path
+    try:
+        size = path.stat().st_size
+        if size > 20 * 1024 * 1024:
+            return None
+        return path.read_bytes(), str(row.get("label") or path.name)
+    except OSError:
+        return None
 
 
 @app.post("/task-instances/{instance_uid}/run")
