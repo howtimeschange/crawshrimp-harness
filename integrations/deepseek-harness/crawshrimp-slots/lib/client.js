@@ -82,16 +82,25 @@ window.__ModuleLoader__.load({
       '.pXSMma_headlineText::before { content: "🦐 抓虾智能体"; font-size: 22px; font-weight: 700; color: var(--dsw-alias-label-primary); }',
       '.pXSMma_previewBadge { display: none !important; }',
       // 6) 抓虾菜单注入侧边栏(主菜单:新会话下/工作区上;底部菜单:云端审批/设置)
-      '[data-crawshrimp-nav-main], [data-crawshrimp-nav-bottom] { display: flex; flex-direction: column; gap: 2px; padding: 8px 4px; margin: 4px 2px 0; }',
-      '[data-crawshrimp-nav-main] { border-top: 1px solid var(--dsw-alias-border-l2); }',
-      '[data-crawshrimp-nav-bottom] { border-top: 1px solid var(--dsw-alias-border-l2); margin-top: auto; }',
-      '.cs-nav-item { display: flex; align-items: center; gap: 8px; width: 100%; border: none; background: transparent; color: var(--dsw-alias-label-secondary); padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; text-align: left; font-family: inherit; }',
+      //    按 DESIGN.md 规范:13.5px 字号、4px 网格间距、完整 hover/active/focus 状态
+      '[data-crawshrimp-nav-main], [data-crawshrimp-nav-bottom] { display: flex; flex-direction: column; gap: 2px; padding: 10px 6px; margin: 2px 2px 0; }',
+      '[data-crawshrimp-nav-main] { border-top: 1px solid var(--dsw-alias-border-l1); padding-top: 12px; }',
+      '[data-crawshrimp-nav-bottom] { border-top: 1px solid var(--dsw-alias-border-l1); margin-top: auto; padding-bottom: 10px; }',
+      '.cs-nav-item { display: flex; align-items: center; gap: 8px; width: 100%; border: none; background: transparent; color: var(--dsw-alias-label-secondary); padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 13.5px; line-height: 1.45; text-align: left; font-family: inherit; transition: background-color 120ms cubic-bezier(0.4, 0, 0.2, 1), color 120ms cubic-bezier(0.4, 0, 0.2, 1); }',
       '.cs-nav-item:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }',
+      '.cs-nav-item:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }',
+      '.cs-nav-item:active { background: var(--dsw-alias-interactive-bg-active, rgba(255, 107, 43, 0.18)); }',
       '.cs-nav-active { background: var(--dsw-alias-state-business-tertiary); color: var(--dsw-alias-state-business-primary); font-weight: 600; }',
-      '.cs-nav-icon { width: 18px; text-align: center; flex: none; }',
-      '.cs-nav-toggle { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary)); }',
+      '.cs-nav-icon { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; flex: none; font-size: 15px; }',
+      '.cs-nav-toggle { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary)); font-size: 12.5px; }',
+      '.cs-nav-toggle .cs-nav-icon { font-size: 11px; transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1); }',
+      '.cs-nav-toggle[aria-expanded="true"] .cs-nav-icon { transform: rotate(180deg); }',
+      '[data-crawshrimp-nav-main] .cs-nav-item { animation: cs-nav-in 160ms cubic-bezier(0.4, 0, 0.2, 1); }',
+      '@keyframes cs-nav-in { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }',
       '.hHd-Xa_collapsed [data-crawshrimp-nav-main] .cs-nav-label, .hHd-Xa_collapsed [data-crawshrimp-nav-bottom] .cs-nav-label { display: none; }',
-      '.hHd-Xa_collapsed .cs-nav-item { justify-content: center; padding: 6px 0; }',
+      '.hHd-Xa_collapsed .cs-nav-item { justify-content: center; padding: 7px 0; }',
+      '.hHd-Xa_collapsed .cs-nav-icon { font-size: 17px; }',
+      '@media (prefers-reduced-motion: reduce) { .cs-nav-item, .cs-nav-toggle .cs-nav-icon { transition: none; animation: none; } }',
       // 7) 选中/强调色随抓虾橙
       '::selection { background: rgba(255, 107, 43, 0.25); }',
     ].join('\n')
@@ -140,9 +149,11 @@ window.__ModuleLoader__.load({
         const toggle = document.createElement('button')
         toggle.type = 'button'
         toggle.className = 'cs-nav-item cs-nav-toggle'
+        toggle.setAttribute('aria-expanded', String(expanded))
+        toggle.title = expanded ? '收起菜单' : '展开全部菜单'
         const icon = document.createElement('span')
         icon.className = 'cs-nav-icon'
-        icon.textContent = expanded ? '▲' : '▼'
+        icon.textContent = '▾'
         const label = document.createElement('span')
         label.className = 'cs-nav-label'
         label.textContent = expanded ? '收起' : `展开全部(${items.length - MAIN_VISIBLE_DEFAULT})`

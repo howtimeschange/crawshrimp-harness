@@ -2018,7 +2018,7 @@ watch(activePanelId, panelId => {
 
 .llm-provider-card.ds {
   border-color: var(--orange-dim);
-  background: linear-gradient(180deg, rgba(255, 107, 43, 0.06), var(--bg2) 90px);
+  background: color-mix(in srgb, var(--bg2) 96%, var(--orange) 4%);
 }
 
 .llm-provider-title {
