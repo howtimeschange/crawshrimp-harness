@@ -556,6 +556,8 @@ class AgentService:
             # DSH web host(方案 §12.7):前端 iframe 嵌入的页面地址
             "web_port": web_port,
             "web_url": f"http://127.0.0.1:{web_port}/" if web_port else "",
+            # 默认工作区(前端自动建立,不需要用户指定)
+            "workspace_root": str(_data_root() / "agent" / "workspace"),
         }
 
     async def _broadcast_run_artifacts(self, run_id: str, session_id: str) -> None:

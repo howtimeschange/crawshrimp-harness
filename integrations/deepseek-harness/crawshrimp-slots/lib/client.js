@@ -203,6 +203,20 @@ window.__ModuleLoader__.load({
       window.parent.postMessage({ __crawshrimp: 'rail-metrics', width, collapsed }, '*')
     }
 
+    // ---- 默认工作区:自动采用抓虾运行时目录,不需要用户指定 ----
+    async function ensureDefaultWorkspace(ctx, root) {
+      if (!root || !ctx.workspaces) return
+      try {
+        const snap = ctx.workspaces.list?.getSnapshot?.() || {}
+        const existing = snap.items || []
+        if (existing.length > 0) return
+        // create 幂等:同一路径重复调用返回同一工作区
+        await ctx.workspaces.create(root)
+      } catch (error) {
+        // 已存在/暂不可用:下一轮消息再试
+      }
+    }
+
     function apply(ctx) {
       ctx.theme.overrideTokens('crawshrimp', CRAWSHRIMP_TOKENS)
       injectBrandCss()
@@ -230,6 +244,7 @@ window.__ModuleLoader__.load({
         const data = event && event.data
         if (data && data.__crawshrimp === 'theme') adopt(data.theme)
         if (data && data.__crawshrimp === 'nav') renderNav(data.items, data.active)
+        if (data && data.__crawshrimp === 'workspace') ensureDefaultWorkspace(ctx, data.root)
       })
       // 会话导航:点击「新会话」或会话列表项 → shell 切回会话主界面
       document.addEventListener('click', (event) => {
@@ -267,8 +282,8 @@ window.__ModuleLoader__.load({
     }
 
     exports.apply = apply
-    // kernel 服务依赖声明:apply 内访问 ctx.theme 必须显式 inject
-    exports.inject = ['theme']
+    // kernel 服务依赖声明:apply 内访问 ctx.theme/ctx.workspaces 必须显式 inject
+    exports.inject = ['theme', 'workspaces']
     return module.exports
   },
 })

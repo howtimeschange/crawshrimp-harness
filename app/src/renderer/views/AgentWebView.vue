@@ -50,6 +50,7 @@ const error = ref('')
 const loading = ref(true)
 const browserOpen = ref(false)
 const recoverAttempts = ref(0)
+const workspaceRoot = ref('')
 const frameEl = ref(null)
 let pollTimer = null
 let warmStarted = false
@@ -66,6 +67,10 @@ async function loadRuntime() {
   try {
     const result = await window.cs.agentApi('GET', '/agent/runtime')
     const url = result?.web_url || ''
+    if (result?.workspace_root && result.workspace_root !== workspaceRoot.value) {
+      workspaceRoot.value = result.workspace_root
+      pushWorkspace()
+    }
     if (url) {
       webUrl.value = url
       loading.value = false
@@ -131,9 +136,15 @@ function retryLoad() {
 }
 
 function onFrameLoad() {
-  // iframe 加载后同步主题与菜单
+  // iframe 加载后同步主题、菜单与默认工作区
   pushTheme()
   pushNav()
+  pushWorkspace()
+}
+
+function pushWorkspace() {
+  if (!frameEl.value?.contentWindow || !workspaceRoot.value) return
+  frameEl.value.contentWindow.postMessage({ __crawshrimp: 'workspace', root: workspaceRoot.value }, '*')
 }
 
 function pushTheme() {
