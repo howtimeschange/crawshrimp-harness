@@ -2728,6 +2728,52 @@ secureHandle('agent:browser:stream:start', async () => {
 secureHandle('agent:browser:stream:stop', async () => stopAgentBrowserStream())
 secureHandle('agent:browser:stream:state', async () => getAgentBrowserState())
 
+secureHandle('agent:pick-attachments', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '选择附件(图片/表格/文本)',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: '图片与数据文件', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'csv', 'xlsx', 'json', 'txt', 'md'] },
+      { name: '所有文件', extensions: ['*'] },
+    ],
+  })
+  if (result.canceled) return { ok: true, files: [] }
+  const files = result.filePaths.map((p) => {
+    const name = path.basename(p)
+    const ext = path.extname(p).toLowerCase()
+    const mimeMap = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+                      '.webp': 'image/webp', '.csv': 'text/csv', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                      '.json': 'application/json', '.txt': 'text/plain', '.md': 'text/markdown' }
+    let size = 0
+    try { size = fs.statSync(p).size } catch {}
+    return { name, path: p, mime: mimeMap[ext] || '', size }
+  })
+  return { ok: true, files }
+})
+
+secureHandle('agent:save-clipboard-image', async (_, payload = {}) => {
+  const buffer = Buffer.from(payload.buffer || [])
+  const name = String(payload.name || `paste-${Date.now()}.png`).replace(/[^A-Za-z0-9._-]/g, '_')
+  const dir = path.join(app.getPath('userData'), 'tmp-agent-images')
+  fs.mkdirSync(dir, { recursive: true })
+  const dest = path.join(dir, name)
+  fs.writeFileSync(dest, buffer)
+  return { ok: true, path: dest, name, size: buffer.length, mime: payload.mime || 'image/png' }
+})
+
+secureHandle('agent:read-image-dataurl', async (_, filePath) => {
+  try {
+    const stats = fs.statSync(filePath)
+    if (stats.size > 8 * 1024 * 1024) return { ok: false, error: '图片过大(>8MB)' }
+    const buffer = fs.readFileSync(filePath)
+    const ext = path.extname(filePath).toLowerCase()
+    const mimeMap = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' }
+    return { ok: true, dataUrl: `data:${mimeMap[ext] || 'image/png'};base64,${buffer.toString('base64')}` }
+  } catch (error) {
+    return { ok: false, error: String(error.message || error) }
+  }
+})
+
 secureHandle('get-adapters',     async () => apiCall('GET',    '/adapters'))
 secureHandle('uninstall-adapter',async (_, id) => apiCall('DELETE', `/adapters/${id}`))
 secureHandle('enable-adapter',   async (_, id, enabled) =>

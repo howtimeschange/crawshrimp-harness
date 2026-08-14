@@ -34,9 +34,9 @@
 
     <!-- 侧边栏 -->
     <aside class="sidebar">
-      <!-- 智能体会话栏(仅智能体界面,位于菜单上方) -->
+      <!-- 智能体会话栏:常驻侧边栏顶部(新建会话/会话历史一直可见) -->
       <AgentSessionBar
-        v-if="currentView === 'agent' && !activeScript"
+        v-if="!activeScript"
         :collapsed="effectiveSidebarCollapsed"
         @select-session="onAgentSessionSelected"
       />
@@ -324,6 +324,7 @@ const agentSessionId = ref('')
 
 function onAgentSessionSelected(sessionId) {
   agentSessionId.value = sessionId || ''
+  currentView.value = 'agent'
 }
 
 function openTaskInstanceFromAgent(instanceUid) {

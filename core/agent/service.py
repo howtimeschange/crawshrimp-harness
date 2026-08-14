@@ -76,6 +76,7 @@ class AgentService:
         self._mcp_task: Optional[asyncio.Task] = None
         self.mcp_port = 0
         self.mcp_url = "http://127.0.0.1:18965/mcp"
+        self.generation_model: Optional[str] = None
         self._callbacks: dict[str, Any] = {}
 
     # ---------- 初始化 / 恢复 ----------
@@ -182,7 +183,9 @@ class AgentService:
     # ---------- 提交轮次 ----------
 
     async def submit_turn(self, session_id: str, text: str,
-                          context_refs: Optional[list[dict]] = None) -> dict:
+                          context_refs: Optional[list[dict]] = None,
+                          attachment_ids: Optional[list[str]] = None,
+                          grant_prefs: Optional[dict] = None) -> dict:
         session = db.get_session(session_id)
         if not session:
             raise ValueError(f"会话不存在: {session_id}")
@@ -191,9 +194,25 @@ class AgentService:
         message_id = f"msg-{uuid.uuid4().hex[:12]}"
         ordinal = db.next_turn_ordinal(session_id)
 
+        # 附件:登记到本轮,并向模型注入提示
+        final_text = text
+        for aid in (attachment_ids or []):
+            row = db.get_attachment(str(aid or "").strip())
+            if row and row.get("session_id") == session_id:
+                db.create_attachment(f"{row['attachment_id']}:{turn_id}", session_id, turn_id, run_id,
+                                     row["filename"], row["path"], row["mime"], row["size"])
+        if attachment_ids:
+            names = []
+            for aid in attachment_ids:
+                row = db.get_attachment(str(aid or "").strip())
+                if row:
+                    names.append(f"- {row['filename']}(attachment_id={row['attachment_id']})")
+            if names:
+                final_text = "用户上传了附件,可用 attachment_read 工具读取:\n" + "\n".join(names) + "\n\n" + text
+
         db.create_message(message_id, session_id, turn_id, run_id, "user", "text", {"text": text})
         turn = db.create_turn(turn_id, session_id, ordinal, message_id)
-        model_id, provider_id = self._resolve_model()
+        model_id, provider_id = self._resolve_model(session_id)
         run = db.create_run(run_id, session_id, turn_id, provider_id, model_id)
         db.update_turn(turn_id, active_run_id=run_id)
         db.update_session(session_id, status="running")
@@ -204,19 +223,28 @@ class AgentService:
         })
         await self.queue.put({
             "run_id": run_id, "session_id": session_id, "turn_id": turn_id,
-            "text": text, "message_id": message_id, "model_id": model_id,
+            "text": final_text, "message_id": message_id, "model_id": model_id,
             "provider_id": provider_id, "context_refs": context_refs or [],
+            "grant_prefs": grant_prefs or {},
         })
         return {"turn_id": turn_id, "run_id": run_id, "queued": True,
                 "queue_depth": self.queue.qsize() + (1 if self.active_run else 0)}
 
-    def _resolve_model(self) -> tuple[str, str]:
+    def _resolve_model(self, session_id: Optional[str] = None) -> tuple[str, str]:
         cfg = load_config()
         llm = (cfg.get("ai") or {}).get("llm") or {}
         model_id = llm.get("default_model") or "gpt-5.6-terra"
+        if session_id:
+            session = db.get_session(session_id)
+            if session and session.get("model_id"):
+                model_id = session["model_id"]
         if not model_capabilities(model_id).get("supports_tools"):
             model_id = "gpt-5.6-terra"
         return model_id, resolve_provider_for_model(model_id)
+
+    def note_model_changed(self, session_id: str, model_id: str) -> None:
+        """会话模型切换后,下一 Run 前重启 generation(Worker 不变量:不混用模型)。"""
+        print(f"[agent] session {session_id} 模型切换为 {model_id},下一轮生效", flush=True)
 
     # ---------- 队列循环 ----------
 
@@ -345,13 +373,20 @@ class AgentService:
         prefix = url[: url.find("/", url.find("//") + 3)] if url else ""
         grant_id = f"grant-{uuid.uuid4().hex[:12]}"
         toolset = ["observe", "eval", "verify", "capture_requests"]
+        prefs = item.get("grant_prefs") or {}
+        pref_toolset = prefs.get("toolset")
+        if isinstance(pref_toolset, list):
+            for entry in pref_toolset:
+                if entry not in toolset:
+                    toolset.append(entry)
         return db.create_grant(grant_id, item["run_id"], prefix or None, str(tab.get("id")),
                                toolset, _iso_after(3600))
 
     # ---------- runtime generation ----------
 
     async def _ensure_generation(self, item: dict) -> bool:
-        if self.worker is not None and self.runtime_state == "ready":
+        if (self.worker is not None and self.runtime_state == "ready"
+                and self.generation_model == item.get("model_id")):
             return True
         return await self.start_generation(item["provider_id"], item["model_id"])
 
@@ -413,6 +448,7 @@ class AgentService:
                 raise RuntimeError(f"start_generation 失败: {gen}")
             self.worker = worker
             self.runtime_state = "ready"
+            self.generation_model = model_id
             return True
         except Exception as exc:  # noqa: BLE001
             self.runtime_error = str(exc)

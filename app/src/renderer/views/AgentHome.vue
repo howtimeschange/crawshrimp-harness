@@ -9,6 +9,19 @@
           <span v-if="queuePosition > 0" class="chat-queue">排队中(第 {{ queuePosition }} 位)</span>
         </div>
         <div class="chat-actions">
+          <div class="model-picker">
+            <button class="head-btn" type="button" title="切换模型" @click="showModelMenu = !showModelMenu">
+              🤖 {{ currentModel || '模型' }} ▾
+            </button>
+            <div v-if="showModelMenu" class="picker-menu">
+              <button v-for="m in models" :key="m.model_id" class="picker-item" type="button"
+                      :class="{ active: m.model_id === currentModel }"
+                      @click="selectModel(m)">
+                <span class="picker-model">{{ m.model_id }}</span>
+                <span class="picker-route">{{ routeLabel(m.route) }}</span>
+              </button>
+            </div>
+          </div>
           <button
             v-if="!browserOpen"
             class="head-btn"
@@ -118,6 +131,23 @@
 
       <div class="chat-composer-wrap">
         <div class="composer-chips">
+          <div class="perm-picker">
+            <button class="composer-chip" type="button" title="权限管控" @click="showPermMenu = !showPermMenu">
+              🔒 {{ permissionPreset === 'web-act' ? '网页操作' : '只读' }} ▾
+            </button>
+            <div v-if="showPermMenu" class="picker-menu perm-menu">
+              <button class="picker-item" type="button" :class="{ active: permissionPreset === 'readonly' }"
+                      @click="setPermission('readonly')">
+                <span class="picker-model">只读</span>
+                <span class="picker-route">观察/求值/验证;页面操作逐次审批</span>
+              </button>
+              <button class="picker-item" type="button" :class="{ active: permissionPreset === 'web-act' }"
+                      @click="setPermission('web-act')">
+                <span class="picker-model">网页操作</span>
+                <span class="picker-route">本次运行预授权点击/输入(敏感操作仍需审批)</span>
+              </button>
+            </div>
+          </div>
           <button
             :class="['composer-chip', { active: attachBrowser }]"
             type="button"
@@ -125,6 +155,13 @@
             @click="attachBrowser = !attachBrowser"
           >
             🌐 带上当前浏览器页面
+          </button>
+          <button class="composer-chip" type="button" title="上传附件/图片" @click="pickAttachments">
+            📎 附件<span v-if="attachments.length">({{ attachments.length }})</span>
+          </button>
+          <button v-for="(a, i) in attachments" :key="a.name + i" class="attachment-chip" type="button"
+                  :title="a.name" @click="removeAttachment(i)">
+            {{ a.name }} ×
           </button>
         </div>
         <div class="chat-composer">
@@ -135,6 +172,7 @@
           :placeholder="sessionId ? '描述你想让智能体做的事情…(Enter 发送,Shift+Enter 换行)' : '请先在左侧新建或选择会话'"
           :disabled="!sessionId"
           @keydown.enter.exact.prevent="send"
+          @paste="onPaste"
         ></textarea>
         <button class="composer-send" type="button" :disabled="!sessionId || !draft.trim()" @click="send">发送</button>
         </div>
@@ -165,7 +203,13 @@ const props = defineProps({
 const emit = defineEmits(['open-task-instance'])
 
 const attachBrowser = ref(false)
+const attachments = ref([])
 const sessionTitle = ref('新会话')
+const models = ref([])
+const currentModel = ref('')
+const showModelMenu = ref(false)
+const permissionPreset = ref('readonly')
+const showPermMenu = ref(false)
 const browserOpen = ref(true)
 const draft = ref('')
 const messages = ref([])
@@ -384,10 +428,15 @@ async function send() {
   scrollToBottom()
   try {
     const refs = attachBrowser.value ? [{ type: 'browser_tab', id: 'current' }] : []
+    const attachIds = attachments.value.map((a) => a.attachment_id).filter(Boolean)
+    const grantPrefs = permissionPreset.value === 'web-act' ? { toolset: ['act'] } : {}
     const result = await window.cs.agentApi('POST', `/agent/sessions/${props.sessionId}/turns`, {
       text,
       context_refs: refs,
+      attachment_ids: attachIds,
+      grant_prefs: grantPrefs,
     })
+    attachments.value = []
     queuePosition.value = result?.queue_depth || 0
   } catch (error) {
     pushMessage({ kind: 'notice', text: `发送失败:${error?.message || error}` })
@@ -407,6 +456,84 @@ async function stopRun() {
 
 function openTaskInstance(instanceUid) {
   emit('open-task-instance', instanceUid)
+}
+
+function routeLabel(route) {
+  return { 'crawshrimp-overseas-openai': '海外 OpenAI', 'crawshrimp-overseas-anthropic': '海外 Anthropic',
+           'crawshrimp-domestic-openai': '国内 OpenAI' }[route] || route
+}
+
+async function loadModels() {
+  try {
+    const result = await window.cs.agentApi('GET', '/agent/models')
+    models.value = result?.models || []
+  } catch {}
+}
+
+async function selectModel(m) {
+  showModelMenu.value = false
+  if (!props.sessionId || m.model_id === currentModel.value) return
+  try {
+    await window.cs.agentApi('PATCH', `/agent/sessions/${props.sessionId}/model`, { model_id: m.model_id })
+    currentModel.value = m.model_id
+    pushMessage({ kind: 'notice', text: `模型已切换为 ${m.model_id},下一轮生效` })
+  } catch (error) {
+    pushMessage({ kind: 'notice', text: `模型切换失败:${error?.message || error}` })
+  }
+}
+
+function setPermission(preset) {
+  showPermMenu.value = false
+  permissionPreset.value = preset
+}
+
+async function pickAttachments() {
+  if (!props.sessionId) {
+    pushMessage({ kind: 'notice', text: '请先在左侧新建或选择会话' })
+    return
+  }
+  if (!window.cs.pickAgentAttachments) return
+  const result = await window.cs.pickAgentAttachments()
+  if (!result?.ok) return
+  for (const file of result.files || []) {
+    const registered = await window.cs.agentApi('POST', `/agent/sessions/${props.sessionId}/attachments`, {
+      name: file.name, path: file.path, mime: file.mime, size: file.size,
+    })
+    if (registered?.attachment) {
+      attachments.value.push({ ...file, attachment_id: registered.attachment.attachment_id })
+    }
+  }
+}
+
+async function onPaste(event) {
+  const items = (event.clipboardData || {}).items || []
+  for (const item of items) {
+    if (item.type && item.type.startsWith('image/')) {
+      event.preventDefault()
+      const blob = item.getAsFile()
+      if (!blob) continue
+      const buffer = await blob.arrayBuffer()
+      const saved = await window.cs.saveAgentClipboardImage({
+        buffer: Array.from(new Uint8Array(buffer)),
+        name: `paste-${Date.now()}.png`,
+        mime: blob.type || 'image/png',
+      })
+      if (saved?.ok) {
+        const registered = await window.cs.agentApi('POST', `/agent/sessions/${props.sessionId}/attachments`, {
+          name: saved.name, path: saved.path, mime: saved.mime, size: saved.size,
+        })
+        if (registered?.attachment) {
+          attachments.value.push({ name: saved.name, path: saved.path, mime: saved.mime,
+                                   size: saved.size, attachment_id: registered.attachment.attachment_id })
+        }
+      }
+      return
+    }
+  }
+}
+
+function removeAttachment(index) {
+  attachments.value.splice(index, 1)
 }
 
 function formatSize(size) {
@@ -451,6 +578,7 @@ async function loadSession() {
   try {
     const result = await window.cs.agentApi('GET', `/agent/sessions/${props.sessionId}`)
     sessionTitle.value = result?.session?.title || '新会话'
+    if (result?.session?.model_id) currentModel.value = result.session.model_id
     for (const m of result?.messages || []) {
       try {
         const content = typeof m.content_json === 'string' ? JSON.parse(m.content_json) : m.content_json
@@ -477,6 +605,7 @@ watch(browserOpen, (open) => writeBrowserPanelPref(open))
 
 onMounted(() => {
   browserOpen.value = readBrowserPanelPref()
+  loadModels()
   if (props.sessionId) loadSession()
 })
 
@@ -529,6 +658,71 @@ onUnmounted(() => {
   margin-left: auto;
   display: flex;
   gap: 6px;
+  position: relative;
+}
+.model-picker,
+.perm-picker {
+  position: relative;
+}
+.picker-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 260px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.perm-menu {
+  left: 0;
+  right: auto;
+}
+.picker-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+}
+.picker-item:hover {
+  background: var(--bg3);
+}
+.picker-item.active {
+  background: var(--orange-bg);
+}
+.picker-model {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+.picker-route {
+  font-size: 11px;
+  color: var(--text3);
+}
+.attachment-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg3);
+  color: var(--text2);
+  font-size: 11px;
+  cursor: pointer;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachment-chip:hover {
+  border-color: var(--red);
+  color: var(--red);
 }
 .head-btn {
   padding: 6px 12px;

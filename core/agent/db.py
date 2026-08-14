@@ -161,6 +161,18 @@ CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
 CREATE INDEX IF NOT EXISTS idx_agent_messages_session ON agent_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_agent_events_session ON agent_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_agent_tool_calls_run ON agent_tool_calls(run_id);
+CREATE TABLE IF NOT EXISTS agent_attachments (
+    attachment_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    turn_id TEXT,
+    run_id TEXT,
+    filename TEXT NOT NULL,
+    path TEXT NOT NULL,
+    mime TEXT NOT NULL DEFAULT '',
+    size INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_attachments_session ON agent_attachments(session_id);
 """
 
 
@@ -179,6 +191,7 @@ def _ensure_agent_columns(conn: sqlite3.Connection) -> None:
     """增量迁移:补齐历史表缺失列(与 data_sink._ensure_column 同模式)。"""
     migrations = {
         "agent_runs": [("created_at", "TEXT NOT NULL DEFAULT ''")],
+        "agent_sessions": [("model_id", "TEXT NOT NULL DEFAULT ''")],
     }
     for table, columns in migrations.items():
         existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -258,7 +271,7 @@ def get_session(session_id: str) -> Optional[dict]:
 
 
 def update_session(session_id: str, **fields: Any) -> None:
-    allowed = {"title", "status", "continuation_available", "archived_at"}
+    allowed = {"title", "status", "continuation_available", "archived_at", "model_id"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
@@ -716,6 +729,45 @@ def get_script_revision(rev_id: str) -> Optional[dict]:
         conn = _conn()
         try:
             return _row(conn.execute("SELECT * FROM agent_script_revisions WHERE rev_id = ?", (rev_id,)).fetchone())
+        finally:
+            conn.close()
+
+
+# ---------- 附件 ----------
+
+def create_attachment(attachment_id: str, session_id: str, turn_id: Optional[str],
+                      run_id: Optional[str], filename: str, path: str,
+                      mime: str, size: int) -> dict:
+    with _lock:
+        conn = _conn()
+        try:
+            conn.execute(
+                "INSERT INTO agent_attachments (attachment_id, session_id, turn_id, run_id, filename, path, mime, size, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (attachment_id, session_id, turn_id, run_id, filename, path, mime, size, _now_iso()),
+            )
+            conn.commit()
+            return _row(conn.execute("SELECT * FROM agent_attachments WHERE attachment_id = ?", (attachment_id,)).fetchone())  # type: ignore[return-value]
+        finally:
+            conn.close()
+
+
+def get_attachment(attachment_id: str) -> Optional[dict]:
+    with _lock:
+        conn = _conn()
+        try:
+            return _row(conn.execute("SELECT * FROM agent_attachments WHERE attachment_id = ?", (attachment_id,)).fetchone())
+        finally:
+            conn.close()
+
+
+def list_attachments(session_id: str, turn_id: Optional[str] = None) -> list[dict]:
+    with _lock:
+        conn = _conn()
+        try:
+            if turn_id:
+                return _fetch(conn, "SELECT * FROM agent_attachments WHERE session_id = ? AND turn_id = ? ORDER BY created_at", (session_id, turn_id))
+            return _fetch(conn, "SELECT * FROM agent_attachments WHERE session_id = ? ORDER BY created_at", (session_id,))
         finally:
             conn.close()
 

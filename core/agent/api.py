@@ -42,6 +42,19 @@ class TurnCreateRequest(BaseModel):
     text: str
     context_refs: Optional[list[dict]] = None
     structured_inputs: Optional[dict] = None
+    attachment_ids: Optional[list[str]] = None
+    grant_prefs: Optional[dict] = None
+
+
+class AttachmentCreateRequest(BaseModel):
+    name: str
+    path: str
+    mime: str = ""
+    size: int = 0
+
+
+class SessionModelRequest(BaseModel):
+    model_id: str
 
 
 class ApprovalDecisionRequest(BaseModel):
@@ -64,6 +77,39 @@ def runtime_status() -> dict:
 @router.post("/runtime/restart")
 async def runtime_restart() -> dict:
     return await get_agent_service().restart_runtime()
+
+
+# ---------- 模型(参考 DSH 的模型切换交互) ----------
+
+@router.get("/models")
+def list_agent_models() -> dict:
+    from core.agent.cordis_config import MODEL_CAPABILITIES, resolve_provider_for_model
+    models = []
+    for model_id, cap in MODEL_CAPABILITIES.items():
+        if not cap.get("supports_tools"):
+            continue
+        models.append({
+            "model_id": model_id,
+            "route": resolve_provider_for_model(model_id),
+            "context_window": cap.get("context_window"),
+            "max_output_tokens": cap.get("max_output_tokens"),
+        })
+    return {"models": models}
+
+
+@router.patch("/sessions/{session_id}/model")
+def set_session_model(session_id: str, req: SessionModelRequest) -> dict:
+    from core.agent.cordis_config import MODEL_CAPABILITIES
+    session = db.get_session(session_id)
+    if not session:
+        raise HTTPException(404, "会话不存在")
+    model_id = str(req.model_id or "").strip()
+    if model_id not in MODEL_CAPABILITIES or not MODEL_CAPABILITIES[model_id].get("supports_tools"):
+        raise HTTPException(422, f"模型不可用于智能体: {model_id}")
+    db.update_session(session_id, model_id=model_id)
+    service = get_agent_service()
+    service.note_model_changed(session_id, model_id)
+    return {"ok": True, "session": db.get_session(session_id)}
 
 
 # ---------- 会话 ----------
@@ -112,6 +158,36 @@ def patch_session(session_id: str, req: dict) -> dict:
     return {"ok": True, "session": db.get_session(session_id)}
 
 
+@router.post("/sessions/{session_id}/attachments")
+def create_attachment(session_id: str, req: AttachmentCreateRequest) -> dict:
+    """渲染端经原生选择器挑选文件后注册为会话附件(拷贝进受控附件目录)。"""
+    import re as _re
+    import shutil as _shutil
+    import uuid as _uuid
+    from pathlib import Path as _Path
+    from core.agent.service import _data_root
+
+    session = db.get_session(session_id)
+    if not session:
+        raise HTTPException(404, "会话不存在")
+    src = _Path(req.path)
+    if not src.is_file():
+        raise HTTPException(422, "文件不存在")
+    safe_name = _re.sub(r"[^A-Za-z0-9._\u4e00-\u9fff-]", "_", str(req.name or src.name))
+    attachment_id = f"att-{_uuid.uuid4().hex[:12]}"
+    dest_dir = _data_root() / "agent" / "attachments" / attachment_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / safe_name
+    try:
+        _shutil.copyfile(src, dest)
+    except OSError as exc:
+        raise HTTPException(422, f"复制附件失败: {exc}") from exc
+    size = req.size or dest.stat().st_size
+    row = db.create_attachment(attachment_id, session_id, None, None,
+                               safe_name, str(dest), req.mime, int(size))
+    return {"attachment": row}
+
+
 @router.post("/sessions/{session_id}/turns")
 async def create_turn(session_id: str, req: TurnCreateRequest) -> dict:
     service = get_agent_service()
@@ -121,7 +197,9 @@ async def create_turn(session_id: str, req: TurnCreateRequest) -> dict:
     if len(text) > 20000:
         raise HTTPException(422, "text 过长")
     try:
-        result = await service.submit_turn(session_id, text, req.context_refs)
+        result = await service.submit_turn(session_id, text, req.context_refs,
+                                           attachment_ids=req.attachment_ids,
+                                           grant_prefs=req.grant_prefs)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     return JSONResponse(status_code=202, content=result)
