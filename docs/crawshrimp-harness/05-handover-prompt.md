@@ -1,41 +1,58 @@
-# 交接 Prompt(给 Codex / 下一位接手者)
+# 交接 Prompt（给下一位维护者）
 
-你是 crawshrimp-harness 项目的新任维护者。工作目录:`/Users/xingyicheng/Documents/crawshrimp-harness`。
-这是一个「抓虾桌面应用 + DeepSeek Harness(DSH)内核智能体」的融合项目:Electron 43.1.0(main)内嵌 FastAPI 后端(端口 18765,回退 +1..+100)+ Node Worker + DSH harness(Electron-as-Node,锁版 @deepseek-ai/*@0.1.0-rc.6),前端 vite 5173 + Electron 窗口(CDP 9223),托管 Chrome CDP 9222(网页自动化)。
+你是 `crawshrimp-harness` 的维护者。工作目录：`/Users/xingyicheng/Documents/crawshrimp-harness`。
 
-## 必读文档(按顺序)
+这是抓虾桌面应用与 DeepSeek Harness（DSH）的融合项目：Electron 43.1.0 → FastAPI → Node Worker → DSH runtime（Electron-as-Node，`@deepseek-ai/*@0.1.0-rc.6` 精确锁版）。Vite 默认 5173，Electron CDP 9223，托管 Chrome CDP 9222。
 
-1. `docs/crawshrimp-harness/04-codex-handover.md` —— 完成清单 + 已修复 + 遗留问题(24 项分级,高 5 / 中 8+新增 4 / 低 7)
-2. `docs/crawshrimp-harness/03-media-in-chat-handover.md` —— 会话内媒体展示 10 坑(消息流插入位置/iframe 重载丢事件/lazy 不触发/Vue props 响应性异常等)
-3. `docs/crawshrimp-harness/02-delivery.md` —— 能力清单与证据
-4. `docs/crawshrimp-harness/01-dsh-agent-v2-proposal.md` §18 —— 提案对实现的落账
-5. `SPEC.md` §11–16 —— 架构/权限/脚本规范/媒体/多窗口等 v2 增补
+## 必读顺序
 
-## 关键环境事实
+1. `README.md`：当前架构、开发、权限、限制和验证。
+2. `docs/crawshrimp-harness/04-codex-handover.md`：24 项 code review 关闭表和关键代码。
+3. `docs/crawshrimp-harness/03-media-in-chat-handover.md`：媒体/附件链路和 10 个历史坑。
+4. `docs/crawshrimp-harness/02-delivery.md`：交付能力与最终证据。
+5. `docs/crawshrimp-harness/01-dsh-agent-v2-proposal.md` §18：提案对当前实现的落账。
+6. `SPEC.md` §11–16：当前规范真值。
 
-- 后端 API token:`77d7cb1e26ac5dd64ac44ba7dd58afea38a7c807273a655fcde27fae3a2884f5`(curl 带 `X-Crawshrimp-Token` 头)
-- 数据目录:`~/.crawshrimp`(SQLite crawshrimp.db + config.json + adapters + agent/attachments/workspace)
-- 端口:API 18765、MCP=API+200、DSH web host=API+300(漂移时后端 `_settle_web_port` 按 `__DSH_BOOT__` 特征自愈)
-- 验证手段:CDP 9223 主 frame + iframe isolated world(iframe 重载后 context 失效需重建);后端日志 `/tmp/electron.log`(dev 壳);pytest `venv/bin/python -m pytest tests/`(877 项基线)
-- DSH hash 类名(锁版 0.1.0-rc.6,升级 DSH 必核对):侧栏 `.hHd-Xa_root`、会话列表 `.qDHVXG_list`、消息列表 `.Md3f7G_column`、滚动容器 `.wSkVaW_scrollBody`、输入框 `.wSkVaW_composerSeat/.wSkVaW_composerStack`、加号按钮 `.uV2eYG_add`、发送 `.uV2eYG_primary`
-- 打包:`npm run build:mac:ci`(mac 双架构已产出);win-unpacked 可用,NSIS 需 Windows 机器
+不要轻信文档。开始工作前应同时检查当前 branch/worktree、关键源码、测试和实际端口/进程。
 
-## 你必须遵守的产品决策(不要推翻)
+## 不得推翻的产品决策
 
-1. 智能体 DSH Web 会话界面是唯一主界面(iframe 常驻全幅);抓虾菜单注入会话侧边栏;其他菜单切右侧 overlay;脚本详情是独立二级页面。
-2. 权限模型:fs_read/fs_list 全盘读免审批;fs_write/fs_exec/browser_navigate 放开但经 DSH 原生审批卡(允许一次);用户明确「最多需要人审批」。
-3. 脚本规范硬性约束:一切脚本必须是抓虾适配包(manifest.yaml + 页面 JS async IIFE 返回 {success,data,meta});草稿/测试/发布三关拒绝不合规脚本。
-4. 审批:DSH 原生审批卡(非自造浮层);简单下载/找图类任务自动批准(审计保留);审批卡内容必须中文人话。
-5. 会话内媒体(图片/视频/附件)在消息流内展示(消息列表末尾),不上输入框旁模块;上传入口是 composer 原生加号按钮改造(📎)+旁开「@」命令按钮。
-6. 实时浏览器:多窗口、按浏览器页面(tab)绑定、一个页面一个窗口、活跃置顶、级联排列。
+1. DSH Web 会话 iframe 是唯一主界面；抓虾菜单注入会话侧栏；其他菜单是右侧 overlay；脚本详情是独立二级页。
+2. DSH 会话权限是审批真值：`never` 时抓虾审批自动通过并审计，`ask` 时使用 DSH 原生审批卡。
+3. `fs_read/fs_list` 全盘读免审批；`fs_write/fs_exec` 允许但服从 DSH；`browser_navigate` 每 run 最多审批一次。
+4. 简单下载/找图/找款自动批准，上传/发布/删除/修改类不自动放行。
+5. 智能体脚本必须是抓虾 Adapter 包：`manifest.yaml + 页面 JS async IIFE`，外层返回 `{success,data,meta}`；草稿/测试/发布均强校验。
+6. 审批卡必须是 DSH 原生卡，内容是中文人话。
+7. 图片、视频和附件显示在消息流末尾；composer 原生加号改成 `📎`，旁边保留 `@`。
+8. 实时浏览器聚合当前会话已 grant 且仍存活的 tab 子集，一个页面一个窗口，活跃置顶、级联排列、关闭自动清理。
 
-## 遗留问题处理优先级(详见 04 文档)
+## 环境事实
 
-高(5):① 审批等待占用默认线程池(改专用有界 executor/异步轮询);② ctx.active_run 单全局槽并发覆盖(改 per-session 字典+互斥);③ test-install 在「生产运行时」执行(快照已做,考虑隔离命名空间);④ 媒体 token 静态(升级短期签名 token);⑤ _execute_plan future 60s 超时弃协程(改「启动中」回查)。
-新增(4):⑥ 多窗口按「全局页面集合」而非「会话级子集」绑定(利用 grant.tab_id 雏形);⑦ tab 关闭后窗口残留(加快照轮询清理);⑧ 附件解析大小上限未声明;⑨ 审批卡跨会话可见性(会话标题已变「等待审批」,可加全局提示)。
+- API 默认 18765，在 `+1..+100` 内漂移；MCP 为实际 API `+200`；DSH Web 为 `+300` 起始并按 BOOT 特征回查。
+- API token 只从当前数据目录的 `api-token` 读取。绝对不要把 token 值写入 prompt、文档、命令参数、URL、日志、截图或 Git。
+- 数据目录通常为 `~/.crawshrimp`，包含 SQLite、config、Adapter、attachments、workspace 和 DSH session。
+- DSH 0.1.0-rc.6 hash 类名：`.hHd-Xa_root`、`.qDHVXG_list`、`.Md3f7G_column`、`.wSkVaW_scrollBody`、`.wSkVaW_composerSeat/.wSkVaW_composerStack`、`.uV2eYG_add`、`.uV2eYG_primary`。
+- iframe 重载后旧 CDP execution context 失效，必须重新获取 frame/context。
 
-## 工作方式
+## 验证合同
 
-- 用 don't stop 循环:实现 → 自测 → 修复 → 复测 → 带证据交付;不要停在分析。
-- 验证要真实:curl 实测端点、CDP 实测 UI、pytest 回归;改完跑 `venv/bin/python -m pytest tests/ -q` 必须 877 项全过。
-- 提交信息用中文、按模块分 commit;文档三件套(交接/提案/SPEC)随功能同步更新。
+使用 don't-stop 循环：实现 → 聚焦测试 → 修复 → 全量回归 → 构建 → curl/CDP 实机回读 → 自审 → 提交。
+
+```bash
+venv/bin/python -m pytest tests/ -q
+npm --prefix app test
+npm --prefix app run vite:build
+git diff --check
+```
+
+实机至少验证：
+
+- `/health` 和 `/agent/runtime`；
+- 媒体 HMAC 的有效、篡改、过期和 route/entry 混淆；
+- 附件 runtime session 绑定、SSE cursor、review Adapter 隔离和测试后篡改拒绝；
+- DSH iframe 常驻、菜单、`📎`/`@`、图片 image block、媒体消息流和跨会话隔离；
+- DSH `never` 自动批准，`ask` 的首次 navigate 原生审批且同 run、跨 MCP lease 不重复；
+- 当前会话多 grant tab 窗口、活跃层/级联和精确 tab 关闭清理；
+- 后端重启或 SSE 断开后，pending 审批提示能按 SQLite 真值恢复/清理。
+
+提交时使用中文、按模块分 commit；只 stage 本轮确切路径，保留用户的无关改动。若用户要求推送，提交后回读远端仓库隐私、默认分支和 SHA，不能用本地 commit 代替远端证据。

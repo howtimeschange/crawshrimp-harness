@@ -422,41 +422,64 @@ P0 进展(2026-08-14,macOS arm64 本机):✅ 锁版安装可重复;✅ Electron-
 
 ---
 
-## 18. 实现修订记录(2026-08-14,对最新实现的落账)
+## 18. 实现修订记录（2026-08-15，code review 完成后）
 
-> 提案主体各节已按当日实现落地;本节记录实现过程中相对提案的决策变化与新增约束。
+> 提案主体保留设计演进背景；本节是当前实现的最终落账。若正文与本节冲突，以本节和 `SPEC.md` §11–16 为准。
 
-### 18.1 权限模型修订(§8 放开)
+### 18.1 DSH Web 与进程模型
 
-用户决策:「之前限制了抓虾智能体的访问,这次放开权限,最多需要人审批」。落账:
+- 前端采用 §12.7 的最终决策：DSH Web host 全量 iframe 嵌入，不做 React island 组件级移植。
+- DSH Web 会话是唯一主界面；抓虾菜单由 `crawshrimp-slots` 注入 DSH 会话侧栏，其他菜单是右侧 overlay，脚本详情为独立二级页。
+- Electron 43.1.0 启动 FastAPI → Node Worker → DSH runtime（Electron-as-Node）。MCP 端口为实际 API `+200`，Web host 为 `+300` 起始并按 BOOT 特征回查。
+- DSH 依赖族继续精确锁定 `0.1.0-rc.6`；升级必须重验 BootManifest、插件 API、事件词汇和 hash 类名。
 
-- 新增 `fs_read/fs_list`(全盘读,免审批)、`fs_write/fs_exec`(写文件/执行命令,DSH 原生审批卡,允许一次)、`browser_navigate` 放开任意 http(s) URL。
-- 媒体展示专用 token(master token 不进媒体 URL),`/agent/artifacts/*` 仅认媒体 token 或 header master token。
-- 安全底线保留:审批卡 + 工具调用审计(agent_tool_calls)。
+### 18.2 权限模型以 DSH 为真值
 
-### 18.2 脚本创作规范(§7 强化为硬性约束)
+- `fs_read/fs_list` 全盘读免审批；`fs_write/fs_exec` 允许执行，但服从当前 DSH 会话权限。
+- DSH `never` 表示用户整体放开：抓虾审批自动通过并保留审计；DSH `ask` 才展示原生审批卡。
+- `browser_navigate` 放开任意 HTTP(S)，每个 run 首次审批后写入 grant，同 run 不重复询问。
+- 简单下载/找图/找款在有限风险内自动批准；上传、发布、删除、更新、修改类不自动放行。
+- 审批等待使用专用有界 executor；审批后 grant 在 context lease 释放前写回 run 级缓存。跨会话提示同时消费 SSE 和 SQLite pending 真值，重启/断流可恢复或清理。
 
-- 所有脚本必须是抓虾适配包(manifest.yaml + 页面 JS async IIFE);独立 Python/Node 脚本在 `script_create_draft/script_test/script_publish` 三关全部被拒。
-- 契约文档技能化:`crawshrimp-adapter-skill/references/script-contract.md`(智能体 fs 受限时经 skill_read 获取契约)。
-- 双闸门第二闸门升级为「先测试后审批」:审核页可安装到测试区、页内内嵌正式任务执行界面真实运行;批准=转正,拒绝=卸载并恢复同名生产适配器快照。
+### 18.3 多会话身份与任务幂等
 
-### 18.3 前端交互修订(§12 补充)
+- web UI 原生会话投影为产品 session/run；`active_runs_by_runtime` 和 `grants_by_run` 保存会话级真值。
+- DSH MCP transport 不携带 session，product bridge 在每次 `tools/execute` 外层用 `exec.agent.id` 获取互斥 context lease；未知会话不回退到最近 run。
+- plan 参数按 `adapter_id + task_id` 定位，原子 claim 后创建稳定 Task Instance UID。
+- 启动等待超过 60 秒返回 `starting` 和 UID，协程继续后台收敛；重放只回查既有实例，不重复创建副作用。
 
-- 会话内媒体(图片多图/视频/附件)在消息流内展示(消息列表末尾),非输入框旁模块;上传入口为 composer 原生加号按钮改造(📎)+ 旁开「@」命令按钮。
-- 实时浏览器升级为可拖动/缩放/最小化/最大化的浮动窗口;菜单切换时自动最小化,防遮挡。
+### 18.4 Adapter 合同与发布事务
 
-### 18.4 稳定性修订(§14/§15 相关)
+- 所有智能体脚本必须是 `manifest.yaml + 页面 JS async IIFE`；外层 IIFE 顶层返回必须包含 `success/data/meta`，辅助函数中的伪返回不能绕过。
+- 测试安装进入唯一 `review-<hash>` Adapter 命名空间，不覆盖同名正式包；测试前后按完整包哈希锁定。
+- 正式发布前复用 `AdapterManifest` schema，非法路径型 ID 在任何快照/安装副作用前拒绝。
+- 发布有短期 rollback snapshot；首次智能体发布另存长期 baseline，多次发布不覆盖，清智能体数据时恢复用户原包。
+- 重装、拒绝和批准前停止测试 Adapter 的活动实例；失败清理半安装包并退回可重试状态。
 
-- 后端孤儿进程启动自清理、端口自愈与 `_settle_web_port` 真实端口探测、SSE 自动重连、HTTP 级探活、backendController 对已就绪后端的瞬时校验容忍(不杀正在跑任务的实例)。
-- 已知竞态修复:restartBackend 与 controller respawn 双实例、`ctx.emit_event` 曾是 no-op、Vue props/watch 响应性异常(改用直接 postMessage 绕开)。
+### 18.5 附件、图片与媒体
 
-### 18.5 深夜迭代(任务展示/审批人话/附件桥接/多窗口浏览器)
+- 上传显式绑定 runtime session，采用 1 MB 流式复制和 200 MB 硬限制；扩展名与 magic bytes 双重拒绝可执行文件。
+- `attachment_read` 只读当前会话附件，解析上限 50 MB；Excel 另有文件、解压量、条目、sheet、行、列和 cell 上限。
+- PNG/JPEG/WebP/GIF 在单张 8 MB、每轮 5 张内转 DSH image block，图片已真正进入模型输入。
+- 媒体继续插入 `.Md3f7G_column` 消息流；按 runtime session 缓存和重放，不串会话。
+- 媒体 URL 使用短期 HMAC capability，绑定 GET route/path/entry/expiry；主 API token 不进入 URL。
 
-- 任务卡与任务中心显示任务中文正式名称(manifest name);历史实例兜底替换;审批卡标题/内容中文人话(运行任务/发布脚本/写入文件/执行命令/任务控制各型文案)。
-- 附件 → 任务参数桥接:task_prepare 对 file_excel/file 参数自动解析(attachment_id 或本地路径 → rows/headers/sheets),修复「上传表格跑任务输入 0 行」的流程断点;attachment_read 返回 local_path 与传法提示。
-- 修复 task_wait/data_analyze/fs_exec 三处工具缺陷,以及 ParamType 枚举匹配导致的桥接静默失效。
-- 实时浏览器多窗口:按浏览器页面(tab)绑定,一个页面一个窗口,活跃页面置顶,级联排列;截图流按 targetId 独立。
+### 18.6 浏览器与安全
 
-### 18.6 仍待拍板/遗留(交接 Codex)
+- 每个 run 首次绑定当时的 Chrome `grant.tab_id`；`browser.activity` 只聚合当前 session 历次 run 的存活 grant tab，不再使用 9222 全局页面集合，也不把多窗口退化为单窗口。
+- 一个 tab 一个 CDP 截图流；窗口活跃置顶、级联排列；2 秒快照轮询清理已关闭 tab。
+- CDP observe 隐藏 password 及凭证特征输入；请求 URL 去除 userinfo 并脱敏 query/body。
+- repository 工具限制公网 HTTP(S)、安全目录段、无 symlink，审批后重新 DNS 解析并固定 Git transport。
+- preload/dev bridge 只把 API token 发给 loopback `18765..18865`，拒绝 query token；`dev.sh` 不打印 token。
 
-见 `04-codex-handover.md`。
+### 18.7 稳定性与可恢复性
+
+- MCP 使用预绑定 socket；Worker 对启动超时、request 超时、EOF、进程退出和迟到响应全部收敛。
+- DSH Web 端口在 15 秒内并行探测，并同时验证 `__DSH_BOOT__`、product bridge、slots。
+- 产品 SSE 使用 SQLite 全局自增 seq/cursor；订阅后补历史，断线自动恢复，QueueFull 有统计。
+- 孤儿后端/运行时清理验证 data root 和父进程存活，不杀并行健康实例。
+- 清智能体数据恢复发布前 Adapter 基线，并清 attachments/workspace/harness/runtime/review/tmp；不清业务 Task Instance 与产物。
+
+### 18.8 交付门禁
+
+当前标准门禁是 Python 全量 pytest、app Node 全量测试、Vite 生产构建、`git diff --check`、curl API 流程和 Electron CDP 9223 UI 流程。详细结果写入 `02-delivery.md`，问题关闭表见 `04-codex-handover.md`。

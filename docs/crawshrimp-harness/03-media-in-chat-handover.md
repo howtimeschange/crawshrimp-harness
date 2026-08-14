@@ -1,51 +1,95 @@
-# 会话内媒体展示(图片/视频/附件)问题交接文档
+# 会话内媒体与附件交接
 
-> 目标效果:AI 生图/生视频/任务产物的图片、视频、附件,**像消息一样出现在对话信息流里**(不是输入框底部的独立模块)。
-> 状态:2026-08-14 已修复并实测验证(见「当前实现」);本文档记录过程中踩过的坑,供后续维护/Codex 接手参考。
+> 更新时间：2026-08-15。目标是让图片、视频和附件像消息一样出现在 DSH 对话信息流中，而不是放在 composer 旁边。
 
-## 当前实现(已修复)
+## 当前链路
 
-链路:`ctx.emit_event("artifact.created")`(后端广播,带 media_kind + zip 内图片清单)→ SSE 全局流(AgentProductLayer,4s 自动重连)→ **AgentProductLayer 直接 postMessage 到会话 iframe**(不经 App/props/watch 中转)→ iframe(client.js)把媒体块插入 **`.Md3f7G_column`(消息列表)末尾** → 像一条消息出现在信息流;发新消息后块存活(React 重渲染不清理外来节点,已实测)。
+```text
+任务/AI 产物
+  → artifact.created（SQLite seq + 全局 SSE）
+  → AgentProductLayer 按 runtime session 缓存
+  → 安全 postMessage 到当前 DSH iframe
+  → crawshrimp-slots 插入 .Md3f7G_column 末尾
+  → iframe 重载后 artifact-replay 重放最近 12 条
+```
 
-- 图片:单图直接显示;ZIP 多图网格(后端 `/agent/artifacts/entry` 流式解压单条目)。
-- 视频:页内 `<video controls>` 播放(`/agent/artifacts/file` 支持 Range,可拖动进度)。
-- 附件:文件卡点击 → shell `openFile`(系统默认应用)。
-- iframe 重载/端口漂移后:client.js apply 时发 `artifact-replay` 请求,shell 重放最近 12 条媒体消息;去重以 DOM 为准。
+- 单图直接显示；ZIP 图片最多 20 张，以网格展示。
+- 视频使用 `<video controls>`，文件端点支持 RFC Range 和 `bytes=-N`。
+- 普通附件显示文件卡，点击后由 Electron shell 调用系统默认应用。
+- AI 直接产物使用稳定 `media-<hash>` ID；任务产物沿用数据库 artifact ID。
+- 跨会话产物只缓存到所属 runtime session，切换会话时重放，不注入错误会话。
 
-## 踩坑清单(修复过的)
+## 上传与模型输入
 
-### 1. 插入位置:块出现在「输入框底部、挤压对话框」
-`.wSkVaW_scrollBody` 有**两个子节点**:消息视图区(`Md3f7G_root → Md3f7G_scroll → Md3f7G_column`,消息项在 column 里)与 **`.wSkVaW_composerSeat`(输入框)**。最初 `scrollBody.appendChild(block)` = 插到 composerSeat **之后**,于是块出现在输入框底部并挤压布局。**正确位置:`.Md3f7G_column`(消息列表)末尾**。类名是 hash,锁版 `@deepseek-ai/*@0.1.0-rc.6` 固定,升级 DSH 需核对。
+- DSH composer 原生加号被改造成 `📎`；旁边新增 `@` 命令按钮。
+- 文件选择、拖入和粘贴都必须发生在 composer 区域，不能 document 级全局拦截。
+- shell 上传时显式携带 `runtime_session_id`；后端把附件复制进受控目录并绑定产品 session。
+- PNG/JPEG/WebP/GIF 且不超过 8 MB 的图片转为 DSH image block；每轮最多 5 张。
+- 非图片或超限图片仍作为附件提示进入文本，不会被伪装成视觉输入。
+- `attachment_read` 再校验附件属于当前 run 的产品 session，跨会话 ID 会拒绝。
 
-### 2. iframe 重载窗口期事件丢失
-后端重启/端口漂移时 iframe 会重挂;postMessage 到「正在重载的 window」直接丢。解决:① shell 缓存 sentArtifacts,client.js apply 后发 `artifact-replay` 请求重放;② renderArtifactShow 在 column 未渲染时 2.5s 重试;③ 去重以 DOM 为准(内存 set 会在页面重载后造成「有记忆无块」)。
+## 媒体 capability
 
-### 3. 动态注入图片 lazy loading 不触发
-cross-origin iframe 里动态插入的 `loading=lazy` 图片不加载(naturalWidth 恒 0)。已改 eager + `decoding=async`。
+媒体 URL 不携带主 API token。流程是：
 
-### 4. Vue props/watch 响应性异常(已绕开)
-「App ref 更新 → 父组件重渲染 patch 子组件 props → 子组件 watch 不触发」:手动 watch(同一 props 对象)能触发、直接赋值 props 能触发,唯独父 patch 路径不触发(flush:'sync' 也无效,且现象随 HMR 状态变化)。**最终方案:绕开该链**——AgentProductLayer(SSE 消费方)直接 `document.querySelector('iframe').contentWindow.postMessage(...)`。教训:iframe 通信不要走多层 Vue 响应式中转。
+1. preload 用认证 header 调用 `POST /agent/artifacts/sign`。
+2. 后端确认目标文件或 ZIP entry 存在。
+3. 返回短期 HMAC capability，签名绑定 `v2 + route + expiry + path + entry`。
+4. 无 header 的 GET 仅可访问 `/agent/artifacts/file` 或 `/agent/artifacts/entry`。
 
-### 5. React 19 受控 textarea 的 CDP 键入不稳定
-测试自动化里 `native setter + input 事件` 时灵时不灵(React 状态未感知)。不影响产品功能,仅测试脚本需多次重试或改用真实键入。
+签名不能从 ZIP entry 切换到完整文件、不能改 path/entry、不能调用签名端点、不能延长 expiry。
 
-### 6. 后端双实例竞态,run 被标 interrupted
-`restartBackend` 与 backendController 的 respawn 竞态产生双后端;新实例「启动自清理」杀掉正在跑任务(审批等待中)的实例,`_recover_on_startup` 把非终态 run 标 `AGENT_DISPATCH_INTERRUPTED`。已修:controller 对「已 ready 后端」的瞬时 validate 失败先容忍重试(4 次)再杀进程。
+## 已踩过的 10 个坑
 
-### 7. 端口漂移与 web_url 报告滞后
-API/MCP/web host 端口在重启时漂移;DSH webserver 在首选端口被占时内部 +1。已修:孤儿清理提前 → `_pick_free_port` 回写 `self.web_port` → ready 后 `_settle_web_port` 按 `__DSH_BOOT__` 特征探测真实端口;前端 HTTP 级探活(no-cors fetch)连续两次不可达自动重挂 iframe。
+### 1. 插入节点选错
 
-### 8. ctx.emit_event 一直是 no-op
-`mcp_gateway.ctx.emit_event` 在 service 里只绑了 `lambda: None`,生图产物广播从未发生。已绑定 `_emit_tool_event_sync`(run_coroutine_threadsafe 投递主循环,异常经 done-callback 记录)。
+`.wSkVaW_scrollBody` 同时包含消息区和 `.wSkVaW_composerSeat`。对 scrollBody 直接 `appendChild` 会把媒体放到输入框之后并挤压布局。正确节点是消息列 `.Md3f7G_column`。
 
-### 9. 图片进模型(未解决)
-DSH attachment 服务仅支持图片注册(PNG/JPEG/WebP/GIF),「图片像素进模型」未实现,当前图片仅展示。若要做:DSH attachment 协议 + provider 视觉适配,或产品侧把图片转给模型。
+### 2. iframe 重载期间事件丢失
 
-### 10. 智能体读不到项目文件(已放开)
-`skill_read` 仅技能目录、DSH fs 工具被 disabled → 智能体读不到 `sdk/ADAPTER_GUIDE.md`。已加 MCP `fs_read/fs_list`(全盘读)+ `fs_write`(写经审批卡);适配器最小契约放进技能包 `crawshrimp-adapter-skill/references/script-contract.md`。
+postMessage 发给正在替换的 window 会静默丢失。shell 必须按 runtime session 缓存产物，client apply 后主动发送 `artifact-replay`，DOM 未就绪时最多重试 6 次。
 
-## 验证方法(可复现)
+### 3. 内存去重导致“有记忆无 DOM”
 
-1. 智能体生图或提交森马云盘找款任务 → 完成后图片自动出现在会话消息流(不是输入框旁)。
-2. 手动验证:`iframe.contentWindow.postMessage({__crawshrimp:'artifact-show', artifact:{...}, urls:{...}}, '*')` → 检查 `.cs-artifact-block` 在 `.Md3f7G_column` 内、图片 naturalWidth>0、发新消息后块仍存活。
-3. 后端:`/agent/artifacts/file?path=...&token=...`(Range 206)、`/agent/artifacts/entry?path=zip&entry=...&token=...`(图片 200)。
+iframe 重载会丢 DOM，但旧 JavaScript set 可能仍在。当前以 DOM `data-*` 标记为最终去重依据，shell 同时保留稳定 artifact ID。
+
+### 4. 动态 lazy image 不触发
+
+cross-origin iframe 动态插入 `loading=lazy` 可能一直不加载。媒体图片使用 eager，保留 `decoding=async`。
+
+### 5. Vue props/watch 链不稳定
+
+父 ref → props → 子 watch 在 HMR/iframe 重载组合下曾不触发。现在 SSE consumer 直接定位唯一 AgentWebView iframe 并 postMessage，不走多层 Vue 响应式中转。
+
+### 6. postMessage 信任边界
+
+发送使用 iframe 当前 origin；接收同时验证 `event.source === iframe.contentWindow` 和精确 `event.origin`。其他 overlay/iframe 不能冒用打开文件、上传或切换会话通道。
+
+### 7. 跨会话上传串线
+
+文件选择器完成时用户可能已经切换会话。选择动作捕获原 runtime session，注册与回填提示都按该 session 排队；当前会话不匹配时不写 composer。
+
+`currentRuntimeSessionId` 不能同时承担“本地已读取”和“已通知 shell”两个语义。附件重放会先读取持久化 session；若共用变量，后续 publish 会误判为已上报，shell 永远拿不到当前会话。当前用独立 `lastPublishedRuntimeSessionId` 去重上报。
+
+### 8. 图片“注册了”不等于进模型
+
+只插入附件文本不会给模型像素。当前实现把受支持图片转为 `{type:'image', mediaType, data}` 并通过 `session.prompt(..., 'queue')` 排队；Worker 也验证 MIME 和文件大小。
+
+### 9. 大文件和 ZIP bomb
+
+上传 200 MB、解析 50 MB、模型图片 8 MB；ZIP preview 单条目 64 MB。读取 ZIP entry 前先检查 `ZipInfo.file_size`，不能先 `read()` 后判断。
+
+### 10. Range 与 token 泄露
+
+后缀 Range `bytes=-N` 必须返回最后 N 字节；媒体 URL 不能放主 API token。当前用 route/path/entry/expiry 绑定的短期签名，并设置 `Cache-Control: no-store`。
+
+## 复现检查
+
+1. 上传一张支持的图片，确认 composer 有附件提示且 DSH prompt 包含 image block。
+2. 在会话 A 产生图片，切到会话 B，确认 B 不出现；切回 A 后重放。
+3. 让 iframe 重载，确认 `.cs-artifact-block` 重新出现在 `.Md3f7G_column`，没有重复。
+4. 对视频请求普通 Range 和 `bytes=-N`，确认 206、`Content-Range` 与字节内容正确。
+5. 篡改媒体 capability 的 route/path/entry/expiry，确认 401；有效签名确认 200。
+6. 上传超限、伪图片、可执行文件和跨会话 attachment ID，确认明确拒绝且无残留临时文件。
+
+升级 DSH 时必须重新核对 `.Md3f7G_column`、`.wSkVaW_scrollBody`、`.wSkVaW_composerSeat/.wSkVaW_composerStack`、`.uV2eYG_add` 和 `.uV2eYG_primary`。

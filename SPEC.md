@@ -124,7 +124,7 @@ tasks:
       meta: { has_more: false }  // optional pagination signal
     }
   } catch (e) {
-    return { success: false, error: e.message }
+    return { success: false, data: [], meta: { has_more: false, error: e.message } }
   }
 })()
 ```
@@ -217,71 +217,137 @@ GET  /settings/chrome-tabs
 
 ---
 
-# crawshrimp SPEC v2 增补(2026-08-14,DSH 智能体落地)
+# crawshrimp SPEC v2 增补（2026-08-15，DSH Harness）
 
-> 本节对齐 crawshrimp-harness 智能体(DSH 内核)的最新实现,与 §4/§5 适配器规范配套阅读。
-> 详细交付记录见 docs/crawshrimp-harness/02-delivery.md 与 03-media-in-chat-handover.md。
+> 本节是当前 Harness 实现的规范真值，与 §4/§5 Adapter 规范配套使用。实现证据见 `docs/crawshrimp-harness/02-delivery.md`。
 
-## 11. 智能体(DSH Harness)架构
+## 11. DSH Harness 架构
 
-- 内核:@deepseek-ai/dsh 全族锁版 0.1.0-rc.6,经 `dsh-sdk-jsonrpc-demo` 以 Electron-as-Node 运行。
-- 进程模型:Electron main 内嵌 FastAPI 后端(端口 18765,回退 +1..+100)→ AgentWorker(node)→ DSH harness(Electron RUN_AS_NODE);MCP 网关独立端口(API+200),DSH web host(API+300)。
-- 双真值:SQLite 产品真值(会话/run/消息/审批/修订投影)+ DSH harness 会话真值;web UI 原生会话经「影子投影」建立 run-web-* 影子 run。
-- 界面:智能体 DSH Web 会话界面为唯一主界面(iframe 常驻),抓虾菜单注入会话侧边栏,其他菜单覆盖右侧内容区;实时浏览器为可拖动/缩放/最小化/最大化浮动窗口,`browser_*` 工具调用时自动弹出。
-- 端口稳定性:孤儿后端/运行时清理、`_pick_free_port` 自愈、`_settle_web_port` 按 `__DSH_BOOT__` 特征探测真实端口、前端 HTTP 探活自恢复、SSE 自动重连。
+### 11.1 进程与端口
 
-## 12. 智能体权限模型(2026-08-14 全面放开)
+- DSH 包族精确锁定 `@deepseek-ai/*@0.1.0-rc.6`，由 `dsh-sdk-jsonrpc-demo` 以 Electron-as-Node 运行。
+- 进程树：Electron main → FastAPI → Node Worker → DSH runtime。
+- FastAPI 默认 `127.0.0.1:18765`，在 `+1..+100` 内回退。
+- MCP gateway 使用实际 API 端口 `+200`，通过预绑定 socket 交给 uvicorn。
+- DSH Web host 使用实际 API 端口 `+300` 起始；启动后在 `preferred..+8` 并行回查，页面必须同时包含 `__DSH_BOOT__`、`crawshrimp-product-bridge` 和 `crawshrimp-slots`。
+- Vite 开发端口 `5173`；Electron CDP `9223`；托管 Chrome CDP `9222`。
 
-| 能力 | 工具 | 授权 |
-| --- | --- | --- |
-| 任务/脚本/数据/技能 | tasks_*/script_*/data_*/skill_*/attachment_read | 现有风险审批模型 |
-| 读本机任意文件/目录 | fs_read / fs_list | 无需审批(用户授权全盘读) |
-| 写本机文件 | fs_write | 审批卡(DSH 原生,允许一次) |
-| 执行本机命令 | fs_exec | 审批卡 |
-| 浏览器导航 | browser_navigate | 任意 http(s) URL(不再限授权前缀) |
-| 仓库克隆 | repo_install 等 | URL SSRF 防护 |
+### 11.2 双真值和会话身份
 
-媒体展示专用 token(由 API token 派生,仅 `/agent/artifacts/*` 可用),master token 不进媒体 URL。
+- DSH JSONL 是模型上下文真值；SQLite 是产品 session/run/message/event/tool/approval/plan/grant/revision 真值。
+- DSH Web 原生会话在首个 `turn/start` 时建立产品影子 session/run。
+- 后端维护 `runtime_session_id → active run` 和 `run_id → grant`。
+- MCP transport 不携带 session；product bridge 必须在每次 Crawshrimp MCP tool execute 外层按 `exec.agent.id` 获取 context lease，并在 `finally` 释放。
+- context lease 释放前必须把工具调用原地更新的 grant 写回 `run_id → grant` 真值，防止下一次 lease 恢复审批前快照。
+- context 不存在或 lease 冲突时安全失败，禁止回退到最后活动 run。
 
-## 13. 脚本创作与双闸门(强制规范)
+### 11.3 UI
 
-- **硬性规范**:所有脚本一律按抓虾适配器规范编写——`manifest.yaml` + 页面 JS 脚本(async IIFE,读取 `window.__CRAWSHRIMP_PARAMS__`,返回 `{ success, data: 扁平对象数组, meta: { has_more } }`);独立 Python/Node 脚本在草稿/测试/发布三关全部被拒。
-- 契约技能包:`crawshrimp-adapter-skill`(含 `references/script-contract.md` 最小契约)、`dont-stop`(实施-自测-修复-交付循环)等 11 个技能包。
-- 双闸门:script_publish → ① 审批卡(DSH 原生)→ ② 脚本审核页。审核页支持「安装到测试区并测试」(页内嵌正式任务执行界面 TaskRunner 真实运行),测试确认后批准发布(转正、我的脚本可见),拒绝则卸载测试安装并恢复同名生产适配器快照。
-- 修订状态机:draft → tested → pending_review → testing(已测试安装)→ published / rejected。
+- DSH Web iframe 是唯一主界面并常驻全幅。
+- 抓虾菜单注入 DSH 会话侧栏；其他页面是右侧 overlay；脚本详情为独立二级页面。
+- 抓虾产品事件由 SQLite seq 的全局 SSE 消费；iframe 消息必须校验 source 和 origin。
 
-## 14. 会话内媒体展示(图片多图/视频/附件)
+## 12. 权限、审批与审计
 
-- 产物媒体经 `artifact.created` 事件(带 media_kind + zip 内图片清单)广播 → shell 直接 postMessage 到会话 iframe → 注入消息列表(`.Md3f7G_column` 末尾),像消息一样出现在信息流。
-- 图片:单图直显;ZIP 多图网格(`/agent/artifacts/entry` 流式解压,zip bomb 防护:解压前检查 file_size)。
-- 视频:页内 `<video controls>` 播放(`/agent/artifacts/file` 支持 Range,含后缀区间 `bytes=-N`)。
-- 附件上传:composer 原生「加号」按钮改造为上传(📎),旁开「@」命令按钮;支持拖入/粘贴;上传注册为会话附件,输入框插入 `[附件: name (attachment_id)]` 供模型 attachment_read。
-- iframe 重载/端口漂移后经 artifact-replay 双向重放,去重以 DOM 为准。
+| 能力 | 策略 |
+| --- | --- |
+| `fs_read` / `fs_list` | 全盘只读，免审批 |
+| `fs_write` / `fs_exec` | 允许，但服从当前 DSH 会话权限 |
+| `browser_observe` / `verify` / `capture_requests` | 仅当前 run 绑定 tab |
+| `browser_navigate` | 任意 HTTP(S)，每 run 最多审批一次 |
+| `browser_act` 普通 click/type/scroll/wait | 当前 tab grant 内执行 |
+| 凭证输入 | 直接阻断 |
+| 提交/上传/发布/支付/删除等敏感点击 | DSH 原生审批 |
+| 简单下载/找图/找款 | 风险允许时自动批准，审计保留 |
 
-## 16. 最近迭代增补(2026-08-14 深夜)
+- DSH `never` 是统一放开策略：抓虾审批自动 `allowed-once`；DSH `ask` 才展示原生审批卡。
+- 不得在抓虾 shell 自造审批浮层；审批标题、原因、参数摘要必须是中文人话并脱敏。
+- 审批等待必须使用专用有界 executor，不得占用 asyncio 默认线程池。
+- approval 必须持久化 run/session 归属。跨会话提示通过全局 SSE 可见，并以 SQLite pending 列表定时校准；approval resolved 或 run terminal 必须清理，后端重启/断流不得留下幽灵提示。
+- 审批、工具、计划和事件持久化内容必须脱敏。含秘密计划的原始参数只驻留内存，进程重启后安全失效。
 
-### 16.1 任务展示与审批人话化
+## 13. Adapter 创作、测试和发布
 
-- 任务实例标题使用适配器 manifest 的中文任务名(创建时注入;历史实例在 detail/list 返回时兜底替换),任务卡/任务中心显示「MOP-唯品商品上新资料检查」而非英文 task_id。
-- 审批卡(DSH 原生)标题与内容中文人话:「运行任务:中文名」+「运行任务「中文名」(adapter/task)。参数:days=7。」;发布脚本/写入文件/执行命令/任务控制各有专属文案。
+### 13.1 硬合同
 
-### 16.2 附件 → 任务参数桥接
+- 智能体脚本只能是完整抓虾 Adapter 包：`manifest.yaml` + 页面 `.js`。
+- manifest 必须通过正式 `AdapterManifest` schema；Adapter ID 和 task ID 不能形成路径。
+- 页面 JS 必须是文件末尾实际调用的 async IIFE；外层 IIFE 顶层返回对象必须包含 `success`、`data`、`meta`。
+- manifest 声明的脚本必须存在于同一修订包内，禁止绝对路径、`..` 和非 `.js` 页面脚本。
+- 独立 Python/Node/单 JS 草稿不能测试或发布。
 
-- `attachment_read` 返回内容 + `local_path` + 任务参数传法提示。
-- `task_prepare` 对 `file_excel`/`file` 参数自动解析:值可为 attachment_id(`att-*`)或本地路径(或 `{"path": ...}`),后端用产品同款 `_read_local_excel` 注入 `rows/headers/sheet_name/sheets`,智能体无需手工构造解析对象。
-- 上传表格跑任务的正确流程:attachment_read → tasks_search/task_describe → task_prepare(文件参数传 `att-*`)→ task_run → 审批卡 → 执行。
+### 13.2 三闸门
 
-### 16.3 实时浏览器多窗口
+```text
+草稿合同校验
+  → DSH 原生发布审批
+  → review-<hash> 隔离测试安装与真实 TaskRunner 测试
+  → 人工批准正式发布
+```
 
-- 后端 `browser_*` 工具每次调用广播 `browser.activity`(活跃 tab id + 全部页面快照)。
-- 前端为每个浏览器页面(tab)渲染一个实时浏览器窗口(标题带页面 ID 后 4 位),活跃页面窗口置顶,多窗口级联偏移 36px 排列;窗口独立拖动/缩放/最小化/关闭(关闭停对应截图流)。
-- 截图流按 targetId 独立(agentBrowser 多流),URL 实时更新(Page.frameNavigated + SPA 定期回读)。
+- 测试 Adapter ID 由 revision ID 稳定派生，不覆盖目标正式 Adapter。
+- 测试安装后记录完整包 SHA-256；发布时内容不一致必须重新测试。
+- 重装、拒绝或批准前先停止 test Adapter 的活动 Task Instance。
+- 正式安装使用本次 rollback snapshot；首次智能体发布另存长期 baseline。
+- 正式安装或数据库状态提交失败必须恢复旧包；清智能体数据时恢复长期 baseline，原本不存在的目标才卸载。
 
-### 16.4 工具缺陷修复
+## 14. 附件、模型图片和会话内媒体
 
-- task_wait 误 `await` 同步返回值;data_analyze bytes 直接进文本预览;fs_exec 函数内 uuid 未 import;task_prepare 的 ParamType 枚举匹配(此前桥接静默失效)。
+### 14.1 附件
 
-## 15. 与 §4/§5 的关系
+- 上传必须显式绑定 product session 或 runtime session，归档会话拒绝上传。
+- 上传硬上限 200 MB，采用 1 MB 分块复制并在复制中再次计数。
+- 可执行安装文件同时按扩展名和 magic bytes 拒绝。
+- `attachment_read` 只能读取当前 run session 的附件，实际文件超过 50 MB 拒绝解析。
+- `file_excel` / `file` 参数可接受 attachment ID、路径或 `{path}`，由后端桥接为产品同款解析对象。
 
-- 智能体按 §4(manifest)与 §5(JS 协议)编写适配包;§4/§5 为唯一脚本规范。
-- 发布固化经 adapter_loader.install_from_dir 进入 adapters 运行时,与「我的脚本」/tasks_search 同一数据源。
+### 14.2 模型图片
+
+- 仅 PNG/JPEG/WebP/GIF；单张 8 MB；每轮最多 5 张。
+- 图片通过 DSH image content block 进入 prompt；文件丢失或类型不支持时跳过 image block，但文本 prompt 仍继续。
+
+### 14.3 媒体展示
+
+- `artifact.created` 通过全局 SSE 按 runtime session 分流，插入 DSH `.Md3f7G_column` 末尾。
+- iframe 重载后 client 请求 `artifact-replay`；shell 每 session 缓存最近 12 条，DOM 标记负责去重。
+- 图片直接显示；ZIP 图片最多 20 条，单 entry 解压上限 64 MB；视频支持 Range；附件卡调用系统默认应用。
+- AI 直接产物使用稳定 `media-<hash>` ID。
+- 媒体 URL 不得携带主 API token。短期 HMAC capability 必须绑定 GET route、path、entry、expiry，只能访问 file/entry 两个字节端点。
+
+### 14.4 Excel 解析上限
+
+- 文件 50 MB，压缩后解压总量 256 MB，ZIP 条目 10,000。
+- sheet 32，总行 100,000，单行列数 512，总 cell 2,000,000。
+- `.xlsx/.xlsm/.xls/.csv` 都必须在读取过程中执行结构限制并返回明确错误。
+
+## 15. 浏览器与多窗口
+
+- 每个 run 在首次 turn 固定绑定当时的 Chrome page `grant.tab_id`；tab 关闭后不得回退到其他页面。
+- `browser.activity` 只广播当前 session 历次 run 已 grant 且在 9222 仍存活的 page 子集；不得暴露其他会话/未授权 page，也不得退化为只能展示一个窗口。
+- 每个 tab 独立 WebSocket、command pending map 和截图 timer；connect/close/timeout 必须拒绝并清理 pending。
+- 每个页面一个浮动窗口，活跃窗口置顶，默认级联；窗口可拖动、缩放、最小化、最大化和关闭。
+- 前端每 2 秒回读 tab 快照并关闭僵尸窗口；connecting socket 在 stream 正式登记前始终可取消。
+- observe 输出不得包含 password 或 name/id/autocomplete 命中凭证特征的值。
+- 请求捕获必须去除 URL userinfo 并脱敏 query、header、POST body。
+
+## 16. 稳定性、清理与验证
+
+- Worker request 超时移除 pending；EOF/退出拒绝所有 pending；迟到响应不恢复已结束 future。
+- runtime 启动和 run 有绝对超时，超时先终止 runtime 再报告。
+- Task plan 通过 SQLite 原子 claim 单次消费。Task Instance 启动超过 60 秒返回 `starting + UID`，后台继续收敛，重放不重复创建。
+- SSE event seq 来自 SQLite 全局自增主键；订阅后补历史，cursor 去重，QueueFull 记录累计丢弃数。
+- 清智能体数据前必须确认没有 active run；恢复 Adapter baseline 后再清数据库和受控目录。失败时保留 baseline 供重试。
+- API token 只从当前运行数据目录的 `api-token` 读取；禁止进入 URL、文档、日志、截图或 Git。
+- preload/dev bridge 只允许 loopback `18765..18865`，拒绝 query token 和任意绝对 API URL。
+- repo 工具只接受公网 HTTP(S) URL、安全单目录名和非 symlink 目标；审批后再次 DNS 校验并固定 Git transport。
+
+必须通过的门禁：
+
+```bash
+venv/bin/python -m pytest tests/ -q
+npm --prefix app test
+npm --prefix app run vite:build
+git diff --check
+```
+
+同时必须用真实源码应用完成 curl API 与 Electron CDP 9223 UI 回读；只通过单元测试不能宣称会话、审批、媒体或多窗口交付完成。
