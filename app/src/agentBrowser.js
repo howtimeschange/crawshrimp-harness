@@ -22,9 +22,9 @@ const CDP_WS_TIMEOUT_MS = 5000
 const FRAME_INTERVAL_MS = 800
 const SCREENSHOT_QUALITY = 55
 
-/** @type {{ ws: WebSocket, timer: NodeJS.Timeout | null, targetUrl: string, send: (method: string, params?: object) => Promise<any> } | null} */
+/** @type {Map<string, { ws: WebSocket, timer: NodeJS.Timeout | null, targetUrl: string, targetId: string, send: (method: string, params?: object) => Promise<any> }>} */
+const streams = new Map()
 let starting = false
-let stream = null
 
 function fetchJson(port, path) {
   return new Promise((resolve, reject) => {
@@ -40,7 +40,7 @@ function fetchJson(port, path) {
   })
 }
 
-async function pickPageTarget() {
+async function pickPageTarget(targetId) {
   let targets
   try {
     targets = await fetchJson(CDP_PORT, '/json')
@@ -51,6 +51,10 @@ async function pickPageTarget() {
     (t) => t && t.type === 'page' && typeof t.webSocketDebuggerUrl === 'string' && t.webSocketDebuggerUrl
   )
   if (!pages.length) throw new Error('9222 CDP 上没有可用的页面标签')
+  if (targetId) {
+    const found = pages.find((p) => String(p.id) === String(targetId))
+    if (found) return found
+  }
   return pages[0]
 }
 
@@ -60,34 +64,70 @@ function notify(webContents, state, extra = {}) {
   }
 }
 
-function stopAgentBrowserStream() {
-  if (!stream) return { ok: true, stopped: false }
-  const stopped = stream
-  stream = null
-  if (stopped.timer) clearInterval(stopped.timer)
-  try {
-    if (stopped.ws && stopped.ws.readyState === WebSocket.OPEN) stopped.ws.close()
-  } catch {}
-  return { ok: true, stopped: true }
+function stopAgentBrowserStream(targetId) {
+  if (targetId) {
+    const stopped = streams.get(String(targetId))
+    if (!stopped) return { ok: true, stopped: false }
+    streams.delete(String(targetId))
+    if (stopped.timer) clearInterval(stopped.timer)
+    try {
+      if (stopped.ws && stopped.ws.readyState === WebSocket.OPEN) stopped.ws.close()
+    } catch {}
+    return { ok: true, stopped: true, targetId: String(targetId) }
+  }
+  let count = 0
+  for (const [, st] of streams) {
+    if (st.timer) clearInterval(st.timer)
+    try {
+      if (st.ws && st.ws.readyState === WebSocket.OPEN) st.ws.close()
+    } catch {}
+    count += 1
+  }
+  streams.clear()
+  return { ok: true, stopped: count > 0, count }
 }
 
-async function startAgentBrowserStream(webContents) {
-  if (stream) return { ok: true, resumed: true, url: stream.targetUrl }
+function getAgentBrowserState() {
+  const list = []
+  for (const [, st] of streams) {
+    list.push({ targetId: st.targetId, url: st.targetUrl, active: true })
+  }
+  return { active: list.length > 0, streams: list }
+}
+
+function listAgentBrowserTabs() {
+  return fetchJson(CDP_PORT, '/json').then((targets) => {
+    const pages = (Array.isArray(targets) ? targets : []).filter(
+      (t) => t && t.type === 'page' && typeof t.webSocketDebuggerUrl === 'string' && t.webSocketDebuggerUrl
+    )
+    return { ok: true, tabs: pages.map((p) => ({ id: p.id, url: p.url || '', title: p.title || '' })) }
+  }).catch((error) => ({ ok: false, error: String(error.message || error) }))
+}
+
+async function startAgentBrowserStream(webContents, targetId) {
+  const tid = targetId ? String(targetId) : ''
+  if (streams.has(tid)) {
+    const st = streams.get(tid)
+    return { ok: true, resumed: true, url: st.targetUrl, targetId: tid }
+  }
   if (starting) return { ok: true, resumed: false, url: '', pending: true }
   if (!webContents || webContents.isDestroyed()) return { ok: false, error: '渲染端不可用' }
 
   let target
   try {
-    target = await pickPageTarget()
+    target = await pickPageTarget(tid)
   } catch (error) {
     notify(webContents, 'error', { message: String(error.message || error) })
     return { ok: false, error: String(error.message || error) }
   }
+  const actualTid = String(target.id || tid || 'tab')
 
   starting = true
   const ws = new WebSocket(target.webSocketDebuggerUrl)
   const nextIdRef = { value: 1 }
   const pending = new Map()
+  // 局部流引用:本 target 的流
+  let st = null
 
   ws.onmessage = (event) => {
     let msg
@@ -101,19 +141,21 @@ async function startAgentBrowserStream(webContents) {
       // 实时跟进页面导航:只取主 frame(parentId 为空)的 URL,窗口地址栏即时刷新
       const frame = msg.params?.frame
       const url = frame?.url
-      if (url && url !== 'about:blank' && !frame.parentId && stream) {
-        stream.targetUrl = url
+      if (url && url !== 'about:blank' && !frame.parentId && st) {
+        st.targetUrl = url
       }
     }
   }
   ws.onerror = () => notify(webContents, 'error', { message: 'CDP websocket 错误' })
   ws.onclose = () => {
-    const wasActive = stream && stream.ws === ws
     starting = false
     for (const [, entry] of pending) entry.reject(new Error('CDP websocket 已断开'))
     pending.clear()
-    if (wasActive) stopAgentBrowserStream()
-    notify(webContents, 'disconnected')
+    if (st && streams.get(actualTid) === st) {
+      if (st.timer) clearInterval(st.timer)
+      streams.delete(actualTid)
+    }
+    notify(webContents, 'disconnected', { targetId: actualTid })
   }
 
   const send = (method, params = {}) => new Promise((resolve, reject) => {
@@ -130,11 +172,12 @@ async function startAgentBrowserStream(webContents) {
 
   await send('Page.enable')
 
-  stream = { ws, timer: null, targetUrl: target.url || '', send, frameCount: 0 }
+  st = { ws, timer: null, targetUrl: target.url || '', targetId: actualTid, send, frameCount: 0 }
+  streams.set(actualTid, st)
   starting = false
-  stream.timer = setInterval(async () => {
-    if (!stream) return
-    if (stream.ws.readyState !== WebSocket.OPEN) return
+  st.timer = setInterval(async () => {
+    if (st !== streams.get(actualTid)) return
+    if (st.ws.readyState !== WebSocket.OPEN) return
     try {
       const shot = await send('Page.captureScreenshot', {
         format: 'jpeg',
@@ -142,8 +185,8 @@ async function startAgentBrowserStream(webContents) {
         fromSurface: true,
       })
       // SPA 内部路由(hash/history)不触发 frameNavigated,定期回读 location.href 兜底
-      stream.frameCount = (stream.frameCount || 0) + 1
-      if (stream.frameCount % 5 === 0) {
+      st.frameCount = (st.frameCount || 0) + 1
+      if (st.frameCount % 5 === 0) {
         try {
           const loc = await send('Runtime.evaluate', {
             expression: 'location.href',
@@ -151,13 +194,14 @@ async function startAgentBrowserStream(webContents) {
             awaitPromise: false,
           })
           const href = loc?.result?.value
-          if (typeof href === 'string' && href && href !== 'about:blank') stream.targetUrl = href
+          if (typeof href === 'string' && href && href !== 'about:blank') st.targetUrl = href
         } catch { /* 忽略单次 URL 回读失败 */ }
       }
-      if (stream && webContents && !webContents.isDestroyed()) {
+      if (st && webContents && !webContents.isDestroyed()) {
         webContents.send('agent:browser:frame', {
+          targetId: actualTid,
           dataUrl: `data:image/jpeg;base64,${shot.data}`,
-          url: stream.targetUrl || target.url || '',
+          url: st.targetUrl || target.url || '',
           ts: Date.now(),
         })
       }
@@ -166,15 +210,13 @@ async function startAgentBrowserStream(webContents) {
     }
   }, FRAME_INTERVAL_MS)
 
-  notify(webContents, 'connected', { url: target.url || '' })
-  return { ok: true, resumed: false, url: target.url || '' }
+  notify(webContents, 'connected', { url: target.url || '', targetId: actualTid })
+  return { ok: true, resumed: false, url: target.url || '', targetId: actualTid }
 }
 
-function getAgentBrowserState() {
-  return {
-    active: Boolean(stream),
-    url: stream ? stream.targetUrl : '',
-  }
+module.exports = {
+  startAgentBrowserStream,
+  stopAgentBrowserStream,
+  getAgentBrowserState,
+  listAgentBrowserTabs,
 }
-
-module.exports = { startAgentBrowserStream, stopAgentBrowserStream, getAgentBrowserState }

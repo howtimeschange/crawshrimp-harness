@@ -12,7 +12,7 @@
         @mousedown.left="onDragStart"
         @dblclick="toggleMaximize"
       >
-        <span class="browser-window-title">🖥️ 实时浏览器</span>
+        <span class="browser-window-title">🖥️ 实时浏览器<span v-if="tabId" class="tab-chip">#{{ tabId.slice(-4) }}</span></span>
         <span class="browser-status" :class="statusClass" :title="statusText">
           <i></i>{{ statusLabel }}
         </span>
@@ -86,8 +86,12 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 
 const props = defineProps({
-  // 菜单切换等场景由父级递增 → 自动最小化,避免浮动窗口盖住界面
+  // 菜单切换等场景由父级递增 → 自动最小化,避免浮动窗口盖住界面拦截点击
   minimizeSignal: { type: Number, default: 0 },
+  // 绑定的浏览器页面(target id);多窗口:一个页面一个窗口
+  tabId: { type: String, default: '' },
+  // 窗口序号(用于级联排列)
+  windowIndex: { type: Number, default: 0 },
 })
 
 const emit = defineEmits(['collapse'])
@@ -158,9 +162,12 @@ function placeDefault() {
   const vh = window.innerHeight
   win.w = saved.w
   win.h = saved.h
+  // 多窗口级联排列:按序号偏移 36px,循环避免无限右移
+  const idx = Math.max(0, Number(props.windowIndex || 0)) % 4
+  const off = idx * 36
   // 默认贴右下,避开产品卡(bottom 14 + 卡高),留 16px 边距
-  win.x = clamp(saved.x || (vw - win.w - 16), 8, Math.max(8, vw - win.w - 8))
-  win.y = clamp(saved.y || (vh - win.h - 16), 8, Math.max(8, vh - win.h - 8))
+  win.x = clamp(saved.x || (vw - win.w - 16 - off), 8, Math.max(8, vw - win.w - 8))
+  win.y = clamp(saved.y || (vh - win.h - 16 - off), 8, Math.max(8, vh - win.h - 8))
   minimized.value = saved.minimized
   maximized.value = saved.maximized
 }
@@ -248,7 +255,7 @@ async function start() {
   if (started || typeof window.cs?.startAgentBrowserStream !== 'function') return
   started = true
   statusState.value = 'connecting'
-  const result = await window.cs.startAgentBrowserStream()
+  const result = await window.cs.startAgentBrowserStream(props.tabId)
   if (!result?.ok) {
     statusState.value = 'error'
     statusMessage.value = result?.error || '浏览器流启动失败'
@@ -258,7 +265,7 @@ async function start() {
 
 async function restart() {
   if (typeof window.cs?.stopAgentBrowserStream === 'function') {
-    await window.cs.stopAgentBrowserStream()
+    await window.cs.stopAgentBrowserStream(props.tabId)
   }
   frame.value = null
   statusState.value = 'connecting'
@@ -271,6 +278,7 @@ onMounted(() => {
   placeDefault()
   if (window.cs?.onAgentBrowserFrame) {
     offFrame = window.cs.onAgentBrowserFrame((payload) => {
+      if (props.tabId && payload?.targetId && String(payload.targetId) !== String(props.tabId)) return
       frame.value = payload
       if (payload?.url) frameUrl.value = payload.url
     })
@@ -292,7 +300,7 @@ onUnmounted(() => {
   drag = null
   resize = null
   if (typeof window.cs?.stopAgentBrowserStream === 'function') {
-    window.cs.stopAgentBrowserStream()
+    window.cs.stopAgentBrowserStream(props.tabId)
   }
 })
 </script>
@@ -331,6 +339,17 @@ onUnmounted(() => {
   font-weight: 700;
   color: var(--text);
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tab-chip {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text3);
+  background: var(--bg3);
+  border-radius: 4px;
+  padding: 1px 5px;
 }
 .browser-status {
   display: flex;

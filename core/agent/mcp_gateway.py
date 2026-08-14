@@ -1378,6 +1378,26 @@ def _browser_tab() -> Optional[dict]:
     return pages[0]
 
 
+def _signal_browser_activity(tab: Optional[dict]) -> None:
+    """浏览器操作时广播当前活跃 tab 与全部页面快照,前端多窗口实时浏览器跟随。"""
+    if not ctx.emit_event or not tab:
+        return
+    tabs_snapshot: list[dict] = []
+    try:
+        from core.cdp_bridge import get_bridge
+        tabs = get_bridge().get_tabs(timeout=2) or []
+        tabs_snapshot = [
+            {"id": str(t.get("id") or ""), "url": str(t.get("url") or ""), "title": str(t.get("title") or "")}
+            for t in tabs if t.get("type") == "page"
+        ][:8]
+    except Exception:  # noqa: BLE001
+        pass
+    ctx.emit_event("browser.activity", {
+        "active_tab_id": str(tab.get("id") or ""),
+        "tabs": tabs_snapshot,
+    })
+
+
 def _browser_client() -> tuple[Optional[CdpClient], Optional[dict], Optional[dict]]:
     guard = _require_run()
     if guard:
@@ -1386,6 +1406,7 @@ def _browser_client() -> tuple[Optional[CdpClient], Optional[dict], Optional[dic
     tab = _browser_tab()
     if not tab:
         return None, None, _failed("CONTEXT_REQUIRED", "9222 CDP 没有可用页面,请先启动 Chrome 并打开目标页面")
+    _signal_browser_activity(tab)
     if grant and grant.get("url_prefix") and tab.get("url"):
         from core.agent.cdp import url_prefix_matches
         if not url_prefix_matches(tab["url"], grant["url_prefix"]):

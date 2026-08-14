@@ -403,8 +403,8 @@ contextBridge.exposeInMainWorld('cs', {
   checkChrome:     () => ipcRenderer.invoke('check-chrome'),
   getCurrentChromeTab: () => ipcRenderer.invoke('get-current-chrome-tab'),
 
-  startAgentBrowserStream: () => ipcRenderer.invoke('agent:browser:stream:start'),
-  stopAgentBrowserStream: () => ipcRenderer.invoke('agent:browser:stream:stop'),
+  startAgentBrowserStream: (targetId) => ipcRenderer.invoke('agent:browser:stream:start', { targetId: String(targetId || '') }),
+  stopAgentBrowserStream: (targetId) => ipcRenderer.invoke('agent:browser:stream:stop', { targetId: String(targetId || '') }),
   getAgentBrowserStreamState: () => ipcRenderer.invoke('agent:browser:stream:state'),
   onAgentBrowserFrame: (cb) => {
     const listener = (_, payload) => cb(payload || {})

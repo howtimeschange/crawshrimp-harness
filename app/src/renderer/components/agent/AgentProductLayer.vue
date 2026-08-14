@@ -47,7 +47,7 @@
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
 
-const emit = defineEmits(['open-task-instance', 'browser-auto-open', 'artifact-show'])
+const emit = defineEmits(['open-task-instance', 'browser-auto-open', 'browser-open-tabs', 'artifact-show'])
 
 const cards = ref([])
 let stopEvents = null
@@ -179,8 +179,13 @@ function handleEvent(eventType, data) {
       break
     }
     case 'browser.activity': {
-      // 智能体正在调用浏览器工具 → 自动弹出实时浏览器窗口展示操作画面
-      emit('browser-auto-open')
+      // 智能体正在调用浏览器工具 → 多窗口实时浏览器跟随会话/页面
+      const tabs = Array.isArray(data?.tabs) ? data.tabs : []
+      if (tabs.length) {
+        emit('browser-open-tabs', { tabs, activeTabId: data?.active_tab_id || '' })
+      } else {
+        emit('browser-auto-open')
+      }
       break
     }
     case 'tool.requested': {

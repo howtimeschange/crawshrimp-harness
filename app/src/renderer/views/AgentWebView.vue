@@ -28,7 +28,14 @@
           @click="browserOpen = !browserOpen"
         >🖥️</button>
       </div>
-      <AgentBrowserPanel v-if="browserOpen" :minimize-signal="browserMinimizeCount" @collapse="browserOpen = false" />
+      <AgentBrowserPanel
+        v-for="(win, idx) in browserWindows"
+        :key="win.tabId"
+        :tab-id="win.tabId"
+        :window-index="idx"
+        :minimize-signal="browserMinimizeCount"
+        @collapse="closeBrowserWindow(win.tabId)"
+      />
     </div>
   </div>
 </template>
@@ -42,6 +49,7 @@ const props = defineProps({
   navItems: { type: Array, default: () => [] }, // 抓虾一级菜单(注入会话侧边栏底部)
   activeNav: { type: String, default: '' },     // 当前激活菜单 id
   browserAutoOpen: { type: Number, default: 0 }, // 智能体调用浏览器工具时递增,自动弹出实时浏览器窗口
+  browserTabs: { type: Object, default: () => ({ tabs: [], activeTabId: '' }) }, // 浏览器活动快照 → 多窗口跟随
 })
 
 const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav', 'repair-core'])
@@ -51,6 +59,7 @@ const error = ref('')
 const loading = ref(true)
 const browserOpen = ref(false)
 const browserMinimizeCount = ref(0)
+const browserWindows = ref([])
 const recoverAttempts = ref(0)
 const workspaceRoot = ref('')
 const frameEl = ref(null)
@@ -316,6 +325,40 @@ watch(() => props.browserAutoOpen, (count) => {
     browserOpen.value = true
   }
 })
+
+// 多窗口实时浏览器:按会话/页面(tab)绑定,一个页面一个窗口
+watch(() => props.browserTabs, (payload) => {
+  if (!payload || !Array.isArray(payload.tabs) || !payload.tabs.length) return
+  const next = []
+  for (const tab of payload.tabs) {
+    if (!tab || !tab.id) continue
+    const existing = browserWindows.value.find((w) => w.tabId === String(tab.id))
+    if (existing) {
+      existing.url = tab.url || existing.url
+      existing.title = tab.title || existing.title
+      next.push(existing)
+    } else {
+      next.push({ tabId: String(tab.id), url: tab.url || '', title: tab.title || '' })
+    }
+  }
+  browserWindows.value = next
+  // 活跃 tab 的窗口置顶(排在数组尾部渲染在上层)
+  const active = String(payload.activeTabId || '')
+  if (active) {
+    const idx = browserWindows.value.findIndex((w) => w.tabId === active)
+    if (idx >= 0) {
+      const [win] = browserWindows.value.splice(idx, 1)
+      browserWindows.value.push(win)
+    }
+  }
+}, { deep: true })
+
+function closeBrowserWindow(tabId) {
+  browserWindows.value = browserWindows.value.filter((w) => w.tabId !== String(tabId))
+  if (typeof window.cs?.stopAgentBrowserStream === 'function') {
+    window.cs.stopAgentBrowserStream(String(tabId))
+  }
+}
 
 </script>
 

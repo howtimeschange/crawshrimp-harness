@@ -100,6 +100,7 @@
           :nav-items="filteredNavItems"
           :active-nav="currentView"
           :browser-auto-open="browserAutoOpenCount"
+          :browser-tabs="browserTabs"
           @nav-select="onAgentNavSelect"
           @rail-metrics="onRailMetrics"
           @session-nav="onSessionNav"
@@ -190,6 +191,7 @@
       <AgentProductLayer
         @open-task-instance="openTaskInstanceFromAgent"
         @browser-auto-open="browserAutoOpenCount += 1"
+        @browser-open-tabs="onBrowserOpenTabs"
       />
     </main>
     <!-- 更新日志弹窗:更新前查看版本内容并确认「去更新」 -->
@@ -351,6 +353,14 @@ function onRailMetrics(metrics) {
 }
 // 智能体调用浏览器工具时递增 → AgentWebView 自动弹出实时浏览器窗口
 const browserAutoOpenCount = ref(0)
+// 浏览器活动快照(tabs + 活跃 tab)→ 多窗口实时浏览器按会话/页面跟随
+const browserTabs = ref({ tabs: [], activeTabId: '' })
+function onBrowserOpenTabs(payload) {
+  browserTabs.value = {
+    tabs: Array.isArray(payload?.tabs) ? payload.tabs : [],
+    activeTabId: String(payload?.activeTabId || ''),
+  }
+}
 // 脚本详情:独立二级页面(隐藏会话界面,内容区从 0 开始)
 const embedLeft = computed(() => (activeScript.value ? 0 : railWidth.value))
 

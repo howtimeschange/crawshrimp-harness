@@ -36,6 +36,7 @@ const {
   startAgentBrowserStream,
   stopAgentBrowserStream,
   getAgentBrowserState,
+  listAgentBrowserTabs,
 } = require('./agentBrowser')
 const { requestBackendHealth } = require('./backendHealth')
 const { configureSingleInstance } = require('./singleInstance')
@@ -2722,11 +2723,12 @@ secureHandle('get-current-chrome-tab', async () => {
   }
 })
 
-secureHandle('agent:browser:stream:start', async () => {
+secureHandle('agent:browser:stream:start', async (_, payload = {}) => {
   const webContents = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null
-  return startAgentBrowserStream(webContents)
+  return startAgentBrowserStream(webContents, payload?.targetId || '')
 })
-secureHandle('agent:browser:stream:stop', async () => stopAgentBrowserStream())
+secureHandle('agent:browser:stream:stop', async (_, payload = {}) => stopAgentBrowserStream(payload?.targetId || ''))
+secureHandle('agent:browser:tabs', async () => listAgentBrowserTabs())
 secureHandle('agent:browser:stream:state', async () => getAgentBrowserState())
 
 secureHandle('agent:pick-attachments', async () => {
