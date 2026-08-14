@@ -1474,6 +1474,20 @@ def soft_delete_ai_video_job(job_uid: str) -> bool:
     return True
 
 
+def _task_display_title(adapter_id: str, task_id: str) -> str:
+    """任务中文正式名称(适配器 manifest);失败返回空串。"""
+    try:
+        from core import adapter_loader
+        manifest = adapter_loader.get_adapter(str(adapter_id or ""))
+        if manifest:
+            for task in getattr(manifest, "tasks", None) or []:
+                if str(getattr(task, "id", "")) == str(task_id) and str(getattr(task, "name", "") or "").strip():
+                    return str(task.name).strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
 def create_task_instance(adapter_id: str, task_id: str, title: str, params: Optional[Mapping[str, Any]] = None,
                          source: str = "manual", source_ref: str = "") -> dict:
     """Insert a draft task instance and return the inserted row."""
@@ -1491,7 +1505,7 @@ def create_task_instance(adapter_id: str, task_id: str, title: str, params: Opti
             instance_uid,
             str(adapter_id or "").strip(),
             str(task_id or "").strip(),
-            str(title or "").strip() or "未命名任务",
+            str(title or "").strip() or _task_display_title(adapter_id, task_id) or "未命名任务",
             _json_dumps(dict(params or {})),
             now,
             now,
@@ -1544,6 +1558,13 @@ def get_task_instance_detail(instance_uid: str) -> dict:
         """, (uid,)).fetchall()
 
     detail = dict(instance)
+    # 展示层兜底:历史实例 title 是英文 task_id 时,换任务中文正式名称
+    _t = str(detail.get("title") or "")
+    _tid = str(detail.get("task_id") or "")
+    if not _t or _t == _tid:
+        _zh = _task_display_title(detail.get("adapter_id"), _tid)
+        if _zh:
+            detail["title"] = _zh
     detail["params"] = _json_loads_object(detail.get("params_json"))
     detail["summary"] = _json_loads_object(detail.get("summary_json"))
     detail["runs"] = [dict(row) for row in runs]
@@ -1619,7 +1640,16 @@ def list_task_instances(
             ORDER BY updated_at DESC, id DESC
             LIMIT ?
         """, [*params, safe_limit]).fetchall()
-        return [dict(row) for row in rows]
+        result = [dict(row) for row in rows]
+        # 展示层兜底:title 为空或等于英文 task_id 时换任务中文正式名称
+        for row in result:
+            _t = str(row.get("title") or "")
+            _tid = str(row.get("task_id") or "")
+            if not _t or _t == _tid:
+                _zh = _task_display_title(row.get("adapter_id"), _tid)
+                if _zh:
+                    row["title"] = _zh
+        return result
 
 
 def find_task_instance_by_approval_batch_id(batch_id: str) -> Optional[dict]:

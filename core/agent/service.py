@@ -1014,6 +1014,74 @@ class AgentService:
         db.decide_approval(approval_id, decision, "dsh-native")
         return decision
 
+def _task_display_name(adapter_id: str, task_id: str) -> str:
+    """任务中文正式名称(来自适配器 manifest),失败回退英文 id。"""
+    try:
+        from core import adapter_loader
+        manifest = adapter_loader.get_adapter(str(adapter_id or ""))
+        if manifest:
+            for task in getattr(manifest, "tasks", None) or []:
+                if str(getattr(task, "id", "")) == str(task_id) and str(getattr(task, "name", "") or "").strip():
+                    return str(task.name).strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return str(task_id or "")
+
+
+def _params_brief(params) -> str:
+    """参数的人类可读摘要(截断,不泄密)。"""
+    if not isinstance(params, dict) or not params:
+        return ""
+    parts = []
+    for key, value in list(params.items())[:6]:
+        text = str(value)
+        if len(text) > 24:
+            text = text[:24] + "…"
+        parts.append(f"{key}={text}")
+    return "参数:" + "; ".join(parts)
+
+
+def _approval_human_text(summary: dict, plan: dict, risk: str) -> str:
+    """审批卡中文人话描述(替代英文键值堆砌)。"""
+    kind = str(summary.get("kind") or "")
+    if kind == "script_publish":
+        fname = str(summary.get("draft_path") or "").split("/")[-1]
+        return (f"发布脚本「{fname}」为可复用抓虾脚本(适配器:{summary.get('adapter_id') or '未指定'})。"
+                f"发布后进入脚本库,可被其他任务调用,属于外部写入操作,请确认脚本内容无误。")
+    if kind == "fs_write":
+        return f"写入本机文件:{summary.get('path')}({summary.get('size', 0)} 字节)。"
+    if kind == "fs_exec":
+        return f"在本机执行命令:{summary.get('command')}"
+    action = str(summary.get("action") or "")
+    if action in ("pause", "resume", "stop") and summary.get("task_instance_uid"):
+        action_zh = {"pause": "暂停", "resume": "继续", "stop": "停止"}.get(action, action)
+        return f"对任务实例 {summary.get('task_instance_uid')} 执行「{action_zh}」操作。"
+    adapter_id = str(plan.get("adapter_id") or summary.get("adapter_id") or "")
+    task_id = str(plan.get("task_id") or summary.get("task_id") or "")
+    if task_id:
+        name = _task_display_name(adapter_id, task_id)
+        brief = _params_brief(summary.get("params") or {})
+        return f"运行任务「{name}」({adapter_id}/{task_id})。{brief}".rstrip("。") + "。"
+    return f"执行敏感操作(风险:{risk or '外部写入'}),请确认。"
+
+
+def _approval_human_tool_name(summary: dict, plan: dict) -> str:
+    kind = str(summary.get("kind") or "")
+    if kind == "script_publish":
+        return "发布脚本"
+    if kind == "fs_write":
+        return "写入文件"
+    if kind == "fs_exec":
+        return "执行命令"
+    action = str(summary.get("action") or "")
+    if action in ("pause", "resume", "stop"):
+        return {"pause": "暂停任务", "resume": "继续任务", "stop": "停止任务"}.get(action, "任务控制")
+    task_id = str(plan.get("task_id") or summary.get("task_id") or "")
+    if task_id:
+        return f"运行任务:{_task_display_name(plan.get('adapter_id') or summary.get('adapter_id'), task_id)}"
+    return "敏感操作"
+
+
     async def _ds_native_approval(self, run: dict, plan: dict, summary: dict, risk: str) -> str:
         """经产品桥走 DSH 原生审批卡;不可达/异常时安全失败。"""
         web_port = getattr(self, "web_port", 0) or int(os.environ.get("CRAWSHRIMP_WEB_PORT", "0") or 0)
@@ -1023,9 +1091,8 @@ class AgentService:
         runtime_session_id = (session or {}).get("runtime_session_id") or ""
         if not runtime_session_id:
             return "rejected"
-        tool_name = str(summary.get("tool_name") or summary.get("title") or plan.get("task_id") or "敏感操作")
-        reason = str(summary.get("detail") or summary.get("description") or summary.get("action")
-                     or json.dumps(summary, ensure_ascii=False)[:800])
+        tool_name = _approval_human_tool_name(summary, plan)
+        reason = _approval_human_text(summary, plan, risk)
         payload = {
             "sessionId": runtime_session_id,
             "toolName": tool_name,

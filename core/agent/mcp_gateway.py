@@ -372,8 +372,11 @@ def _execute_plan(plan: dict, params: dict) -> dict:
     uid = f"ti-{uuid.uuid4().hex[:16]}"
     try:
         tool_call_id = _current_tool_call_id()
+        # 实例标题用任务中文正式名称,任务卡/任务中心显示可读
+        from core.agent.service import _task_display_name as _tdn
+        title = _tdn(plan.get("adapter_id"), plan.get("task_id")) or plan["task_id"]
         instance = ctx.create_task_instance(plan["adapter_id"], plan["task_id"],
-                                            plan["task_id"], params,
+                                            title, params,
                                             source="agent", source_ref=tool_call_id or "")
         uid = instance.get("uid") or instance.get("instance_uid") or uid
     except Exception as exc:  # noqa: BLE001
