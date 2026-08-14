@@ -1,0 +1,25 @@
+{
+  "name": "crawshrimp-slots",
+  "version": "0.1.0",
+  "description": "抓虾主题适配 client 插件:向 DSH Web UI 注入抓虾品牌 token,并跟随 shell 主题",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-theme"
+      ],
+      "platform": "web"
+    }
+  },
+  "license": "MIT"
+}

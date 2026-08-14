@@ -12,7 +12,7 @@
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -33,6 +33,9 @@ const REQUIRED_STAGE_FILES = [
   'node_modules/@deepseek-ai/dsh-session-persistence-jsonl/package.json',
   'node_modules/@crawshrimp/launcher/package.json',
   'node_modules/@crawshrimp/launcher/index.js',
+  'node_modules/crawshrimp-slots/package.json',
+  'node_modules/crawshrimp-slots/lib/index.js',
+  'node_modules/crawshrimp-slots/lib/client.js',
   'node_modules/@deepseek-ai/dsh-cmdline/package.json',
   'node_modules/@deepseek-ai/dsh-web-app/package.json',
   'node_modules/@deepseek-ai/dsh-web-app/lib/startup.js',
@@ -55,7 +58,28 @@ function hashOf(file) {
   return createHash('sha256').update(readFileSync(file)).digest('hex')
 }
 
-const lockHash = hashOf(join(sourceRoot, 'package-lock.json'))
+/** 目录或文件内容哈希(本地插件/worker/skills 变化也要触发重拷)。 */
+function hashTree(dir) {
+  const h = createHash('sha256')
+  if (existsSync(dir) && statSync(dir).isFile()) {
+    return h.update(readFileSync(dir)).digest('hex')
+  }
+  const walk = (d) => {
+    for (const name of readdirSync(d).sort()) {
+      const p = join(d, name)
+      const st = statSync(p)
+      if (st.isDirectory()) walk(p)
+      else if (st.isFile()) h.update(name).update(readFileSync(p))
+    }
+  }
+  if (existsSync(dir)) walk(dir)
+  return h.digest('hex')
+}
+
+const sourceAssetsHash = ['crawshrimp-launcher', 'crawshrimp-slots', 'worker', 'skills', 'web-cordis.yml']
+  .map((p) => hashTree(join(sourceRoot, p)))
+  .join(':')
+const lockHash = hashOf(join(sourceRoot, 'package-lock.json')) + '|' + sourceAssetsHash
 const markerFile = join(stageRoot, '.staged-lock-hash')
 const upToDate = !force && existsSync(markerFile) && readFileSync(markerFile, 'utf8').trim() === lockHash
 
@@ -76,9 +100,9 @@ if (!upToDate) {
   for (const file of STAGE_FILES) {
     copyFileSync(join(sourceRoot, file), join(stageRoot, file))
   }
-  // Worker 入口、技能包、本地 launcher 插件随 staging 一起进安装包
-  // (launcher 必须与 package.json 同层:npm ci 的 file: 依赖从该目录打包)
-  for (const dir of ['worker', 'skills', 'crawshrimp-launcher']) {
+  // Worker 入口、技能包、本地 launcher/slots 插件随 staging 一起进安装包
+  // (file: 依赖从这些目录打包)
+  for (const dir of ['worker', 'skills', 'crawshrimp-launcher', 'crawshrimp-slots']) {
     const src = join(sourceRoot, dir)
     if (existsSync(src)) {
       spawnSync(process.platform === 'win32' ? 'xcopy' : 'cp', ['-R', src, stageRoot], { stdio: 'inherit', shell: true })

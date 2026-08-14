@@ -237,6 +237,37 @@ async def session_events(session_id: str, request: Request, after_seq: int = 0) 
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@router.get("/events")
+async def agent_events(request: Request, after_seq: int = 0) -> StreamingResponse:
+    """全局事件流:跨会话投影事件(DSH Web 视图等无会话绑定消费方)。"""
+    service = get_agent_service()
+
+    async def event_source():
+        # 1) 补放历史(跨会话)
+        for row in db.list_all_events_after(after_seq):
+            payload = row.get("payload_json") or "{}"
+            yield f"id: {row['seq']}\nevent: {row['event_type']}\ndata: {payload}\n\n"
+        # 2) 进入 live
+        queue = service.subscribe_all()
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=20)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                payload = message.get("payload")
+                yield (f"id: {message.get('seq') or 0}\nevent: {message.get('event_type')}\n"
+                       f"data: {json.dumps(payload, ensure_ascii=False)}\n\n")
+        finally:
+            service.unsubscribe_all(queue)
+
+    return StreamingResponse(event_source(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 # ---------- Run / 审批 ----------
 
 @router.post("/runs/{run_id}/cancel")

@@ -478,6 +478,20 @@ def list_events_after(session_id: str, after_seq: int, limit: int = 500) -> list
             conn.close()
 
 
+def list_all_events_after(after_seq: int, limit: int = 500) -> list[dict]:
+    """全局事件流(DSH Web 视图等无会话绑定消费方):跨会话按 seq 排序。"""
+    with _lock:
+        conn = _conn()
+        try:
+            return _fetch(
+                conn,
+                "SELECT * FROM agent_events WHERE seq > ? ORDER BY seq LIMIT ?",
+                (after_seq, limit),
+            )
+        finally:
+            conn.close()
+
+
 # ---------- 工具调用 ----------
 
 def upsert_tool_call(run_id: str, dsh_call_id: str, tool_name: str, arguments: Any) -> dict:

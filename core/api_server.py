@@ -173,16 +173,28 @@ def _allowed_cors_origins() -> list[str]:
         origins = [item.strip() for item in raw.split(",") if item.strip()]
         if origins:
             return origins
+    # "null" = Electron 打包版 file:// 渲染页的 Origin
     return [
+        "null",
         "http://127.0.0.1:5173",
         "http://localhost:5173",
     ]
 
 
+def _allowed_cors_origin_regex() -> str:
+    raw = str(os.environ.get("CRAWSHRIMP_ALLOWED_ORIGIN_REGEX") or "").strip()
+    if raw:
+        return raw
+    # Vite dev 端口随占用漂移(5173/5174/5175/...):放行本地回环任意端口
+    # (后端绑定 127.0.0.1,产品 API 另有 X-Crawshrimp-Token 鉴权)
+    return r"^http://(127\.0\.0\.1|localhost):\d+$"
+
+
 def _add_local_cors_headers(request: Request, response: JSONResponse) -> JSONResponse:
     origin = str(request.headers.get("origin") or "").strip()
     allowed = _allowed_cors_origins()
-    if origin and ("*" in allowed or origin in allowed):
+    regex_ok = bool(re.match(_allowed_cors_origin_regex(), origin))
+    if origin and ("*" in allowed or origin in allowed or regex_ok):
         response.headers["Access-Control-Allow-Origin"] = "*" if "*" in allowed else origin
         response.headers["Vary"] = "Origin"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Crawshrimp-Token"
@@ -7438,6 +7450,7 @@ app.include_router(agent_api.router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_cors_origins(),
+    allow_origin_regex=_allowed_cors_origin_regex(),
     allow_methods=["*"],
     allow_headers=["Content-Type", "X-Crawshrimp-Token"],
 )

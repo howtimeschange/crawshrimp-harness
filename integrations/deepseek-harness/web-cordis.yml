@@ -1,3 +1,6 @@
+- id: crawshrimp-slots
+  name: 'crawshrimp-slots'
+
 - id: mcp-crawshrimp
   name: '@deepseek-ai/dsh-mcp-client'
   config:

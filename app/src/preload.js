@@ -161,6 +161,59 @@ function streamAgentEvents(sessionId, afterSeq, handlers = {}) {
   return () => controller.abort()
 }
 
+/**
+ * SSE 订阅:跨会话的全局智能体事件流(DSH Web 视图等无会话绑定消费方)。
+ * 返回 abort 函数。
+ */
+function streamGlobalAgentEvents(afterSeq, handlers = {}) {
+  const controller = new AbortController()
+  const url = buildUrl(`/agent/events?after_seq=${Number(afterSeq) || 0}`)
+  const headers = { Accept: 'text/event-stream' }
+  const token = apiToken()
+  if (token) headers['X-Crawshrimp-Token'] = token
+
+  void (async () => {
+    try {
+      const response = await fetch(url, { headers, signal: controller.signal })
+      if (!response.ok || !response.body) {
+        handlers.onError?.(new Error(`SSE 连接失败: ${response.status}`))
+        return
+      }
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let eventType = 'message'
+      let eventId = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let idx
+        while ((idx = buffer.indexOf('\n\n')) >= 0) {
+          const chunk = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 2)
+          let data = null
+          for (const line of chunk.split('\n')) {
+            if (line.startsWith('event: ')) eventType = line.slice(7).trim()
+            else if (line.startsWith('id: ')) eventId = line.slice(4).trim()
+            else if (line.startsWith('data: ')) data = line.slice(6)
+          }
+          if (data !== null) {
+            let payload
+            try { payload = JSON.parse(data) } catch { payload = data }
+            handlers.onEvent?.({ id: eventId, event: eventType, data: payload })
+          }
+        }
+      }
+      handlers.onDone?.()
+    } catch (error) {
+      if (String(error?.name) !== 'AbortError') handlers.onError?.(error)
+    }
+  })()
+
+  return () => controller.abort()
+}
+
 function encodePathPart(value) {
   return encodeURIComponent(String(value || ''))
 }
@@ -333,6 +386,7 @@ contextBridge.exposeInMainWorld('cs', {
 
   agentApi: (method, path, body) => agentApi(method, path, body),
   streamAgentEvents: (sessionId, afterSeq, handlers) => streamAgentEvents(sessionId, afterSeq, handlers),
+  streamGlobalAgentEvents: (afterSeq, handlers) => streamGlobalAgentEvents(afterSeq, handlers),
   pickAgentAttachments: () => ipcRenderer.invoke('agent:pick-attachments'),
   saveAgentClipboardImage: (payload) => ipcRenderer.invoke('agent:save-clipboard-image', payload),
   readAgentImageDataUrl: (filePath) => ipcRenderer.invoke('agent:read-image-dataurl', filePath),

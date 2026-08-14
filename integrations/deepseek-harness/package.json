@@ -27,6 +27,7 @@
     "@deepseek-ai/dsh-tool-fs": "0.1.0-rc.6",
     "@deepseek-ai/dsh-tool-skill": "0.1.0-rc.6",
     "@deepseek-ai/dsh-web-app": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-workspace": "0.1.0-rc.6"
+    "@deepseek-ai/dsh-workspace": "0.1.0-rc.6",
+    "crawshrimp-slots": "file:crawshrimp-slots"
   }
 }

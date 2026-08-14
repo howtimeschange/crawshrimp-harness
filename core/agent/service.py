@@ -70,6 +70,7 @@ class AgentService:
 
         self.approval_waits: dict[str, asyncio.Future] = {}
         self.subscribers: dict[str, set[asyncio.Queue]] = {}
+        self.global_subscribers: set[asyncio.Queue] = set()
 
         self._mcp_app = None
         self._mcp_uvicorn = None
@@ -172,11 +173,28 @@ class AgentService:
         if subs:
             subs.discard(queue)
 
+    def subscribe_all(self) -> asyncio.Queue:
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        self.global_subscribers.add(queue)
+        return queue
+
+    def unsubscribe_all(self, queue: asyncio.Queue) -> None:
+        self.global_subscribers.discard(queue)
+
     async def broadcast(self, session_id: str, seq: int, event_type: str, payload: Any) -> None:
         message = {"seq": seq, "event_type": event_type, "payload": payload}
         for queue in list(self.subscribers.get(session_id, ())):
             try:
                 queue.put_nowait(message)
+            except asyncio.QueueFull:
+                pass
+        # 全局事件流(DSH Web 视图等无会话绑定消费方):payload 注入 session_id
+        if isinstance(payload, dict) and "session_id" not in payload:
+            payload = {**payload, "session_id": session_id}
+        gmessage = {"seq": seq, "event_type": event_type, "payload": payload}
+        for queue in list(self.global_subscribers):
+            try:
+                queue.put_nowait(gmessage)
             except asyncio.QueueFull:
                 pass
 
@@ -509,6 +527,7 @@ class AgentService:
         cfg = load_config()
         llm = (cfg.get("ai") or {}).get("llm") or {}
         import os as _os
+        web_port = getattr(self, "web_port", 0) or int(_os.environ.get("CRAWSHRIMP_WEB_PORT", "0") or 0)
         return {
             "enabled": _os.environ.get("CRAWSHRIMP_AGENT_ENABLED", "1") not in ("0", "false", "no"),
             "state": self.runtime_state,
@@ -519,6 +538,9 @@ class AgentService:
             "queue_depth": self.queue.qsize(),
             "error": self.runtime_error,
             "node_executable": resolve_node_executable(),
+            # DSH web host(方案 §12.7):前端 iframe 嵌入的页面地址
+            "web_port": web_port,
+            "web_url": f"http://127.0.0.1:{web_port}/" if web_port else "",
         }
 
     async def _broadcast_run_artifacts(self, run_id: str, session_id: str) -> None:
