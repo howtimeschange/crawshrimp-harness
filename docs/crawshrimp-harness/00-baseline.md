@@ -68,13 +68,34 @@
 - 打包应用缺 mcp 依赖 → requirements.txt + afterPack 校验;
 - 发布态 harness root 不可达 → main.js 注入 CRAWSHRIMP_HARNESS_ROOT。
 
+## 4b. 方案对齐状态(2026-08-14 复核)
+
+| 方案条目 | 状态 |
+| --- | --- |
+| §6.1 允许清单(llm-pi-ai 三路由/spine/persistence/MCP) | ✅ 落地(spike + 生成 cordis) |
+| §6.2 禁止清单 + 构建校验 | ✅ 生产闭包禁止包校验(stage-runtime)+ 23 工具注册表快照断言 |
+| §7.1 浏览器族 6 工具 | ✅ |
+| §7.2 任务族 9 工具 | ✅ |
+| §7.3 脚本族 6 工具 | ✅ |
+| §7.4 数据族(data_preview/analyze/export) | ✅ 本轮补齐 analyze/export(受限纯 Python 分析 + 审批导出) |
+| §7.6 脚本发布双闸门 | ✅ 完整闭环(审批卡 → 脚本审核页人工复核 → 落盘 published-scripts + sha) |
+| §8.1 Run 级能力授权 | ✅ 后端 grant + composer「带上浏览器页面」chip + act 升级授权审批 |
+| §8.2 动作级审批 | ✅ 敏感动作(发布/提交/确认/支付…)逐次审批 + 凭证字段阻断 |
+| §8.3 任务/脚本风险审批 | ✅ |
+| §9 数据模型(11 表 + task_instances.source) | ✅ 本轮补齐 source/source_ref |
+| §10 注入防御 | ✅ 无自由执行面 + 观察蒸馏 + 列掩码 + redact_text + persona 数据边界 |
+| §11 配额与预算 | ✅ 本轮补齐 Worker 分级预算(step/tool/observe/act 计数 + 超限中断) |
+| §12.7 DSH web host 全量嵌入 | ⛔ 阻塞:profile 组装完成(132 行),loader 内部匿名 entry import 崩溃(startsWith on undefined);二分确认元凶在 base 行集合而非 web 平面 |
+| §13 仓库策略 | ✅ 主仓 + 移植源 |
+| §14 P0/P1 | ✅;P2 主体 ✅(浏览器工具/脚本双闸门/数据分析);P3 部分(mac-arm64 打包验证 ✅;mac x64/Windows 未验;feature flag ✅) |
+| 窄 spec §17.4 设置页智能体子区 | ⏳ 未做(设置页 UI 集成留待后续) |
+
 剩余(下一里程碑):
 
-- [x] ~~打包安装包内端到端~~ —— 已验证:`抓虾.app` 内 bundled python(含 mcp)→ agent 服务 → worker → DSH(Resources/deepseek-harness)→ MCP 网关 → tasks_search → 回答;
-- [ ] DSH web host 全量嵌入(方案 §12.7):profile 组装已完成(`integrations/deepseek-harness/web-cordis.yml`,130 行,由 `scripts/gen-web-cordis.py` 从 dsh-base + dsh-web-app 的 cordis.patch.yml 合并生成,含爬虾 llm/persona/MCP/禁止面覆盖)。**当前阻塞**:`webStartup`/`cmdlineArgs` 服务由 dsh CLI 启动器注入(web-startup 插件依赖),裸 runtime 组合无法提供,loader 报 `failed to import loader entry (undefined): startsWith`。出路:① 自研最小 cmdlineArgs 提供插件(cordis 插件格式);② 用 dsh CLI 的 composeProfile 逻辑装配(需 CLI 包,当前未发布);③ 向 DeepSeek 上游确认 headless web 支持的官方姿势;
-- [ ] 脚本审核页(双闸门第二闸门 UI)+ 任务卡/产物卡;
-- [ ] 三平台验证(mac x64 / Windows x64);
-- [ ] 能力授权卡 UI(browser_tab 上下文 chips)。
+- [ ] DSH web host 全量嵌入:loader 内部问题,下一步对 base 行集合二分定位匿名 entry 制造者(dsh-agent/session-projection/typert 等);
+- [ ] 设置页智能体子区(诊断/重启/清除数据按钮);
+- [ ] mac x64 / Windows x64 打包验证;
+- [ ] 任务卡状态实时刷新(现为 task.linked 事件驱动静态卡)。
 
 ## 5. 开发环境
 
