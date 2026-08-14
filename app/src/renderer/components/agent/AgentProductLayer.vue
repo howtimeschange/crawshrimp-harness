@@ -183,6 +183,27 @@ async function bindEvents() {
   } catch (error) {
     console.warn('[agent] 全局事件流连接失败:', error)
   }
+  await loadPendingApprovals()
+}
+
+// 恢复未决策审批卡(刷新/晚连接不丢失)
+async function loadPendingApprovals() {
+  try {
+    const result = await window.cs.agentApi('GET', '/agent/approvals?status=pending')
+    for (const item of result?.approvals || []) {
+      if (!cards.value.some((c) => c.kind === 'approval' && c.approvalId === item.approval_id)) {
+        pushCard({
+          kind: 'approval',
+          approvalId: item.approval_id,
+          summary: item.summary || {},
+          risk: item.risk || 'read_only',
+          status: 'pending',
+        })
+      }
+    }
+  } catch (error) {
+    console.warn('[agent] 拉取待审批列表失败:', error?.message)
+  }
 }
 
 onMounted(bindEvents)

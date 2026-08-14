@@ -285,6 +285,25 @@ def decide_approval(approval_id: str, req: ApprovalDecisionRequest) -> dict:
     return result
 
 
+@router.get("/approvals")
+def list_approvals(status: str = "pending") -> dict:
+    """未决策审批列表(ProductLayer 挂载/刷新时恢复审批卡)。"""
+    if status != "pending":
+        raise HTTPException(422, "status 仅支持 pending")
+    rows = db.list_pending_approvals()
+    return {"approvals": [
+        {
+            "approval_id": row.get("approval_id"),
+            "plan_id": row.get("plan_id"),
+            "summary": json.loads(row.get("summary_json") or "{}"),
+            "risk": row.get("risk"),
+            "status": row.get("status"),
+            "created_at": row.get("created_at"),
+        }
+        for row in rows
+    ]}
+
+
 # ---------- 能力授权(浏览器任务) ----------
 
 @router.post("/sessions/{session_id}/grants")

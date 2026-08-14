@@ -632,6 +632,18 @@ def get_approval(approval_id: str) -> Optional[dict]:
             conn.close()
 
 
+def list_pending_approvals(limit: int = 20) -> list[dict]:
+    """未决策的审批(ProductLayer 挂载/刷新时拉取)。"""
+    with _lock:
+        conn = _conn()
+        try:
+            return _fetch(conn,
+                          "SELECT * FROM agent_approvals WHERE status = 'pending' ORDER BY rowid DESC LIMIT ?",
+                          (limit,))
+        finally:
+            conn.close()
+
+
 def decide_approval(approval_id: str, decision: str, decided_by: str = "user") -> dict:
     now = _now_iso()
     with _lock:

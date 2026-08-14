@@ -808,15 +808,19 @@ class AgentService:
             json.dumps(summary, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
         db.create_approval(approval_id, plan.get("plan_id") or "control", None, summary, risk,
                            params_hash, _iso_after(APPROVAL_WAIT_SECONDS))
-        run = self.active_run or {}
+        # 影子会话(web UI 原生)的 active run 在 mcp_gateway.ctx 上
+        run = self.active_run or mcp_gateway.ctx.active_run or {}
         session_id = (run or {}).get("session_id") or ""
         if session_id:
-            await self.broadcast(session_id, _seq(session_id), "tool.approval_required", {
+            payload = {
                 "approval_id": approval_id,
                 "summary": summary,
                 "risk": risk,
                 "run_id": run.get("run_id"),
-            })
+            }
+            # 落库:全局事件流可回放(用户刷新/晚连也能看到审批卡)
+            db.append_event(session_id, run.get("run_id"), "tool.approval_required", payload)
+            await self.broadcast(session_id, _seq(session_id), "tool.approval_required", payload)
         loop = asyncio.get_event_loop()
         future: asyncio.Future = loop.create_future()
         self.approval_waits[approval_id] = future

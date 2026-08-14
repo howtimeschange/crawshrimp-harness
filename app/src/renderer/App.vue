@@ -91,6 +91,7 @@
           @nav-select="onAgentNavSelect"
           @rail-metrics="onRailMetrics"
           @session-nav="onSessionNav"
+          @repair-core="repairCoreService"
         />
       </div>
       <!-- 覆盖层:其他菜单视图(左偏移让出智能体会话侧边栏) -->

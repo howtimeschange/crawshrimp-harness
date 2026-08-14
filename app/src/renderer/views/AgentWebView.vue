@@ -14,9 +14,11 @@
         />
         <div v-else class="web-placeholder">
           <div class="placeholder-icon">{{ error ? '⚠️' : '🕐' }}</div>
-          <div class="placeholder-title">{{ error ? 'DSH 运行时不可用' : '正在启动智能体运行时…' }}</div>
+          <div class="placeholder-title">{{ error ? '智能体运行时暂不可用,正在自动恢复…' : '正在启动智能体运行时…' }}</div>
           <div class="placeholder-text">{{ error || '首次会话启动后,智能体会话界面会在这里加载(与抓虾同主题)。' }}</div>
-          <button class="placeholder-btn" type="button" @click="retryLoad">重试</button>
+          <div v-if="error" class="placeholder-actions">
+            <span class="recover-state">自动恢复中(第 {{ recoverAttempts }} 次)· 无需操作</span>
+          </div>
         </div>
         <!-- 实时浏览器面板悬浮开关 -->
         <button
@@ -41,15 +43,17 @@ const props = defineProps({
   activeNav: { type: String, default: '' },     // 当前激活菜单 id
 })
 
-const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav'])
+const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav', 'repair-core'])
 
 const webUrl = ref('')
 const error = ref('')
 const loading = ref(true)
 const browserOpen = ref(false)
+const recoverAttempts = ref(0)
 const frameEl = ref(null)
 let pollTimer = null
 let warmStarted = false
+let recovering = false
 
 const frameSrc = computed(() => {
   if (!webUrl.value) return ''
@@ -59,39 +63,64 @@ const frameSrc = computed(() => {
 })
 
 async function loadRuntime() {
-  error.value = ''
   try {
     const result = await window.cs.agentApi('GET', '/agent/runtime')
     const url = result?.web_url || ''
     if (url) {
       webUrl.value = url
       loading.value = false
-      return
+      error.value = ''
+      recoverAttempts.value = 0
+      return true
     }
     webUrl.value = ''
     if (result?.state === 'failed' || result?.error) {
       error.value = result.error || '运行时启动失败'
       loading.value = false
-      return
-    }
-    // 预热:web host 尚未启动(首轮会话前)且当前无 active run → 拉起 runtime
-    if (result?.enabled !== false && !result?.active_run && !warmStarted) {
-      warmStarted = true
+    } else if (result?.enabled !== false && !result?.active_run) {
+      // 预热:web host 未起(首轮会话前)→ 拉起 runtime
       try {
         const warm = await window.cs.agentApi('POST', '/agent/runtime/restart')
-        if (warm?.ok || warm?.state === 'ready') {
-          await loadRuntime()
-          return
-        }
+        if (warm?.ok || warm?.state === 'ready') return await loadRuntime()
         error.value = warm?.error || '运行时启动失败'
       } catch (err) {
         error.value = err?.message || '无法启动运行时'
       }
+      loading.value = false
     }
-    loading.value = !error.value
   } catch (err) {
     error.value = err?.message || '无法连接本地服务'
     loading.value = false
+  }
+  return false
+}
+
+// 自动恢复:DSH 运行时不可用/后端掉线时循环自愈,不交给用户操作
+async function autoRecover() {
+  if (recovering) return
+  recovering = true
+  try {
+    recoverAttempts.value += 1
+    const ok = await loadRuntime()
+    if (ok) return
+    // ① runtime 层恢复:尝试 restart
+    try {
+      const warm = await window.cs.agentApi('POST', '/agent/runtime/restart')
+      if (warm?.ok || warm?.state === 'ready') {
+        await new Promise((r) => setTimeout(r, 3000))
+        if (await loadRuntime()) return
+      }
+    } catch { /* API 不可达,进入后端恢复 */ }
+    // ② 后端/Chrome 层恢复:重启本地后端(原设置页「修复核心服务」)
+    if (recoverAttempts.value >= 2) {
+      try {
+        emit('repair-core')
+        await new Promise((r) => setTimeout(r, 6000))
+        if (await loadRuntime()) return
+      } catch { /* 继续下一轮 */ }
+    }
+  } finally {
+    recovering = false
   }
 }
 
@@ -133,9 +162,23 @@ function onWindowMessage(event) {
 onMounted(() => {
   loadRuntime()
   window.addEventListener('message', onWindowMessage)
-  pollTimer = setInterval(() => {
-    if (!webUrl.value && !error.value) loadRuntime()
-  }, 3000)
+  // 持续探活:runtime/后端不健康即自动恢复(webUrl 非空也检测,覆盖挂掉场景)
+  pollTimer = setInterval(async () => {
+    try {
+      const st = await window.cs.agentApi('GET', '/agent/runtime')
+      if (st?.web_url && st.state === 'ready') {
+        if (!webUrl.value) webUrl.value = st.web_url
+        return
+      }
+      webUrl.value = ''
+      error.value = st?.error || '智能体运行时不可用'
+      autoRecover()
+    } catch {
+      webUrl.value = ''
+      error.value = '无法连接本地服务'
+      autoRecover()
+    }
+  }, 5000)
 })
 
 onUnmounted(() => {
@@ -230,4 +273,30 @@ watch(() => [props.navItems, props.activeNav], () => {
   cursor: pointer;
 }
 .placeholder-btn:hover { background: var(--soft-fill-hover); }
+
+.placeholder-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.recover-state {
+  font-size: 12px;
+  color: var(--text3);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.recover-state::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--yellow);
+  animation: cs-pulse 1.2s infinite;
+}
+@keyframes cs-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
 </style>
