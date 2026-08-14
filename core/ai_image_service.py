@@ -1422,3 +1422,96 @@ def copy_assets_to_directory(
         shutil.copy2(source, target)
         copied.append(str(target))
     return copied
+
+
+def generate_images_sync(
+    job_uid: str,
+    prompts: list[Mapping[str, Any] | str],
+    *,
+    settings: Mapping[str, Any] | None = None,
+    client_factory: Callable[..., OneXMImageClient] = OneXMImageClient,
+    downloader: Callable[[str, Path], None] = _default_downloader,
+    poll_timeout_seconds: float = 900.0,
+    sleep_fn: Callable[[float], None] = time.sleep,
+) -> dict:
+    """智能体一步式生图:提交 → 同步等待完成 → 下载产物 → 返回本地路径。
+
+    供智能体 MCP 工具调用(后端进程内);与工作台共用同一批
+    submit/poll/下载实现与产物落盘。
+    """
+    from core.api_server import _resolve_one_xm_settings
+
+    job = data_sink.get_ai_image_job(job_uid)
+    if not job:
+        raise ValueError(f"AI image job not found: {job_uid}")
+    resolved_settings = dict(settings or {})
+    if not resolved_settings:
+        resolved_settings = _resolve_one_xm_settings()
+    _, api_key = select_model_key(job, resolved_settings)
+    client = client_factory(api_key, base_url=_compact(resolved_settings.get("base_url")) or DEFAULT_BASE_URL)
+
+    submitted = submit_workbench_batch(job_uid, prompts, settings=resolved_settings)
+    if not submitted.get("accepted"):
+        return {"ok": False, "error": "生图任务提交未被接受"}
+    runs = [dict(run) for run in submitted.get("runs") or [] if isinstance(run, Mapping)]
+    if not runs:
+        return {"ok": False, "error": "生图任务未产生运行记录"}
+
+    output_dir = default_output_dir(job)
+    assets: list[dict[str, Any]] = []
+    failures: list[str] = []
+    deadline = time.monotonic() + max(1.0, float(poll_timeout_seconds))
+    for run in runs:
+        run_uid = _compact(run.get("run_uid"))
+        final_run = run
+        while True:
+            current = data_sink.get_ai_image_job(job_uid)
+            latest = next(
+                (dict(item) for item in (current.get("summary") or {}).get("runs") or []
+                 if isinstance(item, Mapping) and _compact(item.get("run_uid")) == run_uid),
+                None,
+            ) if current else None
+            final_run = latest or final_run
+            status = _compact(final_run.get("status")).lower()
+            if status in {"completed", "failed"}:
+                break
+            if time.monotonic() > deadline:
+                failures.append(f"run {run_uid[-6:]} 生成超时")
+                break
+            sleep_fn(3.0)
+        if status == "completed":
+            urls = [u for u in (final_run.get("image_urls") or []) if isinstance(u, str) and u.strip()]
+            if not urls:
+                failures.append(f"run {run_uid[-6:]} 完成但未返回图片地址")
+                continue
+            try:
+                files = _download_outputs(urls, output_dir, downloader)
+            except DownloadOutputsError as exc:
+                failures.append(f"run {run_uid[-6:]} 下载失败: {exc}")
+                continue
+            for index, path in enumerate(files):
+                data_sink.create_ai_image_asset({
+                    "job_uid": job_uid,
+                    "kind": "generated",
+                    "source_type": "local",
+                    "path": path,
+                    "url": urls[index] if index < len(urls) else "",
+                    "mime_type": mimetypes.guess_type(path)[0] or "",
+                    "sort_order": len(assets) + index,
+                    "meta": {"run_uid": run_uid, "prompt": _compact(final_run.get("prompt"))},
+                })
+                assets.append({
+                    "path": path,
+                    "run_uid": run_uid,
+                    "prompt": _compact(final_run.get("prompt")),
+                })
+        else:
+            failures.append(f"run {run_uid[-6:]}: {_compact(final_run.get('error')) or '生成失败'}")
+
+    return {
+        "ok": bool(assets),
+        "assets": assets,
+        "failures": failures,
+        "output_dir": str(output_dir),
+        "job_uid": job_uid,
+    }

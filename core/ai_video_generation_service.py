@@ -3353,3 +3353,88 @@ def envelope_error(exc: Exception) -> dict:
             "message": str(exc) or "internal error",
         },
     }
+
+
+def create_job_trusted(payload: Mapping[str, Any]) -> dict:
+    """智能体(后端进程内)创建生视频任务:本地路径直接信任,不经授权 token。
+
+    与 HTTP 入口 create_job 同一套校验/落库/worker 流程,区别仅在
+    trusted_paths=True(参考图与输出目录来自智能体工作区)。
+    """
+    request_uid = _compact(payload.get("requestUid") or payload.get("request_uid")) or uuid4().hex
+    existing = data_sink.get_ai_video_job_by_request_uid(request_uid)
+    if existing:
+        job = data_sink.get_ai_video_job(existing["id"]) or existing
+        run = data_sink.get_ai_video_run(job.get("currentRunId") or "") or {}
+        return {"ok": True, "data": {"job": public_job(job), "run": public_run(run)}, "reused": True}
+
+    normalized = _validate_trusted_input({
+        **dict(payload),
+        "requestUid": request_uid,
+    })
+    provider = normalized["provider"]
+    model = normalized["model"]
+    status = "needs_config" if normalized["needsConfig"] else "queued"
+    title = job_title_from_prompt(normalized["prompt"])
+    input_snapshot = {
+        "prompt": normalized["prompt"],
+        "assets": normalized["assets"],
+        "parameters": normalized["parameters"],
+    }
+    created = data_sink.create_ai_video_job_with_run(
+        job_payload={
+            "requestUid": request_uid,
+            "title": title,
+            "status": status,
+            "provider": provider,
+            "model": model,
+            "prompt": normalized["prompt"],
+            "parameters": normalized["parameters"],
+            "outputDir": normalized["outputDir"],
+        },
+        assets=normalized["assets"],
+        run_payload={
+            "requestUid": request_uid,
+            "status": status,
+            "provider": provider,
+            "model": model,
+            "inputSnapshot": input_snapshot,
+            "archiveStatus": "none",
+        },
+    )
+    job = created["job"]
+    run = created["run"]
+    if created.get("reused"):
+        return {"ok": True, "data": {"job": public_job(job), "run": public_run(run)}, "reused": True}
+    if status == "queued":
+        ensure_worker_started()
+        threading.Thread(target=process_run, args=(run["id"],), daemon=True,
+                         name=f"ai-video-submit-{run['id'][-6:]}").start()
+    return {"ok": True, "data": {"job": public_job(job), "run": public_run(run)}, "reused": False}
+
+
+def wait_video_job(job_id: str, *, poll_timeout_seconds: float = 1800.0,
+                   sleep_fn=time.sleep) -> dict:
+    """同步等待生视频任务到终态,返回本地产物路径(智能体工具用)。"""
+    deadline = time.monotonic() + max(1.0, float(poll_timeout_seconds))
+    while True:
+        job = data_sink.get_ai_video_job(job_id)
+        if not job:
+            return {"ok": False, "error": f"video job not found: {job_id}"}
+        run = data_sink.get_ai_video_run(job.get("currentRunId") or "") or {}
+        status = _compact(run.get("status") or job.get("status")).lower()
+        if status in {"completed", "failed", "canceled", "needs_config", "error"}:
+            output = dict(run.get("output") or {}) if isinstance(run.get("output"), Mapping) else {}
+            local_video_path = _compact(output.get("localVideoPath") or output.get("local_video_path"))
+            local_poster_path = _compact(output.get("localPosterPath") or output.get("local_poster_path"))
+            return {
+                "ok": status == "completed",
+                "status": status,
+                "video_path": local_video_path,
+                "poster_path": local_poster_path,
+                "error": _compact((run.get("error") or {}).get("message")) if isinstance(run.get("error"), Mapping) else "",
+                "job": public_job(job),
+            }
+        if time.monotonic() > deadline:
+            return {"ok": False, "status": "timeout", "error": "生视频任务超时", "job": public_job(job)}
+        sleep_fn(3.0)

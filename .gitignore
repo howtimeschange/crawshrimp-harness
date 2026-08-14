@@ -45,3 +45,4 @@ build-staging/
 .test-data-reg*
 .crawshrimp-dev-web/
 .ds-e2e/
+.ai-e2e/
