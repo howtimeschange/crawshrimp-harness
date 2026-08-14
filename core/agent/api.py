@@ -535,43 +535,79 @@ def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
     # 固化到抓虾 adapters 目录:注册为可复用任务(tasks_search/task_run 可见)
     from core.agent.service import _data_root
     adapter_dir = _data_root() / "adapters" / safe_adapter
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+
+    published_files: list[str] = []
+    # 抓虾适配包发布:草稿是 manifest.yaml 时,把本次 run 的整个适配包目录
+    # (manifest.yaml + 各任务 .js)一并固化,保留智能体按 ADAPTER_GUIDE 写的真实结构;
+    # 旧式单脚本草稿(.js/.py)走兼容路径:单文件 + 自动补 manifest。
+    is_manifest_draft = draft.name == "manifest.yaml"
+    if is_manifest_draft:
+        files = _db.list_workspace_files(rev.get("created_run_id")) or []
+        for wf in files:
+            src = Path(wf.get("path") or "")
+            if not src.is_file() or src == draft or not src.name.endswith((".js", ".py", ".yaml", ".yml")):
+                continue
+            (adapter_dir / src.name).write_text(src.read_text(encoding="utf-8"))
+            published_files.append(src.name)
+        # 校验 manifest 里声明的脚本文件都已落盘
+        try:
+            manifest_doc = _yaml.safe_load(content) or {}
+            missing = []
+            for t in manifest_doc.get("tasks") or []:
+                if isinstance(t, dict) and t.get("script") and not (adapter_dir / str(t["script"])).exists():
+                    missing.append(str(t["script"]))
+            if missing:
+                raise HTTPException(409, f"manifest 声明的脚本文件缺失: {', '.join(missing)}")
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(409, f"manifest.yaml 解析失败: {exc}") from exc
+
     scripts_dir = adapter_dir
-    scripts_dir.mkdir(parents=True, exist_ok=True)
     safe_name = _re.sub(r"[^A-Za-z0-9._-]", "_", draft.name)
-    if not safe_name.endswith((".js", ".py")):
+    if not is_manifest_draft and not safe_name.endswith((".js", ".py")):
         safe_name += ".js"
     dest = scripts_dir / safe_name
     dest.write_text(content, encoding="utf-8")
 
     manifest_path = adapter_dir / "manifest.yaml"
     manifest: dict = {}
-    if manifest_path.exists():
+    if manifest_path.exists() and not is_manifest_draft:
         try:
             manifest = _yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
         except Exception:  # noqa: BLE001
             manifest = {}
-    manifest.setdefault("id", safe_adapter)
-    manifest.setdefault("name", f"{safe_adapter} 智能体脚本")
-    manifest.setdefault("version", "0.1.0")
-    manifest.setdefault("author", "crawshrimp-agent")
-    manifest.setdefault("description", "智能体固化脚本(双闸门审批)")
-    manifest.setdefault("entry_url", "")
-    tasks = manifest.get("tasks") or []
-    task_id = safe_name.rsplit(".", 1)[0]
-    entry = next((t for t in tasks if isinstance(t, dict) and t.get("id") == task_id), None)
-    if entry is None:
-        entry = {"id": task_id, "name": task_id, "script": safe_name,
-                 "description": "智能体固化的网页自动化脚本(经用户双闸门审批)"}
-        tasks.append(entry)
+    if not is_manifest_draft:
+        manifest.setdefault("id", safe_adapter)
+        manifest.setdefault("name", f"{safe_adapter} 智能体脚本")
+        manifest.setdefault("version", "0.1.0")
+        manifest.setdefault("author", "crawshrimp-agent")
+        manifest.setdefault("description", "智能体固化脚本(双闸门审批)")
+        manifest.setdefault("entry_url", "")
+        tasks = manifest.get("tasks") or []
+        task_id = safe_name.rsplit(".", 1)[0]
+        entry = next((t for t in tasks if isinstance(t, dict) and t.get("id") == task_id), None)
+        if entry is None:
+            entry = {"id": task_id, "name": task_id, "script": safe_name,
+                     "description": "智能体固化的网页自动化脚本(经用户双闸门审批)"}
+            tasks.append(entry)
+        else:
+            entry.update({"script": safe_name})
+        manifest["tasks"] = tasks
+        manifest_path.write_text(_yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False), encoding="utf-8")
     else:
-        entry.update({"script": safe_name})
-    manifest["tasks"] = tasks
-    manifest_path.write_text(_yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        task_id = next(
+            (str(t.get("id")) for t in ((_yaml.safe_load(content) or {}).get("tasks") or [])
+             if isinstance(t, dict) and t.get("id")),
+            safe_name.rsplit(".", 1)[0],
+        )
 
     sha = _hashlib.sha256(content.encode("utf-8")).hexdigest()
     _db.update_script_revision(rev_id, status="published", adapter_id=safe_adapter, source_sha256=sha)
     return {"ok": True, "status": "published", "path": str(dest),
             "adapter_id": safe_adapter, "task_id": task_id,
+            "files": published_files,
             "source_sha256": sha,
             "message": f"已固化到抓虾脚本库:任务 {task_id} 可复用(tasks_search 可见)"}
 

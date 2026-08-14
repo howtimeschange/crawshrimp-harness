@@ -47,6 +47,8 @@ function createBackendController(options) {
   let currentProcessWasReady = false
   let state = 'starting'
   let consecutiveProbeFailures = 0
+  let validateTolerated = 0
+  const MAX_VALIDATE_TOLERANCE = 4
   let lastError = ''
   let launchAttempt = 0
   let generation = 0
@@ -106,6 +108,7 @@ function createBackendController(options) {
       startupFailure = null
       lastError = ''
       consecutiveProbeFailures = 0
+      validateTolerated = 0
       sendStatus('api', true)
       setState('ready')
     }
@@ -163,6 +166,21 @@ function createBackendController(options) {
             if (runtimeValid) {
               await acceptReadyBackend(startupGeneration)
               return
+            }
+            // 已 ready 过的后端出现瞬时校验失败:先容忍重试探测,不要立即杀进程。
+            // 杀进程会中断正在执行的智能体 run(审批等待/任务执行),并引发
+            // 双后端并存与新实例「启动自清理」误杀合法后端的连锁问题。
+            if (currentProcessWasReady && backendProcess) {
+              if (!validateTolerated) {
+                validateTolerated = 0
+              }
+              validateTolerated += 1
+              if (validateTolerated <= MAX_VALIDATE_TOLERANCE) {
+                log(`[api] ready backend validate failed ${validateTolerated}/${MAX_VALIDATE_TOLERANCE}; tolerating, next probe in ${intervalMs}ms`)
+                await sleep(intervalMs)
+                continue
+              }
+              validateTolerated = 0
             }
             markNotReady('restarting')
             if (backendProcess) {

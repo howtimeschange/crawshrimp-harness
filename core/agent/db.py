@@ -757,6 +757,21 @@ def create_workspace_file(file_id: str, path: str, sha256: str, size: int, creat
             conn.close()
 
 
+def list_workspace_files(run_id: Optional[str]) -> list[dict]:
+    """某次 run 创建的工作区草稿文件(适配包发布时按目录固化)。"""
+    with _lock:
+        conn = _conn()
+        try:
+            if run_id:
+                rows = [dict(r) for r in conn.execute(
+                    "SELECT * FROM agent_workspace_files WHERE created_run_id = ? ORDER BY created_at", (run_id,)).fetchall()]
+            else:
+                rows = [dict(r) for r in conn.execute("SELECT * FROM agent_workspace_files ORDER BY created_at").fetchall()]
+            return rows
+        finally:
+            conn.close()
+
+
 def create_script_revision(rev_id: str, draft_path: str, created_run_id: Optional[str]) -> None:
     now = _now_iso()
     with _lock:

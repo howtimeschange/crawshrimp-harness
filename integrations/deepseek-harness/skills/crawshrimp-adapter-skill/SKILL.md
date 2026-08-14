@@ -34,6 +34,11 @@ If the page is not yet well-mapped, run that harness first instead of hand-rolli
 
 ## Quick Workflow
 
+0. If you are writing an adapter from scratch (new adapter dir, new task script), read
+   [references/script-contract.md](references/script-contract.md) FIRST — it has the
+   minimum manifest + async-IIFE return contract. Skipping it is the most common way to
+   produce a script that cannot run.
+
 1. Classify the task first.
    - Pure list scraping
    - Batch detail collection
