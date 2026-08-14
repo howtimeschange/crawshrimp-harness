@@ -278,15 +278,12 @@
 
 - id: commands
   name: '@deepseek-ai/dsh-commands'
-  disabled: true
 
 - id: command-feedback
   name: '@deepseek-ai/dsh-command-feedback'
-  disabled: true
 
 - id: goal
   name: '@deepseek-ai/dsh-goal'
-  disabled: true
 
 - id: goal-round-driver
   name: '@deepseek-ai/dsh-goal-round-driver'
@@ -294,11 +291,9 @@
 
 - id: command-goal
   name: '@deepseek-ai/dsh-command-goal'
-  disabled: true
 
 - id: plan-mode
   name: '@deepseek-ai/dsh-plan-mode'
-  disabled: true
   config:
       section: |
             You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
@@ -313,11 +308,9 @@
 
 - id: compaction-basic
   name: '@deepseek-ai/dsh-compaction-basic'
-  disabled: true
 
 - id: command-compact
   name: '@deepseek-ai/dsh-command-compact'
-  disabled: true
 
 - id: subagent
   name: '@deepseek-ai/dsh-subagent'
@@ -400,7 +393,6 @@
 
 - id: tool-goal
   name: '@deepseek-ai/dsh-tool-goal'
-  disabled: true
 
 - id: tool-ralph
   name: '@deepseek-ai/dsh-tool-ralph'

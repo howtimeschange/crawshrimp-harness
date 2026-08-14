@@ -237,11 +237,16 @@ DISABLE_IDS = [
     "tool-subagent", "tool-subagent-fork", "tool-subagent-control",
     "tool-subagent-list-agents", "tool-subagent-report",
     "session-telemetry-otel", "web-search-deepseek", "web", "agent-presets",
-    "tool-goal", "goal", "goal-round-driver", "command-goal",
+    # goal 命令族恢复(goal/tool-goal/command-goal);goal-round-driver 保持禁用
+    # (自动跨轮续跑,不受 worker 轮次预算约束,风险面大)
+    "goal-round-driver",
     "tool-ralph", "workflow-worker-thread", "tool-workflow",
-    "tool-todo", "plan-mode", "command-compact", "commands", "command-feedback",
+    "tool-todo",
     "session-log-download",
 ]
+
+# DSH 原生命令支持:compact / goal / plan —— web patch 显式 disabled 的行由爬虾覆盖层重新启用
+ENABLE_WEB_PATCH_DISABLED = ("tool-goal", "plan-mode", "compaction-basic", "command-compact")
 
 
 def main() -> int:
@@ -306,6 +311,10 @@ def main() -> int:
     for did in DISABLE_IDS:
         if did in merged:
             merged[did]["disabled"] = "true"
+    # 重新启用 DSH 原生命令行(web patch 的显式 disabled 补丁被覆盖层重置)
+    for eid in ENABLE_WEB_PATCH_DISABLED:
+        if eid in merged:
+            merged[eid]["disabled"] = None
 
     for row in merged.values():
         transform(row)
