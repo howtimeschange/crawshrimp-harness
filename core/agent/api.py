@@ -51,6 +51,13 @@ class AttachmentCreateRequest(BaseModel):
     path: str
     mime: str = ""
     size: int = 0
+    session_id: str = ""
+    runtime_session_id: str = ""
+
+
+class ArtifactSignRequest(BaseModel):
+    path: str
+    entry: str = ""
 
 
 class SessionModelRequest(BaseModel):
@@ -160,82 +167,145 @@ def patch_session(session_id: str, req: dict) -> dict:
 
 @router.post("/attachments/inbox")
 def create_inbox_attachment(req: AttachmentCreateRequest) -> dict:
-    """会话界面拖入/粘贴/📎 按钮上传附件:自动挂到最近活跃会话。
+    """会话界面上传附件；必须显式绑定当前 DSH runtime/product 会话。"""
+    session = None
+    runtime_id = str(req.runtime_session_id or "").strip()
+    product_id = str(req.session_id or "").strip()
+    if runtime_id:
+        session = db.get_session_by_runtime(runtime_id)
+        if session is None:
+            # DSH 新会话可能在首条 turn/start 前上传附件，先建立影子投影。
+            try:
+                session = db.create_session(f"cs-web-{uuid.uuid4().hex[:12]}", runtime_id, "智能体会话")
+            except Exception:  # 并发消息可能已创建，按 runtime 再读一次
+                session = db.get_session_by_runtime(runtime_id)
+    elif product_id:
+        session = db.get_session(product_id)
+    if not session or session.get("archived_at"):
+        raise HTTPException(409, "无法确认当前会话，请等待会话加载完成后重试上传")
+    return _register_attachment(str(session["session_id"]), req, cleanup_tmp=True)
 
-    shell 无 iframe 会话上下文,附件按最近活跃会话登记;模型经
-    attachment_read(attachment_id)读取,不依赖会话归属。
-    """
+
+MAX_AGENT_ATTACHMENT_BYTES = 200 * 1024 * 1024
+_EXECUTABLE_ATTACHMENT_EXT = {
+    ".app", ".bat", ".cmd", ".com", ".dll", ".dmg", ".exe", ".msi", ".pkg", ".ps1", ".scr",
+}
+
+
+def _detected_attachment_mime(path) -> str:
+    """用少量 magic bytes 识别常见展示格式，避免只信任扩展名/前端 MIME。"""
+    import mimetypes
+    try:
+        with path.open("rb") as stream:
+            head = stream.read(16)
+    except OSError:
+        return "application/octet-stream"
+    signatures = (
+        (b"\x89PNG\r\n\x1a\n", "image/png"),
+        (b"\xff\xd8\xff", "image/jpeg"),
+        (b"GIF87a", "image/gif"),
+        (b"GIF89a", "image/gif"),
+        (b"BM", "image/bmp"),
+        (b"%PDF-", "application/pdf"),
+        (b"PK\x03\x04", "application/zip"),
+        (b"\x7fELF", "application/x-executable"),
+        (b"MZ", "application/x-dosexec"),
+        (b"\xcf\xfa\xed\xfe", "application/x-mach-binary"),
+        (b"\xfe\xed\xfa\xcf", "application/x-mach-binary"),
+        (b"\xca\xfe\xba\xbe", "application/x-mach-binary"),
+    )
+    if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+        return "image/webp"
+    for prefix, mime in signatures:
+        if head.startswith(prefix):
+            if mime == "application/zip" and path.suffix.lower() in {".xlsx", ".xlsm"}:
+                return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            return mime
+    guessed = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    # 图片必须由 magic bytes 证实；仅凭 .png/.webp 扩展名不能进入模型像素通道。
+    return "application/octet-stream" if guessed.startswith("image/") else guessed
+
+
+def _register_attachment(session_id: str, req: AttachmentCreateRequest, *, cleanup_tmp: bool = False) -> dict:
     import re as _re
     import shutil as _shutil
     import uuid as _uuid
-    import os as _os
     from pathlib import Path as _P
     from core.agent.service import _data_root
 
     src = _P(str(req.path or "")).expanduser()
     if not src.is_file():
         raise HTTPException(422, "文件不存在")
-    session = None
-    with db._lock:
-        conn = db._conn()
-        try:
-            row = conn.execute(
-                "SELECT * FROM agent_sessions ORDER BY updated_at DESC LIMIT 1").fetchone()
-            if row:
-                session = dict(row)
-        finally:
-            conn.close()
-    if not session:
-        raise HTTPException(409, "尚无会话,请先在智能体界面开始对话")
+    try:
+        actual_size = src.stat().st_size
+    except OSError as exc:
+        raise HTTPException(422, f"读取附件大小失败: {exc}") from exc
+    if actual_size > MAX_AGENT_ATTACHMENT_BYTES:
+        raise HTTPException(413, f"附件超过 {MAX_AGENT_ATTACHMENT_BYTES // (1024 * 1024)}MB 上限")
     safe_name = _re.sub(r"[^A-Za-z0-9._\u4e00-\u9fff-]", "_", str(req.name or src.name))
+    if not safe_name or safe_name in {".", ".."}:
+        safe_name = "attachment"
+    if _P(safe_name).suffix.lower() in _EXECUTABLE_ATTACHMENT_EXT:
+        raise HTTPException(415, "不支持上传可执行安装文件")
     attachment_id = f"att-{_uuid.uuid4().hex[:12]}"
     dest_dir = _data_root() / "agent" / "attachments" / attachment_id
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / safe_name
     try:
-        _shutil.copyfile(str(src), str(dest))
+        copied_size = 0
+        with src.open("rb") as source_stream, dest.open("xb") as dest_stream:
+            while True:
+                chunk = source_stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                copied_size += len(chunk)
+                if copied_size > MAX_AGENT_ATTACHMENT_BYTES:
+                    raise HTTPException(
+                        413,
+                        f"附件超过 {MAX_AGENT_ATTACHMENT_BYTES // (1024 * 1024)}MB 上限",
+                    )
+                dest_stream.write(chunk)
+        copied_size = dest.stat().st_size
+        if copied_size != actual_size or copied_size > MAX_AGENT_ATTACHMENT_BYTES:
+            raise OSError("附件复制后大小校验失败")
+    except HTTPException:
+        _shutil.rmtree(dest_dir, ignore_errors=True)
+        raise
     except OSError as exc:
+        _shutil.rmtree(dest_dir, ignore_errors=True)
         raise HTTPException(422, f"复制附件失败: {exc}") from exc
-    size = int(req.size) or _os.path.getsize(dest)
-    row = db.create_attachment(attachment_id, session["session_id"], None, None,
-                               safe_name, str(dest), str(req.mime or ""), size)
+    detected_mime = _detected_attachment_mime(dest)
+    claimed_mime = str(req.mime or "").strip().lower()
+    if detected_mime in {"application/x-executable", "application/x-dosexec", "application/x-mach-binary"}:
+        _shutil.rmtree(dest_dir, ignore_errors=True)
+        raise HTTPException(415, "不支持上传可执行安装文件")
+    if claimed_mime.startswith("image/") and not detected_mime.startswith("image/"):
+        _shutil.rmtree(dest_dir, ignore_errors=True)
+        raise HTTPException(415, "附件内容与声明的图片类型不一致")
+    row = db.create_attachment(attachment_id, session_id, None, None,
+                               safe_name, str(dest), detected_mime, copied_size)
     # 上传临时文件已复制进受控附件目录,清理 tmp 源避免 userData 无限增长
-    if "tmp-agent-attachments" in str(src):
-        try:
-            _os.unlink(str(src))
-        except OSError:
-            pass
+    if cleanup_tmp:
+        import os as _os
+        tmp_root = _os.environ.get("CRAWSHRIMP_AGENT_ATTACHMENT_TMP_ROOT", "").strip()
+        if tmp_root:
+            try:
+                src.resolve().relative_to(_P(tmp_root).expanduser().resolve())
+                src.unlink()
+            except (OSError, ValueError):
+                pass
     return {"attachment": row}
 
 
 @router.post("/sessions/{session_id}/attachments")
 def create_attachment(session_id: str, req: AttachmentCreateRequest) -> dict:
     """渲染端经原生选择器挑选文件后注册为会话附件(拷贝进受控附件目录)。"""
-    import re as _re
-    import shutil as _shutil
-    import uuid as _uuid
-    from pathlib import Path as _Path
-    from core.agent.service import _data_root
-
     session = db.get_session(session_id)
     if not session:
         raise HTTPException(404, "会话不存在")
-    src = _Path(req.path)
-    if not src.is_file():
-        raise HTTPException(422, "文件不存在")
-    safe_name = _re.sub(r"[^A-Za-z0-9._\u4e00-\u9fff-]", "_", str(req.name or src.name))
-    attachment_id = f"att-{_uuid.uuid4().hex[:12]}"
-    dest_dir = _data_root() / "agent" / "attachments" / attachment_id
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / safe_name
-    try:
-        _shutil.copyfile(src, dest)
-    except OSError as exc:
-        raise HTTPException(422, f"复制附件失败: {exc}") from exc
-    size = req.size or dest.stat().st_size
-    row = db.create_attachment(attachment_id, session_id, None, None,
-                               safe_name, str(dest), req.mime, int(size))
-    return {"attachment": row}
+    if session.get("archived_at"):
+        raise HTTPException(409, "会话已归档，不能继续上传附件")
+    return _register_attachment(session_id, req, cleanup_tmp=True)
 
 
 @router.post("/sessions/{session_id}/turns")
@@ -257,9 +327,9 @@ async def create_turn(session_id: str, req: TurnCreateRequest) -> dict:
 
 @router.post("/data/clear")
 def clear_agent_data() -> dict:
-    """清除智能体数据:会话历史/消息/事件/审批/草稿等投影与持久化记录。
+    """清除智能体数据及受控附件/草稿/运行日志/智能体发布适配包。
 
-    不清任务实例、任务产物与配置;harness 会话日志随 worker 重启重建。
+    不清任务实例、任务产物与模型配置。
     """
     service = get_agent_service()
     result = service.clear_agent_data()
@@ -291,6 +361,26 @@ def get_task_instance_status(instance_uid: str) -> dict:
 _MEDIA_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 _MEDIA_VIDEO_EXT = {".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv"}
 _MEDIA_AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg"}
+
+
+@router.post("/artifacts/sign")
+def sign_artifact_url(req: ArtifactSignRequest) -> dict:
+    """为一个确切的媒体文件/ZIP 条目签发短期只读 capability。"""
+    p = _artifact_path_safe(req.path)
+    entry = str(req.entry or "")
+    if entry:
+        if p.suffix.lower() != ".zip":
+            raise HTTPException(400, "entry 仅适用于 zip 产物")
+        import zipfile
+        try:
+            with zipfile.ZipFile(p) as zf:
+                if entry not in zf.namelist():
+                    raise HTTPException(404, "zip 内条目不存在")
+        except zipfile.BadZipFile as exc:
+            raise HTTPException(400, "zip 文件损坏") from exc
+    from core.api_server import _sign_media_access
+    signed = _sign_media_access(str(p), entry, route="entry" if entry else "file")
+    return {"path": str(p), "entry": entry, **signed}
 
 
 def _media_kind_for(name: str) -> str:
@@ -420,12 +510,18 @@ async def session_events(session_id: str, request: Request, after_seq: int = 0) 
         raise HTTPException(404, "会话不存在")
 
     async def event_source():
-        # 1) 补放历史
-        for row in db.list_events_after(session_id, after_seq):
-            yield f"id: {row['seq']}\nevent: {row['event_type']}\ndata: {row['payload_json']}\n\n"
-        # 2) 进入 live
+        # 先订阅再补历史，消除“查完历史、挂 live 之前”丢事件的竞态；
+        # live 队列中与历史重叠的 seq 会被 cursor 去重。
         queue = service.subscribe(session_id)
         try:
+            cursor = max(0, int(after_seq or 0))
+            while True:
+                rows = db.list_events_after(session_id, cursor)
+                for row in rows:
+                    cursor = max(cursor, int(row["seq"]))
+                    yield f"id: {row['seq']}\nevent: {row['event_type']}\ndata: {row['payload_json']}\n\n"
+                if len(rows) < 500:
+                    break
             while True:
                 if await request.is_disconnected():
                     break
@@ -434,8 +530,12 @@ async def session_events(session_id: str, request: Request, after_seq: int = 0) 
                 except asyncio.TimeoutError:
                     yield ": keepalive\n\n"
                     continue
+                message_seq = int(message.get("seq") or 0)
+                if message_seq <= cursor:
+                    continue
+                cursor = message_seq
                 payload = message.get("payload")
-                yield (f"id: {message.get('seq') or 0}\nevent: {message.get('event_type')}\n"
+                yield (f"id: {message_seq}\nevent: {message.get('event_type')}\n"
                        f"data: {json.dumps(payload, ensure_ascii=False)}\n\n")
         finally:
             service.unsubscribe(session_id, queue)
@@ -450,13 +550,24 @@ async def agent_events(request: Request, after_seq: int = 0) -> StreamingRespons
     service = get_agent_service()
 
     async def event_source():
-        # 1) 补放历史(跨会话)
-        for row in db.list_all_events_after(after_seq):
-            payload = row.get("payload_json") or "{}"
-            yield f"id: {row['seq']}\nevent: {row['event_type']}\ndata: {payload}\n\n"
-        # 2) 进入 live
         queue = service.subscribe_all()
         try:
+            # -1 = 首次挂载只建立当前高水位，不重放其他会话的历史卡片；
+            # cursor 事件把高水位交给客户端，后续断线即可无缝补放。
+            if int(after_seq) < 0:
+                cursor = db.latest_event_seq()
+                yield (f"id: {cursor}\nevent: cursor\n"
+                       f"data: {json.dumps({'seq': cursor}, ensure_ascii=False)}\n\n")
+            else:
+                cursor = max(0, int(after_seq or 0))
+                while True:
+                    rows = db.list_all_events_after(cursor)
+                    for row in rows:
+                        cursor = max(cursor, int(row["seq"]))
+                        payload = row.get("payload_json") or "{}"
+                        yield f"id: {row['seq']}\nevent: {row['event_type']}\ndata: {payload}\n\n"
+                    if len(rows) < 500:
+                        break
             while True:
                 if await request.is_disconnected():
                     break
@@ -465,8 +576,12 @@ async def agent_events(request: Request, after_seq: int = 0) -> StreamingRespons
                 except asyncio.TimeoutError:
                     yield ": keepalive\n\n"
                     continue
+                message_seq = int(message.get("seq") or 0)
+                if message_seq <= cursor:
+                    continue
+                cursor = message_seq
                 payload = message.get("payload")
-                yield (f"id: {message.get('seq') or 0}\nevent: {message.get('event_type')}\n"
+                yield (f"id: {message_seq}\nevent: {message.get('event_type')}\n"
                        f"data: {json.dumps(payload, ensure_ascii=False)}\n\n")
         finally:
             service.unsubscribe_all(queue)
@@ -498,17 +613,21 @@ def list_approvals(status: str = "pending") -> dict:
     if status != "pending":
         raise HTTPException(422, "status 仅支持 pending")
     rows = db.list_pending_approvals()
-    return {"approvals": [
-        {
+    approvals = []
+    for row in rows:
+        session = db.get_session(str(row.get("session_id") or "")) or {}
+        approvals.append({
             "approval_id": row.get("approval_id"),
             "plan_id": row.get("plan_id"),
+            "run_id": row.get("run_id"),
+            "session_id": row.get("session_id"),
+            "runtime_session_id": session.get("runtime_session_id") or "",
             "summary": json.loads(row.get("summary_json") or "{}"),
             "risk": row.get("risk"),
             "status": row.get("status"),
             "created_at": row.get("created_at"),
-        }
-        for row in rows
-    ]}
+        })
+    return {"approvals": approvals}
 
 
 # ---------- 能力授权(浏览器任务) ----------
@@ -516,7 +635,7 @@ def list_approvals(status: str = "pending") -> dict:
 @router.post("/sessions/{session_id}/grants")
 def create_grant(session_id: str, req: GrantCreateRequest) -> dict:
     service = get_agent_service()
-    run = service.active_run or {}
+    run = service.active_run_for_session(session_id) or {}
     if not run or run.get("session_id") != session_id:
         raise HTTPException(409, "当前会话没有 active run,无法授权")
     from core.agent.db import create_grant as _create_grant
@@ -553,12 +672,16 @@ def get_script_revision(rev_id: str) -> dict:
     rev = db.get_script_revision(rev_id)
     if not rev:
         raise HTTPException(404, "修订不存在")
-    content = ""
-    try:
-        content = Path(rev["draft_path"]).read_text(encoding="utf-8")
-    except OSError:
-        pass
-    return {"revision": rev, "content": content[:200000]}
+    package_files = []
+    for name, path in _collect_revision_files(rev):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            content = f"(读取失败: {exc})"
+        package_files.append({"name": name, "content": content[:200000]})
+    draft_name = Path(rev["draft_path"]).name
+    content = next((item["content"] for item in package_files if item["name"] == draft_name), "")
+    return {"revision": rev, "content": content, "files": package_files}
 
 
 class ScriptReviewRequest(BaseModel):
@@ -575,10 +698,13 @@ def _collect_revision_files(rev: dict):
         src = _P(wf.get("path") or "")
         if not src.is_file():
             continue
-        if src.name in seen or not src.name.endswith((".js", ".py", ".yaml", ".yml", ".json", ".md", ".txt", ".csv")):
+        if src.name in seen or not src.name.endswith((".js", ".yaml", ".yml", ".json", ".md", ".txt", ".csv")):
             continue
         seen.add(src.name)
         files.append((src.name, src))
+    draft = _P(str(rev.get("draft_path") or ""))
+    if draft.is_file() and draft.name not in seen:
+        files.append((draft.name, draft))
     return files
 
 
@@ -586,7 +712,8 @@ def _adapter_snapshot_dir(adapter_id: str):
     from pathlib import Path as _P
     from core.agent.service import _data_root
     safe = _P(str(adapter_id or "")).name or "adapter"
-    return _data_root() / "adapters" / f".{safe}.review-backup"
+    # 备份不能放在 adapters 根目录，否则 scan_all 会把备份 manifest 当成正式包。
+    return _data_root() / "agent" / "review-backups" / safe
 
 
 def _snapshot_existing_adapter(adapter_id: str) -> bool:
@@ -600,12 +727,20 @@ def _snapshot_existing_adapter(adapter_id: str) -> bool:
     if not (dest.exists() or dest.is_symlink()):
         return False
     backup = _adapter_snapshot_dir(adapter_id)
+    backup_adapter = backup / "adapter"
+    backup_meta = backup / "install-meta.json"
     _sh.rmtree(str(backup), ignore_errors=True)
     try:
-        _sh.copytree(str(dest), str(backup), symlinks=True)
+        backup.mkdir(parents=True, exist_ok=False)
+        _sh.copytree(str(dest), str(backup_adapter), symlinks=True)
+        from core import adapter_loader as _al
+        meta_path = _al._metadata_path(adapter_id)
+        if meta_path.is_file():
+            _sh.copy2(str(meta_path), str(backup_meta))
         return True
-    except Exception:  # noqa: BLE001
-        return False
+    except Exception as exc:  # noqa: BLE001
+        _sh.rmtree(str(backup), ignore_errors=True)
+        raise HTTPException(409, f"无法为现有适配器 {adapter_id} 创建安全快照: {exc}") from exc
 
 
 def _restore_snapshotted_adapter(adapter_id: str) -> None:
@@ -615,17 +750,28 @@ def _restore_snapshotted_adapter(adapter_id: str) -> None:
     import shutil as _sh
     from core.agent.service import _data_root
     backup = _adapter_snapshot_dir(adapter_id)
-    if not backup.exists():
+    backup_adapter = backup / "adapter"
+    backup_meta = backup / "install-meta.json"
+    if not backup_adapter.exists():
         return
     dest = _data_root() / "adapters" / str(adapter_id)
     try:
         _sh.rmtree(str(dest), ignore_errors=True)
-        _sh.copytree(str(backup), str(dest), symlinks=True)
-        _sh.rmtree(str(backup), ignore_errors=True)
+        _sh.copytree(str(backup_adapter), str(dest), symlinks=True)
         from core import adapter_loader as _al
-        _al.install_from_dir(str(dest), install_mode="copy")
-    except Exception:  # noqa: BLE001
-        pass
+        meta_path = _al._metadata_path(adapter_id)
+        if backup_meta.is_file():
+            meta_path.parent.mkdir(parents=True, exist_ok=True)
+            _sh.copy2(str(backup_meta), str(meta_path))
+        else:
+            try:
+                meta_path.unlink()
+            except FileNotFoundError:
+                pass
+        _sh.rmtree(str(backup), ignore_errors=True)
+        _al.scan_all()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"恢复适配器 {adapter_id} 的发布前快照失败: {exc}") from exc
 
 
 def _discard_adapter_snapshot(adapter_id: str) -> None:
@@ -636,7 +782,157 @@ def _discard_adapter_snapshot(adapter_id: str) -> None:
     _sh.rmtree(str(backup), ignore_errors=True)
 
 
-def _install_revision_to_adapters(rev: dict):
+def _published_adapter_baseline_dir(adapter_id: str):
+    """智能体首次发布前的长期基线；清除智能体数据时用于恢复用户原包。"""
+    from core.models import SLUG_PATTERN
+    from core.agent.service import _data_root
+    value = str(adapter_id or "").strip()
+    if not SLUG_PATTERN.fullmatch(value):
+        raise HTTPException(409, f"非法适配器 id: {value}")
+    return _data_root() / "agent" / "published-baselines" / value
+
+
+def _capture_published_adapter_baseline(adapter_id: str) -> bool:
+    """只在首次智能体发布时保存原适配器；后续覆盖不得冲掉这份基线。"""
+    import json as _json
+    import shutil as _sh
+    from core.agent.service import _data_root
+    from core import adapter_loader as _al
+
+    baseline = _published_adapter_baseline_dir(adapter_id)
+    state_path = baseline / "state.json"
+    if state_path.is_file():
+        return False
+    tmp = baseline.parent / f".{baseline.name}.tmp-{uuid.uuid4().hex[:8]}"
+    _sh.rmtree(tmp, ignore_errors=True)
+    try:
+        tmp.mkdir(parents=True, exist_ok=False)
+        dest = _data_root() / "adapters" / str(adapter_id)
+        had_adapter = bool(dest.exists() or dest.is_symlink())
+        if had_adapter:
+            if not dest.is_dir():
+                raise OSError("现有适配器目标不是目录")
+            _sh.copytree(str(dest), str(tmp / "adapter"), symlinks=True)
+        meta_path = _al._metadata_path(adapter_id)
+        if meta_path.is_file():
+            _sh.copy2(str(meta_path), str(tmp / "install-meta.json"))
+        (tmp / "state.json").write_text(
+            _json.dumps({"had_adapter": had_adapter}, ensure_ascii=False), encoding="utf-8"
+        )
+        baseline.parent.mkdir(parents=True, exist_ok=True)
+        if baseline.exists():
+            _sh.rmtree(tmp, ignore_errors=True)
+            return False
+        tmp.rename(baseline)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        _sh.rmtree(tmp, ignore_errors=True)
+        raise HTTPException(409, f"无法保存适配器 {adapter_id} 的发布前基线: {exc}") from exc
+
+
+def _discard_published_adapter_baseline(adapter_id: str) -> None:
+    import shutil as _sh
+    _sh.rmtree(_published_adapter_baseline_dir(adapter_id), ignore_errors=True)
+
+
+def _restore_published_adapter_baseline(adapter_id: str) -> bool:
+    """恢复首次发布前基线；成功清库前不删除备份，失败后可安全重试。"""
+    import json as _json
+    import shutil as _sh
+    from core.agent.service import _data_root
+    from core import adapter_loader as _al
+
+    baseline = _published_adapter_baseline_dir(adapter_id)
+    state_path = baseline / "state.json"
+    if not state_path.is_file():
+        return False
+    try:
+        state = _json.loads(state_path.read_text(encoding="utf-8"))
+        had_adapter = bool(state.get("had_adapter"))
+        backup_adapter = baseline / "adapter"
+        backup_meta = baseline / "install-meta.json"
+        _al.uninstall(adapter_id)
+        dest = _data_root() / "adapters" / str(adapter_id)
+        _sh.rmtree(str(dest), ignore_errors=True)
+        meta_path = _al._metadata_path(adapter_id)
+        if had_adapter:
+            if not backup_adapter.is_dir():
+                raise OSError("发布前适配器基线缺失")
+            _sh.copytree(str(backup_adapter), str(dest), symlinks=True)
+            if backup_meta.is_file():
+                meta_path.parent.mkdir(parents=True, exist_ok=True)
+                _sh.copy2(str(backup_meta), str(meta_path))
+            else:
+                try:
+                    meta_path.unlink()
+                except FileNotFoundError:
+                    pass
+        _al.scan_all()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"恢复适配器 {adapter_id} 的发布前基线失败: {exc}") from exc
+
+
+def _revision_package_sha256(rev: dict) -> str:
+    """按文件名与内容锁定经过测试的完整适配包。"""
+    import hashlib as _hashlib
+    digest = _hashlib.sha256()
+    for name, path in sorted(_collect_revision_files(rev), key=lambda item: item[0]):
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _remove_failed_adapter(adapter_id: str) -> None:
+    """无旧版本可恢复时清除正式安装留下的半目录并刷新加载缓存。"""
+    import shutil as _sh
+    from core.agent.service import _data_root
+    from core import adapter_loader as _al
+    dest = _data_root() / "adapters" / str(adapter_id)
+    try:
+        _al.uninstall(adapter_id)
+    except Exception:  # noqa: BLE001
+        pass
+    _sh.rmtree(str(dest), ignore_errors=True)
+    try:
+        _al._metadata_path(adapter_id).unlink()
+    except FileNotFoundError:
+        pass
+    _al.scan_all()
+
+
+def _test_adapter_id(rev_id: str) -> str:
+    import hashlib
+    return f"review-{hashlib.sha256(str(rev_id).encode('utf-8')).hexdigest()[:20]}"
+
+
+def _load_revision_package(rev: dict):
+    """读取并严格校验一个 manifest 修订，返回 manifest 与包文件。"""
+    from pathlib import Path as _P
+    import yaml as _y
+    from core.agent.script_contract import validate_adapter_package
+
+    draft = _P(str(rev.get("draft_path") or ""))
+    if draft.name != "manifest.yaml" or not draft.is_file():
+        raise HTTPException(409, "脚本修订必须以 manifest.yaml 为入口，单文件脚本不能测试或发布")
+    files = dict(_collect_revision_files(rev))
+    manifest_src = files.get("manifest.yaml") or draft
+    try:
+        manifest_doc = _y.safe_load(manifest_src.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(409, f"manifest.yaml 解析失败: {exc}") from exc
+    if not isinstance(manifest_doc, dict):
+        raise HTTPException(409, "manifest.yaml 顶层必须是对象")
+    try:
+        validate_adapter_package(manifest_doc, files)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return manifest_doc, files
+
+
+def _install_revision_to_adapters(rev: dict, *, adapter_id_override: str = ""):
     """把修订的适配包文件安装到抓虾 adapters 运行时(经 adapter_loader 加载)。
 
     返回 (adapter_id, manifest_doc)。manifest 声明缺失脚本时报 409。
@@ -646,35 +942,21 @@ def _install_revision_to_adapters(rev: dict):
     import shutil as _sh
     import yaml as _y
     from core import adapter_loader as _al
-    files = _collect_revision_files(rev)
-    manifest_src = next((src for name, src in files if name == "manifest.yaml"), None)
-    if manifest_src is None:
-        draft = _P(rev["draft_path"])
-        if draft.is_file() and draft.name == "manifest.yaml":
-            manifest_src = draft
-    if manifest_src is None:
-        raise HTTPException(409, "适配包缺少 manifest.yaml,无法安装测试")
-    manifest_doc = {}
-    try:
-        manifest_doc = _y.safe_load(manifest_src.read_text(encoding="utf-8")) or {}
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(409, f"manifest.yaml 解析失败: {exc}") from exc
-    adapter_id = str(manifest_doc.get("id") or "").strip()
-    if not adapter_id:
-        raise HTTPException(409, "manifest.yaml 缺少 id")
+    manifest_doc, file_map = _load_revision_package(rev)
+    adapter_id = str(adapter_id_override or manifest_doc.get("id") or "").strip()
+    install_manifest = dict(manifest_doc)
+    if adapter_id_override:
+        install_manifest["id"] = adapter_id
+        install_manifest["name"] = f"[测试] {manifest_doc.get('name') or manifest_doc.get('id')}"
     with _tf.TemporaryDirectory(prefix="crawshrimp-rev-") as tmp:
         tmpdir = _P(tmp)
-        for name, src in files:
+        for name, src in file_map.items():
             if name == "manifest.yaml":
                 continue
             _sh.copy2(str(src), str(tmpdir / name))
-        _sh.copy2(str(manifest_src), str(tmpdir / "manifest.yaml"))
-        missing = []
-        for t in manifest_doc.get("tasks") or []:
-            if isinstance(t, dict) and t.get("script") and not (tmpdir / str(t["script"])).exists():
-                missing.append(str(t["script"]))
-        if missing:
-            raise HTTPException(409, f"manifest 声明的脚本文件缺失: {', '.join(missing)}")
+        (tmpdir / "manifest.yaml").write_text(
+            _y.safe_dump(install_manifest, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
         try:
             _al.install_from_dir(str(tmpdir), install_mode="copy")
         except Exception as exc:  # noqa: BLE001
@@ -683,7 +965,7 @@ def _install_revision_to_adapters(rev: dict):
 
 
 @router.post("/script-revisions/{rev_id}/test-install")
-def test_install_script_revision(rev_id: str) -> dict:
+async def test_install_script_revision(rev_id: str) -> dict:
     """把待复核适配包安装到运行时测试区(与正式脚本界面同一运行环境)。
 
     用户在审核页即可真实运行测试;批准=转正,拒绝=卸载测试安装。
@@ -694,26 +976,72 @@ def test_install_script_revision(rev_id: str) -> dict:
         raise HTTPException(404, "修订不存在")
     if rev["status"] not in ("pending_review", "testing"):
         raise HTTPException(409, f"修订状态不允许测试安装: {rev['status']}")
-    # 测试安装可能覆盖同名生产适配器:先快照,拒绝时恢复
-    _snapshot_existing_adapter(str(rev.get("adapter_id") or ""))
-    adapter_id, manifest_doc = _install_revision_to_adapters(rev)
-    _db.update_script_revision(rev_id, status="testing", adapter_id=adapter_id)
-    return {"ok": True, "status": "testing", "adapter_id": adapter_id,
+    manifest_doc, _files = _load_revision_package(rev)
+    target_adapter_id = str(manifest_doc.get("id") or "")
+    test_adapter_id = str(rev.get("test_adapter_id") or _test_adapter_id(rev_id))
+    tested_sha256 = _revision_package_sha256(rev)
+    if (rev.get("status") == "testing" and rev.get("test_adapter_id")
+            and str(rev.get("tested_sha256") or "") == tested_sha256):
+        return {"ok": True, "idempotent": True, "status": "testing",
+                "adapter_id": test_adapter_id, "target_adapter_id": target_adapter_id,
+                "test_adapter_id": test_adapter_id, "tested_sha256": tested_sha256,
+                "message": "该版本已安装在隔离测试命名空间，无需重复覆盖"}
+    if rev.get("test_adapter_id"):
+        await _stop_test_adapter_instances(test_adapter_id)
+    try:
+        installed_id, _ = _install_revision_to_adapters(rev, adapter_id_override=test_adapter_id)
+    except Exception:
+        # adapter_loader 覆盖安装会先移除旧测试目录；失败后不能继续把修订
+        # 标成 testing，也不能留下缓存中的半安装 review-* 包。
+        _remove_failed_adapter(test_adapter_id)
+        _db.update_script_revision(
+            rev_id, status="pending_review", test_adapter_id=None,
+            tested_sha256=None,
+        )
+        raise
+    _db.update_script_revision(
+        rev_id, status="testing", adapter_id=target_adapter_id,
+        target_adapter_id=target_adapter_id, test_adapter_id=installed_id,
+        tested_sha256=tested_sha256,
+    )
+    return {"ok": True, "status": "testing", "adapter_id": installed_id,
+            "target_adapter_id": target_adapter_id, "test_adapter_id": installed_id,
+            "tested_sha256": tested_sha256,
             "adapter": {
-                "id": adapter_id,
-                "name": manifest_doc.get("name") or adapter_id,
+                "id": installed_id,
+                "name": f"[测试] {manifest_doc.get('name') or target_adapter_id}",
                 "version": str(manifest_doc.get("version") or ""),
                 "description": manifest_doc.get("description") or "",
                 "task_count": len([t for t in manifest_doc.get("tasks") or [] if isinstance(t, dict)]),
             },
-            "message": "已安装到测试区,可在下方任务列表运行测试;确认无误后批准发布,否则拒绝(将卸载测试安装)"}
+            "message": "已安装到隔离测试命名空间，不会覆盖或触发同名正式适配器；真实运行确认后才能批准发布"}
+
+
+async def _stop_test_adapter_instances(adapter_id: str) -> None:
+    """卸载测试适配器前停止其活动实例，避免 Windows 文件占用和孤儿任务。"""
+    if not adapter_id:
+        return
+    from core import data_sink as _sink
+    active = _sink.list_task_instances(status_group="current", adapter_id=adapter_id, limit=500)
+    if not active:
+        return
+    service = get_agent_service()
+    control = service._callbacks.get("control_task_instance")
+    if not control:
+        raise HTTPException(503, "任务控制服务未就绪，无法安全卸载测试适配器")
+    for item in active:
+        try:
+            await control(str(item["instance_uid"]), "stop")
+        except Exception as exc:  # noqa: BLE001
+            current = _sink.get_task_instance(str(item["instance_uid"])) or {}
+            if str(current.get("status") or "") in {"draft", "queued", "running", "generating", "creating", "waiting_approval"}:
+                raise HTTPException(409, f"测试任务 {item['instance_uid']} 无法停止: {exc}") from exc
 
 
 @router.post("/script-revisions/{rev_id}/review")
-def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
+async def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
     """人工复核闸门:把草稿发布到已发布脚本库,或拒绝。"""
     from pathlib import Path
-    import hashlib as _hashlib
     from core.agent import db as _db
 
     if req.decision not in ("publish", "reject"):
@@ -726,75 +1054,71 @@ def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
             return {"ok": True, "idempotent": True, "status": "published"}
         raise HTTPException(409, f"修订状态不允许复核: {rev['status']}")
     if req.decision == "reject":
-        # 测试安装过的修订:卸载测试副本;若覆盖了同名生产适配器,恢复快照
-        if rev["status"] == "testing" and rev.get("adapter_id"):
-            try:
-                from core import adapter_loader as _al
-                _al.uninstall(str(rev["adapter_id"]))
-            except Exception:  # noqa: BLE001
-                pass
-            _restore_snapshotted_adapter(str(rev["adapter_id"]))
-        _db.update_script_revision(rev_id, status="rejected")
+        test_adapter_id = str(rev.get("test_adapter_id") or "")
+        if test_adapter_id:
+            await _stop_test_adapter_instances(test_adapter_id)
+            from core import adapter_loader as _al
+            _al.uninstall(test_adapter_id)
+        _db.update_script_revision(rev_id, status="rejected", test_adapter_id=None,
+                                   tested_sha256=None)
         return {"ok": True, "status": "rejected"}
+
+    if rev["status"] != "testing" or not rev.get("test_adapter_id"):
+        raise HTTPException(409, "必须先安装到隔离测试区并真实测试，才能批准发布")
 
     draft = Path(rev["draft_path"])
     if not draft.exists():
         _db.update_script_revision(rev_id, status="rejected")
         raise HTTPException(409, "草稿文件已不存在,无法发布")
-    content = draft.read_text(encoding="utf-8")
-    adapter_id = rev.get("adapter_id") or "general-agent"
-    import re as _re
-    safe_adapter = _re.sub(r"[^A-Za-z0-9._-]", "_", str(adapter_id)) or "general-agent"
-    import yaml as _yaml
-
-    published_files: list[str] = []
-    is_manifest_draft = draft.name == "manifest.yaml"
-    if is_manifest_draft:
-        # 抓虾适配包发布:整个适配包目录经 adapter_loader 安装(「我的脚本」/tasks_search 可见)
-        try:
-            safe_adapter, manifest_doc = _install_revision_to_adapters(rev)
-            published_files = [name for name, _src in _collect_revision_files(rev) if name != "manifest.yaml"]
-            task_id = next(
-                (str(t.get("id")) for t in manifest_doc.get("tasks") or []
-                 if isinstance(t, dict) and t.get("id")),
-                draft.stem,
-            )
-        except HTTPException:
-            raise
-    else:
-        # 旧式单脚本兼容路径:自动补 manifest,经临时目录安装入运行时
-        import tempfile as _tf
-        import shutil as _sh
+    manifest_doc, _files = _load_revision_package(rev)
+    package_sha256 = _revision_package_sha256(rev)
+    if not rev.get("tested_sha256") or str(rev.get("tested_sha256")) != package_sha256:
+        raise HTTPException(409, "适配包内容在测试后已变化，必须重新安装到隔离测试区并真实测试")
+    safe_adapter = str(manifest_doc["id"])
+    published_files = [name for name, _src in _collect_revision_files(rev) if name != "manifest.yaml"]
+    task_id = str((manifest_doc.get("tasks") or [{}])[0].get("id") or "")
+    test_adapter_id = str(rev.get("test_adapter_id") or "")
+    await _stop_test_adapter_instances(test_adapter_id)
+    baseline_created = _capture_published_adapter_baseline(safe_adapter)
+    try:
+        had_snapshot = _snapshot_existing_adapter(safe_adapter)
+    except Exception:
+        if baseline_created:
+            _discard_published_adapter_baseline(safe_adapter)
+        raise
+    try:
+        _install_revision_to_adapters(rev)
+    except Exception:
+        if had_snapshot:
+            _restore_snapshotted_adapter(safe_adapter)
+        else:
+            _remove_failed_adapter(safe_adapter)
+        if baseline_created:
+            _discard_published_adapter_baseline(safe_adapter)
+        raise
+    sha = package_sha256
+    try:
+        _db.update_script_revision(
+            rev_id, status="published", adapter_id=safe_adapter,
+            target_adapter_id=safe_adapter, test_adapter_id=None,
+            tested_sha256=package_sha256, source_sha256=sha,
+        )
+    except Exception:
+        if had_snapshot:
+            _restore_snapshotted_adapter(safe_adapter)
+        else:
+            _remove_failed_adapter(safe_adapter)
+        if baseline_created:
+            _discard_published_adapter_baseline(safe_adapter)
+        raise
+    if test_adapter_id:
         from core import adapter_loader as _al
-        safe_name = _re.sub(r"[^A-Za-z0-9._-]", "_", draft.name)
-        if not safe_name.endswith((".js", ".py")):
-            safe_name += ".js"
-        task_id = safe_name.rsplit(".", 1)[0]
-        manifest = {
-            "id": safe_adapter,
-            "name": f"{safe_adapter} 智能体脚本",
-            "version": "0.1.0",
-            "author": "crawshrimp-agent",
-            "description": "智能体固化脚本(双闸门审批)",
-            "entry_url": "",
-            "tasks": [{
-                "id": task_id, "name": task_id, "script": safe_name,
-                "description": "智能体固化的网页自动化脚本(经用户双闸门审批)",
-            }],
-        }
-        with _tf.TemporaryDirectory(prefix="crawshrimp-pub-") as tmp:
-            tmpdir = Path(tmp)
-            (tmpdir / safe_name).write_text(content, encoding="utf-8")
-            (tmpdir / "manifest.yaml").write_text(_yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False), encoding="utf-8")
-            try:
-                _al.install_from_dir(str(tmpdir), install_mode="copy")
-            except Exception as exc:  # noqa: BLE001
-                raise HTTPException(409, f"安装到运行时失败: {exc}") from exc
-        published_files = [safe_name]
-
+        try:
+            _al.uninstall(test_adapter_id)
+        except Exception as exc:  # noqa: BLE001
+            # 正式包和数据库状态已经提交；保留审计告警，清除智能体数据仍会清理 review-*。
+            print(f"[agent] 测试适配器 {test_adapter_id} 发布后清理失败: {exc}", flush=True)
     _discard_adapter_snapshot(safe_adapter)
-    sha = _hashlib.sha256(content.encode("utf-8")).hexdigest()
-    _db.update_script_revision(rev_id, status="published", adapter_id=safe_adapter, source_sha256=sha)
     return {"ok": True, "status": "published", "path": draft and str(draft),
             "adapter_id": safe_adapter, "task_id": task_id,
             "files": published_files,
@@ -802,7 +1126,8 @@ def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
             "message": f"已固化到抓虾脚本库:任务 {task_id} 可复用(tasks_search 可见)"}
 
 
-def build_agent_mcp_asgi(token_provider) -> Any:
+def build_agent_mcp_asgi(token_provider, context_acquirer=None,
+                         context_releaser=None) -> Any:
     """构建带 Bearer 鉴权的 MCP ASGI 应用(独立端口服务,SDK session manager 需要自身 lifespan)。
 
     挂在 FastAPI 子路由上时 MCP SDK 2.0 的 lifespan 不会运行(Task group 未初始化),
@@ -826,6 +1151,32 @@ def build_agent_mcp_asgi(token_provider) -> Any:
             supplied = str(request.headers.get("Authorization") or "").strip()
             if not expected or not supplied.startswith("Bearer ") or not hmac.compare_digest(supplied[7:], expected):
                 return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+            path = str(request.url.path or "")
+            if path == "/context/acquire" and request.method == "POST":
+                if context_acquirer is None:
+                    return JSONResponse({"detail": "Context leasing unavailable"}, status_code=503)
+                try:
+                    body = await request.json()
+                    lease = await context_acquirer(
+                        str(body.get("runtime_session_id") or ""),
+                        str(body.get("call_id") or ""),
+                    )
+                    return JSONResponse({"ok": True, **lease})
+                except LookupError as exc:
+                    return JSONResponse({"detail": str(exc)}, status_code=409)
+                except Exception as exc:  # noqa: BLE001
+                    return JSONResponse({"detail": str(exc)}, status_code=500)
+            if path == "/context/release" and request.method == "POST":
+                if context_releaser is None:
+                    return JSONResponse({"detail": "Context leasing unavailable"}, status_code=503)
+                try:
+                    body = await request.json()
+                    released = bool(context_releaser(str(body.get("lease_id") or "")))
+                except Exception as exc:  # noqa: BLE001
+                    return JSONResponse({"detail": str(exc)}, status_code=500)
+                if not released:
+                    return JSONResponse({"detail": "Unknown context lease"}, status_code=409)
+                return JSONResponse({"ok": True, "released": True})
             return await call_next(request)
 
     return McpBearerAuth(inner)

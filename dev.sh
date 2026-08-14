@@ -34,5 +34,5 @@ fi
 
 echo "[start] crawshrimp API on http://127.0.0.1:18765"
 echo "[docs]  http://127.0.0.1:18765/docs"
-echo "[auth]  use header: X-Crawshrimp-Token: $CRAWSHRIMP_API_TOKEN"
+echo "[auth]  use X-Crawshrimp-Token; read it from $TOKEN_FILE (value is never printed)"
 PYTHONPATH=. venv/bin/python3 core/api_server.py

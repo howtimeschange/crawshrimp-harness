@@ -109,6 +109,8 @@ class AgentWorker:
                     raise WorkerProtocolError(f"worker 非 JSON 帧: {line[:160]!r}") from exc
                 if isinstance(msg.get("id"), (int, str)) and msg.get("id") in self._pending:
                     fut = self._pending.pop(msg["id"])
+                    if fut.done():
+                        continue
                     if "error" in msg:
                         fut.set_exception(WorkerProtocolError(msg["error"].get("message", "worker error")))
                     else:
@@ -118,12 +120,17 @@ class AgentWorker:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            for fut in self._pending.values():
-                if not fut.done():
-                    fut.set_exception(WorkerProtocolError(f"worker 读取失败: {exc}"))
-            self._pending.clear()
+            self._fail_pending(f"worker 读取失败: {exc}")
         finally:
             stderr_task.cancel()
+            self._fail_pending("worker 已退出,未返回请求结果")
+
+    def _fail_pending(self, message: str) -> None:
+        pending = list(self._pending.values())
+        self._pending.clear()
+        for fut in pending:
+            if not fut.done():
+                fut.set_exception(WorkerProtocolError(message))
 
     async def _drain_stderr(self) -> None:
         assert self.proc and self.proc.stderr
@@ -148,7 +155,11 @@ class AgentWorker:
                    "params": {"protocol_version": 1, **(params or {})}}
         self.proc.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
         await self.proc.stdin.drain()
-        return await asyncio.wait_for(fut, timeout=timeout)
+        try:
+            return await asyncio.wait_for(fut, timeout=timeout)
+        finally:
+            if self._pending.get(msg_id) is fut:
+                self._pending.pop(msg_id, None)
 
     async def wait_exit(self) -> Optional[int]:
         if self.proc is None:
@@ -169,4 +180,5 @@ class AgentWorker:
             await self.proc.wait()
         if self._reader_task:
             self._reader_task.cancel()
+        self._fail_pending("worker 已停止")
         self.proc = None

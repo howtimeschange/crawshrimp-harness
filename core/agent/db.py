@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS agent_execution_plans (
     risk TEXT NOT NULL DEFAULT 'read_only',
     approval_required INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'ready',
+    task_instance_uid TEXT,
     expires_at TEXT NOT NULL,
     consumed_at TEXT
 );
@@ -117,6 +118,8 @@ CREATE TABLE IF NOT EXISTS agent_approvals (
     approval_id TEXT PRIMARY KEY,
     plan_id TEXT NOT NULL,
     tool_call_id TEXT,
+    session_id TEXT,
+    run_id TEXT,
     summary_json TEXT NOT NULL,
     risk TEXT NOT NULL,
     params_sha256 TEXT NOT NULL,
@@ -149,6 +152,9 @@ CREATE TABLE IF NOT EXISTS agent_script_revisions (
     rev_id TEXT PRIMARY KEY,
     draft_path TEXT NOT NULL,
     adapter_id TEXT,
+    target_adapter_id TEXT,
+    test_adapter_id TEXT,
+    tested_sha256 TEXT,
     source_sha256 TEXT,
     status TEXT NOT NULL DEFAULT 'draft',
     created_run_id TEXT,
@@ -192,6 +198,16 @@ def _ensure_agent_columns(conn: sqlite3.Connection) -> None:
     migrations = {
         "agent_runs": [("created_at", "TEXT NOT NULL DEFAULT ''")],
         "agent_sessions": [("model_id", "TEXT NOT NULL DEFAULT ''")],
+        "agent_execution_plans": [("task_instance_uid", "TEXT")],
+        "agent_approvals": [
+            ("session_id", "TEXT"),
+            ("run_id", "TEXT"),
+        ],
+        "agent_script_revisions": [
+            ("target_adapter_id", "TEXT"),
+            ("test_adapter_id", "TEXT"),
+            ("tested_sha256", "TEXT"),
+        ],
     }
     for table, columns in migrations.items():
         existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -472,8 +488,14 @@ def append_event(session_id: str, run_id: Optional[str], event_type: str, payloa
                 "INSERT INTO agent_events (session_id, run_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)",
                 (session_id, run_id, event_type, _json(payload), _now_iso()),
             )
+            seq = int(cur.lastrowid)
+            conn.execute(
+                "UPDATE agent_sessions SET last_event_seq = MAX(last_event_seq, ?), updated_at = ?"
+                " WHERE session_id = ?",
+                (seq, _now_iso(), session_id),
+            )
             conn.commit()
-            return int(cur.lastrowid)
+            return seq
         finally:
             conn.close()
 
@@ -501,6 +523,16 @@ def list_all_events_after(after_seq: int, limit: int = 500) -> list[dict]:
                 "SELECT * FROM agent_events WHERE seq > ? ORDER BY seq LIMIT ?",
                 (after_seq, limit),
             )
+        finally:
+            conn.close()
+
+
+def latest_event_seq() -> int:
+    with _lock:
+        conn = _conn()
+        try:
+            row = conn.execute("SELECT COALESCE(MAX(seq), 0) AS seq FROM agent_events").fetchone()
+            return int((row or {"seq": 0})["seq"] or 0)
         finally:
             conn.close()
 
@@ -533,6 +565,7 @@ def clear_agent_data() -> None:
 # ---------- 工具调用 ----------
 
 def upsert_tool_call(run_id: str, dsh_call_id: str, tool_name: str, arguments: Any) -> dict:
+    from core.agent.redaction import redact_value
     now = _now_iso()
     with _lock:
         conn = _conn()
@@ -541,7 +574,8 @@ def upsert_tool_call(run_id: str, dsh_call_id: str, tool_name: str, arguments: A
                 "INSERT INTO agent_tool_calls (tool_call_id, run_id, dsh_call_id, tool_name, status, arguments_json, created_at)"
                 " VALUES (?, ?, ?, ?, 'requested', ?, ?)"
                 " ON CONFLICT(run_id, dsh_call_id) DO NOTHING",
-                (f"{run_id}:{dsh_call_id}", run_id, dsh_call_id, tool_name, _json(arguments), now),
+                (f"{run_id}:{dsh_call_id}", run_id, dsh_call_id, tool_name,
+                 _json(redact_value(arguments)), now),
             )
             conn.commit()
             return _row(conn.execute(
@@ -586,13 +620,14 @@ def get_tool_call(run_id: str, dsh_call_id: str) -> Optional[dict]:
 
 def create_plan(plan_id: str, session_id: str, run_id: str, task_id: str, adapter_id: Optional[str],
                 params: dict, risk: str, approval_required: bool, expires_at: str) -> dict:
+    from core.agent.redaction import redact_value
     with _lock:
         conn = _conn()
         try:
             conn.execute(
                 "INSERT INTO agent_execution_plans (plan_id, session_id, run_id, adapter_id, task_id, params_json, params_sha256, risk, approval_required, status, expires_at)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?)",
-                (plan_id, session_id, run_id, adapter_id, task_id, _json(params),
+                (plan_id, session_id, run_id, adapter_id, task_id, _json(redact_value(params)),
                  params_sha256(params), risk, 1 if approval_required else 0, expires_at),
             )
             conn.commit()
@@ -618,7 +653,7 @@ def params_sha256(params: dict) -> str:
 
 
 def update_plan(plan_id: str, **fields: Any) -> None:
-    allowed = {"status", "consumed_at"}
+    allowed = {"status", "consumed_at", "task_instance_uid"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
@@ -632,15 +667,62 @@ def update_plan(plan_id: str, **fields: Any) -> None:
             conn.close()
 
 
+def claim_plan(plan_id: str, task_instance_uid: str = "") -> Optional[dict]:
+    """原子地把 ready plan 置为 executing，并预留唯一 Task Instance UID。
+
+    `BEGIN IMMEDIATE` 让跨 MCP 线程/连接的并发调用只有一个能消费计划；
+    UID 与 claim 同事务写入，因此重放调用在实例尚未创建完时也能获得稳定引用。
+    """
+    now = _now_iso()
+    with _lock:
+        conn = _conn()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT status, expires_at FROM agent_execution_plans WHERE plan_id = ?",
+                (plan_id,),
+            ).fetchone()
+            if row is None or str(row["status"]) != "ready":
+                conn.rollback()
+                return None
+            if str(row["expires_at"] or "") <= now:
+                conn.execute(
+                    "UPDATE agent_execution_plans SET status = 'expired' WHERE plan_id = ? AND status = 'ready'",
+                    (plan_id,),
+                )
+                conn.commit()
+                return None
+            cursor = conn.execute(
+                "UPDATE agent_execution_plans"
+                " SET status = 'executing', task_instance_uid = ?"
+                " WHERE plan_id = ? AND status = 'ready'",
+                (str(task_instance_uid or "") or None, plan_id),
+            )
+            if cursor.rowcount != 1:
+                conn.rollback()
+                return None
+            claimed = _row(conn.execute(
+                "SELECT * FROM agent_execution_plans WHERE plan_id = ?", (plan_id,)
+            ).fetchone())
+            conn.commit()
+            return claimed
+        finally:
+            conn.close()
+
+
 def create_approval(approval_id: str, plan_id: str, tool_call_id: Optional[str], summary: dict,
-                    risk: str, params_hash: str, expires_at: str) -> dict:
+                    risk: str, params_hash: str, expires_at: str,
+                    session_id: str = "", run_id: str = "") -> dict:
+    from core.agent.redaction import redact_value
     with _lock:
         conn = _conn()
         try:
             conn.execute(
-                "INSERT INTO agent_approvals (approval_id, plan_id, tool_call_id, summary_json, risk, params_sha256, status, created_at, expires_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
-                (approval_id, plan_id, tool_call_id, _json(summary), risk, params_hash, _now_iso(), expires_at),
+                "INSERT INTO agent_approvals (approval_id, plan_id, tool_call_id, session_id, run_id, summary_json, risk, params_sha256, status, created_at, expires_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+                (approval_id, plan_id, tool_call_id, str(session_id or "") or None,
+                 str(run_id or "") or None, _json(redact_value(summary)), risk,
+                 params_hash, _now_iso(), expires_at),
             )
             conn.commit()
             return _row(conn.execute("SELECT * FROM agent_approvals WHERE approval_id = ?", (approval_id,)).fetchone())  # type: ignore[return-value]
@@ -722,6 +804,25 @@ def get_grant(grant_id: str) -> Optional[dict]:
             conn.close()
 
 
+def list_granted_tab_ids_for_session(session_id: str) -> list[str]:
+    """返回该会话各 run 曾精确绑定且仍 active 的浏览器页面。"""
+    with _lock:
+        conn = _conn()
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT g.tab_id, g.created_at"
+                " FROM agent_capability_grants g"
+                " JOIN agent_runs r ON r.run_id = g.run_id"
+                " WHERE r.session_id = ? AND g.status = 'active'"
+                " AND g.tab_id IS NOT NULL AND g.tab_id != ''"
+                " ORDER BY g.created_at",
+                (session_id,),
+            ).fetchall()
+            return [str(row["tab_id"]) for row in rows]
+        finally:
+            conn.close()
+
+
 def update_grant_toolset(grant_id: str, toolset: list[str]) -> None:
     with _lock:
         conn = _conn()
@@ -788,7 +889,8 @@ def create_script_revision(rev_id: str, draft_path: str, created_run_id: Optiona
 
 
 def update_script_revision(rev_id: str, **fields: Any) -> None:
-    allowed = {"status", "adapter_id", "source_sha256"}
+    allowed = {"status", "adapter_id", "target_adapter_id", "test_adapter_id",
+               "tested_sha256", "source_sha256"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return

@@ -22,14 +22,14 @@ from core.llm_gateway import (
 
 # 模型能力登记(服务端共享能力表,方案 §12.2)
 MODEL_CAPABILITIES: dict[str, dict[str, Any]] = {
-    "gpt-5.6-terra": {"context_window": 200000, "max_output_tokens": 32000, "supports_tools": True},
-    "gpt-5.6-sol": {"context_window": 200000, "max_output_tokens": 32000, "supports_tools": True},
-    "gpt-5.6-luna": {"context_window": 200000, "max_output_tokens": 32000, "supports_tools": True},
-    "gpt-5.5": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
-    "gemini-3.1-pro-preview": {"context_window": 1000000, "max_output_tokens": 65536, "supports_tools": True},
-    "gemini-3.5-flash": {"context_window": 1000000, "max_output_tokens": 65536, "supports_tools": True},
-    "claude-opus-4-8": {"context_window": 200000, "max_output_tokens": 32000, "supports_tools": True},
-    "claude-sonnet-5": {"context_window": 200000, "max_output_tokens": 32000, "supports_tools": True},
+    "gpt-5.6-terra": {"context_window": 200000, "max_output_tokens": 32000, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "gpt-5.6-sol": {"context_window": 200000, "max_output_tokens": 32000, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "gpt-5.6-luna": {"context_window": 200000, "max_output_tokens": 32000, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "gpt-5.5": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "gemini-3.1-pro-preview": {"context_window": 1000000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "gemini-3.5-flash": {"context_window": 1000000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "claude-opus-4-8": {"context_window": 200000, "max_output_tokens": 32000, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "claude-sonnet-5": {"context_window": 200000, "max_output_tokens": 32000, "supports_tools": True, "input_modalities": ["text", "image"]},
     "qwen3.8-max-preview": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
     "qwen3.7-plus": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
     "deepseek-v4-pro": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
@@ -70,6 +70,7 @@ def _route_models(model_ids: tuple[str, ...]) -> list[dict[str, Any]]:
             "id": mid,
             "contextWindow": cap["context_window"],
             "maxTokens": cap["max_output_tokens"],
+            "input": list(cap.get("input_modalities") or ["text"]),
         })
     return entries
 
@@ -218,6 +219,7 @@ def _yaml_models(models: list[dict], indent: int) -> str:
         lines.append(f"{pad}- id: {m['id']}")
         lines.append(f"{pad}  contextWindow: {m['contextWindow']}")
         lines.append(f"{pad}  maxTokens: {m['maxTokens']}")
+        lines.append(f"{pad}  input: [{', '.join(m.get('input') or ['text'])}]")
     return "\n".join(lines)
 
 

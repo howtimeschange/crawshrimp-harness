@@ -1489,10 +1489,11 @@ def _task_display_title(adapter_id: str, task_id: str) -> str:
 
 
 def create_task_instance(adapter_id: str, task_id: str, title: str, params: Optional[Mapping[str, Any]] = None,
-                         source: str = "manual", source_ref: str = "") -> dict:
+                         source: str = "manual", source_ref: str = "",
+                         instance_uid: str = "") -> dict:
     """Insert a draft task instance and return the inserted row."""
     now = _now_iso()
-    instance_uid = uuid.uuid4().hex
+    instance_uid = str(instance_uid or "").strip() or uuid.uuid4().hex
     with _get_conn() as conn:
         conn.execute("""
             INSERT INTO task_instances (

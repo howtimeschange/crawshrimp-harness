@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any, Optional
 
 import websockets
@@ -26,7 +27,11 @@ OBSERVE_JS = r"""
     bodyText: cap(document.body ? document.body.innerText : '', 4000),
     links: q('a').slice(0, 60).map(a => ({ text: cap(a.innerText || a.textContent, 60), href: cap(a.href, 200) })),
     buttons: q('button, input[type=button], input[type=submit], [role=button]').slice(0, 60).map(b => ({ text: cap(b.innerText || b.textContent || b.value || b.getAttribute('aria-label'), 60) })),
-    inputs: q('input, textarea, select').slice(0, 60).map(i => ({ tag: i.tagName.toLowerCase(), type: i.type || '', name: cap(i.name, 40), id: cap(i.id, 40), placeholder: cap(i.placeholder, 40), value: cap(i.value, 40) })),
+    inputs: q('input, textarea, select').slice(0, 60).map(i => {
+      const credentialHints = `${i.type || ''} ${i.name || ''} ${i.id || ''} ${i.autocomplete || ''}`.toLowerCase();
+      const sensitive = /(?:password|passwd|pwd|token|secret|api[_-]?key|current-password|new-password)/.test(credentialHints);
+      return { tag: i.tagName.toLowerCase(), type: i.type || '', name: cap(i.name, 40), id: cap(i.id, 40), placeholder: cap(i.placeholder, 40), value: sensitive ? '' : cap(i.value, 40) };
+    }),
   };
 })()
 """
@@ -64,8 +69,14 @@ ACT_TYPE_JS = r"""
   if (!el || !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
     return { typed: false, error: '目标不是可输入元素,请先提供 selector 或先聚焦输入框' };
   }
+  const credentialHints = `${el.type || ''} ${el.name || ''} ${el.id || ''} ${el.autocomplete || ''}`.toLowerCase();
+  if (/(?:password|passwd|pwd|token|secret|api[_-]?key|current-password|new-password)/.test(credentialHints)) {
+    return { typed: false, credentialBlocked: true, error: '检测到凭证类输入框' };
+  }
   el.focus();
-  el.value = text;
+  const proto = el instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+  if (setter) setter.call(el, text); else el.value = text;
   el.dispatchEvent(new Event('input', { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
   return { typed: true, selector: selector || '(focused)', length: text.length };
@@ -91,6 +102,7 @@ class CdpClient:
         self._next_id = 0
         self._pending: dict[int, asyncio.Future] = {}
         self._listeners: list[asyncio.Queue] = []
+        self._reader: Optional[asyncio.Task] = None
 
     async def __aenter__(self):
         await self.connect()
@@ -115,13 +127,19 @@ class CdpClient:
                     continue
                 if isinstance(msg, dict) and msg.get("id") in self._pending:
                     fut = self._pending.pop(msg["id"])
+                    if fut.done():
+                        continue
                     if "error" in msg:
                         fut.set_exception(CdpError(msg["error"].get("message", "CDP error")))
                     else:
                         fut.set_result(msg.get("result", {}))
                 else:
                     for queue in self._listeners:
-                        queue.put_nowait(msg)
+                        try:
+                            queue.put_nowait(msg)
+                        except asyncio.QueueFull:
+                            # 捕获队列是有界的；丢弃过量网络事件，不能拖垮 CDP reader。
+                            pass
         except Exception:  # noqa: BLE001
             for fut in self._pending.values():
                 if not fut.done():
@@ -135,6 +153,18 @@ class CdpClient:
             except Exception:  # noqa: BLE001
                 pass
             self._ws = None
+        reader = self._reader
+        if reader and reader is not asyncio.current_task():
+            reader.cancel()
+            try:
+                await reader
+            except asyncio.CancelledError:
+                pass
+        self._reader = None
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(CdpError("CDP 连接已关闭"))
+        self._pending.clear()
 
     async def send(self, method: str, params: Optional[dict] = None) -> dict:
         if self._ws is None:
@@ -143,8 +173,14 @@ class CdpClient:
         msg_id = self._next_id
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending[msg_id] = fut
-        await self._ws.send(json.dumps({"id": msg_id, "method": method, "params": params or {}}))
-        return await asyncio.wait_for(fut, timeout=self.timeout)
+        try:
+            await self._ws.send(json.dumps({"id": msg_id, "method": method, "params": params or {}}))
+            return await asyncio.wait_for(fut, timeout=self.timeout)
+        finally:
+            if self._pending.get(msg_id) is fut:
+                self._pending.pop(msg_id, None)
+            if not fut.done():
+                fut.cancel()
 
     async def evaluate(self, expression: str, user_gesture: bool = False) -> dict:
         result = await self.send("Runtime.evaluate", {
@@ -205,9 +241,9 @@ class CdpClient:
                     req = (msg.get("params") or {}).get("request") or {}
                     headers = req.get("headers") or {}
                     collected.append({
-                        "url": str(req.get("url", ""))[:300],
+                        "url": _redact_url(str(req.get("url", "")))[:300],
                         "method": req.get("method", ""),
-                        "post_data": str(req.get("postData", ""))[:500],
+                        "post_data": _redact_post_data(str(req.get("postData", "")))[:500],
                         "content_type": str(headers.get("content-type", headers.get("Content-Type", "")))[:100],
                     })
                 if len(collected) >= 100:
@@ -230,4 +266,75 @@ def _js_literal(value: Any) -> str:
 def url_prefix_matches(url: str, prefix: str) -> bool:
     if not prefix:
         return True
-    return url.startswith(prefix)
+    from urllib.parse import urlsplit
+    try:
+        actual = urlsplit(str(url))
+        allowed = urlsplit(str(prefix))
+    except ValueError:
+        return False
+    if actual.scheme not in {"http", "https"} or allowed.scheme not in {"http", "https"}:
+        return False
+    actual_port = actual.port or (443 if actual.scheme == "https" else 80)
+    allowed_port = allowed.port or (443 if allowed.scheme == "https" else 80)
+    if (actual.scheme.lower(), (actual.hostname or "").lower(), actual_port) != (
+        allowed.scheme.lower(), (allowed.hostname or "").lower(), allowed_port,
+    ):
+        return False
+    allowed_path = allowed.path or "/"
+    actual_path = actual.path or "/"
+    if allowed_path == "/":
+        return True
+    normalized = allowed_path.rstrip("/")
+    return actual_path == normalized or actual_path.startswith(normalized + "/")
+
+
+_SENSITIVE_REQUEST_KEY = re.compile(
+    r"(?i)(?:authorization|cookie|password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key)"
+)
+
+
+def _redact_url(value: str) -> str:
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname or ""
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        netloc = host + (f":{parsed.port}" if parsed.port else "")
+        query = urlencode([
+            (key, "***" if _SENSITIVE_REQUEST_KEY.search(key) else val)
+            for key, val in parse_qsl(parsed.query, keep_blank_values=True)
+        ])
+        fragment = "***" if _SENSITIVE_REQUEST_KEY.search(parsed.fragment or "") else parsed.fragment
+        return urlunsplit((parsed.scheme, netloc, parsed.path, query, fragment))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _redact_post_data(value: str) -> str:
+    raw = str(value or "")
+    if not raw:
+        return ""
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        from urllib.parse import parse_qsl, urlencode
+        try:
+            pairs = parse_qsl(raw, keep_blank_values=True, strict_parsing=True)
+            return urlencode([
+                (key, "***" if _SENSITIVE_REQUEST_KEY.search(key) else val) for key, val in pairs
+            ])
+        except ValueError:
+            return re.sub(
+                r"(?i)((?:password|passwd|pwd|token|secret|api[_-]?key)\s*[=:]\s*)[^&\s,]+",
+                r"\1***", raw,
+            )
+
+    def scrub(item):
+        if isinstance(item, dict):
+            return {key: ("***" if _SENSITIVE_REQUEST_KEY.search(str(key)) else scrub(val))
+                    for key, val in item.items()}
+        if isinstance(item, list):
+            return [scrub(val) for val in item]
+        return item
+    return json.dumps(scrub(payload), ensure_ascii=False, separators=(",", ":"))

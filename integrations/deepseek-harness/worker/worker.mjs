@@ -14,9 +14,10 @@
 
 import readline from 'node:readline'
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 
 const PROTOCOL_VERSION = 1
+const MODEL_IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 
 // 影子投影转发的事件类型(web UI 原生会话 → FastAPI)
 const SHADOW_EVENT_TYPES = [
@@ -297,6 +298,7 @@ async function startRun(params) {
     resolve: null,
     timer: setTimeout(() => {
       console.error(`[worker] run ${runId} 超过 ${RUN_ABSOLUTE_TIMEOUT_MS}ms 绝对上限,终止`)
+      stopRuntime()
       finishRun({ status: 'failed', reason: { kind: 'error', error: { code: 'RUN_TIMEOUT' } }, lastSeq: run.lastSeq })
     }, RUN_ABSOLUTE_TIMEOUT_MS),
   }
@@ -305,9 +307,27 @@ async function startRun(params) {
   attachRunEventHandlers(run)
 
   try {
+    const contentBlocks = []
+    for (const image of Array.isArray(params.images) ? params.images.slice(0, 5) : []) {
+      const imagePath = String(image?.path || '')
+      const mediaType = String(image?.mediaType || '')
+      if (!imagePath || !MODEL_IMAGE_MEDIA_TYPES.has(mediaType)) continue
+      try {
+        if (!existsSync(imagePath) || statSync(imagePath).size > 8 * 1024 * 1024) continue
+        contentBlocks.push({
+          type: 'image',
+          mediaType,
+          data: readFileSync(imagePath).toString('base64'),
+          name: String(image?.name || 'image'),
+        })
+      } catch {
+        // 附件在登记后被移动/删除时跳过该图片，不让整条文本 prompt 失败。
+      }
+    }
+    contentBlocks.push({ type: 'text', text })
     const result = await state.runtime.sdk.request('session/prompt', {
       sessionId,
-      contentBlocks: [{ type: 'text', text }],
+      contentBlocks,
     }, 30000)
     run.messageId = result?.messageId ?? null
     notifyHarness(runId, { type: 'agent/inbox/spliced', data: { messageId: run.messageId, sessionId }, seq: 0 })

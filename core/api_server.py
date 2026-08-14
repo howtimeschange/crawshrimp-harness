@@ -141,22 +141,57 @@ def _backend_lock_path() -> Path:
     return _backend_lock_dir() / "backend.lock"
 
 
-def _get_media_token() -> str:
-    """媒体展示专用 token(由 API token 确定性派生,不暴露 master token)。
-
-    <img>/<video> 无法携带请求头,媒体 token 允许出现在 query 参数里;
-    它只对 /agent/artifacts/* 展示类端点生效,不能用于其他产品 API。
-    """
-    import hashlib as _hl
-    expected = _get_api_token()
-    if not expected:
-        return ""
-    return _hl.sha256((expected + ":media:v1").encode("utf-8")).hexdigest()
+MEDIA_SIGNATURE_TTL_SECONDS = 30 * 60
 
 
-def _media_token_ok(supplied: str) -> bool:
-    expected = _get_media_token()
-    return bool(expected) and hmac.compare_digest(supplied, expected)
+def _sign_media_access(path: str, entry: str = "", expires: int | None = None,
+                       route: str = "") -> dict:
+    """签发绑定 route/path/entry/过期时间的短期媒体 capability。"""
+    import base64
+    import hashlib
+    import time
+
+    expiry = int(expires or (time.time() + MEDIA_SIGNATURE_TTL_SECONDS))
+    capability_route = str(route or ("entry" if entry else "file"))
+    canonical = (
+        f"v2\n{capability_route}\n{expiry}\n{str(path or '')}\n{str(entry or '')}"
+    ).encode("utf-8")
+    token = _get_api_token()
+    if not token:
+        raise RuntimeError("API token 未初始化，不能签发媒体 capability")
+    digest = hmac.new(token.encode("utf-8"), canonical, hashlib.sha256).digest()
+    signature = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return {"signature": signature, "expires": expiry, "route": capability_route}
+
+
+def _media_signature_ok(route: str, path: str, entry: str, expires: str, supplied: str) -> bool:
+    import time
+
+    try:
+        expiry = int(expires)
+    except (TypeError, ValueError):
+        return False
+    now = int(time.time())
+    if expiry < now or expiry > now + MEDIA_SIGNATURE_TTL_SECONDS + 60:
+        return False
+    if route not in {"file", "entry"}:
+        return False
+    if (route == "entry") != bool(entry):
+        return False
+    expected = _sign_media_access(path, entry, expiry, route=route)["signature"]
+    return bool(supplied) and hmac.compare_digest(str(supplied), expected)
+
+
+def _signed_media_request_ok(method: str, request_path: str, path: str, entry: str,
+                             expires: str, supplied: str) -> bool:
+    """capability 只能授权两个只读字节流端点，不能授权签名端点或跨 scope。"""
+    if str(method or "").upper() != "GET":
+        return False
+    route = {
+        "/agent/artifacts/file": "file",
+        "/agent/artifacts/entry": "entry",
+    }.get(str(request_path or ""))
+    return bool(route) and _media_signature_ok(route, path, entry, expires, supplied)
 
 
 def _get_api_token() -> str:
@@ -5801,29 +5836,68 @@ def _rows_raw_to_table(rows_raw, header_row: int = 1):
     return {"headers": headers, "rows": rows, "total": len(rows)}
 
 
+MAX_EXCEL_FILE_BYTES = 50 * 1024 * 1024
+MAX_EXCEL_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
+MAX_EXCEL_ZIP_ENTRIES = 10_000
+MAX_EXCEL_SHEETS = 32
+MAX_EXCEL_ROWS = 100_000
+MAX_EXCEL_COLUMNS = 512
+MAX_EXCEL_CELLS = 2_000_000
+
+
 def _read_local_excel(path: str, sheet: Optional[str] = None, header_row: int = 1):
     """Internal helper to read Excel/CSV without raising HTTPExceptions"""
     p = Path(path)
     if not p.exists():
         return {"error": f"File not found: {path}", "headers": [], "rows": [], "total": 0}
+    try:
+        if p.stat().st_size > MAX_EXCEL_FILE_BYTES:
+            return {"error": "表格文件超过 50MB 上限", "headers": [], "rows": [], "total": 0}
+    except OSError as exc:
+        return {"error": str(exc), "headers": [], "rows": [], "total": 0}
 
-    def _worksheet_rows(ws):
+    total_rows_seen = 0
+    total_cells_seen = 0
+
+    def _worksheet_table(ws):
+        nonlocal total_rows_seen, total_cells_seen
         try:
             ws.reset_dimensions()
         except Exception:
             pass
-        return list(ws.iter_rows(values_only=True))
+        rows = []
+        for row in ws.iter_rows(values_only=True):
+            total_rows_seen += 1
+            if total_rows_seen > MAX_EXCEL_ROWS:
+                raise ValueError(f"工作簿总行数超过 {MAX_EXCEL_ROWS} 行上限")
+            if len(row) > MAX_EXCEL_COLUMNS:
+                raise ValueError(f"工作表 {ws.title} 超过 {MAX_EXCEL_COLUMNS} 列上限")
+            total_cells_seen += len(row)
+            if total_cells_seen > MAX_EXCEL_CELLS:
+                raise ValueError(f"工作簿总单元格数超过 {MAX_EXCEL_CELLS} 个上限")
+            rows.append(row)
+        return _rows_raw_to_table(rows, header_row)
 
     suffix = p.suffix.lower()
     try:
-        if suffix in ('.xlsx', '.xls', '.xlsm'):
+        if suffix in ('.xlsx', '.xlsm'):
             import openpyxl
+            import zipfile
+
+            with zipfile.ZipFile(p) as zf:
+                infos = zf.infolist()
+                if len(infos) > MAX_EXCEL_ZIP_ENTRIES:
+                    raise ValueError(f"xlsx 压缩条目超过 {MAX_EXCEL_ZIP_ENTRIES} 个上限")
+                if sum(max(0, info.file_size) for info in infos) > MAX_EXCEL_UNCOMPRESSED_BYTES:
+                    raise ValueError("xlsx 解压后超过 256MB 上限")
 
             wb = openpyxl.load_workbook(p, read_only=True, data_only=True)
             try:
+                if len(wb.sheetnames) > MAX_EXCEL_SHEETS:
+                    raise ValueError(f"工作表数量超过 {MAX_EXCEL_SHEETS} 个上限")
                 if sheet:
                     ws = wb[sheet]
-                    table = _rows_raw_to_table(_worksheet_rows(ws), header_row)
+                    table = _worksheet_table(ws)
                     table["sheet_name"] = ws.title
                     table["sheets"] = {
                         ws.title: {
@@ -5836,7 +5910,7 @@ def _read_local_excel(path: str, sheet: Optional[str] = None, header_row: int = 
 
                 workbook_tables = {}
                 for ws in wb.worksheets:
-                    workbook_tables[ws.title] = _rows_raw_to_table(_worksheet_rows(ws), header_row)
+                    workbook_tables[ws.title] = _worksheet_table(ws)
 
                 active_name = wb.active.title if wb.active else (wb.sheetnames[0] if wb.sheetnames else "Sheet1")
                 active_table = workbook_tables.get(active_name) or {"headers": [], "rows": [], "total": 0}
@@ -5850,6 +5924,48 @@ def _read_local_excel(path: str, sheet: Optional[str] = None, header_row: int = 
             finally:
                 wb.close()
 
+        if suffix == '.xls':
+            import xlrd
+
+            book = xlrd.open_workbook(str(p), on_demand=True)
+            try:
+                if book.nsheets > MAX_EXCEL_SHEETS:
+                    raise ValueError(f"工作表数量超过 {MAX_EXCEL_SHEETS} 个上限")
+                sheet_names = list(book.sheet_names())
+                sheets_to_read = [book.sheet_by_name(sheet)] if sheet else [
+                    book.sheet_by_name(name) for name in sheet_names
+                ]
+                workbook_tables = {}
+                for worksheet in sheets_to_read:
+                    total_rows_seen += int(worksheet.nrows)
+                    if total_rows_seen > MAX_EXCEL_ROWS:
+                        raise ValueError(f"工作簿总行数超过 {MAX_EXCEL_ROWS} 行上限")
+                    if int(worksheet.ncols) > MAX_EXCEL_COLUMNS:
+                        raise ValueError(f"工作表 {worksheet.name} 超过 {MAX_EXCEL_COLUMNS} 列上限")
+                    total_cells_seen += int(worksheet.nrows) * int(worksheet.ncols)
+                    if total_cells_seen > MAX_EXCEL_CELLS:
+                        raise ValueError(f"工作簿总单元格数超过 {MAX_EXCEL_CELLS} 个上限")
+                    rows_raw = [tuple(worksheet.row_values(index)) for index in range(worksheet.nrows)]
+                    workbook_tables[worksheet.name] = _rows_raw_to_table(rows_raw, header_row)
+                if sheet:
+                    table = workbook_tables[sheet]
+                    table["sheet_name"] = sheet
+                    table["sheets"] = {sheet: {
+                        "headers": table["headers"], "rows": table["rows"], "total": table["total"],
+                    }}
+                    return table
+                active_name = sheet_names[0] if sheet_names else "Sheet1"
+                active_table = workbook_tables.get(active_name) or {"headers": [], "rows": [], "total": 0}
+                return {
+                    "headers": active_table["headers"],
+                    "rows": active_table["rows"],
+                    "total": active_table["total"],
+                    "sheet_name": active_name,
+                    "sheets": workbook_tables,
+                }
+            finally:
+                book.release_resources()
+
         if suffix == '.csv':
             import csv
 
@@ -5858,7 +5974,17 @@ def _read_local_excel(path: str, sheet: Optional[str] = None, header_row: int = 
             for encoding in ("utf-8-sig", "gb18030", "gbk"):
                 try:
                     with open(p, newline='', encoding=encoding) as f:
-                        rows_raw = list(csv.reader(f))
+                        rows_raw = []
+                        csv_cells_seen = 0
+                        for index, row in enumerate(csv.reader(f), start=1):
+                            if index > MAX_EXCEL_ROWS:
+                                raise ValueError(f"CSV 超过 {MAX_EXCEL_ROWS} 行上限")
+                            if len(row) > MAX_EXCEL_COLUMNS:
+                                raise ValueError(f"CSV 超过 {MAX_EXCEL_COLUMNS} 列上限")
+                            csv_cells_seen += len(row)
+                            if csv_cells_seen > MAX_EXCEL_CELLS:
+                                raise ValueError(f"CSV 总单元格数超过 {MAX_EXCEL_CELLS} 个上限")
+                            rows_raw.append(row)
                     break
                 except UnicodeDecodeError as exc:
                     last_decode_error = exc
@@ -7421,9 +7547,10 @@ async def lifespan(app: FastAPI):
             _agent = AgentService()
             _agent.bind_callbacks(
                 create_task_instance=lambda adapter_id, task_id, title, params,
-                    source="manual", source_ref="":
+                    source="manual", source_ref="", instance_uid="":
                     data_sink.create_task_instance(adapter_id, task_id, title, params,
-                                                   source=source, source_ref=source_ref),
+                                                   source=source, source_ref=source_ref,
+                                                   instance_uid=instance_uid),
                 get_task_instance=data_sink.get_task_instance_detail,
                 run_task_instance=_agent_run_task_instance,
                 control_task_instance=_agent_control_task_instance,
@@ -7463,7 +7590,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="crawshrimp", version=API_VERSION, lifespan=lifespan)
 app.include_router(agent_api.router)
-# MCP 网关由 AgentService 在独立端口(18768)以 uvicorn 服务
+# MCP 网关由 AgentService 在 API 端口 +200 的独立端口以 uvicorn 服务
 # (MCP SDK 2.0 session manager 需要自身 lifespan,不能挂 FastAPI 子路由)
 app.add_middleware(
     CORSMiddleware,
@@ -7496,11 +7623,17 @@ async def require_local_api_token(request: Request, call_next):
     supplied = str(request.headers.get(API_TOKEN_HEADER) or "").strip()
     is_media_path = str(request.url.path or "").startswith("/agent/artifacts/")
     if not supplied and is_media_path:
-        supplied = str(request.query_params.get("token") or "").strip()
-    if not supplied or not hmac.compare_digest(supplied, expected):
-        # 媒体端点:接受专用媒体 token(master token 不进 URL),或 master token 直连
-        if is_media_path and supplied and _media_token_ok(supplied):
+        signature = str(request.query_params.get("sig") or "").strip()
+        if _signed_media_request_ok(
+            request.method,
+            str(request.url.path or ""),
+            str(request.query_params.get("path") or ""),
+            str(request.query_params.get("entry") or ""),
+            str(request.query_params.get("expires") or ""),
+            signature,
+        ):
             return await call_next(request)
+    if not supplied or not hmac.compare_digest(supplied, expected):
         return _add_local_cors_headers(
             request,
             JSONResponse({"detail": "Unauthorized"}, status_code=401),
@@ -12192,25 +12325,34 @@ def _cleanup_orphan_backends(data_dir: str) -> None:
     import subprocess
     me = os.getpid()
     try:
-        out = subprocess.run(["ps", "eww", "-A"], capture_output=True, text=True, timeout=15).stdout
+        out = subprocess.run(
+            ["ps", "eww", "-axo", "pid=,ppid=,command="], capture_output=True, text=True, timeout=15
+        ).stdout
     except Exception:  # noqa: BLE001
         return
     for line in out.splitlines():
-        if "core.api_server" not in line or "grep" in line.split(" ", 1)[0]:
+        if "core.api_server" not in line:
             continue
         if str(data_dir) not in line:
             continue
-        fields = line.strip().split()
-        if not fields:
+        fields = line.strip().split(maxsplit=2)
+        if len(fields) < 3:
             continue
         try:
             pid = int(fields[0])
+            ppid = int(fields[1])
         except ValueError:
             continue
         if pid == me:
             continue
+        if ppid > 1:
+            try:
+                os.kill(ppid, 0)
+                continue  # 父 Electron 仍存活，是并行实例而非孤儿
+            except OSError:
+                pass
         try:
-            os.kill(pid, 9)
+            os.kill(pid, 15)
             print(f"[api] 启动自清理:终止同数据目录孤儿后端 pid={pid}", flush=True)
         except OSError:
             pass
@@ -12226,4 +12368,12 @@ if __name__ == "__main__":
     )
     _data_dir = os.environ.get("CRAWSHRIMP_DATA", "").strip() or str(_pl.Path.home() / ".crawshrimp")
     _cleanup_orphan_backends(_data_dir)
-    uvicorn.run(app, host="127.0.0.1", port=port, access_log=False)
+    # SSE 是长连接；没有有限 graceful timeout 时，退出会永久等待仍在读取的
+    # /agent/events，导致 backend.lock 不释放并触发 Electron 连续漂移端口。
+    uvicorn.run(
+        app,
+        host="127.0.0.1",
+        port=port,
+        access_log=False,
+        timeout_graceful_shutdown=5,
+    )
