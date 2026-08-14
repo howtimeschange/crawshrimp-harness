@@ -61,8 +61,8 @@ window.__ModuleLoader__.load({
       'svg[viewBox="0 0 182 24"] { display: none !important; }',
       '.hHd-Xa_brand::after {',
       '  content: "🦐 抓虾智能体";',
-      '  font-size: 14px;',
-      '  font-weight: 700;',
+      '  font-size: 17px;',
+      '  font-weight: 750;',
       '  letter-spacing: 0.01em;',
       '  color: var(--dsw-alias-label-primary);',
       '  white-space: nowrap;',
@@ -79,7 +79,7 @@ window.__ModuleLoader__.load({
       // 5) 新会话空状态 hero:去 DeepSeek 鱼 logo 与文案,替换为抓虾
       'svg[viewBox="0 0 23.16 17.04"] { display: none !important; }',
       '.pXSMma_headlineText { font-size: 0 !important; }',
-      '.pXSMma_headlineText::before { content: "🦐 抓虾智能体"; font-size: 22px; font-weight: 700; color: var(--dsw-alias-label-primary); }',
+      '.pXSMma_headlineText::before { content: "🦐 抓虾智能体"; font-size: 24px; font-weight: 750; color: var(--dsw-alias-label-primary); }',
       '.pXSMma_previewBadge { display: none !important; }',
       // 6) 抓虾菜单注入侧边栏(主菜单:新会话下/工作区上;底部菜单:云端审批/设置)
       //    按 DESIGN.md 规范:13.5px 字号、4px 网格间距、完整 hover/active/focus 状态

@@ -10,9 +10,6 @@
   >
     <!-- 标题栏 -->
     <div class="titlebar">
-      <div class="brand">
-        <span class="logo">🦐 抓虾</span>
-      </div>
       <div class="status-bar">
         <span class="dot" :class="status.api ? 'on' : 'off'">
           <i></i>核心
@@ -774,7 +771,6 @@ input, select, textarea { font-family: inherit; }
   min-width: 0;
   -webkit-app-region: no-drag;
 }
-.logo { font-size: 18px; font-weight: 800; color: var(--text); white-space: nowrap; }
 .collapse-btn {
   width: 24px;
   height: 24px;
