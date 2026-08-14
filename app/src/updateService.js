@@ -213,6 +213,44 @@ function createUpdateService({
   }
 }
 
+const GITHUB_RELEASE_API = 'https://api.github.com/repos/howtimeschange/crawshrimp/releases/latest'
+// GitHub 镜像(网络受限环境回退;可按部署替换为 Cloudflare 镜像站)
+const GITHUB_RELEASE_API_MIRROR = String(process.env.CRAWSHRIMP_UPDATE_NOTES_MIRROR || '').trim()
+const GITHUB_RELEASE_PAGE = 'https://github.com/howtimeschange/crawshrimp/releases/latest'
+
+/** 抓取最新 release 的更新日志(GitHub API → 镜像回退)。 */
+async function fetchLatestReleaseNotes() {
+  const attempts = [
+    GITHUB_RELEASE_API,
+    ...(GITHUB_RELEASE_API_MIRROR ? [GITHUB_RELEASE_API_MIRROR] : []),
+  ]
+  let lastError = ''
+  for (const url of attempts) {
+    try {
+      const response = await fetch(url, {
+        headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'crawshrimp-updater' },
+        signal: AbortSignal.timeout(15000),
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const release = await response.json()
+      const name = String(release?.name || release?.tag_name || '')
+      const body = String(release?.body || '')
+      return {
+        ok: true,
+        version: name.replace(/^v(?=\d)/, ''),
+        body,
+        publishedAt: String(release?.published_at || ''),
+        url: String(release?.html_url || GITHUB_RELEASE_PAGE),
+      }
+    } catch (error) {
+      lastError = String(error?.message || error)
+    }
+  }
+  return { ok: false, error: lastError, url: GITHUB_RELEASE_PAGE }
+}
+
+module.exports = { createUpdateService, fetchLatestReleaseNotes, GITHUB_RELEASE_PAGE }
+
 function configureUpdater(autoUpdater, updateFeedUrl, log) {
   if (!autoUpdater) throw new Error('autoUpdater is required')
   autoUpdater.autoDownload = false
@@ -281,4 +319,3 @@ function formatBytes(value) {
   return `${Math.round(amount * 10) / 10} ${units[index]}`
 }
 
-module.exports = { createUpdateService }

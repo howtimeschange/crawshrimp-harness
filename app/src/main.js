@@ -39,7 +39,7 @@ const {
 } = require('./agentBrowser')
 const { requestBackendHealth } = require('./backendHealth')
 const { configureSingleInstance } = require('./singleInstance')
-const { createUpdateService } = require('./updateService')
+const { createUpdateService, fetchLatestReleaseNotes } = require('./updateService')
 const { createUpdateInstallCoordinator } = require('./updateInstallCoordinator')
 const { createUpdateCheckScheduler } = require('./updateCheckScheduler')
 const { evaluateUpdatePlatform, resolveUpdateFeedUrl } = require('./updatePlatform')
@@ -2706,6 +2706,7 @@ secureHandle('update:download', async () => {
   return updateService.getStatus()
 })
 secureHandle('update:install', async () => updateCoordinator.requestInstall())
+secureHandle('update:fetch-release-notes', async () => fetchLatestReleaseNotes())
 
 secureHandle('launch-chrome', async (_, customPath) => launchChrome(customPath || ''))
 secureHandle('check-chrome', async () => ({ ok: (await probeChromeCdp()).ok }))

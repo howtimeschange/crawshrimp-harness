@@ -193,6 +193,14 @@
         @open-task-instance="openTaskInstanceFromAgent"
       />
     </main>
+    <!-- 更新日志弹窗:更新前查看版本内容并确认「去更新」 -->
+    <UpdateChangelogModal
+      :open="changelogOpen"
+      :version="titlebarUpdate.latestVersion"
+      :busy="updateActionBusy"
+      @close="changelogOpen = false"
+      @update="onChangelogUpdate"
+    />
   </div>
 </template>
 
@@ -212,6 +220,7 @@ import CloudApprovalFrame from './views/CloudApprovalFrame.vue'
 import AgentWebView from './views/AgentWebView.vue'
 import AgentScriptReview from './views/AgentScriptReview.vue'
 import AgentProductLayer from './components/agent/AgentProductLayer.vue'
+import UpdateChangelogModal from './components/UpdateChangelogModal.vue'
 import SidebarUpdateFooter from './components/SidebarUpdateFooter.vue'
 import { buildScriptGroups } from './utils/scriptGroups'
 import { buildTaskOverviewProgress, isTaskLiveActive, resolveTaskProgressConfig } from './utils/taskProgress'
@@ -509,9 +518,20 @@ const titlebarUpdate = computed(() => {
 function onTitlebarUpdateAction() {
   if (updateActionBusy.value) return
   const action = titlebarUpdate.value.action
-  if (action === 'download') downloadUpdate()
-  else if (action === 'install') installUpdate()
+  if (action === 'download') {
+    // 更新前先展示更新日志,由用户确认「去更新」
+    changelogOpen.value = true
+    return
+  }
+  if (action === 'install') installUpdate()
   else if (action === 'retry') retryUpdateCheck()
+}
+
+const changelogOpen = ref(false)
+
+async function onChangelogUpdate() {
+  changelogOpen.value = false
+  await downloadUpdate()
 }
 
 async function retryUpdateCheck() {
@@ -710,6 +730,16 @@ input, select, textarea { font-family: inherit; }
   background: var(--bg);
   border-left: 1px solid var(--border);
   min-width: 0;
+  animation: embed-in 140ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes embed-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .embed-overlay { animation: none; }
 }
 
 .embed-overlay-body {

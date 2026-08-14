@@ -141,6 +141,21 @@ window.__ModuleLoader__.load({
     }
 
     function renderGroup(host, items, activeId, collapsible) {
+      const visibleCount = collapsible && host.dataset.expanded !== '1'
+        ? Math.min(items.length, MAIN_VISIBLE_DEFAULT)
+        : items.length
+      const signature = items.slice(0, visibleCount).map((i) => i.id).join(',') + '|' + (collapsible ? host.dataset.expanded || '0' : '')
+      // 增量更新:菜单集合未变时仅切换 active 类,避免重建+入场动画造成的闪烁
+      if (host.dataset.signature === signature) {
+        const buttons = [...host.querySelectorAll(':scope > .cs-nav-item:not(.cs-nav-toggle)')]
+        buttons.forEach((btn, index) => {
+          const item = items[index]
+          if (!item) return
+          btn.classList.toggle('cs-nav-active', item.id === activeId)
+        })
+        return
+      }
+      host.dataset.signature = signature
       host.replaceChildren()
       const expanded = host.dataset.expanded === '1'
       const visible = collapsible && !expanded ? items.slice(0, MAIN_VISIBLE_DEFAULT) : items
@@ -161,6 +176,7 @@ window.__ModuleLoader__.load({
         toggle.appendChild(label)
         toggle.addEventListener('click', () => {
           host.dataset.expanded = expanded ? '0' : '1'
+          host.dataset.signature = ''
           renderGroup(host, items, activeId, collapsible)
         })
         host.appendChild(toggle)
