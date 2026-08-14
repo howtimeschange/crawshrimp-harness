@@ -41,7 +41,7 @@ const props = defineProps({
   activeNav: { type: String, default: '' },     // 当前激活菜单 id
 })
 
-const emit = defineEmits(['nav-select', 'rail-metrics'])
+const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav'])
 
 const webUrl = ref('')
 const error = ref('')
@@ -121,12 +121,13 @@ function pushNav() {
   }, '*')
 }
 
-// iframe 内菜单点击 / 侧边栏宽度变化 → shell
+// iframe 内菜单点击 / 侧边栏宽度变化 / 会话导航 → shell
 function onWindowMessage(event) {
   const data = event?.data
   if (!data || !data.__crawshrimp) return
   if (data.__crawshrimp === 'nav-click') emit('nav-select', data.id)
   else if (data.__crawshrimp === 'rail-metrics') emit('rail-metrics', { width: data.width, collapsed: data.collapsed })
+  else if (data.__crawshrimp === 'session-nav') emit('session-nav', data.kind || 'session')
 }
 
 onMounted(() => {

@@ -231,6 +231,19 @@ window.__ModuleLoader__.load({
         if (data && data.__crawshrimp === 'theme') adopt(data.theme)
         if (data && data.__crawshrimp === 'nav') renderNav(data.items, data.active)
       })
+      // 会话导航:点击「新会话」或会话列表项 → shell 切回会话主界面
+      document.addEventListener('click', (event) => {
+        const target = event.target
+        if (!target || !(target instanceof Element)) return
+        if (target.closest('.hHd-Xa_newSession')) {
+          window.parent.postMessage({ __crawshrimp: 'session-nav', kind: 'new' }, '*')
+          return
+        }
+        const region = target.closest('.hHd-Xa_regionArea')
+        if (region && !target.closest('.qDHVXG_sectionHeader')) {
+          window.parent.postMessage({ __crawshrimp: 'session-nav', kind: 'session' }, '*')
+        }
+      })
       // 侧边栏重渲染后兜底重插 + 宽度变化推送
       const observer = new MutationObserver(() => {
         const rail = document.querySelector('.hHd-Xa_root')

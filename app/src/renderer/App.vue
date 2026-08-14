@@ -90,6 +90,7 @@
           :active-nav="currentView"
           @nav-select="onAgentNavSelect"
           @rail-metrics="onRailMetrics"
+          @session-nav="onSessionNav"
         />
       </div>
       <!-- 覆盖层:其他菜单视图(左偏移让出智能体会话侧边栏) -->
@@ -307,6 +308,12 @@ function shouldClearActiveScriptForNav(item) {
 // 智能体会话侧边栏内菜单点击 → 切换内容区(左侧栏不动)
 function onAgentNavSelect(navId) {
   const item = navItems.find((it) => it.id === navId)
+  if (item) selectNav(item)
+}
+
+// 侧边栏点「新会话」/会话项 → 跳回智能体会话主界面
+function onSessionNav() {
+  const item = navItems.find((it) => it.id === 'agent')
   if (item) selectNav(item)
 }
 
