@@ -28,7 +28,7 @@
           @click="browserOpen = !browserOpen"
         >🖥️</button>
       </div>
-      <AgentBrowserPanel v-if="browserOpen" @collapse="browserOpen = false" />
+      <AgentBrowserPanel v-if="browserOpen" :minimize-signal="browserMinimizeCount" @collapse="browserOpen = false" />
     </div>
   </div>
 </template>
@@ -50,6 +50,7 @@ const webUrl = ref('')
 const error = ref('')
 const loading = ref(true)
 const browserOpen = ref(false)
+const browserMinimizeCount = ref(0)
 const recoverAttempts = ref(0)
 const workspaceRoot = ref('')
 const frameEl = ref(null)
@@ -168,6 +169,8 @@ function onWindowMessage(event) {
   if (!data || !data.__crawshrimp) return
   if (data.__crawshrimp === 'nav-click') {
     if (Number(data.railWidth) > 0) emit('rail-metrics', { width: data.railWidth, collapsed: false })
+    // 菜单切换时最小化实时浏览器窗口,避免浮动窗口盖住界面拦截点击
+    if (browserOpen.value) browserMinimizeCount.value += 1
     emit('nav-select', data.id)
   } else if (data.__crawshrimp === 'rail-metrics') {
     emit('rail-metrics', { width: data.width, collapsed: data.collapsed })

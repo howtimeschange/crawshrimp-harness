@@ -83,7 +83,12 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+
+const props = defineProps({
+  // 菜单切换等场景由父级递增 → 自动最小化,避免浮动窗口盖住界面
+  minimizeSignal: { type: Number, default: 0 },
+})
 
 const emit = defineEmits(['collapse'])
 
@@ -93,6 +98,14 @@ const statusState = ref('connecting') // connecting | connected | error | discon
 const statusMessage = ref('')
 const minimized = ref(false)
 const maximized = ref(false)
+
+watch(() => props.minimizeSignal, (count) => {
+  if (Number(count) > 0 && !minimized.value) {
+    maximized.value = false
+    minimized.value = true
+    savePrefs()
+  }
+})
 
 const MIN_W = 360
 const MIN_H = 260
