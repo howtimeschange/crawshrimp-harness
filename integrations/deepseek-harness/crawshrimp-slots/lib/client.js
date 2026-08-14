@@ -76,7 +76,12 @@ window.__ModuleLoader__.load({
       '.Md3f7G_turnStatus { font-size: 0 !important; }',
       '.Md3f7G_turnStatus::before { content: "抓虾中..."; font-size: 12px; }',
       '.Md3f7G_turnStatus .Md3f7G_turnStatusClock { font-size: 12px; }',
-      // 5) 选中/强调色随抓虾橙
+      // 5) 新会话空状态 hero:去 DeepSeek 鱼 logo 与文案,替换为抓虾
+      'svg[viewBox="0 0 23.16 17.04"] { display: none !important; }',
+      '.pXSMma_headlineText { font-size: 0 !important; }',
+      '.pXSMma_headlineText::before { content: "🦐 抓虾智能体"; font-size: 22px; font-weight: 700; color: var(--dsw-alias-label-primary); }',
+      '.pXSMma_previewBadge { display: none !important; }',
+      // 6) 选中/强调色随抓虾橙
       '::selection { background: rgba(255, 107, 43, 0.25); }',
     ].join('\n')
 

@@ -34,9 +34,9 @@
 
     <!-- 侧边栏 -->
     <aside class="sidebar">
-      <!-- 智能体会话栏:常驻侧边栏顶部(DSH Web 视图自带会话侧边栏时隐藏) -->
+      <!-- 智能体会话栏:常驻侧边栏顶部(智能体会话界面自带会话侧边栏时隐藏) -->
       <AgentSessionBar
-        v-if="!activeScript && !(currentView === 'agent' && agentViewMode === 'web')"
+        v-if="!activeScript && currentView !== 'agent'"
         :collapsed="effectiveSidebarCollapsed"
         @select-session="onAgentSessionSelected"
       />
@@ -170,34 +170,11 @@
       <DataFiles v-if="currentView === 'files'" />
       <!-- 云端审批 -->
       <CloudApprovalFrame v-if="currentView === 'cloud_approval'" />
-      <!-- 智能体界面:DSH Web 视图(体验一致)/ 抓虾原生会话视图 -->
-      <div v-if="currentView === 'agent'" class="agent-view-wrap">
-        <div class="agent-view-switch">
-          <span class="agent-view-switch-label">会话视图</span>
-          <button
-            type="button"
-            :class="['agent-view-switch-btn', { active: agentViewMode === 'web' }]"
-            @click="setAgentViewMode('web')"
-          >智能体会话(推荐)</button>
-          <button
-            type="button"
-            :class="['agent-view-switch-btn', { active: agentViewMode === 'native' }]"
-            @click="setAgentViewMode('native')"
-          >经典视图</button>
-        </div>
-        <div class="agent-view-body">
-          <AgentWebView
-            v-if="agentViewMode === 'web'"
-            :theme="effectiveTheme"
-          />
-          <AgentHome
-            v-else
-            :session-id="agentSessionId"
-            @open-settings="openSettingsPanel"
-            @open-task-instance="openTaskInstanceFromAgent"
-          />
-        </div>
-      </div>
+      <!-- 智能体界面:智能体会话(抓虾主题的完整会话体验) -->
+      <AgentWebView
+        v-if="currentView === 'agent'"
+        :theme="effectiveTheme"
+      />
       <!-- 脚本审核(双闸门第二闸门) -->
       <AgentScriptReview v-if="currentView === 'agent_script_review'" />
       <!-- 全局产品事件浮层(审批/任务/产物卡,DSH Web 视图下由 shell 渲染) -->
@@ -235,7 +212,6 @@ import LocalPromptLibrary from './views/LocalPromptLibrary.vue'
 import DataFiles   from './views/DataFiles.vue'
 import SettingsPage from './views/SettingsPage.vue'
 import CloudApprovalFrame from './views/CloudApprovalFrame.vue'
-import AgentHome from './views/AgentHome.vue'
 import AgentWebView from './views/AgentWebView.vue'
 import AgentScriptReview from './views/AgentScriptReview.vue'
 import AgentSessionBar from './components/agent/AgentSessionBar.vue'
@@ -349,22 +325,6 @@ function shouldClearActiveScriptForNav(item) {
 }
 
 const agentSessionId = ref('')
-const AGENT_VIEW_MODE_KEY = 'crawshrimp.agent.viewMode'
-const agentViewMode = ref(readAgentViewMode(window.localStorage))
-
-function readAgentViewMode(storage) {
-  const value = String(storage?.getItem?.(AGENT_VIEW_MODE_KEY) || '').trim()
-  return value === 'native' ? 'native' : 'web'
-}
-
-function setAgentViewMode(mode) {
-  agentViewMode.value = mode === 'native' ? 'native' : 'web'
-  try { window.localStorage.setItem(AGENT_VIEW_MODE_KEY, agentViewMode.value) } catch {}
-  // 切回原生视图时同步会话栏选中态
-  if (agentViewMode.value === 'native' && currentView.value === 'agent' && !agentSessionId.value) {
-    window.dispatchEvent(new CustomEvent('agent:ensure-session'))
-  }
-}
 
 function onAgentSessionSelected(sessionId) {
   agentSessionId.value = sessionId || ''
@@ -694,52 +654,6 @@ input, select, textarea { font-family: inherit; }
   grid-template-columns: 168px 1fr;
   grid-template-rows: 40px 1fr;
   height: 100vh;
-}
-
-.agent-view-wrap {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
-.agent-view-body {
-  flex: 1;
-  min-height: 0;
-}
-
-.agent-view-switch {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg2);
-}
-
-.agent-view-switch-label {
-  font-size: 12px;
-  color: var(--text3);
-  margin-right: 2px;
-}
-
-.agent-view-switch-btn {
-  border: 1px solid var(--border);
-  background: var(--bg3);
-  color: var(--text2);
-  font-size: 12px;
-  padding: 4px 12px;
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.agent-view-switch-btn:hover { color: var(--text); background: var(--soft-fill-hover); }
-
-.agent-view-switch-btn.active {
-  background: var(--orange-bg);
-  border-color: var(--orange);
-  color: var(--orange-text);
-  font-weight: 600;
 }
 
 .layout.sidebar-collapsed {

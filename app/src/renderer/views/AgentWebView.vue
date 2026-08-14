@@ -1,21 +1,5 @@
 <template>
   <div class="agent-web-view">
-    <!-- 顶部工具条(抓虾 chrome) -->
-    <div class="web-toolbar">
-      <span class="web-toolbar-title">🤖 DSH 智能体</span>
-      <span class="web-toolbar-status" :class="statusClass">
-        <i></i>{{ statusLabel }}
-      </span>
-      <span v-if="webUrl" class="web-toolbar-url" :title="webUrl">{{ webUrl }}</span>
-      <div class="web-toolbar-actions">
-        <button v-if="browserSupported" class="toolbar-btn" type="button" :title="browserOpen ? '收起实时浏览器' : '展开实时浏览器(9222 CDP)'" @click="browserOpen = !browserOpen">
-          {{ browserOpen ? '🖥️' : '🖥️' }}
-        </button>
-        <button class="toolbar-btn" type="button" title="刷新" @click="reload">↻</button>
-        <button class="toolbar-btn" type="button" title="在浏览器打开" @click="openExternal">↗</button>
-      </div>
-    </div>
-
     <!-- 主体:iframe(DSH Web UI) + 可展开浏览器面板 -->
     <div class="web-body">
       <div class="web-frame-wrap">
@@ -24,16 +8,23 @@
           ref="frameEl"
           class="web-frame"
           :src="frameSrc"
-          :title="'DSH 智能体'"
+          :title="'抓虾智能体'"
           allow="clipboard-read; clipboard-write; fullscreen"
           @load="onFrameLoad"
         />
         <div v-else class="web-placeholder">
           <div class="placeholder-icon">{{ error ? '⚠️' : '🕐' }}</div>
-          <div class="placeholder-title">{{ error ? 'DSH 运行时不可用' : '正在启动 DSH 智能体运行时…' }}</div>
-          <div class="placeholder-text">{{ error || '首个会话启动后,DSH Web 界面会在这里加载(与抓虾同主题)。' }}</div>
+          <div class="placeholder-title">{{ error ? 'DSH 运行时不可用' : '正在启动智能体运行时…' }}</div>
+          <div class="placeholder-text">{{ error || '首次会话启动后,智能体会话界面会在这里加载(与抓虾同主题)。' }}</div>
           <button class="placeholder-btn" type="button" @click="retryLoad">重试</button>
         </div>
+        <!-- 实时浏览器面板悬浮开关 -->
+        <button
+          class="browser-toggle"
+          type="button"
+          :title="browserOpen ? '收起实时浏览器' : '展开实时浏览器(9222 CDP)'"
+          @click="browserOpen = !browserOpen"
+        >🖥️</button>
       </div>
       <AgentBrowserPanel v-if="browserOpen" class="web-browser-panel" @collapse="browserOpen = false" />
     </div>
@@ -52,19 +43,15 @@ const webUrl = ref('')
 const error = ref('')
 const loading = ref(true)
 const browserOpen = ref(false)
-const browserSupported = ref(true)
 const frameEl = ref(null)
-const refreshKey = ref(0)
 let pollTimer = null
 let warmStarted = false
 
-const statusClass = computed(() => (error.value ? 'error' : loading.value ? 'loading' : 'ready'))
-const statusLabel = computed(() => (error.value ? '不可用' : loading.value ? '启动中' : '就绪'))
 const frameSrc = computed(() => {
   if (!webUrl.value) return ''
   const url = new URL(webUrl.value, window.location.href)
   if (props.theme === 'light' || props.theme === 'dark') url.searchParams.set('theme', props.theme)
-  return `${url.href}${refreshKey.value ? `#r=${refreshKey.value}` : ''}`
+  return url.href
 })
 
 async function loadRuntime() {
@@ -110,14 +97,6 @@ function retryLoad() {
   loadRuntime()
 }
 
-function reload() {
-  refreshKey.value += 1
-}
-
-function openExternal() {
-  if (webUrl.value) window.open(webUrl.value, '_blank', 'noopener')
-}
-
 function onFrameLoad() {
   // 主题同步:iframe 加载后按当前主题再推一次
   pushTheme()
@@ -153,54 +132,6 @@ watch(() => props.theme, (t) => {
   background: var(--bg);
 }
 
-.web-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg2);
-  flex: none;
-}
-
-.web-toolbar-title { font-size: 13px; font-weight: 600; color: var(--text); }
-
-.web-toolbar-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text2);
-}
-.web-toolbar-status i { width: 8px; height: 8px; border-radius: 50%; background: var(--text3); }
-.web-toolbar-status.ready i { background: var(--green); }
-.web-toolbar-status.loading i { background: var(--yellow); animation: pulse 1.2s infinite; }
-.web-toolbar-status.error i { background: var(--red); }
-
-.web-toolbar-url {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--text3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.web-toolbar-actions { display: flex; gap: 6px; }
-.toolbar-btn {
-  border: 1px solid var(--border);
-  background: var(--bg3);
-  color: var(--text);
-  width: 28px;
-  height: 26px;
-  border-radius: 7px;
-  cursor: pointer;
-  font-size: 13px;
-  line-height: 1;
-}
-.toolbar-btn:hover { background: var(--soft-fill-hover); }
-
 .web-body {
   flex: 1;
   min-height: 0;
@@ -213,6 +144,23 @@ watch(() => props.theme, (t) => {
   position: relative;
   background: var(--bg);
 }
+
+.browser-toggle {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 10;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.75;
+}
+.browser-toggle:hover { opacity: 1; background: var(--soft-fill-hover); }
 
 .web-frame {
   position: absolute;
@@ -252,9 +200,4 @@ watch(() => props.theme, (t) => {
   cursor: pointer;
 }
 .placeholder-btn:hover { background: var(--soft-fill-hover); }
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
 </style>

@@ -435,6 +435,10 @@ class AgentService:
         # Web host 端口取 MCP 端口 + 100(API+300),避开 main.js 端口回退区间。
         self.web_port = getattr(self, "web_port", 0) or (self.mcp_port + 100)
         os.environ["CRAWSHRIMP_WEB_PORT"] = str(self.web_port)
+        # DSH Web UI「工作区」默认指向抓虾运行时目录(data/agent/workspace)
+        workspace_root = _data_root() / "agent" / "workspace"
+        workspace_root.mkdir(parents=True, exist_ok=True)
+        os.environ["CRAWSHRIMP_WORKSPACE_ROOT"] = str(workspace_root)
         base = (cfg.get("ai") or {}).get("llm") or {}
         for env_key, cfg_key, default in (
             ("CRAWSHRIMP_OVERSEAS_OPENAI_BASE_URL", "overseas_openai_base_url", None),
