@@ -37,11 +37,11 @@ import AgentBrowserPanel from '../components/agent/AgentBrowserPanel.vue'
 
 const props = defineProps({
   theme: { type: String, default: '' },        // effectiveTheme(light|dark)
-  navItems: { type: Array, default: () => [] }, // 抓虾一级菜单(并入 DSH 侧边栏底部)
+  navItems: { type: Array, default: () => [] }, // 抓虾一级菜单(注入会话侧边栏底部)
   activeNav: { type: String, default: '' },     // 当前激活菜单 id
 })
 
-const emit = defineEmits(['nav-select'])
+const emit = defineEmits(['nav-select', 'rail-metrics'])
 
 const webUrl = ref('')
 const error = ref('')
@@ -102,7 +102,7 @@ function retryLoad() {
 }
 
 function onFrameLoad() {
-  // iframe 加载后同步主题与抓虾菜单
+  // iframe 加载后同步主题与菜单
   pushTheme()
   pushNav()
 }
@@ -121,11 +121,12 @@ function pushNav() {
   }, '*')
 }
 
-// iframe 内抓虾菜单点击 → 切换 shell 视图
+// iframe 内菜单点击 / 侧边栏宽度变化 → shell
 function onWindowMessage(event) {
   const data = event?.data
-  if (!data || data.__crawshrimp !== 'nav-click') return
-  emit('nav-select', data.id)
+  if (!data || !data.__crawshrimp) return
+  if (data.__crawshrimp === 'nav-click') emit('nav-select', data.id)
+  else if (data.__crawshrimp === 'rail-metrics') emit('rail-metrics', { width: data.width, collapsed: data.collapsed })
 }
 
 onMounted(() => {
@@ -152,9 +153,10 @@ watch(() => [props.navItems, props.activeNav], () => {
 
 <style scoped>
 .agent-web-view {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  height: 100%;
   min-width: 0;
   background: var(--bg);
 }

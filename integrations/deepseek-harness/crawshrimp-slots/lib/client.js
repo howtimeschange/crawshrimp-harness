@@ -81,7 +81,7 @@ window.__ModuleLoader__.load({
       '.pXSMma_headlineText { font-size: 0 !important; }',
       '.pXSMma_headlineText::before { content: "🦐 抓虾智能体"; font-size: 22px; font-weight: 700; color: var(--dsw-alias-label-primary); }',
       '.pXSMma_previewBadge { display: none !important; }',
-      // 6) 抓虾菜单注入侧边栏底部(单一侧边栏:shell 菜单并入这里)
+      // 6) 抓虾菜单注入侧边栏底部(主菜单:会话下方)
       '[data-crawshrimp-nav] { border-top: 1px solid var(--dsw-alias-border-l2); padding: 8px 4px; margin: 4px 2px 0; display: flex; flex-direction: column; gap: 2px; }',
       '.cs-nav-item { display: flex; align-items: center; gap: 8px; width: 100%; border: none; background: transparent; color: var(--dsw-alias-label-secondary); padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; text-align: left; font-family: inherit; }',
       '.cs-nav-item:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }',
@@ -104,7 +104,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    // ---- 抓虾菜单注入 DSH 侧边栏底部(单一侧边栏) ----
+    // ---- 抓虾菜单注入 DSH 侧边栏底部(会话下方的主菜单) ----
     function renderNav(items, activeId) {
       const rail = document.querySelector('.hHd-Xa_root')
       if (!rail) return
@@ -135,6 +135,15 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // ---- 侧边栏宽度/折叠状态推送(shell 内容区覆盖层偏移用) ----
+    function pushRailMetrics() {
+      const rail = document.querySelector('.hHd-Xa_root')
+      if (!rail) return
+      const width = rail.getBoundingClientRect().width
+      const collapsed = rail.classList.contains('hHd-Xa_collapsed')
+      window.parent.postMessage({ __crawshrimp: 'rail-metrics', width, collapsed }, '*')
+    }
+
     function apply(ctx) {
       ctx.theme.overrideTokens('crawshrimp', CRAWSHRIMP_TOKENS)
       injectBrandCss()
@@ -163,14 +172,18 @@ window.__ModuleLoader__.load({
         if (data && data.__crawshrimp === 'theme') adopt(data.theme)
         if (data && data.__crawshrimp === 'nav') renderNav(data.items, data.active)
       })
-      // 侧边栏重渲染后兜底重插(React 可能移除未识别节点)
-      new MutationObserver(() => {
+      // 侧边栏重渲染后兜底重插 + 宽度变化推送
+      const observer = new MutationObserver(() => {
         const rail = document.querySelector('.hHd-Xa_root')
         const host = document.querySelector('[data-crawshrimp-nav]')
         if (rail && host && !rail.contains(host)) {
           rail.appendChild(host)
         }
-      }).observe(document.documentElement, { childList: true, subtree: true })
+        pushRailMetrics()
+      })
+      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] })
+      setTimeout(pushRailMetrics, 0)
+      setTimeout(pushRailMetrics, 800)
     }
 
     exports.apply = apply

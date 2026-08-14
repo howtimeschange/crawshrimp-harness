@@ -4,7 +4,7 @@
     :class="{
       'layout-ai-image': currentView === 'ai_image' || currentView === 'ai_video' || currentView === 'ai_video_generation',
       'sidebar-collapsed': effectiveSidebarCollapsed,
-      'no-sidebar': !activeScript && currentView === 'agent',
+      'has-script-sidebar': activeScript,
       'titlebar-macos': isMacTitlebar,
     }"
   >
@@ -12,16 +12,6 @@
     <div class="titlebar">
       <div class="brand">
         <span class="logo">🦐 抓虾</span>
-        <button
-          v-if="activeScript || currentView !== 'agent'"
-          class="collapse-btn"
-          type="button"
-          :aria-label="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
-          :title="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
-          @click="toggleSidebar"
-        >
-          {{ sidebarCollapsed ? '›' : '‹' }}
-        </button>
       </div>
       <div class="status-bar">
         <span class="dot" :class="status.api ? 'on' : 'off'">
@@ -33,25 +23,9 @@
       </div>
     </div>
 
-    <!-- 侧边栏:智能体视图下由会话界面侧边栏承载菜单;其余视图由 shell 显示同一套菜单
-         (任一时刻只有一个菜单栏) -->
-    <aside v-if="activeScript || currentView !== 'agent'" class="sidebar">
-      <!-- 一级菜单(与智能体会话侧边栏底部注入的菜单同源) -->
-      <nav v-if="!activeScript">
-        <button
-          v-for="item in filteredNavItems" :key="item.id"
-          :class="['nav-btn', { active: currentView === item.id }]"
-          :aria-label="item.label"
-          :data-tooltip="effectiveSidebarCollapsed ? item.label : null"
-          :title="effectiveSidebarCollapsed ? undefined : item.label"
-          @click="selectNav(item)"
-        >
-          <span class="icon">{{ item.icon }}</span>
-          <span>{{ item.label }}</span>
-        </button>
-      </nav>
-      <!-- 二级菜单:进入脚本后 -->
-      <div v-else class="sub-nav">
+    <!-- 侧边栏:仅脚本详情显示二级菜单(主菜单在智能体会话侧边栏内) -->
+    <aside v-if="activeScript" class="sidebar">
+      <div class="sub-nav">
         <button class="back-btn" @click="exitScript">
           ← 我的脚本
         </button>
@@ -107,91 +81,95 @@
       />
     </aside>
 
-    <!-- 主内容区:智能体会话常驻(v-show 保活),其余视图为统一内容区 -->
+    <!-- 主内容区:智能体会话常驻全幅(含侧边栏与菜单),其他视图以覆盖层嵌入右侧 -->
     <main class="content">
-      <!-- 智能体会话:常驻容器,菜单并入其侧边栏底部 -->
-      <div v-show="currentView === 'agent'" class="agent-persist">
-        <AgentWebView
-          :theme="effectiveTheme"
-          :nav-items="filteredNavItems"
-          :active-nav="currentView"
-          @nav-select="onAgentNavSelect"
-        />
+      <AgentWebView
+        :theme="effectiveTheme"
+        :nav-items="filteredNavItems"
+        :active-nav="currentView"
+        @nav-select="onAgentNavSelect"
+        @rail-metrics="onRailMetrics"
+      />
+      <!-- 覆盖层:其他菜单视图(左偏移让出智能体会话侧边栏) -->
+      <div
+        v-if="currentView !== 'agent'"
+        class="embed-overlay"
+        :style="{ left: `${embedLeft}px` }"
+      >
+        <div class="embed-overlay-body">
+          <!-- 我的脚本：脚本列表 -->
+          <ScriptList
+            v-if="currentView === 'scripts' && !activeScript"
+            @open-script="openScript"
+            @reload="loadScriptGroups"
+          />
+          <!-- 脚本任务执行页 -->
+          <TaskRunner
+            :key="`${activeScript?.adapter_id || ''}:${activeTaskId || ''}:${taskRunnerHandoffKey}`"
+            v-else-if="activeScript && activeTaskId"
+            :adapter-id="activeScript.adapter_id"
+            :task="activeScript.tasks.find(t => t.task_id === activeTaskId)"
+            :initial-params="taskRunnerHandoffParams"
+            @status-change="onTaskStatusChange"
+            @open-task="openTaskFromRunner"
+          />
+          <!-- 任务中心 -->
+          <TaskCenter
+            v-else-if="currentView === 'task_center' && !activeInstanceUid"
+            @open-instance="openTaskInstance"
+          />
+          <TaskInstanceRunner
+            v-else-if="currentView === 'task_center' && activeInstanceUid"
+            :instance-uid="activeInstanceUid"
+            @back="activeInstanceUid = ''"
+          />
+          <!-- AI 生图 -->
+          <KeepAlive>
+            <AiImageWorkbench
+              v-if="currentView === 'ai_image'"
+              @open-settings="openSettingsPanel('ai-1xm')"
+            />
+          </KeepAlive>
+          <!-- AI 生视频 -->
+          <KeepAlive>
+            <AiVideoGenerationWorkbench
+              v-if="currentView === 'ai_video_generation'"
+              @open-settings="openSettingsPanel('ai-video')"
+            />
+          </KeepAlive>
+          <!-- AI 视频工作流 -->
+          <KeepAlive>
+            <AiVideoWorkflow
+              v-if="currentView === 'ai_video'"
+              @open-settings="openSettingsPanel"
+            />
+          </KeepAlive>
+          <!-- 提示词库 -->
+          <LocalPromptLibrary
+            v-if="currentView === 'local_prompt_library'"
+            @open-cloud-approval="currentView = 'cloud_approval'"
+          />
+          <!-- 数据文件 -->
+          <DataFiles v-if="currentView === 'files'" />
+          <!-- 云端审批 -->
+          <CloudApprovalFrame v-if="currentView === 'cloud_approval'" />
+          <!-- 脚本审核(双闸门第二闸门) -->
+          <AgentScriptReview v-if="currentView === 'agent_script_review'" />
+          <!-- 设置 -->
+          <SettingsPage
+            v-if="currentView === 'settings'"
+            :status="status"
+            :focus-panel-id="focusSettingsPanelId"
+            :update-status="updateStatus"
+            :update-action-busy="updateActionBusy"
+            :theme-preference="themePreference"
+            :effective-theme="effectiveTheme"
+            @runtime-refresh="refreshRuntimeStatus"
+            @check-update="retryUpdateCheck"
+            @theme-change="setThemePreference"
+          />
+        </div>
       </div>
-      <!-- 统一内容区:其他菜单视图 -->
-      <template v-if="currentView !== 'agent'">
-        <!-- 我的脚本：脚本列表 -->
-        <ScriptList
-          v-if="currentView === 'scripts' && !activeScript"
-          @open-script="openScript"
-          @reload="loadScriptGroups"
-        />
-        <!-- 脚本任务执行页 -->
-        <TaskRunner
-          :key="`${activeScript?.adapter_id || ''}:${activeTaskId || ''}:${taskRunnerHandoffKey}`"
-          v-else-if="activeScript && activeTaskId"
-          :adapter-id="activeScript.adapter_id"
-          :task="activeScript.tasks.find(t => t.task_id === activeTaskId)"
-          :initial-params="taskRunnerHandoffParams"
-          @status-change="onTaskStatusChange"
-          @open-task="openTaskFromRunner"
-        />
-        <!-- 任务中心 -->
-        <TaskCenter
-          v-else-if="currentView === 'task_center' && !activeInstanceUid"
-          @open-instance="openTaskInstance"
-        />
-        <TaskInstanceRunner
-          v-else-if="currentView === 'task_center' && activeInstanceUid"
-          :instance-uid="activeInstanceUid"
-          @back="activeInstanceUid = ''"
-        />
-        <!-- AI 生图 -->
-        <KeepAlive>
-          <AiImageWorkbench
-            v-if="currentView === 'ai_image'"
-            @open-settings="openSettingsPanel('ai-1xm')"
-          />
-        </KeepAlive>
-        <!-- AI 生视频 -->
-        <KeepAlive>
-          <AiVideoGenerationWorkbench
-            v-if="currentView === 'ai_video_generation'"
-            @open-settings="openSettingsPanel('ai-video')"
-          />
-        </KeepAlive>
-        <!-- AI 视频工作流 -->
-        <KeepAlive>
-          <AiVideoWorkflow
-            v-if="currentView === 'ai_video'"
-            @open-settings="openSettingsPanel"
-          />
-        </KeepAlive>
-        <!-- 提示词库 -->
-        <LocalPromptLibrary
-          v-if="currentView === 'local_prompt_library'"
-          @open-cloud-approval="currentView = 'cloud_approval'"
-        />
-        <!-- 数据文件 -->
-        <DataFiles v-if="currentView === 'files'" />
-        <!-- 云端审批 -->
-        <CloudApprovalFrame v-if="currentView === 'cloud_approval'" />
-        <!-- 脚本审核(双闸门第二闸门) -->
-        <AgentScriptReview v-if="currentView === 'agent_script_review'" />
-        <!-- 设置 -->
-        <SettingsPage
-          v-if="currentView === 'settings'"
-          :status="status"
-          :focus-panel-id="focusSettingsPanelId"
-          :update-status="updateStatus"
-          :update-action-busy="updateActionBusy"
-          :theme-preference="themePreference"
-          :effective-theme="effectiveTheme"
-          @runtime-refresh="refreshRuntimeStatus"
-          @check-update="retryUpdateCheck"
-          @theme-change="setThemePreference"
-        />
-      </template>
       <!-- 全局产品事件浮层(审批/任务/产物卡,由 shell 渲染) -->
       <AgentProductLayer
         @open-task-instance="openTaskInstanceFromAgent"
@@ -229,7 +207,7 @@ import {
   writeThemePreference,
 } from './utils/theme.mjs'
 
-const currentView = ref('scripts')
+const currentView = ref('agent')
 const status = ref({
   api: false,
   apiState: 'starting',
@@ -324,11 +302,20 @@ function shouldClearActiveScriptForNav(item) {
   return Boolean(activeScript.value) && item.id !== currentView.value
 }
 
-// 智能体界面内嵌菜单点击(来自 DSH 侧边栏底部的抓虾菜单)
+// 智能体会话侧边栏内菜单点击 → 切换内容区(左侧栏不动)
 function onAgentNavSelect(navId) {
   const item = navItems.find((it) => it.id === navId)
   if (item) selectNav(item)
 }
+
+// 会话侧边栏宽度/折叠状态(覆盖层左偏移跟随)
+const railWidth = ref(260)
+function onRailMetrics(metrics) {
+  if (!metrics) return
+  const w = Number(metrics.width) || 0
+  if (w > 40 && w < 800) railWidth.value = w
+}
+const embedLeft = computed(() => (activeScript.value ? 168 : railWidth.value))
 
 function openTaskInstanceFromAgent(instanceUid) {
   activeInstanceUid.value = instanceUid || ''
@@ -650,25 +637,43 @@ input, select, textarea { font-family: inherit; }
 <style scoped>
 .layout {
   display: grid;
-  grid-template-columns: 168px 1fr;
+  grid-template-columns: 1fr;
   grid-template-rows: 40px 1fr;
   height: 100vh;
 }
 
-/* 无脚本侧边栏时(智能体会话/其他菜单视图):内容区全宽,菜单在会话界面侧边栏内 */
-.layout.no-sidebar {
-  grid-template-columns: 1fr;
+/* 脚本详情:左侧显示二级菜单栏 */
+.layout.has-script-sidebar {
+  grid-template-columns: 168px 1fr;
 }
 
-.layout.no-sidebar .sidebar { display: none; }
+.layout.has-script-sidebar.sidebar-collapsed {
+  grid-template-columns: 56px 1fr;
+}
 
-.agent-persist {
+.embed-overlay {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  z-index: 20;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  min-width: 0;
+}
+
+.embed-overlay-body {
   height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 .layout.sidebar-collapsed {
   grid-template-columns: 56px 1fr;
+}
+
+.layout.sidebar-collapsed:not(.has-script-sidebar) {
+  grid-template-columns: 1fr;
 }
 
 /* 标题栏 */
@@ -758,35 +763,48 @@ nav {
   min-height: 0;
   overflow-y: auto;
 }
-.nav-btn {
+/* 主菜单:样式与智能体会话侧边栏一致(紧凑行/DSH 风格/激活橙) */
+.side-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 6px 8px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.side-menu-btn {
   position: relative;
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 12px; border-radius: 8px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-radius: 8px;
   background: transparent; border: none;
   color: var(--text2); font-size: 13px; text-align: left;
-  transition: all 0.15s;
+  cursor: pointer;
+  font-family: inherit;
 }
-.sidebar-collapsed nav {
-  padding: 0 6px;
+.side-menu-btn .icon { width: 18px; text-align: center; flex: none; font-size: 14px; }
+.side-menu-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-collapsed .side-menu {
+  padding: 4px 6px 8px;
   overflow: visible;
 }
-.sidebar-collapsed .nav-btn {
+.sidebar-collapsed .side-menu-btn {
   justify-content: center;
-  padding: 10px 0;
+  padding: 6px 0;
 }
-.sidebar-collapsed .nav-btn > span:not(.icon) {
+.sidebar-collapsed .side-menu-label {
   display: none;
 }
-.sidebar-collapsed .nav-btn .icon {
+.sidebar-collapsed .side-menu-btn .icon {
   width: auto;
   font-size: 17px;
 }
-.nav-btn:hover { background: var(--bg3); color: var(--text); }
-.nav-btn:focus-visible {
+.side-menu-btn:hover { background: var(--soft-fill-hover); color: var(--text); }
+.side-menu-btn:focus-visible {
   outline: 2px solid var(--orange);
   outline-offset: 2px;
 }
-.sidebar-collapsed .nav-btn::after {
+.sidebar-collapsed .side-menu-btn::after {
   content: attr(data-tooltip);
   position: absolute;
   top: 50%;
@@ -809,13 +827,13 @@ nav {
   transform: translate(-4px, -50%);
   transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s ease;
 }
-.sidebar-collapsed .nav-btn:hover::after,
-.sidebar-collapsed .nav-btn:focus-visible::after {
+.sidebar-collapsed .side-menu-btn:hover::after,
+.sidebar-collapsed .side-menu-btn:focus-visible::after {
   opacity: 1;
   visibility: visible;
   transform: translate(0, -50%);
 }
-.nav-btn.active { background: var(--orange-bg); color: var(--orange-text); font-weight: 600; }
+.side-menu-btn.active { background: var(--orange-bg); color: var(--orange-text); font-weight: 600; }
 .icon { font-size: 15px; width: 20px; }
 
 /* 二级菜单 */
@@ -911,7 +929,7 @@ nav {
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
 /* 主内容 */
-.content { overflow: hidden; background: var(--bg); height: 100%; min-height: 0; }
+.content { overflow: hidden; background: var(--bg); height: 100%; min-height: 0; position: relative; }
 
 @media (max-width: 760px) {
   .layout.layout-ai-image {
