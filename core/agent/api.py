@@ -205,6 +205,24 @@ async def create_turn(session_id: str, req: TurnCreateRequest) -> dict:
     return JSONResponse(status_code=202, content=result)
 
 
+@router.get("/task-instances/{instance_uid}")
+def get_task_instance_status(instance_uid: str) -> dict:
+    """任务实例状态(任务卡实时刷新)。"""
+    from core import data_sink as _ds
+    detail = _ds.get_task_instance_detail(instance_uid)
+    if not detail:
+        raise HTTPException(404, "任务实例不存在")
+    return {
+        "instance_uid": instance_uid,
+        "status": detail.get("status"),
+        "current_step": detail.get("current_step") or "",
+        "progress": detail.get("progress") or None,
+        "title": detail.get("title") or "",
+        "summary": detail.get("summary") or None,
+        "artifacts": detail.get("artifacts") or [],
+    }
+
+
 @router.get("/sessions/{session_id}/events")
 async def session_events(session_id: str, request: Request, after_seq: int = 0) -> StreamingResponse:
     service = get_agent_service()

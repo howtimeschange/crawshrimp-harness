@@ -5,11 +5,12 @@
       <template v-if="card.kind === 'task'">
         <div class="product-card-head">
           <span class="product-card-icon">📋</span>
-          <span class="product-card-title">任务实例</span>
-          <span class="product-card-status running">运行中</span>
+          <span class="product-card-title">{{ card.title || '任务实例' }}</span>
+          <span class="product-card-status" :class="taskStatusClass(card)">{{ taskStatusLabel(card) }}</span>
           <button class="product-card-close" type="button" title="关闭" @click="dismiss(card)">×</button>
         </div>
         <div class="product-card-uid">{{ card.taskInstanceUid }}</div>
+        <div v-if="card.step" class="product-card-meta">当前步骤:{{ card.step }}</div>
         <div class="product-card-actions">
           <button class="product-btn" type="button" @click="openTask(card)">在任务中心打开</button>
         </div>
@@ -50,6 +51,51 @@ const emit = defineEmits(['open-task-instance'])
 
 const cards = ref([])
 let stopEvents = null
+let taskPollTimer = null
+
+function taskStatusLabel(card) {
+  if (card.status === 'completed') return '已完成'
+  if (card.status === 'failed') return '失败'
+  if (card.status === 'canceled') return '已取消'
+  if (card.status === 'paused') return '已暂停'
+  return '运行中'
+}
+
+function taskStatusClass(card) {
+  if (card.status === 'completed') return 'completed'
+  if (card.status === 'failed' || card.status === 'canceled') return 'failed'
+  if (card.status === 'paused') return 'paused'
+  return 'running'
+}
+
+// 任务卡实时刷新:每 5s 轮询任务实例状态(方案 §11 任务卡由前端独立跟进进度)
+async function pollTaskStatuses() {
+  const taskCards = cards.value.filter((c) => c.kind === 'task' && c.status === 'running')
+  for (const card of taskCards) {
+    try {
+      const result = await window.cs.agentApi('GET', `/agent/task-instances/${card.taskInstanceUid}`)
+      if (!result) continue
+      card.status = result.status || card.status
+      card.step = result.current_step || ''
+      card.title = result.title || card.title || ''
+      if (card.status === 'completed' && Array.isArray(result.artifacts) && result.artifacts.length) {
+        for (const item of result.artifacts.slice(0, 3)) {
+          const filename = item.label || item.filename || ''
+          if (filename && !cards.value.some((c) => c.kind === 'artifact' && c.filename === filename)) {
+            pushCard({
+              kind: 'artifact',
+              artifactId: item.id,
+              filename,
+              path: item.path || '',
+              size: item.size || 0,
+              taskInstanceUid: card.taskInstanceUid,
+            })
+          }
+        }
+      }
+    } catch { /* 后端暂时不可达,下轮重试 */ }
+  }
+}
 
 function pushCard(card) {
   card.uid = card.uid || `${card.kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
@@ -138,8 +184,14 @@ async function bindEvents() {
   }
 }
 
-onMounted(bindEvents)
-onUnmounted(() => { stopEvents?.() })
+onMounted(() => {
+  bindEvents()
+  taskPollTimer = setInterval(pollTaskStatuses, 5000)
+})
+onUnmounted(() => {
+  stopEvents?.()
+  if (taskPollTimer) clearInterval(taskPollTimer)
+})
 </script>
 
 <style scoped>
@@ -206,8 +258,11 @@ onUnmounted(() => { stopEvents?.() })
 .product-card-risk { font-size: 12px; color: var(--yellow); }
 .product-card-uid, .product-card-meta { font-size: 12px; color: var(--text3); word-break: break-all; }
 .product-card-name { font-size: 13px; color: var(--text); word-break: break-all; }
-.product-card-status { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
-.product-card-status.running { background: var(--blue); color: #0b1220; }
+.product-card-status { font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+.product-card-status.running { background: rgba(96, 165, 250, 0.16); color: var(--blue); }
+.product-card-status.completed { background: rgba(74, 222, 128, 0.14); color: var(--green); }
+.product-card-status.failed { background: rgba(248, 113, 113, 0.14); color: var(--red); }
+.product-card-status.paused { background: rgba(251, 191, 36, 0.16); color: var(--yellow); }
 
 .product-card-actions { display: flex; gap: 8px; }
 .product-btn {
