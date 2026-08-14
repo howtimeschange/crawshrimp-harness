@@ -322,6 +322,13 @@ class AgentService:
     def unsubscribe_all(self, queue: asyncio.Queue) -> None:
         self.global_subscribers.discard(queue)
 
+    def _next_live_seq(self, session_id: str) -> int:
+        current = self._live_seq.get(session_id, 0) + 1
+        self._live_seq[session_id] = current
+        if len(self._live_seq) > 512:
+            self._live_seq = dict(list(self._live_seq.items())[-256:])
+        return current
+
     async def broadcast(self, session_id: str, seq: int, event_type: str, payload: Any) -> None:
         live_seq = self._next_live_seq(session_id)
         message = {"seq": live_seq, "event_type": event_type, "payload": payload}
