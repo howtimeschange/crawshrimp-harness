@@ -44,6 +44,16 @@ const REQUIRED_VIDEO_INTEGRATION_FILES = [
   'bailianCLI/src/config.js',
 ]
 
+const REQUIRED_DEEPSEEK_HARNESS_FILES = [
+  'package.json',
+  'node_modules/@deepseek-ai/dsh-sdk-jsonrpc-demo/lib/bin.js',
+  'node_modules/@deepseek-ai/dsh-agent-spine-demo/package.json',
+  'node_modules/@deepseek-ai/dsh-llm-pi-ai/package.json',
+  'node_modules/@deepseek-ai/dsh-mcp-client/package.json',
+  'node_modules/@deepseek-ai/dsh-session-persistence-jsonl/package.json',
+  'spike.cordis.yml',
+]
+
 function getPythonExecutable(srcPython, srcKey = '') {
   if (srcKey === 'win-x64') return path.join(srcPython, 'python.exe')
   if (srcKey === 'mac-arm64' || srcKey === 'mac-x64') return path.join(srcPython, 'bin', 'python3')
@@ -132,6 +142,23 @@ function requirePythonScriptsBundle(resourcesPath) {
   }
 }
 
+function requireDeepseekHarnessBundle(resourcesPath) {
+  const bundleRoot = path.join(resourcesPath, 'deepseek-harness')
+  if (!fs.existsSync(bundleRoot)) {
+    throw new Error(`[after-pack] deepseek-harness bundle 未打包: ${bundleRoot}`)
+  }
+  const missing = REQUIRED_DEEPSEEK_HARNESS_FILES.filter(relativePath => {
+    const target = path.join(bundleRoot, relativePath)
+    return !fs.existsSync(target) || !fs.statSync(target).isFile()
+  })
+  if (missing.length) {
+    throw new Error(
+      `[after-pack] deepseek-harness bundle 不完整,缺少: ${missing.join(', ')}。` +
+      '请先运行 node integrations/deepseek-harness/scripts/stage-runtime.mjs。'
+    )
+  }
+}
+
 async function afterPack(context) {
   const { electronPlatformName, arch, appOutDir } = context
   // arch: 0=ia32, 1=x64, 2=armv7l, 3=arm64
@@ -163,6 +190,7 @@ async function afterPack(context) {
   }
 
   requirePythonScriptsBundle(resourcesPath)
+  requireDeepseekHarnessBundle(resourcesPath)
 
   const destPython = path.join(resourcesPath, 'python')
   console.log(`[after-pack] Copying Python ${srcKey} → ${destPython}`)
@@ -199,5 +227,7 @@ function copyDirSync(src, dest) {
 exports.default = afterPack
 exports.requirePythonBundle = requirePythonBundle
 exports.requirePythonScriptsBundle = requirePythonScriptsBundle
+exports.requireDeepseekHarnessBundle = requireDeepseekHarnessBundle
 exports.REQUIRED_BACKEND_IMPORTS = REQUIRED_BACKEND_IMPORTS
 exports.REQUIRED_VIDEO_INTEGRATION_FILES = REQUIRED_VIDEO_INTEGRATION_FILES
+exports.REQUIRED_DEEPSEEK_HARNESS_FILES = REQUIRED_DEEPSEEK_HARNESS_FILES

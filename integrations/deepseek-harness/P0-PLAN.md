@@ -55,7 +55,8 @@ session telemetry、console logger。
   - `session/prompt` 返回 durable `messageId`;
   - 事件流:`turn/start → user/message → assistant/chunk → step/end → turn/end`,与窄 spec §7.3 词汇一致;
   - 无 key 时 `turn/end.reason = {kind:'error', error:{code:'MISSING_CREDENTIAL'}}`,错误信息正确引用路由名与 `CRAWSHRIMP_LLM_API_KEY`;
-  - `session.status` running → idle。
+  - `session.status` running → idle;
+- [x] **staging + boot check**:`stage-runtime.mjs` 编排生产闭包(260 包),staged bin 经 Electron-as-Node initialize/shutdown 通过。
 
 待补:
 
@@ -64,3 +65,23 @@ session telemetry、console logger。
 - [ ] fs/skill/workspace 族 profile v2(草稿:spike.cordis.v2.yml);
 - [ ] macOS x64 / Windows x64(koffi、进程树、管道);
 - [ ] 三种阶段取消无孤儿进程。
+
+## 6. 打包(开箱即用,与抓虾打包 Python 同模式)
+
+```
+integrations/deepseek-harness/     ← 开发版(含 dev 依赖)
+build-staging/deepseek-harness/    ← 发布版(仅生产闭包,npm ci --omit=dev)
+Resources/deepseek-harness/        ← 安装包内(extraResources)
+```
+
+- `scripts/stage-runtime.mjs`:编排生产闭包(lockfile 哈希增量跳过)+ 完整性清单 + **Electron-as-Node boot check**(staged bin 必须能 initialize/shutdown);
+- `app/build.yml` `extraResources`:`../build-staging/deepseek-harness` → `deepseek-harness`;
+- `app/scripts/after-pack.js` `requireDeepseekHarnessBundle`:安装包内闭包不完整则构建失败;
+- 构建链:`npm run build` / `build:mac` / `build:win` 自动先跑 staging;
+- 运行时:`app/src/deepseekHarnessPaths.js` —— 开发态用仓库目录,发布态用 `process.resourcesPath/deepseek-harness`;不额外分发 Node,用已打包 Electron(`ELECTRON_RUN_AS_NODE=1`)。
+
+待补:
+
+- [ ] P1 起 FastAPI 从 ai.llm 生成 cordis 配置替换 spike.cordis.yml;
+- [ ] Worker 入口随 `worker/` 目录进入 staging;
+- [ ] Windows x64 打包验证(koffi 加载);macOS x64 验证。
