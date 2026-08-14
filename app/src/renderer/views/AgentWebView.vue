@@ -165,9 +165,14 @@ function pushNav() {
 function onWindowMessage(event) {
   const data = event?.data
   if (!data || !data.__crawshrimp) return
-  if (data.__crawshrimp === 'nav-click') emit('nav-select', data.id)
-  else if (data.__crawshrimp === 'rail-metrics') emit('rail-metrics', { width: data.width, collapsed: data.collapsed })
-  else if (data.__crawshrimp === 'session-nav') emit('session-nav', data.kind || 'session')
+  if (data.__crawshrimp === 'nav-click') {
+    if (Number(data.railWidth) > 0) emit('rail-metrics', { width: data.railWidth, collapsed: false })
+    emit('nav-select', data.id)
+  } else if (data.__crawshrimp === 'rail-metrics') {
+    emit('rail-metrics', { width: data.width, collapsed: data.collapsed })
+  } else if (data.__crawshrimp === 'session-nav') {
+    emit('session-nav', data.kind || 'session')
+  }
 }
 
 onMounted(() => {

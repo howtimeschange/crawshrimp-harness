@@ -121,6 +121,13 @@ window.__ModuleLoader__.load({
     const BOTTOM_NAV_IDS = ['cloud_approval', 'settings']
     const MAIN_VISIBLE_DEFAULT = 3
 
+    function currentRailWidth() {
+      const rail = document.querySelector('.hHd-Xa_root')
+      if (!rail) return 0
+      const sidebarCol = rail.closest('[class*="sidebarCol"]') || rail.parentElement
+      return Math.round((sidebarCol || rail).getBoundingClientRect().width)
+    }
+
     function makeNavButton(item, activeId) {
       const btn = document.createElement('button')
       btn.type = 'button'
@@ -135,7 +142,8 @@ window.__ModuleLoader__.load({
       btn.appendChild(icon)
       btn.appendChild(label)
       btn.addEventListener('click', () => {
-        window.parent.postMessage({ __crawshrimp: 'nav-click', id: item.id }, '*')
+        // 携带点击瞬间的侧栏实际宽度,shell 覆盖层即时对齐(避免任何时序错位)
+        window.parent.postMessage({ __crawshrimp: 'nav-click', id: item.id, railWidth: currentRailWidth() }, '*')
       })
       return btn
     }
@@ -212,10 +220,10 @@ window.__ModuleLoader__.load({
 
     // ---- 侧边栏宽度/折叠状态推送(shell 内容区覆盖层偏移用) ----
     function pushRailMetrics() {
+      const width = currentRailWidth()
+      if (!width) return
       const rail = document.querySelector('.hHd-Xa_root')
-      if (!rail) return
-      const width = rail.getBoundingClientRect().width
-      const collapsed = rail.classList.contains('hHd-Xa_collapsed')
+      const collapsed = rail ? rail.classList.contains('hHd-Xa_collapsed') : false
       window.parent.postMessage({ __crawshrimp: 'rail-metrics', width, collapsed }, '*')
     }
 
@@ -295,6 +303,9 @@ window.__ModuleLoader__.load({
       observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] })
       setTimeout(pushRailMetrics, 0)
       setTimeout(pushRailMetrics, 800)
+      // 周期同步兜底:侧栏拖拽宽度只改 AppFrame 的 grid 列宽,不触发 mutation,
+      // 定时推送保证 shell 覆盖层左偏移始终对齐侧栏实际宽度
+      setInterval(pushRailMetrics, 1500)
     }
 
     exports.apply = apply

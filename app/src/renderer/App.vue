@@ -727,16 +727,17 @@ input, select, textarea { font-family: inherit; }
   background: var(--bg);
   border-left: 1px solid var(--border);
   min-width: 0;
+  transition: left 160ms cubic-bezier(0.4, 0, 0.2, 1);
   animation: embed-in 140ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .embed-overlay { animation: none; transition: none; }
 }
 
 @keyframes embed-in {
   from { opacity: 0; }
   to { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .embed-overlay { animation: none; }
 }
 
 .embed-overlay-body {
