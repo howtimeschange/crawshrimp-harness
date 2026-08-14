@@ -38,3 +38,5 @@ venv/
 artifacts/
 chi_sim.traineddata
 .crawshrimp-dev*/
+.spike-sessions/
+integrations/deepseek-harness/workspace/

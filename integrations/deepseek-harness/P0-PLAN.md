@@ -46,10 +46,21 @@ session telemetry、console logger。
 
 构建校验:解析最终 profile 与生产依赖闭包,断言禁用包名不存在;运行时断言模型可见工具集合与方案 §7 清单一致。
 
-## 5. 下一步
+## 5. P0 进展(2026-08-14,macOS arm64)
 
-- [ ] `npm ci` 安装并生成 lockfile;
-- [ ] 编写最小 `cordis.yml`(local 模型 + fake MCP server 先跑通 spine);
-- [ ] macOS 本机跑通 `dsh-jsonrpc-agent`(ELECTRON_RUN_AS_NODE=1);
-- [ ] Python MCP v2 ASGI 骨架 + Streamable HTTP 互通测试;
-- [ ] Worker NDJSON JSON-RPC 协议骨架(方案窄 spec §10)。
+- [x] `npm install` 生成 lockfile,锁 0.1.0-rc.6 全族可重复安装;
+- [x] **Electron-as-Node 启动 `dsh-jsonrpc-agent`**:`ELECTRON_RUN_AS_NODE=1` + Electron 43.1.0(Node 24.18.0)→ `initialize` 返回 `serverInfo {name: deepseek-harness-sdk-runtime, version: 0.0.1}`,正常 `shutdown`;
+- [x] 最小 profile(spike.cordis.yml):sdk-jsonrpc-server + llm-pi-ai 三路由(抓虾网关)+ spine(persona)+ persistence(zstd)+ checkpoint + token-meter + compaction + mcp-client;
+- [x] 无密钥 prompt 冒烟(`SPIKE_PROMPT=1 node spike/run-spike.mjs`):
+  - `session/prompt` 返回 durable `messageId`;
+  - 事件流:`turn/start → user/message → assistant/chunk → step/end → turn/end`,与窄 spec §7.3 词汇一致;
+  - 无 key 时 `turn/end.reason = {kind:'error', error:{code:'MISSING_CREDENTIAL'}}`,错误信息正确引用路由名与 `CRAWSHRIMP_LLM_API_KEY`;
+  - `session.status` running → idle。
+
+待补:
+
+- [ ] 真实模型 tool call round trip(需网关 key + 一个 fake MCP server);
+- [ ] DSH MCP client ↔ Python MCP v2 Streamable HTTP 互通;
+- [ ] fs/skill/workspace 族 profile v2(草稿:spike.cordis.v2.yml);
+- [ ] macOS x64 / Windows x64(koffi、进程树、管道);
+- [ ] 三种阶段取消无孤儿进程。

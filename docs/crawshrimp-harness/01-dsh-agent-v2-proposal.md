@@ -315,6 +315,21 @@ Crawshrimp Electron
 
 不是"无缝衔接",但显著优于自研:connection 适配 + React island 嵌入 + 主题 token 映射 + slots 扩展卡片是四块明确工作;对话流式渲染、工具卡折叠、composer 交互、深色主题视觉直接继承,预估节省前端工作量约 60–70%。剩余风险:rc 版本漂移(与内核同族锁定)、React 版本共存、DSH UI 对 host 能力的隐式依赖(用 preload 桥接替换)。
 
+### 12.7 决策修订(2026-08-14,已确认):DSH web host 全量嵌入
+
+进一步研究 DSH 源码后发现,web 前端是**模块加载器架构**:host 从自己的 Cordis 组合图动态生成 BootManifest(`window.__DSH_BOOT__`),由 `frontend-static` + `plugin-inventory` 按图分发 `dsh-client-*` 插件包,前端 UI 全部经此加载。**组件级移植意味着复刻整个 loader 与 host 半边**,违背"复用代码、不造轮子"。
+
+因此前端策略修订为:
+
+- **让 DSH runtime 自带 web host**(`dsh web` 形态的 composition),crawshrimp 渲染端用 iframe/WebContentsView 嵌入其页面,四周包 crawshrimp Vue chrome(左侧会话栏+菜单、右侧 9222 浏览器面板);会话交互、动效、主题、i18n 与 DSH **逐像素一致**,零移植;
+- **两个自定义插件完成抓虾扩展**:
+  1. host 侧 `crawshrimp-product-bridge`:代理 `/api/agent/*` 到 FastAPI(注入 `X-Crawshrimp-Token`),并向 web 事件流注入产品事件(审批/任务/产物);
+  2. client 侧 `crawshrimp-slots`(经 frontend-static 分发):经 ui-slots 挂载审批卡/授权卡/任务卡/产物卡/脚本审核页,并注入抓虾主题 token 覆盖;
+- **模型配置单一来源 = 抓虾 ai.llm**:FastAPI 从 `route_for_model` 生成 llm-pi-ai 三路由 cordis 配置(已 spike 验证,见 §14 P0 进展);DSH 自带模型切换 UI 通过 settings 限制为只读或隐藏,避免双份密钥/双份模型配置;
+- 会话/产品双真值仍按 §5.2:DSH 拥有模型会话,抓虾 SQLite 幂等投影事件。
+
+成本再评估:对话 UI 移植工作量归零,剩余工作 = host composition(web profile 组装)+ 两个自定义插件 + iframe 外框 chrome。风险新增一条:DSH web profile 的 host 半部(HTTP server/信任围栏)与本机回环绑定需在打包产物中随 Worker 一起分发。
+
 ## 13. 工程落点与仓库策略
 
 **已确认方案:在 crawshrimp 主仓(2.4.12)长出新能力,以 crawshrimp-agent 为移植源。**
@@ -338,6 +353,8 @@ Crawshrimp Electron
 - 三种阶段(模型运行/审批挂起/工具等待)取消且无孤儿进程。
 
 **门禁:任一项失败不得进入 P1。**
+
+P0 进展(2026-08-14,macOS arm64 本机):✅ 锁版安装可重复;✅ Electron-as-Node 启动 dsh-jsonrpc-agent + 最小 profile 初始化/shutdown;✅ 无密钥 prompt 冒烟(durable inbox 回执、事件流词汇与 `turn/end` reason 与窄 spec §7.3 完全一致,`MISSING_CREDENTIAL` 结构化错误)。⏳ 待补:真实模型 tool call round trip(需网关 key)、MCP v2 互通、fs/skill 族 profile v2、macOS x64/Windows x64。
 
 ### P1:产品纵切(3–4 周)
 
@@ -386,7 +403,7 @@ Crawshrimp Electron
 | ADR-19 | 浏览器副作用采用 Run 级能力授权卡 + 敏感动作逐次审批的两级模型,替代"全部动作逐次审批" |
 | ADR-20 | 步数/工具配额从固定值改为按 Run 类型分级预算,由 Worker 与 token-meter 联合执行 |
 | ADR-21 | crawshrimp-agent 转为移植源;产品能力在 crawshrimp 主仓演进,内核相关代码不再维护 Codex 线 |
-| ADR-22 | 前端复用 DSH Web UI(React island + slots 扩展 + 主题 token 重映射),不自研对话渲染;抓虾特色卡片以 slots 挂载,保持单一 React 渲染栈 |
+| ADR-22 | 前端复用 DSH Web(修订:web host 全量嵌入 + 两个自定义插件,见 §12.7),不自研对话渲染;抓虾特色卡片经 ui-slots 挂载 |
 | ADR-23 | `script_publish` 采用双闸门:审批卡之外必须经脚本审核页人工 review(全文/diff/测试结果)才落 adapters |
 
 ## 17. 待评审决策点(需要拍板)

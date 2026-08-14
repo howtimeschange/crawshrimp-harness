@@ -42,15 +42,21 @@
 - 右侧浏览器面板连接抓虾托管 Chrome 的 9222 CDP,定时 `Page.captureScreenshot` 推送 JPEG 帧(当前 800ms),用户可实时看到网页自动化过程;
 - 面板展开状态持久化于 `localStorage:crawshrimp.agent.browserPanelOpen`。
 
-## 4. 当前进度(骨架阶段)
+## 4. 当前进度
 
 已完成:
 
 - [x] 源码 fork 与仓库初始化;
 - [x] 侧边栏:智能体入口 + 会话栏(新建会话/会话列表);
 - [x] 智能体主视图:会话区(空态 + composer 骨架)+ 右侧实时浏览器面板(展开/收起);
-- [x] 主进程 `agentBrowser.js`:9222 CDP 截图流(连接/断连/错误状态推送,窗口销毁自动停止);
-- [x] preload 桥接:`startAgentBrowserStream` / `stopAgentBrowserStream` / `onAgentBrowserFrame` / `onAgentBrowserStatus`。
+- [x] 主进程 `agentBrowser.js`:9222 CDP 截图流;
+- [x] preload 桥接;
+- [x] **P0 spike(部分)**:Electron-as-Node 拉起 dsh-jsonrpc-agent(0.1.0-rc.6),initialize/shutdown + 无密钥 prompt 冒烟通过,事件流与 `turn/end` 语义已验证(详见 `integrations/deepseek-harness/P0-PLAN.md`)。
+
+已确认指令(2026-08-14):
+
+- 智能体会话体验与 DSH 完全一致:采用 **DSH web host 全量嵌入**(方案 §12.7)+ 两个自定义插件(crawshrimp-product-bridge / crawshrimp-slots),零对话 UI 移植;
+- 模型配置对接抓虾 `ai.llm`:FastAPI 从 `route_for_model` 生成 llm-pi-ai 三路由 cordis 配置(spike 已验证),密钥走 `CRAWSHRIMP_LLM_API_KEY` 环境变量。
 
 待完成(按方案 §14 阶段):
 
