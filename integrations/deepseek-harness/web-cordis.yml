@@ -1,4 +1,9 @@
 - insert:
+    - id: launcher
+      name: '@crawshrimp/launcher'
+      config:
+        args: !!js |
+          ['--host', '127.0.0.1', '--port', String(process.env.CRAWSHRIMP_WEB_PORT || 3090)]
     - id: timer
       name: '@deepseek-ai/cordis-plugin-timer'
 
@@ -416,178 +421,225 @@
       name: '@deepseek-ai/dsh-llm-deepseek'
     - id: code-runtime
       name: '@deepseek-ai/dsh-code-runtime-worker-thread'
+      disabled: true
 
     - id: storage
       name: '@deepseek-ai/dsh-storage'
+      disabled: true
 
     - id: storage-json
       name: '@deepseek-ai/dsh-storage-json'
+      disabled: true
       config:
         root: !!js process.env.CRAWSHRIMP_STORAGE_ROOT ?? './.storages'
 
     - id: storage-domain
       name: '@deepseek-ai/dsh-storage-domain'
+      disabled: true
       config:
         backend: json
 
     - id: message-feedback
       name: '@deepseek-ai/dsh-message-feedback'
+      disabled: true
       config:
         maxNoteBytes: 8192
 
     - id: session-log-download
       name: '@deepseek-ai/dsh-session-log-export'
+      disabled: true
 
     - id: workspace
       name: '@deepseek-ai/dsh-workspace'
+      disabled: true
 
     - id: session-projection-cache
       name: '@deepseek-ai/dsh-session-projection-cache'
+      disabled: true
       config:
         writeEveryEvents: 200
         writeIntervalMs: 5000
 
     - id: session-stats
       name: '@deepseek-ai/dsh-session-stats'
+      disabled: true
 
     - id: directory-picker
       name: '@deepseek-ai/dsh-host-directory-picker-auto'
+      disabled: true
 
     - id: plugin-inventory
       name: '@deepseek-ai/dsh-host-plugin-inventory'
+      disabled: true
 
     - id: api-gateway
       name: '@deepseek-ai/dsh-host-apiproxy'
 
     - id: cordis-host-runner
       name: '@deepseek-ai/dsh-cordis-host-runner'
+      disabled: true
+
+    - id: web-startup
+      name: '@deepseek-ai/dsh-web-app/startup'
 
     - id: webserver
       name: '@deepseek-ai/dsh-host-webserver'
-
+      inject: [webStartup]
       config:
-        host: !!js process.env.CRAWSHRIMP_WEB_HOST ?? '127.0.0.1'
-        port: !!js Number(process.env.CRAWSHRIMP_WEB_PORT ?? 3090)
+        host: !!js ctx.webStartup.host ?? '127.0.0.1'
+        port: !!js ctx.webStartup.port ?? 3080
 
     - id: web-runtime
       name: '@deepseek-ai/dsh-web-app'
-
+      inject: [webStartup]
       config:
         printUrl: true
         surfaceContext: true
-        trustedHosts: !!js (process.env.CRAWSHRIMP_WEB_TRUSTED_HOSTS ?? '').split(',').filter(Boolean)
+        trustedHosts: !!js ctx.webStartup.trustedHosts
 
     - id: client-hmr
       name: '@deepseek-ai/dsh-client-hmr'
+      disabled: true
 
     - id: modules
       name: '@deepseek-ai/dsh-client-modules'
 
     - id: connection
       name: '@deepseek-ai/dsh-client-connection'
-
+      inject: [webRuntime]
       config:
         # LAN literals derived from the active bind plus --trusted-host extras.
         # A deployment adding authorities keeps this expression and concatenates
         # its literals, for example: ['app.internal', ...ctx.webRuntime.trustedHosts].
-        trustedHosts: !!js (process.env.CRAWSHRIMP_WEB_TRUSTED_HOSTS ?? '').split(',').filter(Boolean)
+        trustedHosts: !!js ctx.webRuntime.trustedHosts
 
     - id: api-remotes
       name: '@deepseek-ai/dsh-api-remotes'
+      disabled: true
 
     - id: client-runtime
       name: '@deepseek-ai/dsh-client-runtime'
 
     - id: cordis-client-runner
       name: '@deepseek-ai/dsh-cordis-client-runner'
+      disabled: true
 
     - id: ui-theme
       name: '@deepseek-ai/dsh-client-ui-theme'
+      disabled: true
 
     - id: locale
       name: '@deepseek-ai/dsh-client-locale'
+      disabled: true
 
     - id: ui-layout
       name: '@deepseek-ai/dsh-client-ui-layout'
+      disabled: true
 
     - id: ui-sidebar
       name: '@deepseek-ai/dsh-client-ui-sidebar'
+      disabled: true
 
     - id: ui-settings
       name: '@deepseek-ai/dsh-client-ui-settings'
+      disabled: true
 
     - id: ui-settings-general
       name: '@deepseek-ai/dsh-client-ui-settings-general'
+      disabled: true
 
     - id: ui-settings-models
       name: '@deepseek-ai/dsh-client-ui-settings-models'
+      disabled: true
 
     - id: ui-settings-plugin-inventory
       name: '@deepseek-ai/dsh-client-ui-settings-plugin-inventory'
+      disabled: true
 
     - id: ui-conversation
       name: '@deepseek-ai/dsh-client-ui-conversation'
+      disabled: true
 
     - id: ui-tool
       name: '@deepseek-ai/dsh-client-ui-tool'
+      disabled: true
 
     - id: ui-cordis
       name: '@deepseek-ai/dsh-client-ui-cordis'
+      disabled: true
 
     - id: ui-workflow-run
       name: '@deepseek-ai/dsh-client-ui-workflow-run'
+      disabled: true
 
     - id: ui-deliverables
       name: '@deepseek-ai/dsh-client-ui-deliverables'
+      disabled: true
 
 
     - id: ui-workspace
       name: '@deepseek-ai/dsh-client-ui-workspace'
+      disabled: true
 
     - id: ui-input-trigger
       name: '@deepseek-ai/dsh-client-ui-input-trigger'
+      disabled: true
 
     - id: ui-commands
       name: '@deepseek-ai/dsh-client-ui-commands'
+      disabled: true
 
     - id: ui-skill
       name: '@deepseek-ai/dsh-client-ui-skill'
+      disabled: true
 
     - id: ui-subagent
       name: '@deepseek-ai/dsh-client-ui-subagent'
+      disabled: true
 
     - id: ui-jobs
       name: '@deepseek-ai/dsh-client-ui-jobs'
+      disabled: true
 
     - id: ui-goal
       name: '@deepseek-ai/dsh-client-ui-goal'
+      disabled: true
 
     - id: ui-message-feedback
       name: '@deepseek-ai/dsh-client-ui-message-feedback'
+      disabled: true
 
     - id: ui-model-selection
       name: '@deepseek-ai/dsh-client-ui-model-selection'
+      disabled: true
 
     - id: ui-permission
       name: '@deepseek-ai/dsh-client-ui-permission-presets'
+      disabled: true
 
     - id: ui-agent-preset
       name: '@deepseek-ai/dsh-client-ui-agent-preset'
+      disabled: true
 
     - id: ui-settings-plugins
       name: '@deepseek-ai/dsh-client-ui-settings-plugins'
+      disabled: true
 
     - id: ui-plan
       name: '@deepseek-ai/dsh-client-ui-plan'
+      disabled: true
 
     - id: ui-user-questions
       name: '@deepseek-ai/dsh-client-ui-user-questions'
+      disabled: true
 
     - id: ui-trajectory
       name: '@deepseek-ai/dsh-client-ui-trajectory'
+      disabled: true
 
     - id: agent-presets
       name: '@deepseek-ai/dsh-agent-presets'
+      disabled: true
       config:
         default: standard
     - id: mcp-crawshrimp

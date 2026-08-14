@@ -64,13 +64,16 @@
 - db 共享 RLock 跨线程死锁 → nullcontext + busy_timeout;
 - MCP SDK 2.0 挂 FastAPI 子路由无 lifespan → 独立 uvicorn(端口 = API 端口 + 200,避开应用端口回退区间);
 - DSH 会话 id collision(重启后)→ 自动轮换 + 提示;
-- 同步 CDP HTTP 阻塞事件循环 → to_thread。
+- 同步 CDP HTTP 阻塞事件循环 → to_thread;
+- 打包应用缺 mcp 依赖 → requirements.txt + afterPack 校验;
+- 发布态 harness root 不可达 → main.js 注入 CRAWSHRIMP_HARNESS_ROOT。
 
 剩余(下一里程碑):
 
-- [ ] DSH web host 全量嵌入(方案 §12.7:web-app bundle 组合 + product-bridge/slots 两个插件 + iframe 外框;bundle 组成已调研,约 60 包);
+- [x] ~~打包安装包内端到端~~ —— 已验证:`抓虾.app` 内 bundled python(含 mcp)→ agent 服务 → worker → DSH(Resources/deepseek-harness)→ MCP 网关 → tasks_search → 回答;
+- [ ] DSH web host 全量嵌入(方案 §12.7):profile 组装已完成(`integrations/deepseek-harness/web-cordis.yml`,130 行,由 `scripts/gen-web-cordis.py` 从 dsh-base + dsh-web-app 的 cordis.patch.yml 合并生成,含爬虾 llm/persona/MCP/禁止面覆盖)。**当前阻塞**:`webStartup`/`cmdlineArgs` 服务由 dsh CLI 启动器注入(web-startup 插件依赖),裸 runtime 组合无法提供,loader 报 `failed to import loader entry (undefined): startsWith`。出路:① 自研最小 cmdlineArgs 提供插件(cordis 插件格式);② 用 dsh CLI 的 composeProfile 逻辑装配(需 CLI 包,当前未发布);③ 向 DeepSeek 上游确认 headless web 支持的官方姿势;
 - [ ] 脚本审核页(双闸门第二闸门 UI)+ 任务卡/产物卡;
-- [ ] 打包安装包内端到端(backend+worker+DSH 闭包)与三平台验证;
+- [ ] 三平台验证(mac x64 / Windows x64);
 - [ ] 能力授权卡 UI(browser_tab 上下文 chips)。
 
 ## 5. 开发环境

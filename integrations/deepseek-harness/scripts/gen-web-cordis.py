@@ -49,27 +49,13 @@ def parse_rows(text: str):
 
 
 def transform_web_rows(rows: dict[str, list[str]]) -> None:
-    """web 层 CLI 专有表达式 → 环境表达式;删 web-startup;剥离 inject。"""
+    """web 层:仅替换 launcher 事实之外的路径表达式;webStartup 由 crawshrimp-launcher 提供。"""
     def sub_row(row_id: str, old: str, new: str) -> None:
         if row_id in rows:
             rows[row_id] = [l.replace(old, new) for l in rows[row_id]]
 
-    sub_row("webserver",
-            "        host: !!js ctx.webStartup.host ?? '127.0.0.1'",
-            "        host: !!js process.env.CRAWSHRIMP_WEB_HOST ?? '127.0.0.1'")
-    sub_row("webserver",
-            "        port: !!js ctx.webStartup.port ?? 3080",
-            "        port: !!js Number(process.env.CRAWSHRIMP_WEB_PORT ?? 3090)")
-    sub_row("webserver", "      inject: [webStartup]", "")
-    sub_row("web-runtime", "      inject: [webStartup]", "")
-    sub_row("web-runtime", "        trustedHosts: !!js ctx.webStartup.trustedHosts",
-            "        trustedHosts: !!js (process.env.CRAWSHRIMP_WEB_TRUSTED_HOSTS ?? '').split(',').filter(Boolean)")
-    sub_row("connection", "      inject: [webRuntime]", "")
-    sub_row("connection", "        trustedHosts: !!js ctx.webRuntime.trustedHosts",
-            "        trustedHosts: !!js (process.env.CRAWSHRIMP_WEB_TRUSTED_HOSTS ?? '').split(',').filter(Boolean)")
     sub_row("storage-json", "root: !!js dshHomePath('storages')",
             "root: !!js process.env.CRAWSHRIMP_STORAGE_ROOT ?? './.storages'")
-    rows.pop("web-startup", None)
 
 
 def transform_base_rows(rows: dict[str, list[str]]) -> None:
@@ -178,6 +164,17 @@ DISABLE_IDS = [
     "tool-subagent", "tool-subagent-fork", "tool-subagent-control",
     "tool-subagent-list-agents", "tool-subagent-report",
     "session-telemetry-otel", "web-search-deepseek", "web",
+    "agent-presets",
+    # 二分诊断:暂时禁用 ui 花名册与外围 host 行
+    "client-hmr", "plugin-inventory", "api-remotes", "cordis-client-runner", "cordis-host-runner",
+    "ui-theme", "locale", "ui-layout", "ui-sidebar", "ui-settings", "ui-settings-general",
+    "ui-settings-models", "ui-settings-plugin-inventory", "ui-conversation", "ui-tool", "ui-cordis",
+    "ui-workflow-run", "ui-deliverables", "ui-workspace", "ui-input-trigger", "ui-commands",
+    "ui-skill", "ui-subagent", "ui-jobs", "ui-goal", "ui-message-feedback", "ui-model-selection",
+    "ui-permission", "ui-agent-preset", "ui-settings-plugins", "ui-plan", "ui-user-questions",
+    "ui-trajectory", "session-projection-cache", "session-stats", "message-feedback",
+    "session-log-download", "workspace", "directory-picker", "code-runtime", "storage",
+    "storage-json", "storage-domain",
 ]
 
 
@@ -220,13 +217,22 @@ def main() -> int:
         if did in merged:
             merged[did] = disable_row(merged[did])
 
+    launcher_row = """    - id: launcher
+      name: '@crawshrimp/launcher'
+      config:
+        args: !!js |
+          ['--host', '127.0.0.1', '--port', String(process.env.CRAWSHRIMP_WEB_PORT || 3090)]
+"""
+    merged["launcher"] = launcher_row.splitlines()
+    order.insert(0, "launcher")
+
     out_lines = ["- insert:"]
     for row_id in order:
         out_lines.extend(merged[row_id])
     OUT.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
 
     text = OUT.read_text(encoding="utf-8")
-    assert "ctx.webStartup" not in text and "dshHomePath" not in text, "CLI 表达式残留"
+    assert "dshHomePath" not in text, "dshHomePath 残留"
     ids = re.findall(r"^    - id: (\S+)$", text, re.M)
     assert len(ids) == len(set(ids)), f"重复 id: {[i for i in ids if ids.count(i) > 1]}"
     print(f"[gen] wrote {OUT} ({len(ids)} rows)")
