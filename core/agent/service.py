@@ -66,8 +66,8 @@ class AgentService:
         self._mcp_app = None
         self._mcp_uvicorn = None
         self._mcp_task: Optional[asyncio.Task] = None
-        self.mcp_port = 18768
-        self.mcp_url = "http://127.0.0.1:18768/mcp"
+        self.mcp_port = 0
+        self.mcp_url = "http://127.0.0.1:18965/mcp"
         self._callbacks: dict[str, Any] = {}
 
     # ---------- 初始化 / 恢复 ----------
@@ -106,7 +106,10 @@ class AgentService:
         import os as _os
         import uvicorn
         from core.agent import api as agent_api
-        port = int(_os.environ.get("CRAWSHRIMP_AGENT_MCP_PORT", "18768"))
+        base_port = int(_os.environ.get("CRAWSHRIMP_PORT", "18765"))
+        # API 端口有 +1..+100 的回退区间(main.js findAvailableApiPort),
+        # MCP 端口取 API 端口 + 200,保证永不落入回退区间且实例间唯一。
+        port = int(_os.environ.get("CRAWSHRIMP_AGENT_MCP_PORT", str(base_port + 200)))
         self.mcp_port = port
         self.mcp_url = f"http://127.0.0.1:{port}/mcp"
         app = agent_api.build_agent_mcp_asgi(lambda: self.runtime_token)
@@ -365,7 +368,7 @@ class AgentService:
             runtime_root=str(resolve_harness_root()),
             data_root=str(data_root),
             cordis_path=str(cordis_path),
-            mcp_url=getattr(self, "mcp_url", "http://127.0.0.1:18768/mcp"),
+            mcp_url=getattr(self, "mcp_url", "http://127.0.0.1:18965/mcp"),
             session_root=str(agent_dir / "harness-sessions"),
             on_notification=self._on_worker_notification,
         )
@@ -375,7 +378,7 @@ class AgentService:
                 "runtimeRoot": str(resolve_harness_root()),
                 "dataRoot": str(data_root),
                 "cordisPath": str(cordis_path),
-                "mcpUrl": getattr(self, "mcp_url", "http://127.0.0.1:18768/mcp"),
+                "mcpUrl": getattr(self, "mcp_url", "http://127.0.0.1:18965/mcp"),
                 "sessionRoot": str(agent_dir / "harness-sessions"),
             }, timeout=20)
             if not init.get("ok"):

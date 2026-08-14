@@ -146,7 +146,7 @@ def build_cordis_yaml(cfg: dict, selected_model: Optional[str] = None) -> str:
   config:
     transport: streamable-http
     serverName: crawshrimp
-    url: !!js process.env.CRAWSHRIMP_MCP_URL ?? 'http://127.0.0.1:18768/mcp'
+    url: !!js process.env.CRAWSHRIMP_MCP_URL ?? 'http://127.0.0.1:18965/mcp'
     headers: !!js |
       ({{ Authorization: 'Bearer ' + (process.env.CRAWSHRIMP_MCP_TOKEN ?? '') }})
     toolCallTimeoutMs: 1800000

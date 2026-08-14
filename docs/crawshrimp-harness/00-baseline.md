@@ -48,23 +48,30 @@
 
 - [x] 源码 fork 与仓库初始化;
 - [x] 侧边栏:智能体入口 + 会话栏(新建会话/会话列表);
-- [x] 智能体主视图:会话区(空态 + composer 骨架)+ 右侧实时浏览器面板(展开/收起);
-- [x] 主进程 `agentBrowser.js`:9222 CDP 截图流;
-- [x] preload 桥接;
-- [x] **P0 spike(部分)**:Electron-as-Node 拉起 dsh-jsonrpc-agent(0.1.0-rc.6),initialize/shutdown + 无密钥 prompt 冒烟通过,事件流与 `turn/end` 语义已验证;
-- [x] **DSH 运行时打包链**:stage-runtime.mjs 编排生产闭包(260 包)+ boot check;build.yml extraResources → `Resources/deepseek-harness`;after-pack 完整性校验;dev/发布态路径解析(deepseekHarnessPaths.js);构建链自动 staging —— 与抓虾打包 Python 同模式,开箱即用。
+- [x] 智能体主视图:会话区(消息流/工具卡/审批卡/停止)+ 右侧实时浏览器面板(展开/收起);
+- [x] 主进程 `agentBrowser.js`:9222 CDP 截图流 + preload 桥接(浏览器流/agent API/SSE);
+- [x] P0 spike:Electron-as-Node 拉起 dsh-jsonrpc-agent(0.1.0-rc.6),真实模型 + MCP v2 工具往返验证;
+- [x] DSH 运行时打包链(stage-runtime + afterPack 拷入安装包 + 包内 boot 验证);
+- [x] 产品后端:core/agent(db/cordis_config/cdp/mcp_gateway/worker/service/api)+ 21 个 MCP 工具 + 审批阻塞 + 单 Active Run + 事件投影 + SSE;
+- [x] 前端接真实 API:会话/消息/工具卡/审批卡/停止/排队提示;
+- [x] E2E:任务目录搜索与描述、浏览器观察(9222 CDP)、脚本草稿→发布双闸门(审批卡→批准→pending_review)、运行取消、运行时重启后会话碰撞自动轮换;
+- [x] 桌面应用内闭环:应用自带后端(用户真实 ai.llm 配置)→ worker → DSH → MCP 网关全链路;
+- [x] 回归测试 11 项。
 
-已确认指令(2026-08-14):
+关键修复记录(自修复):
 
-- 智能体会话体验与 DSH 完全一致:采用 **DSH web host 全量嵌入**(方案 §12.7)+ 两个自定义插件(crawshrimp-product-bridge / crawshrimp-slots),零对话 UI 移植;
-- 模型配置对接抓虾 `ai.llm`:FastAPI 从 `route_for_model` 生成 llm-pi-ai 三路由 cordis 配置(spike 已验证),密钥走 `CRAWSHRIMP_LLM_API_KEY` 环境变量。
+- `_grant_for_run` NameError → queue task 静默死亡 → run 卡 starting(已修 + 队列兜底);
+- db 共享 RLock 跨线程死锁 → nullcontext + busy_timeout;
+- MCP SDK 2.0 挂 FastAPI 子路由无 lifespan → 独立 uvicorn(端口 = API 端口 + 200,避开应用端口回退区间);
+- DSH 会话 id collision(重启后)→ 自动轮换 + 提示;
+- 同步 CDP HTTP 阻塞事件循环 → to_thread。
 
-待完成(按方案 §14 阶段):
+剩余(下一里程碑):
 
-- [ ] P0:DSH `0.1.0-rc.6` 全族锁版 + Electron-as-Node 三平台 spike + MCP v2 互通;
-- [ ] P1:产品纵切(agent 数据表、队列、SSE、Worker supervisor、DSH Web UI 嵌入);
-- [ ] P2:浏览器自动化工具族、脚本创作闭环、数据分析;
-- [ ] P3:安全与发布。
+- [ ] DSH web host 全量嵌入(方案 §12.7:web-app bundle 组合 + product-bridge/slots 两个插件 + iframe 外框;bundle 组成已调研,约 60 包);
+- [ ] 脚本审核页(双闸门第二闸门 UI)+ 任务卡/产物卡;
+- [ ] 打包安装包内端到端(backend+worker+DSH 闭包)与三平台验证;
+- [ ] 能力授权卡 UI(browser_tab 上下文 chips)。
 
 ## 5. 开发环境
 

@@ -99,7 +99,7 @@ function spawnRuntime() {
     ELECTRON_RUN_AS_NODE: '1',
     DSH_CORDIS_CONFIG: cordisPath,
     CRAWSHRIMP_SESSION_ROOT: process.env.CRAWSHRIMP_SESSION_ROOT || `${state.dataRoot}/agent/harness-sessions`,
-    CRAWSHRIMP_MCP_URL: process.env.CRAWSHRIMP_MCP_URL || 'http://127.0.0.1:18768/mcp',
+    CRAWSHRIMP_MCP_URL: process.env.CRAWSHRIMP_MCP_URL || 'http://127.0.0.1:18965/mcp',
   }
 
   const child = spawn(nodeExecutable, [demoBin], {
