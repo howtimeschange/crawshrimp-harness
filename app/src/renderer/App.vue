@@ -173,6 +173,7 @@
       <!-- 智能体界面 -->
       <AgentHome
         v-if="currentView === 'agent'"
+        :session-id="agentSessionId"
         @open-settings="openSettingsPanel"
       />
       <!-- 设置 -->
@@ -314,9 +315,10 @@ function shouldClearActiveScriptForNav(item) {
   return Boolean(activeScript.value) && item.id !== currentView.value
 }
 
+const agentSessionId = ref('')
+
 function onAgentSessionSelected(sessionId) {
-  // 骨架阶段:会话选择暂不联动后端,由 AgentHome 后续接入 /agent/sessions 时处理
-  void sessionId
+  agentSessionId.value = sessionId || ''
 }
 
 function openSettingsPanel(panelId) {

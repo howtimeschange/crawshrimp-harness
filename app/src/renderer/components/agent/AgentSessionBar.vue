@@ -6,6 +6,7 @@
         type="button"
         :title="collapsed ? '新建会话' : undefined"
         :aria-label="'新建会话'"
+        :disabled="busy"
         @click="createSession"
       >
         <span class="icon">＋</span>
@@ -13,16 +14,17 @@
       </button>
     </div>
     <div v-if="!collapsed" class="session-list">
-      <div v-if="!sessions.length" class="session-empty">暂无会话</div>
+      <div v-if="loading" class="session-empty">加载中…</div>
+      <div v-else-if="!sessions.length" class="session-empty">暂无会话,点击上方新建</div>
       <button
         v-for="s in sessions"
-        :key="s.id"
-        :class="['session-btn', { active: s.id === activeId }]"
+        :key="s.session_id"
+        :class="['session-btn', { active: s.session_id === activeId }]"
         type="button"
         :title="s.title"
-        @click="select(s.id)"
+        @click="select(s.session_id)"
       >
-        <span class="session-dot"></span>
+        <span class="session-dot" :class="{ running: s.status === 'running' }"></span>
         <span class="session-title">{{ s.title }}</span>
       </button>
     </div>
@@ -30,7 +32,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 
 defineProps({
   collapsed: { type: Boolean, default: false },
@@ -38,21 +40,46 @@ defineProps({
 
 const emit = defineEmits(['select-session'])
 
-// 骨架阶段:会话暂存于渲染端,后续接入 /agent/sessions 产品 API
 const sessions = ref([])
 const activeId = ref('')
+const loading = ref(false)
+const busy = ref(false)
 
-function createSession() {
-  const id = `local-${Date.now()}`
-  sessions.value.unshift({ id, title: '新会话' })
-  activeId.value = id
-  emit('select-session', id)
+async function loadSessions() {
+  loading.value = true
+  try {
+    const result = await window.cs.agentApi('GET', '/agent/sessions')
+    sessions.value = (result?.sessions || []).filter((s) => !s.archived_at)
+  } catch (error) {
+    sessions.value = []
+  } finally {
+    loading.value = false
+  }
 }
 
-function select(id) {
-  activeId.value = id
-  emit('select-session', id)
+async function createSession() {
+  if (busy.value) return
+  busy.value = true
+  try {
+    const result = await window.cs.agentApi('POST', '/agent/sessions', { title: '新会话' })
+    const session = result?.session
+    if (session) {
+      await loadSessions()
+      select(session.session_id)
+    }
+  } catch (error) {
+    console.error('[agent] 新建会话失败:', error)
+  } finally {
+    busy.value = false
+  }
 }
+
+function select(sessionId) {
+  activeId.value = sessionId
+  emit('select-session', sessionId)
+}
+
+onMounted(loadSessions)
 </script>
 
 <style scoped>
@@ -84,8 +111,12 @@ function select(id) {
   white-space: nowrap;
   overflow: hidden;
 }
-.new-session-btn:hover {
+.new-session-btn:hover:not(:disabled) {
   background: var(--orange-bg);
+}
+.new-session-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .collapsed .new-session-btn {
   padding: 8px 0;
@@ -136,6 +167,10 @@ function select(id) {
   height: 6px;
   border-radius: 50%;
   background: var(--text3);
+}
+.session-dot.running {
+  background: var(--orange);
+  box-shadow: 0 0 5px var(--orange);
 }
 .session-btn.active .session-dot {
   background: var(--orange);

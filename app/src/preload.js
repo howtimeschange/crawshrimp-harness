@@ -86,8 +86,7 @@ async function apiCall(method, requestPath, body) {
   const options = { method, headers }
   if (body !== undefined && body !== null) {
     headers['Content-Type'] = 'application/json'
-    options.body = JSON.stringify(body)
-  }
+    options.body = JSON.stringify(body)  }
   const response = await fetch(buildUrl(requestPath), options)
   const payload = await parseResponse(response)
   if (!response.ok) {
@@ -103,6 +102,63 @@ function queryString(query = {}) {
       .filter(([, value]) => value !== undefined && value !== null && String(value) !== '')
       .map(([key, value]) => [key, String(value)])
   ).toString()
+}
+
+async function agentApi(method, requestPath, body) {
+  return apiCall(method, requestPath, body)
+}
+
+/**
+ * SSE 订阅:抓虾智能体事件流(带产品 token,SSE 不支持自定义头,用 fetch 流解析)。
+ * 返回 abort 函数。
+ */
+function streamAgentEvents(sessionId, afterSeq, handlers = {}) {
+  const controller = new AbortController()
+  const url = buildUrl(`/agent/sessions/${encodePathPart(sessionId)}/events?after_seq=${Number(afterSeq) || 0}`)
+  const headers = { Accept: 'text/event-stream' }
+  const token = apiToken()
+  if (token) headers['X-Crawshrimp-Token'] = token
+
+  void (async () => {
+    try {
+      const response = await fetch(url, { headers, signal: controller.signal })
+      if (!response.ok || !response.body) {
+        handlers.onError?.(new Error(`SSE 连接失败: ${response.status}`))
+        return
+      }
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let eventType = 'message'
+      let eventId = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let idx
+        while ((idx = buffer.indexOf('\n\n')) >= 0) {
+          const chunk = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 2)
+          let data = null
+          for (const line of chunk.split('\n')) {
+            if (line.startsWith('event: ')) eventType = line.slice(7).trim()
+            else if (line.startsWith('id: ')) eventId = line.slice(4).trim()
+            else if (line.startsWith('data: ')) data = line.slice(6)
+          }
+          if (data !== null) {
+            let payload
+            try { payload = JSON.parse(data) } catch { payload = data }
+            handlers.onEvent?.({ id: eventId, event: eventType, data: payload })
+          }
+        }
+      }
+      handlers.onDone?.()
+    } catch (error) {
+      if (String(error?.name) !== 'AbortError') handlers.onError?.(error)
+    }
+  })()
+
+  return () => controller.abort()
 }
 
 function encodePathPart(value) {
@@ -274,6 +330,9 @@ contextBridge.exposeInMainWorld('cs', {
     ipcRenderer.on('agent:browser:status', listener)
     return () => ipcRenderer.removeListener('agent:browser:status', listener)
   },
+
+  agentApi: (method, path, body) => agentApi(method, path, body),
+  streamAgentEvents: (sessionId, afterSeq, handlers) => streamAgentEvents(sessionId, afterSeq, handlers),
 
   getAdapters:     () => ipcRenderer.invoke('get-adapters'),
   showOperatorAlert: (payload) => ipcRenderer.invoke('show-operator-alert', payload || {}),

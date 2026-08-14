@@ -6,6 +6,7 @@
         <div class="chat-title">
           <span class="chat-title-text">{{ sessionTitle }}</span>
           <span class="chat-subtitle">智能体</span>
+          <span v-if="queuePosition > 0" class="chat-queue">排队中(第 {{ queuePosition }} 位)</span>
         </div>
         <div class="chat-actions">
           <button
@@ -18,8 +19,15 @@
           >
             🌐 浏览器
           </button>
-          <button class="head-btn" type="button" title="停止回答(开发中)" aria-label="停止回答" disabled>
-            ⏹
+          <button
+            class="head-btn stop-btn"
+            type="button"
+            title="停止回答"
+            aria-label="停止回答"
+            :disabled="!activeRunId"
+            @click="stopRun"
+          >
+            ⏹ 停止
           </button>
         </div>
       </header>
@@ -38,9 +46,47 @@
             <li>📊 爬取数据分析</li>
           </ul>
         </div>
-        <div v-for="m in messages" :key="m.id" :class="['chat-msg', `chat-msg-${m.role}`]">
-          <div class="chat-msg-body">{{ m.text }}</div>
-        </div>
+
+        <template v-for="m in messages" :key="m.id">
+          <div v-if="m.role === 'user'" class="chat-msg chat-msg-user">
+            <div class="chat-msg-body">{{ m.text }}</div>
+          </div>
+
+          <div v-else-if="m.role === 'assistant'" class="chat-msg chat-msg-assistant">
+            <div class="chat-msg-body">
+              {{ m.text }}<span v-if="m.streaming" class="stream-cursor">▍</span>
+            </div>
+          </div>
+
+          <div v-else-if="m.kind === 'tool'" class="tool-card">
+            <div class="tool-card-head">
+              <span class="tool-card-icon">🔧</span>
+              <span class="tool-card-name">{{ toolLabel(m.toolName) }}</span>
+              <span class="tool-card-status" :class="m.status">
+                {{ { requested: '调用中…', succeeded: '完成', failed: '失败', canceled: '已取消' }[m.status] || m.status }}
+              </span>
+            </div>
+            <div v-if="m.argsText" class="tool-card-body tool-card-args">{{ m.argsText }}</div>
+            <div v-if="m.resultText" class="tool-card-body tool-card-result">{{ m.resultText }}</div>
+          </div>
+
+          <div v-else-if="m.kind === 'approval'" class="approval-card">
+            <div class="approval-card-head">⚠️ 需要你的批准</div>
+            <div class="approval-card-body">{{ approvalSummary(m) }}</div>
+            <div class="approval-card-risk">风险等级:{{ m.risk || 'read_only' }}</div>
+            <div v-if="m.status === 'pending'" class="approval-card-actions">
+              <button class="approve-btn" type="button" @click="decideApproval(m, 'approved')">批准</button>
+              <button class="reject-btn" type="button" @click="decideApproval(m, 'rejected')">拒绝</button>
+            </div>
+            <div v-else class="approval-card-decided">
+              {{ m.status === 'approved' ? '已批准 ✓' : m.status === 'rejected' ? '已拒绝 ✗' : `已${m.status}` }}
+            </div>
+          </div>
+
+          <div v-else-if="m.kind === 'notice'" class="chat-notice">
+            {{ m.text }}
+          </div>
+        </template>
       </div>
 
       <div class="chat-composer">
@@ -48,10 +94,11 @@
           v-model="draft"
           class="composer-input"
           rows="2"
-          placeholder="描述你想让智能体做的事情,例如:导出最近 7 天的订单数据…(Enter 发送,Shift+Enter 换行)"
+          :placeholder="sessionId ? '描述你想让智能体做的事情…(Enter 发送,Shift+Enter 换行)' : '请先在左侧新建或选择会话'"
+          :disabled="!sessionId"
           @keydown.enter.exact.prevent="send"
         ></textarea>
-        <button class="composer-send" type="button" :disabled="!draft.trim()" @click="send">发送</button>
+        <button class="composer-send" type="button" :disabled="!sessionId || !draft.trim()" @click="send">发送</button>
       </div>
     </div>
 
@@ -67,17 +114,53 @@
 </template>
 
 <script setup>
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import AgentBrowserPanel from '../components/agent/AgentBrowserPanel.vue'
 
 const BROWSER_PANEL_STORAGE_KEY = 'crawshrimp.agent.browserPanelOpen'
+
+const props = defineProps({
+  sessionId: { type: String, default: '' },
+})
 
 const sessionTitle = ref('新会话')
 const browserOpen = ref(true)
 const draft = ref('')
 const messages = ref([])
 const messageListEl = ref(null)
+const activeRunId = ref('')
+const queuePosition = ref(0)
+let stopEvents = null
 let localSeq = 0
+
+const TOOL_LABELS = {
+  tasks_search: '查找任务',
+  task_describe: '查看任务详情',
+  task_prepare: '准备任务',
+  task_run: '执行任务',
+  task_status: '查询任务状态',
+  task_wait: '等待任务',
+  task_control: '控制任务',
+  artifacts_list: '查看产物',
+  data_preview: '数据预览',
+  browser_observe: '观察页面',
+  browser_eval: '页面求值',
+  browser_act: '页面操作',
+  browser_verify: '页面验证',
+  browser_navigate: '页面跳转',
+  browser_capture_requests: '捕获请求',
+  script_list: '列出脚本',
+  script_describe: '脚本详情',
+  script_run: '运行脚本',
+  script_create_draft: '创建脚本草稿',
+  script_publish: '发布脚本',
+  script_test: '测试脚本',
+}
+
+function toolLabel(name) {
+  const key = String(name || '').replace(/^mcp__crawshrimp__/, '')
+  return TOOL_LABELS[key] || name
+}
 
 function readBrowserPanelPref() {
   try {
@@ -93,8 +176,8 @@ function writeBrowserPanelPref(open) {
   } catch {}
 }
 
-function pushMessage(role, text) {
-  messages.value.push({ id: `m-${Date.now()}-${localSeq++}`, role, text })
+function pushMessage(message) {
+  messages.value.push({ id: `m-${Date.now()}-${localSeq++}`, ...message })
 }
 
 async function scrollToBottom() {
@@ -104,20 +187,204 @@ async function scrollToBottom() {
   }
 }
 
-function send() {
+function approvalSummary(m) {
+  const s = m.summary || {}
+  if (s.kind === 'script_publish') return `发布脚本修订:${s.rev_id || ''}`
+  if (s.action) return `任务控制:对 ${s.task_instance_uid} 执行 ${s.action}`
+  const params = s.params || {}
+  const paramText = Object.entries(params).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')
+  return `任务:${s.task_id || ''}(${paramText || '无参数'})`
+}
+
+// ---------- SSE ----------
+
+function bindEvents() {
+  stopEvents?.()
+  stopEvents = null
+  if (!props.sessionId) return
+
+  let afterSeq = 0
+  stopEvents = window.cs.streamAgentEvents(props.sessionId, afterSeq, {
+    onEvent: ({ event, data }) => handleEvent(event, data),
+    onError: (error) => {
+      console.warn('[agent] SSE 断开:', error?.message)
+      pushMessage({ kind: 'notice', text: '事件流断开,3 秒后重连…' })
+      setTimeout(() => { if (props.sessionId) bindEvents() }, 3000)
+    },
+    onDone: () => {
+      console.warn('[agent] SSE 结束')
+    },
+  })
+}
+
+function handleEvent(event, data) {
+  switch (event) {
+    case 'turn.queued': {
+      activeRunId.value = data?.run_id || ''
+      queuePosition.value = data?.queue_depth || 0
+      break
+    }
+    case 'assistant.delta': {
+      const existing = messages.value.find((m) => m.kind === 'assistant-stream')
+      if (existing) {
+        existing.text += data?.delta || ''
+      } else {
+        pushMessage({ role: 'assistant', kind: 'assistant-stream', text: data?.delta || '', streaming: true })
+      }
+      scrollToBottom()
+      break
+    }
+    case 'assistant.completed': {
+      const existing = messages.value.find((m) => m.kind === 'assistant-stream')
+      if (existing) {
+        existing.text = data?.text || existing.text
+        existing.streaming = false
+        existing.kind = 'assistant'
+      } else if (data?.text) {
+        pushMessage({ role: 'assistant', kind: 'assistant', text: data.text, streaming: false })
+      }
+      scrollToBottom()
+      break
+    }
+    case 'tool.requested': {
+      pushMessage({
+        kind: 'tool',
+        toolName: data?.tool_name || '',
+        argsText: JSON.stringify(data?.arguments || {}, null, 1),
+        resultText: '',
+        status: 'requested',
+      })
+      scrollToBottom()
+      break
+    }
+    case 'tool.completed': {
+      const card = [...messages.value].reverse().find((m) => m.kind === 'tool' && m.status === 'requested')
+      if (card) {
+        card.resultText = data?.result || ''
+        card.status = 'succeeded'
+      }
+      scrollToBottom()
+      break
+    }
+    case 'tool.approval_required': {
+      pushMessage({
+        kind: 'approval',
+        approvalId: data?.approval_id || '',
+        summary: data?.summary || {},
+        risk: data?.risk || 'read_only',
+        status: 'pending',
+      })
+      scrollToBottom()
+      break
+    }
+    case 'run.failed': {
+      activeRunId.value = ''
+      queuePosition.value = 0
+      pushMessage({ kind: 'notice', text: `运行失败:${data?.error || data?.error_code || '未知错误'}` })
+      scrollToBottom()
+      break
+    }
+    case 'run.completed': {
+      activeRunId.value = ''
+      queuePosition.value = 0
+      break
+    }
+    case 'run.canceled': {
+      activeRunId.value = ''
+      queuePosition.value = 0
+      pushMessage({ kind: 'notice', text: '已停止回答(已启动的业务任务不受影响)' })
+      scrollToBottom()
+      break
+    }
+    case 'session.updated': {
+      if (data?.title) sessionTitle.value = data.title
+      break
+    }
+    default:
+      break
+  }
+}
+
+// ---------- 动作 ----------
+
+async function send() {
   const text = String(draft.value || '').trim()
-  if (!text) return
-  pushMessage('user', text)
+  if (!text || !props.sessionId) return
   draft.value = ''
-  // 骨架阶段:智能体运行时(DSH Worker)尚未接入,本地回显提示
-  pushMessage('assistant', '智能体运行时尚未接入(骨架阶段)。这条消息已记录,接入 DSH 内核后这里会显示真实回答。')
+  pushMessage({ role: 'user', text })
+  scrollToBottom()
+  try {
+    const result = await window.cs.agentApi('POST', `/agent/sessions/${props.sessionId}/turns`, {
+      text,
+      context_refs: [],
+    })
+    queuePosition.value = result?.queue_depth || 0
+  } catch (error) {
+    pushMessage({ kind: 'notice', text: `发送失败:${error?.message || error}` })
+    scrollToBottom()
+  }
+}
+
+async function stopRun() {
+  if (!activeRunId.value) return
+  try {
+    await window.cs.agentApi('POST', `/agent/runs/${activeRunId.value}/cancel`, {})
+  } catch (error) {
+    pushMessage({ kind: 'notice', text: `停止失败:${error?.message || error}` })
+    scrollToBottom()
+  }
+}
+
+async function decideApproval(m, decision) {
+  try {
+    await window.cs.agentApi('POST', `/agent/approvals/${m.approvalId}/decision`, { decision })
+    m.status = decision
+  } catch (error) {
+    m.status = 'error'
+    pushMessage({ kind: 'notice', text: `审批操作失败:${error?.message || error}` })
+  }
   scrollToBottom()
 }
+
+async function loadSession() {
+  messages.value = []
+  activeRunId.value = ''
+  queuePosition.value = 0
+  if (!props.sessionId) return
+  try {
+    const result = await window.cs.agentApi('GET', `/agent/sessions/${props.sessionId}`)
+    sessionTitle.value = result?.session?.title || '新会话'
+    for (const m of result?.messages || []) {
+      try {
+        const content = typeof m.content_json === 'string' ? JSON.parse(m.content_json) : m.content_json
+        if (m.role === 'user') {
+          pushMessage({ role: 'user', text: content?.text || '' })
+        } else if (m.role === 'assistant') {
+          pushMessage({ role: 'assistant', kind: 'assistant', text: content?.text || '', streaming: false })
+        }
+      } catch {}
+    }
+    scrollToBottom()
+  } catch (error) {
+    console.warn('[agent] 加载会话失败:', error)
+  }
+  bindEvents()
+}
+
+watch(() => props.sessionId, () => {
+  stopEvents?.()
+  loadSession()
+})
 
 watch(browserOpen, (open) => writeBrowserPanelPref(open))
 
 onMounted(() => {
   browserOpen.value = readBrowserPanelPref()
+  if (props.sessionId) loadSession()
+})
+
+onUnmounted(() => {
+  stopEvents?.()
 })
 </script>
 
@@ -157,6 +424,10 @@ onMounted(() => {
   font-size: 11px;
   color: var(--text3);
 }
+.chat-queue {
+  font-size: 11px;
+  color: var(--orange);
+}
 .chat-actions {
   margin-left: auto;
   display: flex;
@@ -178,6 +449,10 @@ onMounted(() => {
 .head-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+.stop-btn:hover:not(:disabled) {
+  color: var(--red);
+  border-color: var(--red);
 }
 .chat-messages {
   flex: 1;
@@ -255,6 +530,128 @@ onMounted(() => {
   color: var(--text);
   border-bottom-left-radius: 4px;
 }
+.stream-cursor {
+  animation: blink 1s step-start infinite;
+  color: var(--orange);
+}
+@keyframes blink {
+  50% { opacity: 0; }
+}
+.tool-card {
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg2);
+  overflow: hidden;
+}
+.tool-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.tool-card-icon {
+  font-size: 13px;
+}
+.tool-card-name {
+  font-weight: 700;
+  color: var(--text);
+}
+.tool-card-status {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text3);
+}
+.tool-card-status.succeeded {
+  color: var(--green);
+}
+.tool-card-status.failed {
+  color: var(--red);
+}
+.tool-card-status.requested {
+  color: var(--orange);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.tool-card-body {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.tool-card-args {
+  color: var(--text3);
+}
+.approval-card {
+  margin-bottom: 12px;
+  border: 1px solid var(--orange);
+  border-radius: 10px;
+  background: var(--orange-bg);
+  padding: 12px 14px;
+}
+.approval-card-head {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--orange);
+  margin-bottom: 6px;
+}
+.approval-card-body {
+  font-size: 12.5px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.approval-card-risk {
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: 6px;
+}
+.approval-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.approve-btn,
+.reject-btn {
+  padding: 7px 18px;
+  border-radius: 8px;
+  border: none;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.approve-btn {
+  background: var(--orange);
+  color: #fff;
+}
+.reject-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text2);
+}
+.approval-card-decided {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text2);
+}
+.chat-notice {
+  margin: 0 auto 12px;
+  width: fit-content;
+  max-width: 80%;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--bg3);
+  color: var(--text3);
+  font-size: 11.5px;
+}
 .chat-composer {
   display: flex;
   align-items: flex-end;
@@ -280,6 +677,9 @@ onMounted(() => {
 .composer-input:focus {
   border-color: var(--orange);
 }
+.composer-input:disabled {
+  opacity: 0.5;
+}
 .composer-send {
   height: 44px;
   padding: 0 18px;
@@ -295,7 +695,6 @@ onMounted(() => {
   opacity: 0.45;
   cursor: not-allowed;
 }
-/* 收起后的窄栏 */
 .agent-browser-rail {
   flex: none;
   width: 34px;
@@ -316,7 +715,6 @@ onMounted(() => {
   background: transparent;
   color: var(--text3);
   cursor: pointer;
-  writing-mode: initial;
 }
 .browser-rail-btn:hover {
   color: var(--orange);

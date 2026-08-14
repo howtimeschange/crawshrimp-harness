@@ -40,6 +40,11 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _iso_after(seconds: int) -> str:
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
 class AgentService:
     def __init__(self) -> None:
         self.main_loop: Optional[asyncio.AbstractEventLoop] = None
@@ -61,6 +66,8 @@ class AgentService:
         self._mcp_app = None
         self._mcp_uvicorn = None
         self._mcp_task: Optional[asyncio.Task] = None
+        self.mcp_port = 18768
+        self.mcp_url = "http://127.0.0.1:18768/mcp"
         self._callbacks: dict[str, Any] = {}
 
     # ---------- 初始化 / 恢复 ----------
@@ -80,6 +87,12 @@ class AgentService:
     async def start(self) -> None:
         self.main_loop = asyncio.get_event_loop()
         mcp_gateway.ctx.main_loop = self.main_loop
+        try:
+            import faulthandler
+            import signal
+            faulthandler.register(signal.SIGUSR1, all_threads=True)  # 诊断用:kill -USR1 转储全部栈
+        except Exception:  # noqa: BLE001
+            pass
         self._recover_on_startup()
         self.queue_task = asyncio.create_task(self._queue_loop())
         data_root = _data_root()
@@ -90,20 +103,24 @@ class AgentService:
         await self._start_mcp_server()
 
     async def _start_mcp_server(self) -> None:
+        import os as _os
         import uvicorn
         from core.agent import api as agent_api
+        port = int(_os.environ.get("CRAWSHRIMP_AGENT_MCP_PORT", "18768"))
+        self.mcp_port = port
+        self.mcp_url = f"http://127.0.0.1:{port}/mcp"
         app = agent_api.build_agent_mcp_asgi(lambda: self.runtime_token)
-        config = uvicorn.Config(app, host="127.0.0.1", port=18768, log_level="warning")
+        config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
         self._mcp_uvicorn = uvicorn.Server(config)
         self._mcp_task = asyncio.create_task(self._mcp_uvicorn.serve())
-        print("[agent] MCP gateway listening on 127.0.0.1:18768/mcp", flush=True)
+        print(f"[agent] MCP gateway listening on {self.mcp_url}", flush=True)
 
     async def _stop_mcp_server(self) -> None:
         if getattr(self, "_mcp_uvicorn", None) is not None:
             self._mcp_uvicorn.should_exit = True
             try:
-                await asyncio.wait_for(self._mcp_task, timeout=5)
-            except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+                await asyncio.wait_for(asyncio.shield(self._mcp_task), timeout=5)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):  # noqa: BLE001
                 self._mcp_task.cancel()
             self._mcp_uvicorn = None
             self._mcp_task = None
@@ -162,7 +179,7 @@ class AgentService:
         message_id = f"msg-{uuid.uuid4().hex[:12]}"
         ordinal = db.next_turn_ordinal(session_id)
 
-        db.create_message(message_id, session_id, turn_id, run_id, "user", "text", text)
+        db.create_message(message_id, session_id, turn_id, run_id, "user", "text", {"text": text})
         turn = db.create_turn(turn_id, session_id, ordinal, message_id)
         model_id, provider_id = self._resolve_model()
         run = db.create_run(run_id, session_id, turn_id, provider_id, model_id)
@@ -194,11 +211,26 @@ class AgentService:
     async def _queue_loop(self) -> None:
         while True:
             item = await self.queue.get()
-            if self.active_run is not None:
-                await self.queue.put(item)  # 放回队尾重排(理论上不会发生,单消费者)
-                await asyncio.sleep(0.2)
-                continue
-            await self._run_one(item)
+            try:
+                if self.active_run is not None:
+                    await self.queue.put(item)  # 放回队尾重排(理论上不会发生,单消费者)
+                    await asyncio.sleep(0.2)
+                    continue
+                await self._run_one(item)
+            except Exception as exc:  # noqa: BLE001
+                import traceback
+                traceback.print_exc()
+                try:
+                    db.update_run(item.get("run_id"), status="failed", finished_at=_now_iso(),
+                                  error_code="INTERNAL_ERROR", error_message=str(exc)[:500])
+                    db.update_turn(item.get("turn_id"), status="failed", completed_at=_now_iso())
+                    await self.broadcast(item.get("session_id"), 0, "run.failed",
+                                         {"run_id": item.get("run_id"), "error": str(exc)[:300]})
+                except Exception:  # noqa: BLE001
+                    pass
+                self.active_run = None
+                mcp_gateway.ctx.active_run = None
+                mcp_gateway.ctx.grant = None
 
     async def _run_one(self, item: dict) -> None:
         run_id, session_id, turn_id = item["run_id"], item["session_id"], item["turn_id"]
@@ -211,7 +243,8 @@ class AgentService:
         await self.broadcast(session_id, 0, "run.started", {"run_id": run_id, "turn_id": turn_id})
 
         mcp_gateway.ctx.active_run = db.get_run(run_id)
-        mcp_gateway.ctx.grant = self._grant_for_run(item)
+        # 同步 HTTP(CDP bridge)不得阻塞事件循环 → to_thread
+        mcp_gateway.ctx.grant = await asyncio.to_thread(self._grant_for_run, item)
 
         try:
             generation_ok = await self._ensure_generation(item)
@@ -225,6 +258,23 @@ class AgentService:
             }, timeout=30 * 60 + 60)
 
             result = (summary or {}).get("summary") or {}
+
+            # DSH 持久化不变量:runtime 重启后,旧 runtime_session_id 与既有日志不匹配
+            # (id collision)。产品行为:轮换 runtime_session_id 并重试一次,提示上下文不可恢复。
+            if result.get("status") == "failed" and _is_session_collision(result):
+                import uuid as _uuid
+                new_sid = f"dsh-{_uuid.uuid4().hex}"
+                db.update_session(session_id, runtime_session_id=new_sid, continuation_available=0)
+                notice = "智能体运行时已重启,上一轮对话上下文无法继续恢复;已开启新上下文继续本轮。"
+                db.create_message(f"{run_id}:notice", session_id, turn_id, run_id, "system", "notice", {"text": notice})
+                await self.broadcast(session_id, 0, "session.updated",
+                                     {"session_id": session_id, "notice": notice, "new_context": True})
+                summary = await self.worker.request("worker.run", {
+                    "runId": run_id,
+                    "sessionId": new_sid,
+                    "text": item["text"],
+                }, timeout=30 * 60 + 60)
+                result = (summary or {}).get("summary") or {}
             status = result.get("status")
             if status not in RUN_FINAL_STATUSES:
                 status = "failed"
@@ -262,7 +312,7 @@ class AgentService:
             return None
         from core.cdp_bridge import get_bridge
         try:
-            tabs = get_bridge().get_tabs(timeout=4)
+            tabs = get_bridge().get_tabs(timeout=2)
         except Exception:  # noqa: BLE001
             tabs = []
         pages = [t for t in tabs if t.get("type") == "page"]
@@ -315,7 +365,7 @@ class AgentService:
             runtime_root=str(resolve_harness_root()),
             data_root=str(data_root),
             cordis_path=str(cordis_path),
-            mcp_url="http://127.0.0.1:18768/mcp",
+            mcp_url=getattr(self, "mcp_url", "http://127.0.0.1:18768/mcp"),
             session_root=str(agent_dir / "harness-sessions"),
             on_notification=self._on_worker_notification,
         )
@@ -325,7 +375,7 @@ class AgentService:
                 "runtimeRoot": str(resolve_harness_root()),
                 "dataRoot": str(data_root),
                 "cordisPath": str(cordis_path),
-                "mcpUrl": "http://127.0.0.1:18768/mcp",
+                "mcpUrl": getattr(self, "mcp_url", "http://127.0.0.1:18768/mcp"),
                 "sessionRoot": str(agent_dir / "harness-sessions"),
             }, timeout=20)
             if not init.get("ok"):
@@ -572,6 +622,13 @@ class AgentService:
             await self.broadcast(run["session_id"], 0, "run.canceled", {"run_id": run_id})
             return {"ok": True, "status": "canceled"}
         return {"ok": False, "error": "NOT_ACTIVE"}
+
+
+def _is_session_collision(result: dict) -> bool:
+    reason = result.get("reason") or {}
+    error = reason.get("error") if isinstance(reason, dict) else None
+    message = str((error or {}).get("message") or "") if isinstance(error, dict) else ""
+    return "persisted log" in message or "id collision" in message
 
 
 def _seq(session_id: str) -> int:

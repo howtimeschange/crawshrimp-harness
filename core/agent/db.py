@@ -18,8 +18,10 @@ from typing import Any, Optional
 from core.data_sink import _db_path, _now_iso  # noqa: F401  (复用产品库路径与时间格式)
 
 _local = threading.local()
-# 可重入锁:create_* 函数在持锁状态下会调用 get_* 读回记录
-_lock = threading.RLock()
+# 不使用进程级共享锁:跨线程(事件循环线程 + executor 线程 + anyio 线程)共享 RLock
+# 会产生死锁类问题;并发安全交给 sqlite 文件锁 + busy_timeout。
+from contextlib import nullcontext as _nullcontext
+_lock = _nullcontext()  # noqa: A001  (保留 with _lock: 调用点形状,语义变为无锁)
 
 AGENT_TABLES = """
 CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -186,8 +188,9 @@ def _ensure_agent_columns(conn: sqlite3.Connection) -> None:
 
 
 def _conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(_db_path()), timeout=10)
+    conn = sqlite3.connect(str(_db_path()), timeout=15)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 15000")
     return conn
 
 

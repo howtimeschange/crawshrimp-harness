@@ -112,6 +112,7 @@ function spawnRuntime() {
     console.error(`[worker][harness] ${String(chunk).trimEnd()}`)
   })
   child.on('exit', (code, signal) => {
+    console.error(`[worker] harness runtime 退出 code=${code} signal=${signal}`)
     const wasActive = state.activeRun
     state.runtime = null
     if (wasActive) {

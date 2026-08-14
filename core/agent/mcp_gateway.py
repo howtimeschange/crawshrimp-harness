@@ -701,7 +701,7 @@ def tool_script_publish(rev_id: str, adapter_id: str = "") -> dict:
         "adapter_id": adapter_id or None,
         "risk": "external_write",
     }
-    decision = _await_approval_sync({"plan_id": f"publish-{rev_id}", "params_json": "{}", "params_sha256": "",
+    decision = _await_approval_blocking({"plan_id": f"publish-{rev_id}", "params_json": "{}", "params_sha256": "",
                                      "risk": "external_write", "adapter_id": "", "task_id": ""}, summary)
     if decision != "approved":
         db.update_script_revision(rev_id, status="rejected")
