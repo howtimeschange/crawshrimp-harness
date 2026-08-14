@@ -178,18 +178,40 @@ function onWindowMessage(event) {
 onMounted(() => {
   loadRuntime()
   window.addEventListener('message', onWindowMessage)
-  // 持续探活:runtime/后端不健康即自动恢复(webUrl 非空也检测,覆盖挂掉场景)
+  // 持续探活:runtime/后端不健康即自动恢复(webUrl 非空也检测,覆盖挂掉场景)。
+  // web_url 报告可能滞后于真实端口(DSH webserver 端口冲突内部 +1),
+  // 因此额外做 HTTP 级探活:no-cors fetch 只判可达性,不可达即触发自愈。
+  let probeFailCount = 0
   pollTimer = setInterval(async () => {
     try {
       const st = await window.cs.agentApi('GET', '/agent/runtime')
       if (st?.web_url && st.state === 'ready') {
-        if (!webUrl.value) webUrl.value = st.web_url
+        let reachable = true
+        try {
+          await fetch(st.web_url.replace(/\/+$/, '') + '/?__probe=' + Date.now(), { mode: 'no-cors', cache: 'no-store' })
+        } catch {
+          reachable = false
+        }
+        if (reachable) {
+          probeFailCount = 0
+          if (!webUrl.value) webUrl.value = st.web_url
+          return
+        }
+        // 连续两次不可达才重挂 iframe,避免瞬断闪烁
+        probeFailCount += 1
+        if (probeFailCount >= 2) {
+          webUrl.value = ''
+          error.value = '智能体会话界面未就绪'
+          autoRecover()
+        }
         return
       }
+      probeFailCount = 0
       webUrl.value = ''
       error.value = st?.error || '智能体运行时不可用'
       autoRecover()
     } catch {
+      probeFailCount = 0
       webUrl.value = ''
       error.value = '无法连接本地服务'
       autoRecover()

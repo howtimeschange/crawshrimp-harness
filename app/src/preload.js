@@ -87,13 +87,20 @@ async function apiCall(method, requestPath, body) {
   if (body !== undefined && body !== null) {
     headers['Content-Type'] = 'application/json'
     options.body = JSON.stringify(body)  }
-  const response = await fetch(buildUrl(requestPath), options)
-  const payload = await parseResponse(response)
-  if (!response.ok) {
-    const detail = payload?.detail || payload?.error || payload?.message || String(payload || response.statusText || '请求失败')
-    throw new Error(detail)
+  // 稳定性:后端重启/端口漂移时请求可能静默挂起,统一 60s 超时兜底。
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 60000)
+  try {
+    const response = await fetch(buildUrl(requestPath), { ...options, signal: controller.signal })
+    const payload = await parseResponse(response)
+    if (!response.ok) {
+      const detail = payload?.detail || payload?.error || payload?.message || String(payload || response.statusText || '请求失败')
+      throw new Error(detail)
+    }
+    return payload
+  } finally {
+    clearTimeout(timer)
   }
-  return payload
 }
 
 function queryString(query = {}) {

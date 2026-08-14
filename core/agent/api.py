@@ -205,6 +205,19 @@ async def create_turn(session_id: str, req: TurnCreateRequest) -> dict:
     return JSONResponse(status_code=202, content=result)
 
 
+@router.post("/data/clear")
+def clear_agent_data() -> dict:
+    """清除智能体数据:会话历史/消息/事件/审批/草稿等投影与持久化记录。
+
+    不清任务实例、任务产物与配置;harness 会话日志随 worker 重启重建。
+    """
+    service = get_agent_service()
+    result = service.clear_agent_data()
+    if not result.get("ok"):
+        raise HTTPException(409, result.get("error", "存在进行中的运行,无法清除"))
+    return result
+
+
 @router.get("/task-instances/{instance_uid}")
 def get_task_instance_status(instance_uid: str) -> dict:
     """任务实例状态(任务卡实时刷新)。"""

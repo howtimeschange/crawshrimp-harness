@@ -500,7 +500,54 @@
           </div>
         </section>
 
-        <section v-else-if="activePanelId === 'ai-llm'" key="ai-llm" class="panel">
+        <section v-else-if="activePanelId === 'ai-agent'" key="ai-agent" class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">AI 能力</p>
+              <h3>智能体运行时</h3>
+            </div>
+            <span :class="['badge', agentRuntime.state === 'ready' ? 'on' : 'off']">
+              {{ agentRuntime.state === 'ready' ? '就绪' : agentRuntime.state === 'crashed' ? '异常' : '启动中' }}
+            </span>
+          </div>
+
+          <div class="panel-layout">
+            <div class="form-stack">
+              <div class="field">
+                <label>运行状态</label>
+                <div class="key-states">
+                  <span :class="['key-pill', agentRuntime.state === 'ready' ? 'on' : 'off']">运行时</span>
+                  <span :class="['key-pill', agentRuntime.api_key_configured ? 'on' : 'off']">API Key</span>
+                  <span class="key-pill neutral">模型 {{ agentRuntime.model || '—' }}</span>
+                </div>
+                <p class="field-hint">状态:{{ agentRuntime.state || '—' }} · 代次 {{ agentRuntime.generation }}<span v-if="agentRuntime.error"> · {{ agentRuntime.error }}</span></p>
+                <p v-if="agentRuntime.web_url" class="field-hint">会话界面:{{ agentRuntime.web_url }}</p>
+              </div>
+              <div class="field">
+                <label>操作</label>
+                <div class="agent-op-row">
+                  <button class="btn-ghost" type="button" :disabled="Boolean(agentBusy)" @click="onAgentRestartRuntime">
+                    {{ agentBusy === 'runtime' ? '重启中…' : '重启智能体运行时' }}
+                  </button>
+                  <button class="btn-ghost" type="button" :disabled="Boolean(agentBusy)" @click="onAgentRepairCore">
+                    {{ agentBusy === 'core' ? '修复中…' : '修复核心服务' }}
+                  </button>
+                  <button class="btn-danger" type="button" :disabled="Boolean(agentBusy)" @click="onAgentClearData">
+                    清除智能体数据
+                  </button>
+                </div>
+                <p class="field-hint">重启运行时保留会话历史;修复核心服务重启本地后端;清除数据会清空会话历史/审批记录/草稿(不影响已执行任务与产物),需确认。</p>
+              </div>
+              <div v-if="agentNotice" class="agent-notice">{{ agentNotice }}</div>
+            </div>
+            <div class="side-note">
+              <strong>说明</strong>
+              <p>智能体会话界面带自动恢复:运行中掉线会静默自愈。这里提供手动诊断与重置入口。</p>
+            </div>
+          </div>
+        </section>
+
+<section v-else-if="activePanelId === 'ai-llm'" key="ai-llm" class="panel">
           <div class="panel-head">
             <div>
               <p class="panel-kicker">AI 文本与多模态</p>
@@ -869,6 +916,60 @@ const props = defineProps([
 ])
 const emit = defineEmits(['runtime-refresh', 'check-update', 'theme-change'])
 
+const agentRuntime = ref({ state: 'unknown', generation: 0, model: '', web_url: '', api_key_configured: false, error: '' })
+const agentBusy = ref('')
+const agentNotice = ref('')
+
+async function refreshAgentRuntime() {
+  try {
+    agentRuntime.value = await window.cs.agentApi('GET', '/agent/runtime')
+  } catch {
+    agentRuntime.value = { state: 'offline', generation: 0, model: '', web_url: '', api_key_configured: false, error: '后端不可达' }
+  }
+}
+
+async function onAgentRestartRuntime() {
+  agentBusy.value = 'runtime'
+  agentNotice.value = ''
+  try {
+    const result = await window.cs.agentApi('POST', '/agent/runtime/restart')
+    agentNotice.value = result?.ok ? '智能体运行时已重启。' : `重启失败:${result?.error || ''}`
+  } catch (error) {
+    agentNotice.value = `重启失败:${error?.message || error}`
+  } finally {
+    agentBusy.value = ''
+    await refreshAgentRuntime()
+  }
+}
+
+async function onAgentRepairCore() {
+  agentBusy.value = 'core'
+  agentNotice.value = ''
+  try {
+    await window.cs.restartBackend()
+    agentNotice.value = '核心服务已重启。'
+  } catch (error) {
+    agentNotice.value = `修复失败:${error?.message || error}`
+  } finally {
+    agentBusy.value = ''
+    await refreshAgentRuntime()
+  }
+}
+
+async function onAgentClearData() {
+  if (!window.confirm('确定清除智能体数据?将清空会话历史、审批记录与草稿,已执行的任务与产物不受影响。')) return
+  agentBusy.value = 'clear'
+  agentNotice.value = ''
+  try {
+    await window.cs.agentApi('POST', '/agent/data/clear')
+    agentNotice.value = '智能体数据已清除。'
+  } catch (error) {
+    agentNotice.value = `清除失败:${error?.message || error}`
+  } finally {
+    agentBusy.value = ''
+  }
+}
+
 const cfg = ref({})
 const savedCfg = ref({})
 
@@ -981,11 +1082,12 @@ const menuGroups = [
     id: 'ai',
     icon: '●',
     label: 'AI 能力',
-    desc: '图片 / 文本 / 视频模型',
+    desc: '图片 / 文本 / 视频 / 智能体',
     children: [
       { id: 'ai-1xm', label: '1XM 图片模型', statusKeys: ai1xmKeyFields },
       { id: 'ai-llm', label: '文本大模型', statusKeys: llmKeyFields },
       { id: 'ai-video', label: '视频模型', statusKeys: aiVideoKeyFields },
+      { id: 'ai-agent', label: '智能体', statusKeys: [] },
     ],
   },
   {
@@ -1443,6 +1545,7 @@ watch(() => props.focusPanelId, panelId => {
 
 watch(activePanelId, panelId => {
   if (panelId === 'cloud-approval') loadCloudStatus()
+  if (panelId === 'ai-agent') refreshAgentRuntime()
 })
 </script>
 
@@ -1681,6 +1784,12 @@ watch(activePanelId, panelId => {
   gap: 20px;
   transform-origin: top left;
 }
+
+.agent-op-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.agent-notice { font-size: 12.5px; color: var(--green); padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); }
+.btn-danger { border: 1px solid var(--red); color: var(--red); background: transparent; font-size: 13px; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+.btn-danger:hover { background: rgba(248, 113, 113, 0.12); }
+.btn-danger:disabled { opacity: 0.6; cursor: default; }
 
 .panel-head {
   display: flex;

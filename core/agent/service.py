@@ -525,13 +525,15 @@ class AgentService:
         if ds_key:
             os.environ["CRAWSHRIMP_DEEPSEEK_API_KEY"] = ds_key
 
-        # Web host 端口自愈:残留 harness 占用时自动 +1 递增,不再因端口冲突起不来
-        os.environ["CRAWSHRIMP_WEB_PORT"] = str(_pick_free_port(self.web_port, 8))
-
         data_root = _data_root()
         agent_dir = data_root / "agent"
-        # 启动 worker 前清理本 data 目录的孤儿 runtime(上次后端被强杀的残留)
+        # 启动 worker 前先清理本 data 目录的孤儿 runtime(上次后端被强杀的残留),
+        # 避免残留进程占用端口导致 DSH webserver 内部 +1 漂移(前端拿不到真实端口会白屏)。
         _cleanup_orphan_runtimes(str(data_root))
+        # Web host 端口自愈:清完残留再选端口,并把结果回写 self.web_port,
+        # runtime_status 必须上报与 harness 实际监听一致的端口。
+        self.web_port = _pick_free_port(self.web_port, 8)
+        os.environ["CRAWSHRIMP_WEB_PORT"] = str(self.web_port)
         # runtime cordis 必须写在 harness root(node_modules 旁):
         # dsh-app-boot 以 config 所在目录为模块解析基准(ctx.baseUrl),
         # 写进 data 目录会导致 client 插件包(bare import)解析失败,web BOOT entries 为空。
@@ -577,6 +579,9 @@ class AgentService:
             self.runtime_state = "ready"
             self.generation_model = model_id
             self.generation_model_provider = provider_id
+            # 端口漂移兜底:DSH webserver 在首选端口被占时会内部 +1,
+            # 后台探测真实监听端口并回写 self.web_port,前端 iframe 才能加载正确地址。
+            asyncio.get_running_loop().create_task(self._settle_web_port(self.web_port))
             return True
         except Exception as exc:  # noqa: BLE001
             self.runtime_error = str(exc)
@@ -584,6 +589,32 @@ class AgentService:
             await worker.stop()
             self._note_crash(str(exc))
             return False
+
+    async def _settle_web_port(self, preferred: int) -> None:
+        """探测 DSH web host 真实监听端口(webserver 内部端口冲突会 +1)。
+
+        在 [preferred, preferred+8] 范围内找第一个返回 __DSH_BOOT__ 特征的
+        端口并回写 self.web_port 与环境变量;最多探测约 15s(webserver 启动有延迟)。
+        """
+        import http.client as _http
+        base = max(1, int(preferred or 0))
+        for _attempt in range(30):
+            for port in range(base, base + 9):
+                try:
+                    conn = _http.HTTPConnection("127.0.0.1", port, timeout=0.8)
+                    conn.request("GET", "/")
+                    resp = conn.getresponse()
+                    body = resp.read(512).decode("utf-8", "replace")
+                    conn.close()
+                    if resp.status == 200 and "__DSH_BOOT__" in body:
+                        if port != self.web_port:
+                            print(f"[agent] web host 实际端口修正 {self.web_port}→{port}", flush=True)
+                            self.web_port = port
+                            os.environ["CRAWSHRIMP_WEB_PORT"] = str(port)
+                        return
+                except OSError:
+                    continue
+            await asyncio.sleep(0.5)
 
     def _note_crash(self, message: str) -> None:
         import time as _time
@@ -949,6 +980,26 @@ class AgentService:
                 return "rejected"
 
         return await asyncio.get_event_loop().run_in_executor(None, _post)
+
+    def clear_agent_data(self) -> dict:
+        """清除智能体数据(会话历史/审批/草稿等);进行中的运行时拒绝。"""
+        if self.active_run is not None or (mcp_gateway.ctx.active_run or {}).get("status") == "running":
+            return {"ok": False, "error": "存在进行中的运行,请先停止后再清除"}
+        try:
+            db.clear_agent_data()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"清除失败: {exc}"}
+        self.shadow_runs.clear()
+        self.approval_waits.clear()
+        # harness 会话日志:由下一次 worker 启动时按新会话根重建
+        try:
+            sessions_root = Path(_data_root()) / "agent" / "harness-sessions"
+            if sessions_root.exists():
+                import shutil as _shutil
+                _shutil.rmtree(sessions_root, ignore_errors=True)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": True, "cleared": True}
 
     def decide_approval(self, approval_id: str, decision: str) -> dict:
         approval = db.get_approval(approval_id)
