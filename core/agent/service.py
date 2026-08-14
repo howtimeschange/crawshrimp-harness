@@ -309,6 +309,8 @@ class AgentService:
             db.update_turn(turn_id, status="failed", completed_at=_now_iso())
             await self.broadcast(session_id, 0, "run.failed", {"run_id": run_id, "error": str(exc)[:300]})
             self._note_crash(str(exc))
+            if status == "completed":
+                await self._broadcast_run_artifacts(run_id, session_id)
         finally:
             mcp_gateway.ctx.active_run = None
             mcp_gateway.ctx.grant = None
@@ -459,6 +461,53 @@ class AgentService:
             "error": self.runtime_error,
             "node_executable": resolve_node_executable(),
         }
+
+    async def _broadcast_run_artifacts(self, run_id: str, session_id: str) -> None:
+        """任务执行完成后,把产物以附件形式推送到聊天(流程 1)。"""
+        if not mcp_gateway.ctx.list_task_artifacts:
+            return
+        import json as _json
+        import os as _os
+        with db._lock:
+            conn = db._conn()
+            try:
+                calls = [dict(r) for r in conn.execute(
+                    "SELECT * FROM agent_tool_calls WHERE run_id = ? AND status = 'succeeded'", (run_id,)).fetchall()]
+            finally:
+                conn.close()
+        seen: set[str] = set()
+        for call in calls:
+            try:
+                envelope = _json.loads(call.get("result_json") or "{}")
+            except (TypeError, ValueError):
+                continue
+            envelope = envelope.get("text") if isinstance(envelope, dict) else None
+            if isinstance(envelope, str):
+                try:
+                    envelope = _json.loads(envelope)
+                except ValueError:
+                    continue
+            evidence = (envelope or {}).get("evidence") or {}
+            uid = evidence.get("task_instance_uid")
+            if not uid or uid in seen:
+                continue
+            seen.add(uid)
+            for artifact in (mcp_gateway.ctx.list_task_artifacts(uid) or []):
+                path = artifact.get("path") or ""
+                size = 0
+                if path:
+                    try:
+                        size = _os.path.getsize(path)
+                    except OSError:
+                        size = 0
+                await self.broadcast(session_id, _seq(session_id), "artifact.created", {
+                    "artifact_id": artifact.get("id"),
+                    "filename": artifact.get("label") or (path.split("/")[-1] if path else ""),
+                    "kind": artifact.get("kind") or "",
+                    "path": path,
+                    "size": size,
+                    "task_instance_uid": uid,
+                })
 
     # ---------- Worker 事件投影 ----------
 

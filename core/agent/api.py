@@ -255,17 +255,53 @@ def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
         _db.update_script_revision(rev_id, status="rejected")
         raise HTTPException(409, "草稿文件已不存在,无法发布")
     content = draft.read_text(encoding="utf-8")
-    adapter_id = rev.get("adapter_id") or "general"
+    adapter_id = rev.get("adapter_id") or "general-agent"
     import re as _re
-    safe_adapter = _re.sub(r"[^A-Za-z0-9._-]", "_", str(adapter_id))
+    safe_adapter = _re.sub(r"[^A-Za-z0-9._-]", "_", str(adapter_id)) or "general-agent"
+    import yaml as _yaml
+
+    # 固化到抓虾 adapters 目录:注册为可复用任务(tasks_search/task_run 可见)
     from core.agent.service import _data_root
-    publish_dir = _data_root() / "agent" / "published-scripts" / safe_adapter
-    publish_dir.mkdir(parents=True, exist_ok=True)
-    dest = publish_dir / draft.name
+    adapter_dir = _data_root() / "adapters" / safe_adapter
+    scripts_dir = adapter_dir
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = _re.sub(r"[^A-Za-z0-9._-]", "_", draft.name)
+    if not safe_name.endswith((".js", ".py")):
+        safe_name += ".js"
+    dest = scripts_dir / safe_name
     dest.write_text(content, encoding="utf-8")
+
+    manifest_path = adapter_dir / "manifest.yaml"
+    manifest: dict = {}
+    if manifest_path.exists():
+        try:
+            manifest = _yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        except Exception:  # noqa: BLE001
+            manifest = {}
+    manifest.setdefault("id", safe_adapter)
+    manifest.setdefault("name", f"{safe_adapter} 智能体脚本")
+    manifest.setdefault("version", "0.1.0")
+    manifest.setdefault("author", "crawshrimp-agent")
+    manifest.setdefault("description", "智能体固化脚本(双闸门审批)")
+    manifest.setdefault("entry_url", "")
+    tasks = manifest.get("tasks") or []
+    task_id = safe_name.rsplit(".", 1)[0]
+    entry = next((t for t in tasks if isinstance(t, dict) and t.get("id") == task_id), None)
+    if entry is None:
+        entry = {"id": task_id, "name": task_id, "script": safe_name,
+                 "description": "智能体固化的网页自动化脚本(经用户双闸门审批)"}
+        tasks.append(entry)
+    else:
+        entry.update({"script": safe_name})
+    manifest["tasks"] = tasks
+    manifest_path.write_text(_yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
     sha = _hashlib.sha256(content.encode("utf-8")).hexdigest()
-    _db.update_script_revision(rev_id, status="published", source_sha256=sha)
-    return {"ok": True, "status": "published", "path": str(dest), "source_sha256": sha}
+    _db.update_script_revision(rev_id, status="published", adapter_id=safe_adapter, source_sha256=sha)
+    return {"ok": True, "status": "published", "path": str(dest),
+            "adapter_id": safe_adapter, "task_id": task_id,
+            "source_sha256": sha,
+            "message": f"已固化到抓虾脚本库:任务 {task_id} 可复用(tasks_search 可见)"}
 
 
 def build_agent_mcp_asgi(token_provider) -> Any:

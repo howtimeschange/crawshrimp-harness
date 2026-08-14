@@ -68,10 +68,12 @@ if (!upToDate) {
   for (const file of STAGE_FILES) {
     copyFileSync(join(sourceRoot, file), join(stageRoot, file))
   }
-  // 未来 Worker 入口(P1)也会随 worker/ 目录一起进来
-  const workerDir = join(sourceRoot, 'worker')
-  if (existsSync(workerDir)) {
-    spawnSync(process.platform === 'win32' ? 'xcopy' : 'cp', ['-R', workerDir, stageRoot], { stdio: 'inherit', shell: true })
+  // Worker 入口与技能包随 staging 一起进安装包
+  for (const dir of ['worker', 'skills']) {
+    const src = join(sourceRoot, dir)
+    if (existsSync(src)) {
+      spawnSync(process.platform === 'win32' ? 'xcopy' : 'cp', ['-R', src, stageRoot], { stdio: 'inherit', shell: true })
+    }
   }
   writeFileSync(markerFile, `${lockHash}\n`)
   console.log('[stage-runtime] staging complete')

@@ -97,6 +97,19 @@
             </div>
           </div>
 
+          <div v-else-if="m.kind === 'artifact'" class="artifact-card">
+            <div class="artifact-card-icon">📎</div>
+            <div class="artifact-card-info">
+              <div class="artifact-card-name">{{ m.filename }}</div>
+              <div class="artifact-card-meta">{{ formatSize(m.size) }} · {{ m.taskInstanceUid }}</div>
+            </div>
+            <div class="artifact-card-actions">
+              <button class="artifact-btn" type="button" @click="openArtifact(m)">打开</button>
+              <button class="artifact-btn" type="button" @click="revealArtifact(m)">定位</button>
+              <button class="artifact-btn primary" type="button" @click="analyzeArtifact(m)">分析此文件</button>
+            </div>
+          </div>
+
           <div v-else-if="m.kind === 'notice'" class="chat-notice">
             {{ m.text }}
           </div>
@@ -279,6 +292,7 @@ function handleEvent(event, data) {
       break
     }
     case 'tool.requested': {
+      if ((data?.tool_name || '').startsWith('mcp__crawshrimp__browser')) browserOpen.value = true
       pushMessage({
         kind: 'tool',
         toolName: data?.tool_name || '',
@@ -329,11 +343,24 @@ function handleEvent(event, data) {
       break
     }
     case 'task.linked': {
+      browserOpen.value = true  // 任务执行:内置浏览器窗口实时可见
       pushMessage({
         kind: 'task',
         taskInstanceUid: data?.task_instance_uid || '',
         planId: data?.plan_id || '',
         status: 'running',
+      })
+      scrollToBottom()
+      break
+    }
+    case 'artifact.created': {
+      pushMessage({
+        kind: 'artifact',
+        artifactId: data?.artifact_id,
+        filename: data?.filename || `artifact-${data?.artifact_id}`,
+        path: data?.path || '',
+        size: data?.size || 0,
+        taskInstanceUid: data?.task_instance_uid || '',
       })
       scrollToBottom()
       break
@@ -380,6 +407,29 @@ async function stopRun() {
 
 function openTaskInstance(instanceUid) {
   emit('open-task-instance', instanceUid)
+}
+
+function formatSize(size) {
+  const n = Number(size) || 0
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+async function openArtifact(m) {
+  if (!m.path) return
+  try { await window.cs.openFile(m.path) } catch (error) { pushMessage({ kind: 'notice', text: `打开失败:${error?.message || error}` }) }
+}
+
+async function revealArtifact(m) {
+  if (!m.path) return
+  try { await window.cs.revealFile(m.path) } catch (error) { pushMessage({ kind: 'notice', text: `定位失败:${error?.message || error}` }) }
+}
+
+function analyzeArtifact(m) {
+  // 流程 3:产物作为下一轮分析上下文
+  draft.value = `请分析这个结果文件(artifact_id=${m.artifactId},文件名 ${m.filename}),输出一份简要分析报告,包括数据规模、关键字段和可操作结论。`
+  send()
 }
 
 async function decideApproval(m, decision) {
@@ -688,6 +738,59 @@ onUnmounted(() => {
   margin-top: 10px;
   font-size: 12px;
   color: var(--text2);
+}
+.artifact-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg2);
+}
+.artifact-card-icon {
+  font-size: 18px;
+}
+.artifact-card-info {
+  flex: 1;
+  min-width: 0;
+}
+.artifact-card-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifact-card-meta {
+  font-size: 11px;
+  color: var(--text3);
+}
+.artifact-card-actions {
+  display: flex;
+  gap: 6px;
+}
+.artifact-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.artifact-btn:hover {
+  color: var(--text);
+  background: var(--bg3);
+}
+.artifact-btn.primary {
+  border-color: var(--orange);
+  color: var(--orange);
+}
+.artifact-btn.primary:hover {
+  background: var(--orange-bg);
 }
 .chat-notice {
   margin: 0 auto 12px;
