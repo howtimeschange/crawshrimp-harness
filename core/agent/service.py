@@ -16,6 +16,7 @@ from core import data_sink
 from core.agent import db
 from core.agent import mcp_gateway
 from core.agent.cordis_config import build_cordis_yaml, resolve_provider_for_model, model_capabilities
+from core.llm_gateway import deepseek_official_real_model
 from core.agent.worker import AgentWorker, resolve_harness_root, resolve_node_executable
 from core.config import load_config
 
@@ -490,7 +491,8 @@ class AgentService:
             gen = await worker.request("worker.start_generation", {
                 "generation": self.generation,
                 "provider": provider_id,
-                "model": model_id,
+                # DeepSeek 官方模型:产品内 ID → runtime 真实模型名
+                "model": deepseek_official_real_model(model_id),
                 "maxTokens": model_capabilities(model_id).get("max_output_tokens", 8192),
                 "cwd": str(agent_dir / "runtime-workdir"),
             }, timeout=120)
