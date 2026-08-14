@@ -51,7 +51,8 @@
 - [x] 智能体主视图:会话区(空态 + composer 骨架)+ 右侧实时浏览器面板(展开/收起);
 - [x] 主进程 `agentBrowser.js`:9222 CDP 截图流;
 - [x] preload 桥接;
-- [x] **P0 spike(部分)**:Electron-as-Node 拉起 dsh-jsonrpc-agent(0.1.0-rc.6),initialize/shutdown + 无密钥 prompt 冒烟通过,事件流与 `turn/end` 语义已验证(详见 `integrations/deepseek-harness/P0-PLAN.md`)。
+- [x] **P0 spike(部分)**:Electron-as-Node 拉起 dsh-jsonrpc-agent(0.1.0-rc.6),initialize/shutdown + 无密钥 prompt 冒烟通过,事件流与 `turn/end` 语义已验证;
+- [x] **DSH 运行时打包链**:stage-runtime.mjs 编排生产闭包(260 包)+ boot check;build.yml extraResources → `Resources/deepseek-harness`;after-pack 完整性校验;dev/发布态路径解析(deepseekHarnessPaths.js);构建链自动 staging —— 与抓虾打包 Python 同模式,开箱即用。
 
 已确认指令(2026-08-14):
 
@@ -86,10 +87,18 @@ bash dev.sh        # 创建 venv 并启动 FastAPI(127.0.0.1:18765)
 | 文件 | 说明 |
 | --- | --- |
 | `app/src/agentBrowser.js` | 新增:CDP 截图流模块 |
+| `app/src/deepseekHarnessPaths.js` | 新增:DSH 运行时 dev/发布态路径解析 |
 | `app/src/main.js` | 注册 `agent:browser:stream:*` IPC |
 | `app/src/preload.js` | 新增浏览器流桥接 API |
+| `app/build.yml` | extraResources 增加 deepseek-harness 闭包 |
+| `app/scripts/after-pack.js` | 增加 DSH 闭包完整性校验 |
+| `app/package.json` | 包名/版本/构建链(自动 staging) |
 | `app/src/renderer/views/AgentHome.vue` | 新增:智能体主视图 |
 | `app/src/renderer/components/agent/AgentSessionBar.vue` | 新增:侧边栏会话栏 |
 | `app/src/renderer/components/agent/AgentBrowserPanel.vue` | 新增:实时浏览器面板 |
 | `app/src/renderer/App.vue` | 接入智能体入口与会话栏 |
-| `app/package.json` | 包名/版本/描述更新 |
+| `integrations/deepseek-harness/package.json` | 新增:0.1.0-rc.6 精确锁版 |
+| `integrations/deepseek-harness/spike.cordis.yml` | 新增:llm-pi-ai 三路由 + spine profile |
+| `integrations/deepseek-harness/scripts/stage-runtime.mjs` | 新增:生产闭包编排 + boot check |
+| `integrations/deepseek-harness/spike/run-spike.mjs` | 新增:spike 驱动(initialize/prompt/shutdown) |
+| `integrations/deepseek-harness/P0-PLAN.md` | 新增:P0 计划与进展 |

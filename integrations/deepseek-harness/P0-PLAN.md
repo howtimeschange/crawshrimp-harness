@@ -75,10 +75,10 @@ Resources/deepseek-harness/        ← 安装包内(extraResources)
 ```
 
 - `scripts/stage-runtime.mjs`:编排生产闭包(lockfile 哈希增量跳过)+ 完整性清单 + **Electron-as-Node boot check**(staged bin 必须能 initialize/shutdown);
-- `app/build.yml` `extraResources`:`../build-staging/deepseek-harness` → `deepseek-harness`;
-- `app/scripts/after-pack.js` `requireDeepseekHarnessBundle`:安装包内闭包不完整则构建失败;
+- `app/scripts/after-pack.js`:从 `build-staging/deepseek-harness` 拷入 `Resources/deepseek-harness` 并校验完整性(缺失即构建失败)——**与 Python 同模式**;electron-builder 的 extraResources 默认排除 node_modules,不可用于本闭包;
 - 构建链:`npm run build` / `build:mac` / `build:win` 自动先跑 staging;
-- 运行时:`app/src/deepseekHarnessPaths.js` —— 开发态用仓库目录,发布态用 `process.resourcesPath/deepseek-harness`;不额外分发 Node,用已打包 Electron(`ELECTRON_RUN_AS_NODE=1`)。
+- 运行时:`app/src/deepseekHarnessPaths.js` —— 开发态用仓库目录,发布态用 `process.resourcesPath/deepseek-harness`;不额外分发 Node,用已打包 Electron(`ELECTRON_RUN_AS_NODE=1`);
+- ✅ **已验证(mac-arm64)**:`抓虾.app/Contents/Resources/deepseek-harness`(166M)内,用安装包自带 Electron 以 Node 模式运行包内 `dsh-jsonrpc-agent` + 包内 `spike.cordis.yml`,initialize/shutdown 通过。
 
 待补:
 

@@ -190,7 +190,22 @@ async function afterPack(context) {
   }
 
   requirePythonScriptsBundle(resourcesPath)
+
+  // DeepSeek Harness:与 Python 同模式 —— stage 脚本编排生产闭包,
+  // afterPack 负责拷入 Resources 并校验(extraResources 默认排除 node_modules)。
+  const stageHarness = path.join(scriptDir, '..', 'build-staging', 'deepseek-harness')
+  if (!fs.existsSync(stageHarness)) {
+    throw new Error(
+      `[after-pack] deepseek-harness staging 不存在: ${stageHarness}。` +
+      '请先运行 node integrations/deepseek-harness/scripts/stage-runtime.mjs。'
+    )
+  }
+  const destHarness = path.join(resourcesPath, 'deepseek-harness')
+  console.log(`[after-pack] Copying deepseek-harness → ${destHarness}`)
+  fs.mkdirSync(destHarness, { recursive: true })
+  copyDirSync(stageHarness, destHarness)
   requireDeepseekHarnessBundle(resourcesPath)
+  console.log('[after-pack] deepseek-harness bundled')
 
   const destPython = path.join(resourcesPath, 'python')
   console.log(`[after-pack] Copying Python ${srcKey} → ${destPython}`)

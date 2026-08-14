@@ -88,9 +88,8 @@ extraResources:
       - "!**/.DS_Store"
   # Python interpreter (downloaded by scripts/download-python.sh)
   # Actual copy happens in afterPack hook
-  # DeepSeek Harness 运行时生产闭包(stage-runtime.mjs 编排,开箱即用)
-  - from: "../build-staging/deepseek-harness"
-    to: deepseek-harness
+  # DeepSeek Harness 运行时:由 afterPack 从 build-staging/deepseek-harness 拷贝
+  # (与 Python 同模式;extraResources 默认 pattern 会排除 node_modules)
 
 # afterPack: copies per-arch Python bundle into Resources/python/
 afterPack: scripts/after-pack.js

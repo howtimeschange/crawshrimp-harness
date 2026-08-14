@@ -139,5 +139,7 @@ try { child.stdin.end() } catch {}
     { cwd: stageRoot, timeout: 60000 },
   )
   if (probe.status !== 0) fail(`staged runtime boot check exited ${probe.status}`)
+  // 清理 boot check 产生的会话目录,避免进入安装包
+  try { rmSync(join(stageRoot, '.boot-check-sessions'), { recursive: true, force: true }) } catch {}
   console.log('[stage-runtime] boot check OK')
 }
