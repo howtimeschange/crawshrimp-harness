@@ -41,3 +41,4 @@ chi_sim.traineddata
 .spike-sessions/
 integrations/deepseek-harness/workspace/
 build-staging/
+.storages/

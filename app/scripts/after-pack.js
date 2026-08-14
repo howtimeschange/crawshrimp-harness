@@ -52,7 +52,12 @@ const REQUIRED_DEEPSEEK_HARNESS_FILES = [
   'node_modules/@deepseek-ai/dsh-llm-pi-ai/package.json',
   'node_modules/@deepseek-ai/dsh-mcp-client/package.json',
   'node_modules/@deepseek-ai/dsh-session-persistence-jsonl/package.json',
+  'node_modules/@crawshrimp/launcher/index.js',
+  'node_modules/@deepseek-ai/dsh-web-app/package.json',
+  'node_modules/@deepseek-ai/dsh-host-webserver/package.json',
   'spike.cordis.yml',
+  'web-cordis.yml',
+  'worker/worker.mjs',
 ]
 
 function getPythonExecutable(srcPython, srcKey = '') {

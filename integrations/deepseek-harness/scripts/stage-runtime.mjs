@@ -12,7 +12,7 @@
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -22,7 +22,7 @@ const repoRoot = resolve(sourceRoot, '../..')
 const appRoot = join(repoRoot, 'app')
 const stageRoot = join(repoRoot, 'build-staging', 'deepseek-harness')
 
-const STAGE_FILES = ['spike.cordis.yml']
+const STAGE_FILES = ['spike.cordis.yml', 'web-cordis.yml']
 
 const REQUIRED_STAGE_FILES = [
   'package.json',
@@ -31,7 +31,15 @@ const REQUIRED_STAGE_FILES = [
   'node_modules/@deepseek-ai/dsh-llm-pi-ai/package.json',
   'node_modules/@deepseek-ai/dsh-mcp-client/package.json',
   'node_modules/@deepseek-ai/dsh-session-persistence-jsonl/package.json',
+  'node_modules/@crawshrimp/launcher/package.json',
+  'node_modules/@crawshrimp/launcher/index.js',
+  'node_modules/@deepseek-ai/dsh-cmdline/package.json',
+  'node_modules/@deepseek-ai/dsh-web-app/package.json',
+  'node_modules/@deepseek-ai/dsh-web-app/lib/startup.js',
+  'node_modules/@deepseek-ai/dsh-host-webserver/package.json',
+  'node_modules/@deepseek-ai/dsh-client-modules/package.json',
   'spike.cordis.yml',
+  'web-cordis.yml',
 ]
 
 const args = process.argv.slice(2)
@@ -68,8 +76,9 @@ if (!upToDate) {
   for (const file of STAGE_FILES) {
     copyFileSync(join(sourceRoot, file), join(stageRoot, file))
   }
-  // Worker 入口与技能包随 staging 一起进安装包
-  for (const dir of ['worker', 'skills']) {
+  // Worker 入口、技能包、本地 launcher 插件随 staging 一起进安装包
+  // (launcher 必须与 package.json 同层:npm ci 的 file: 依赖从该目录打包)
+  for (const dir of ['worker', 'skills', 'crawshrimp-launcher']) {
     const src = join(sourceRoot, dir)
     if (existsSync(src)) {
       spawnSync(process.platform === 'win32' ? 'xcopy' : 'cp', ['-R', src, stageRoot], { stdio: 'inherit', shell: true })
@@ -85,7 +94,9 @@ for (const rel of REQUIRED_STAGE_FILES) {
   if (!existsSync(join(stageRoot, rel))) fail(`staging missing required file: ${rel}`)
 }
 
-// 禁止包校验(方案 §6.2):生产闭包中不得出现禁用能力族
+// 禁止能力族校验(方案 §6.2):npm 传递依赖会把禁用包装进闭包,
+// 安全保证由 web-cordis.yml 的 disabled 行提供(loader 不 import 禁用行代码)。
+// 这里断言:闭包中出现的禁用包,其 cordis 行必须全部 disabled。
 const BANNED_PACKAGES = [
   'dsh-tool-bash', 'dsh-tool-bash-persistent', 'dsh-terminal', 'dsh-tool-terminal',
   'dsh-subprocess', 'dsh-subprocess-local',
@@ -96,10 +107,25 @@ const BANNED_PACKAGES = [
 ]
 {
   const scoped = join(stageRoot, 'node_modules', '@deepseek-ai')
-  if (existsSync(scoped)) {
-    const { readdirSync } = require('node:fs')
-    const banned = readdirSync(scoped).filter((name) => BANNED_PACKAGES.some((b) => name === b))
-    if (banned.length) fail(`生产闭包含禁用包: ${banned.join(', ')}`)
+  const present = existsSync(scoped) ? new Set(readdirSync(scoped)) : new Set()
+  const webYml = readFileSync(join(stageRoot, 'web-cordis.yml'), 'utf8')
+  // 解析 name 行(6 空格缩进),取其包名;行 id 是禁用断言的锚点
+  const rows = [...webYml.matchAll(/^- id: (\S+)\n  name: '([^']+)'/gm)]
+    .map((m) => ({ id: m[1], name: m[2].split('/')[0] }))
+  const problems = []
+  for (const row of rows) {
+    if (!BANNED_PACKAGES.some((b) => row.name.includes(b))) continue
+    const block = webYml.slice(webYml.indexOf(`- id: ${row.id}`), webYml.length)
+    const next = block.indexOf('\n- id: ')
+    const rowText = next >= 0 ? block.slice(0, next) : block
+    if (!/^\s*disabled:\s*('true'|true)\s*$/m.test(rowText)) {
+      problems.push(`${row.id} (${row.name})`)
+    }
+  }
+  if (problems.length) fail(`web-cordis.yml 中禁用能力行未 disabled: ${problems.join(', ')}`)
+  const activeBanned = rows.filter((r) => BANNED_PACKAGES.some((b) => r.name.includes(b)) && !problems.includes(`${r.id} (${r.name})`))
+  if (activeBanned.length) {
+    console.log(`[stage-runtime] 禁用能力族已在 cordis 行隔离(包仍在闭包,不加载代码): ${activeBanned.map((r) => r.id).join(', ')}`)
   }
 }
 

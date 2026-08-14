@@ -70,11 +70,15 @@ def _route_models(model_ids: tuple[str, ...]) -> list[dict[str, Any]]:
 
 
 def build_cordis_yaml(cfg: dict, selected_model: Optional[str] = None) -> str:
-    """生成 runtime cordis profile。cfg = load_config()。"""
+    """生成 runtime cordis profile。cfg = load_config()。
+
+    基于 web-cordis.yml 模板(完整 DSH web host 全量嵌入,见方案 §12.7):
+    模板由 integrations/deepseek-harness/scripts/gen-web-cordis.py 静态生成,
+    运行时仅替换 agent-default-model 的 provider/model 行(会话级模型切换);
+    baseURL/端口等经环境表达式读取,由 AgentService 在起 worker 前注入环境。
+    模板缺失(旧发布包)时回退到内置 legacy 极简 profile。
+    """
     llm = (cfg.get("ai") or {}).get("llm") or {}
-    overseas_openai_base = llm.get("overseas_openai_base_url") or OVERSEAS_OPENAI_BASE_URL
-    overseas_anthropic_base = llm.get("overseas_anthropic_base_url") or OVERSEAS_ANTHROPIC_BASE_URL
-    domestic_base = llm.get("domestic_base_url") or DOMESTIC_OPENAI_BASE_URL
     default_model = llm.get("default_model") or "gpt-5.6-terra"
 
     # 未登记能力或不支持工具的默认模型 → 保守上限 + 非默认
@@ -84,8 +88,53 @@ def build_cordis_yaml(cfg: dict, selected_model: Optional[str] = None) -> str:
         cap = model_capabilities(default_model)
 
     sel = selected_model if selected_model and model_capabilities(selected_model).get("supports_tools") else default_model
+    provider_id = resolve_provider_for_model(sel)
 
-    return f"""# 由 crawshrimp-harness FastAPI 从 ai.llm 配置生成(勿手改)
+    template = _web_cordis_template()
+    if template is None:
+        return _build_cordis_yaml_legacy(cfg, sel, provider_id)
+
+    lines = template.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("- id: agent-default-model"):
+            j = i + 1
+            while j < len(lines) and not lines[j].startswith("- id:"):
+                if lines[j].startswith("      provider:"):
+                    lines[j] = f"      provider: {provider_id}"
+                elif lines[j].startswith("      model:"):
+                    lines[j] = f"      model: {sel}"
+                j += 1
+            break
+    else:
+        return _build_cordis_yaml_legacy(cfg, sel, provider_id)
+    return "\n".join(lines) + "\n"
+
+
+def _web_cordis_template() -> Optional[str]:
+    """读取静态 web-cordis.yml 模板;缺失时返回 None(调用方回退 legacy)。"""
+    import os as _os
+    from pathlib import Path as _Path
+
+    env_root = _os.environ.get("CRAWSHRIMP_HARNESS_ROOT", "").strip()
+    if env_root:
+        root = _Path(env_root)
+    else:
+        root = _Path(__file__).resolve().parents[2] / "integrations" / "deepseek-harness"
+    path = root / "web-cordis.yml"
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def _build_cordis_yaml_legacy(cfg: dict, selected_model: str, provider_id: str) -> str:
+    """旧版极简 profile(无 web host 行);仅作模板缺失时的回退。"""
+    llm = (cfg.get("ai") or {}).get("llm") or {}
+    overseas_openai_base = llm.get("overseas_openai_base_url") or OVERSEAS_OPENAI_BASE_URL
+    overseas_anthropic_base = llm.get("overseas_anthropic_base_url") or OVERSEAS_ANTHROPIC_BASE_URL
+    domestic_base = llm.get("domestic_base_url") or DOMESTIC_OPENAI_BASE_URL
+    sel = selected_model
+
+    return f"""# 由 crawshrimp-harness FastAPI 从 ai.llm 配置生成(勿手改;legacy 回退,无 web host)
 - id: sdk-jsonrpc-server
   name: '@deepseek-ai/dsh-sdk-jsonrpc-server'
 

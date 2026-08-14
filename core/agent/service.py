@@ -413,10 +413,33 @@ class AgentService:
         self.runtime_token = secrets.token_hex(32)
         os.environ["CRAWSHRIMP_MCP_TOKEN"] = self.runtime_token
 
+        # Web host 端口与网关 baseURL:web-cordis.yml 经 !!js 环境表达式读取。
+        # Web host 端口取 MCP 端口 + 100(API+300),避开 main.js 端口回退区间。
+        self.web_port = getattr(self, "web_port", 0) or (self.mcp_port + 100)
+        os.environ["CRAWSHRIMP_WEB_PORT"] = str(self.web_port)
+        base = (cfg.get("ai") or {}).get("llm") or {}
+        for env_key, cfg_key, default in (
+            ("CRAWSHRIMP_OVERSEAS_OPENAI_BASE_URL", "overseas_openai_base_url", None),
+            ("CRAWSHRIMP_OVERSEAS_ANTHROPIC_BASE_URL", "overseas_anthropic_base_url", None),
+            ("CRAWSHRIMP_DOMESTIC_OPENAI_BASE_URL", "domestic_base_url", None),
+        ):
+            value = str(base.get(cfg_key) or "").strip()
+            if value:
+                os.environ[env_key] = value
+
         data_root = _data_root()
         agent_dir = data_root / "agent"
-        cordis_path = agent_dir / "runtime-cordis.yml"
-        cordis_path.write_text(build_cordis_yaml(cfg, model_id), encoding="utf-8")
+        # runtime cordis 必须写在 harness root(node_modules 旁):
+        # dsh-app-boot 以 config 所在目录为模块解析基准(ctx.baseUrl),
+        # 写进 data 目录会导致 client 插件包(bare import)解析失败,web BOOT entries 为空。
+        harness_root = resolve_harness_root()
+        cordis_path = harness_root / "runtime-cordis.yml"
+        try:
+            cordis_path.write_text(build_cordis_yaml(cfg, model_id), encoding="utf-8")
+        except OSError as exc:
+            print(f"[agent] 无法写入 {cordis_path}({exc}),回退 data 目录", flush=True)
+            cordis_path = agent_dir / "runtime-cordis.yml"
+            cordis_path.write_text(build_cordis_yaml(cfg, model_id), encoding="utf-8")
 
         worker = AgentWorker(
             runtime_root=str(resolve_harness_root()),
