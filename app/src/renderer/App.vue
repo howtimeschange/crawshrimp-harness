@@ -20,6 +20,20 @@
         <span class="dot" :class="status.chrome ? 'on' : 'off'">
           <i></i>Chrome
         </span>
+        <!-- 自动更新:主界面常驻入口(原侧边栏更新 footer 的顶栏形态) -->
+        <button
+          v-if="titlebarUpdate.action"
+          class="titlebar-update-btn"
+          :class="`tone-${titlebarUpdate.tone}`"
+          type="button"
+          :title="titlebarUpdate.title"
+          :disabled="updateActionBusy"
+          @click="onTitlebarUpdateAction"
+        >
+          <span aria-hidden="true">{{ titlebarUpdate.icon }}</span>
+          <span>{{ titlebarUpdate.versionLabel }} · {{ titlebarUpdate.label }}</span>
+          <span v-if="titlebarUpdate.tone === 'downloading'" class="titlebar-update-percent">{{ titlebarUpdate.percent }}%</span>
+        </button>
       </div>
     </div>
 
@@ -203,6 +217,7 @@ import { buildScriptGroups } from './utils/scriptGroups'
 import { buildTaskOverviewProgress, isTaskLiveActive, resolveTaskProgressConfig } from './utils/taskProgress'
 import { readSidebarCollapsed, writeSidebarCollapsed } from './utils/sidebarState.js'
 import { createUpdateActionRunner } from './utils/updateActions.js'
+import { buildSidebarUpdatePresentation } from './utils/updateDisplay.js'
 import {
   applyTheme,
   normalizeThemePreference,
@@ -482,6 +497,23 @@ async function downloadUpdate() {
   if (result?.status) updateStatus.value = result
 }
 
+// 顶栏更新按钮:状态展示与动作分发(与侧边栏更新 footer 同源)
+const titlebarUpdate = computed(() => {
+  const presentation = buildSidebarUpdatePresentation(updateStatus.value, false)
+  const tone = presentation.tone
+  const icon = { available: '⬇', downloading: '↓', waiting: '…', ready: '↻',
+                 error: '!', disabled: '-', checking: '⟳', installing: '↻' }[tone] || '✓'
+  return { ...presentation, icon }
+})
+
+function onTitlebarUpdateAction() {
+  if (updateActionBusy.value) return
+  const action = titlebarUpdate.value.action
+  if (action === 'download') downloadUpdate()
+  else if (action === 'install') installUpdate()
+  else if (action === 'retry') retryUpdateCheck()
+}
+
 async function retryUpdateCheck() {
   const result = await updateActionRunner.run(() => window.cs.checkForUpdates())
   if (result?.status) updateStatus.value = result
@@ -751,7 +783,28 @@ input, select, textarea { font-family: inherit; }
 .titlebar-macos.sidebar-collapsed .brand {
   margin-left: -32px;
 }
-.status-bar { margin-left: auto; display: flex; gap: 16px; -webkit-app-region: no-drag; }
+.status-bar { margin-left: auto; display: flex; gap: 16px; -webkit-app-region: no-drag; align-items: center; }
+
+.titlebar-update-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg3);
+  color: var(--text2);
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+  line-height: 1.5;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.titlebar-update-btn:hover { background: var(--soft-fill-hover); color: var(--text); }
+.titlebar-update-btn:disabled { opacity: 0.6; cursor: default; }
+.titlebar-update-btn.tone-available { border-color: var(--orange-dim); color: var(--orange-text); }
+.titlebar-update-btn.tone-ready, .titlebar-update-btn.tone-installing { color: var(--green); }
+.titlebar-update-btn.tone-error { color: var(--red); }
+.titlebar-update-percent { font-variant-numeric: tabular-nums; color: var(--text3); }
 .dot { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text3); }
 .dot i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--text3); }
 .dot.on i { background: var(--green); box-shadow: 0 0 6px var(--green); }
