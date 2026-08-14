@@ -1,0 +1,38 @@
+{
+  "name": "crawshrimp-harness",
+  "version": "2.4.12-harness.0",
+  "description": "Crawshrimp Harness: DeepSeek Harness powered browser-automation agent desktop app",
+  "author": "howtimeschange",
+  "license": "Apache-2.0",
+  "crawshrimpUpdateFeedUrl": "https://updates.crawshrimp.com/",
+  "main": "src/main.js",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "build": "vite build && node scripts/run-electron-builder.js --publish=never",
+    "build:mac": "vite build && node scripts/run-electron-builder.js --mac --publish=never",
+    "build:mac:ci": "vite build && node scripts/run-electron-builder.js --mac --publish=never",
+    "build:win": "vite build && node scripts/run-electron-builder.js --win --publish=never",
+    "vite:build": "vite build",
+    "test": "node --test src/*.test.js src/renderer/utils/*.test.js scripts/*.test.js",
+    "test:update-artifacts": "node --test scripts/validate-update-artifacts.test.js"
+  },
+  "dependencies": {
+    "@tabler/icons-vue": "^3.45.0",
+    "@tldraw/assets": "^5.2.3",
+    "electron-updater": "6.8.9",
+    "portfinder": "^1.0.32",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "tesseract.js": "^5.1.1",
+    "tldraw": "^5.2.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.7",
+    "concurrently": "^8.2.2",
+    "electron": "43.1.0",
+    "electron-builder": "^26.15.3",
+    "vite": "^8.1.4",
+    "vue": "^3.4.21",
+    "wait-on": "^9.0.4"
+  }
+}

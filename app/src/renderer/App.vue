@@ -1,0 +1,986 @@
+<template>
+  <div
+    class="layout"
+    :class="{
+      'layout-ai-image': currentView === 'ai_image' || currentView === 'ai_video' || currentView === 'ai_video_generation',
+      'sidebar-collapsed': effectiveSidebarCollapsed,
+      'titlebar-macos': isMacTitlebar,
+    }"
+  >
+    <!-- 标题栏 -->
+    <div class="titlebar">
+      <div class="brand">
+        <span class="logo">🦐 抓虾</span>
+        <button
+          v-if="!activeScript"
+          class="collapse-btn"
+          type="button"
+          :aria-label="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+          :title="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+          @click="toggleSidebar"
+        >
+          {{ sidebarCollapsed ? '›' : '‹' }}
+        </button>
+      </div>
+      <div class="status-bar">
+        <span class="dot" :class="status.api ? 'on' : 'off'">
+          <i></i>核心
+        </span>
+        <span class="dot" :class="status.chrome ? 'on' : 'off'">
+          <i></i>Chrome
+        </span>
+      </div>
+    </div>
+
+    <!-- 侧边栏 -->
+    <aside class="sidebar">
+      <!-- 智能体会话栏(仅智能体界面,位于菜单上方) -->
+      <AgentSessionBar
+        v-if="currentView === 'agent' && !activeScript"
+        :collapsed="effectiveSidebarCollapsed"
+        @select-session="onAgentSessionSelected"
+      />
+      <!-- 一级菜单 -->
+      <nav v-if="!activeScript">
+        <button
+          v-for="item in filteredNavItems" :key="item.id"
+          :class="['nav-btn', { active: currentView === item.id }]"
+          :aria-label="item.label"
+          :data-tooltip="effectiveSidebarCollapsed ? item.label : null"
+          :title="effectiveSidebarCollapsed ? undefined : item.label"
+          @click="selectNav(item)"
+        >
+          <span class="icon">{{ item.icon }}</span>
+          <span>{{ item.label }}</span>
+        </button>
+      </nav>
+
+      <!-- 二级菜单：进入脚本后 -->
+      <div v-else class="sub-nav">
+        <button class="back-btn" @click="exitScript">
+          ← 我的脚本
+        </button>
+        <div class="script-title">
+          <span class="icon">{{ activeScript.icon || '📄' }}</span>
+          {{ activeScript.adapter_name }}
+        </div>
+        <div class="task-list">
+          <button
+            v-for="t in activeScript.tasks" :key="t.task_id"
+            :class="['task-btn', { active: activeTaskId === t.task_id, 'task-btn-detailed': hasEnhancedSidebarProgress(t) }]"
+            @click="activeTaskId = t.task_id"
+          >
+            <template v-if="hasEnhancedSidebarProgress(t)">
+              <div class="task-btn-main">
+                <span class="task-btn-label">{{ t.task_name }}</span>
+                <span class="task-btn-status">
+                  <span v-if="taskProgressSummary(t)?.percentLabel" class="task-btn-percent">
+                    {{ taskProgressSummary(t)?.percentLabel }}
+                  </span>
+                  <span class="running-dot"></span>
+                </span>
+              </div>
+              <div
+                v-if="taskProgressSummary(t)?.overall"
+                class="task-btn-progress"
+                role="progressbar"
+                :aria-label="taskProgressSummary(t)?.overall?.ariaLabel"
+                :aria-valuenow="taskProgressSummary(t)?.overall?.percentValue"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >
+                <div class="task-btn-progress-fill" :style="{ width: `${taskProgressSummary(t)?.overall?.percentValue || 0}%` }"></div>
+              </div>
+              <div v-if="taskProgressSummary(t)?.batch" class="task-btn-sub">
+                {{ taskProgressSummary(t).batch.main }}
+              </div>
+            </template>
+            <template v-else>
+              {{ t.task_name }}
+              <span v-if="isTaskLiveActive(t.live?.status)" class="running-dot"></span>
+            </template>
+          </button>
+        </div>
+      </div>
+      <SidebarUpdateFooter
+        :update-status="updateStatus"
+        :collapsed="effectiveSidebarCollapsed"
+        :busy="updateActionBusy"
+        @download="downloadUpdate"
+        @install="installUpdate"
+        @retry="retryUpdateCheck"
+      />
+    </aside>
+
+    <!-- 主内容区 -->
+    <main class="content">
+      <!-- 我的脚本：脚本列表 -->
+      <ScriptList
+        v-if="currentView === 'scripts' && !activeScript"
+        @open-script="openScript"
+        @reload="loadScriptGroups"
+      />
+      <!-- 脚本任务执行页 -->
+      <TaskRunner
+        :key="`${activeScript?.adapter_id || ''}:${activeTaskId || ''}:${taskRunnerHandoffKey}`"
+        v-else-if="activeScript && activeTaskId"
+        :adapter-id="activeScript.adapter_id"
+        :task="activeScript.tasks.find(t => t.task_id === activeTaskId)"
+        :initial-params="taskRunnerHandoffParams"
+        @status-change="onTaskStatusChange"
+        @open-task="openTaskFromRunner"
+      />
+      <!-- 任务中心 -->
+      <TaskCenter
+        v-else-if="currentView === 'task_center' && !activeInstanceUid"
+        @open-instance="openTaskInstance"
+      />
+      <TaskInstanceRunner
+        v-else-if="currentView === 'task_center' && activeInstanceUid"
+        :instance-uid="activeInstanceUid"
+        @back="activeInstanceUid = ''"
+      />
+      <!-- AI 生图 -->
+      <KeepAlive>
+        <AiImageWorkbench
+          v-if="currentView === 'ai_image'"
+          @open-settings="openSettingsPanel('ai-1xm')"
+        />
+      </KeepAlive>
+      <!-- AI 生视频 -->
+      <KeepAlive>
+        <AiVideoGenerationWorkbench
+          v-if="currentView === 'ai_video_generation'"
+          @open-settings="openSettingsPanel('ai-video')"
+        />
+      </KeepAlive>
+      <!-- AI 视频工作流 -->
+      <KeepAlive>
+        <AiVideoWorkflow
+          v-if="currentView === 'ai_video'"
+          @open-settings="openSettingsPanel"
+        />
+      </KeepAlive>
+      <!-- 提示词库 -->
+      <LocalPromptLibrary
+        v-if="currentView === 'local_prompt_library'"
+        @open-cloud-approval="currentView = 'cloud_approval'"
+      />
+      <!-- 数据文件 -->
+      <DataFiles v-if="currentView === 'files'" />
+      <!-- 云端审批 -->
+      <CloudApprovalFrame v-if="currentView === 'cloud_approval'" />
+      <!-- 智能体界面 -->
+      <AgentHome
+        v-if="currentView === 'agent'"
+        @open-settings="openSettingsPanel"
+      />
+      <!-- 设置 -->
+      <SettingsPage
+        v-if="currentView === 'settings'"
+        :status="status"
+        :focus-panel-id="focusSettingsPanelId"
+        :update-status="updateStatus"
+        :update-action-busy="updateActionBusy"
+        :theme-preference="themePreference"
+        :effective-theme="effectiveTheme"
+        @runtime-refresh="refreshRuntimeStatus"
+        @check-update="retryUpdateCheck"
+        @theme-change="setThemePreference"
+      />
+    </main>
+  </div>
+</template>
+
+<script setup>
+import { computed, ref, onMounted, onUnmounted } from 'vue'
+import ScriptList  from './views/ScriptList.vue'
+import TaskRunner  from './views/TaskRunner.vue'
+import TaskCenter  from './views/TaskCenter.vue'
+import TaskInstanceRunner from './views/TaskInstanceRunner.vue'
+import AiImageWorkbench from './views/AiImageWorkbench.vue'
+import AiVideoGenerationWorkbench from './views/AiVideoGenerationWorkbench.vue'
+import AiVideoWorkflow from './views/AiVideoWorkflow.vue'
+import LocalPromptLibrary from './views/LocalPromptLibrary.vue'
+import DataFiles   from './views/DataFiles.vue'
+import SettingsPage from './views/SettingsPage.vue'
+import CloudApprovalFrame from './views/CloudApprovalFrame.vue'
+import AgentHome from './views/AgentHome.vue'
+import AgentSessionBar from './components/agent/AgentSessionBar.vue'
+import SidebarUpdateFooter from './components/SidebarUpdateFooter.vue'
+import { buildScriptGroups } from './utils/scriptGroups'
+import { buildTaskOverviewProgress, isTaskLiveActive, resolveTaskProgressConfig } from './utils/taskProgress'
+import { readSidebarCollapsed, writeSidebarCollapsed } from './utils/sidebarState.js'
+import { createUpdateActionRunner } from './utils/updateActions.js'
+import {
+  applyTheme,
+  normalizeThemePreference,
+  observeSystemTheme,
+  readThemePreference,
+  writeThemePreference,
+} from './utils/theme.mjs'
+
+const currentView = ref('scripts')
+const status = ref({
+  api: false,
+  apiState: 'starting',
+  apiPort: 18765,
+  apiDiagnostic: { state: 'starting', lastError: '', launchAttempt: 0 },
+  dataDir: '',
+  dataDirRecovery: { recovered: false, from: '', to: '', errors: [] },
+  chrome: false,
+  cdpPort: 9222,
+  chromeDiagnostic: { kind: 'unknown', message: '' },
+})
+const activeScript = ref(null)   // { adapter_id, adapter_name, tasks[] }
+const activeTaskId = ref(null)
+const activeInstanceUid = ref('')
+const taskRunnerHandoffParams = ref({})
+const taskRunnerHandoffKey = ref(0)
+const scriptGroups = ref([])
+const cloudApprovalStatus = ref(null)
+const focusSettingsPanelId = ref('')
+const sidebarCollapsed = ref(readSidebarCollapsed(window.localStorage))
+const effectiveSidebarCollapsed = computed(() => !activeScript.value && sidebarCollapsed.value)
+const isMacTitlebar = /mac/i.test(String(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent))
+const updateStatus = ref({
+  status: 'idle',
+  currentVersion: '',
+  latestVersion: '',
+  progress: null,
+  blockers: [],
+  error: '',
+  downloaded: false,
+})
+const updateActionBusy = ref(false)
+const systemThemeMedia = window.matchMedia?.('(prefers-color-scheme: dark)')
+const themePreference = ref(readThemePreference(window.localStorage))
+const effectiveTheme = ref(applyTheme(themePreference.value, {
+  documentRef: document,
+  systemPrefersDark: Boolean(systemThemeMedia?.matches),
+}))
+const updateActionRunner = createUpdateActionRunner({
+  setBusy: busy => {
+    updateActionBusy.value = busy
+  },
+  getLatestStatus: async () => {
+    if (typeof window.cs.getUpdateStatus !== 'function') return null
+    return window.cs.getUpdateStatus()
+  },
+  handleError: (error, latestStatus) => {
+    const message = formatUpdateActionError(error)
+    updateStatus.value = {
+      ...updateStatus.value,
+      ...(latestStatus || {}),
+      status: 'error',
+      error: message,
+    }
+  },
+})
+
+const navItems = [
+  { id: 'agent',  icon: '🤖', label: '智能体' },
+  { id: 'scripts',  icon: '📄', label: '我的脚本' },
+  { id: 'task_center', icon: '📋', label: '任务中心' },
+  { id: 'ai_image', icon: '🎨', label: 'AI 生图' },
+  { id: 'ai_video_generation', icon: '🎬', label: 'AI 生视频' },
+  { id: 'ai_video', icon: '🎞️', label: 'AI 视频工作流' },
+  { id: 'local_prompt_library', icon: '💬', label: '提示词库' },
+  { id: 'files',    icon: '📁', label: '数据文件' },
+  { id: 'cloud_approval', icon: '☁️', label: '云端审批' },
+  { id: 'settings', icon: '⚙️', label: '设置' },
+]
+
+const cloudApprovalConfigured = computed(() => {
+  const cloudStatus = cloudApprovalStatus.value || {}
+  return Boolean(cloudStatus.configured || String(cloudStatus.base_url || '').trim())
+})
+
+const filteredNavItems = computed(() =>
+  navItems.filter(item => item.id !== 'cloud_approval' || cloudApprovalConfigured.value)
+)
+
+function selectNav(item) {
+  if (shouldClearActiveScriptForNav(item)) {
+    activeScript.value = null
+    activeTaskId.value = null
+  }
+  currentView.value = item.id
+  activeInstanceUid.value = ''
+  if (item.id !== 'settings') focusSettingsPanelId.value = ''
+}
+
+function shouldClearActiveScriptForNav(item) {
+  return Boolean(activeScript.value) && item.id !== currentView.value
+}
+
+function onAgentSessionSelected(sessionId) {
+  // 骨架阶段:会话选择暂不联动后端,由 AgentHome 后续接入 /agent/sessions 时处理
+  void sessionId
+}
+
+function openSettingsPanel(panelId) {
+  focusSettingsPanelId.value = panelId
+  currentView.value = 'settings'
+  activeScript.value = null
+  activeTaskId.value = null
+  activeInstanceUid.value = ''
+}
+
+async function refreshCloudApprovalStatus() {
+  if (typeof window.cs.getCloudApprovalStatus !== 'function') {
+    cloudApprovalStatus.value = null
+    if (currentView.value === 'cloud_approval') currentView.value = 'settings'
+    return
+  }
+  try {
+    cloudApprovalStatus.value = await window.cs.getCloudApprovalStatus()
+  } catch (error) {
+    console.error('Failed to get cloud approval status', error)
+    cloudApprovalStatus.value = null
+  }
+  if (!cloudApprovalConfigured.value && currentView.value === 'cloud_approval') {
+    currentView.value = 'settings'
+  }
+}
+
+async function loadScriptGroups(options = {}) {
+  const tasks = await window.cs.getTasks()
+  const nextGroups = buildScriptGroups(tasks)
+  if (options.preserveOnShrink && scriptGroups.value.length > 0) {
+    const beforeTaskCount = scriptGroups.value.reduce((sum, group) => sum + (group.tasks?.length || 0), 0)
+    const nextTaskCount = nextGroups.reduce((sum, group) => sum + (group.tasks?.length || 0), 0)
+    const adapterShrink = nextGroups.length > 0 && nextGroups.length < Math.ceil(scriptGroups.value.length * 0.75)
+    const taskShrink = nextTaskCount > 0 && nextTaskCount < Math.ceil(beforeTaskCount * 0.75)
+    if (adapterShrink || taskShrink) {
+      return scriptGroups.value
+    }
+  }
+  scriptGroups.value = nextGroups
+  if (activeScript.value) {
+    const nextActiveScript = nextGroups.find(group => group.adapter_id === activeScript.value.adapter_id)
+    if (nextActiveScript) {
+      activeScript.value = nextActiveScript
+      if (!nextActiveScript.tasks.some(task => task.task_id === activeTaskId.value)) {
+        activeTaskId.value = nextActiveScript.tasks[0]?.task_id || null
+      }
+    }
+  }
+  return scriptGroups.value
+}
+
+function openScript(group) {
+  activeScript.value = group
+  activeTaskId.value = group.tasks[0]?.task_id || null
+  taskRunnerHandoffParams.value = {}
+  taskRunnerHandoffKey.value += 1
+  currentView.value = 'scripts'
+  activeInstanceUid.value = ''
+}
+
+function exitScript() {
+  activeScript.value = null
+  activeTaskId.value = null
+}
+
+function openTaskInstance(instanceUid) {
+  activeInstanceUid.value = instanceUid || ''
+}
+
+function openTaskFromRunner(request = {}) {
+  const adapterId = String(request.adapterId || request.adapter_id || '').trim()
+  const taskId = String(request.taskId || request.task_id || '').trim()
+  if (!adapterId || !taskId) return
+  const group = scriptGroups.value.find(item => item.adapter_id === adapterId)
+  if (!group || !group.tasks?.some(task => task.task_id === taskId)) return
+  activeScript.value = group
+  activeTaskId.value = taskId
+  taskRunnerHandoffParams.value = request.params && typeof request.params === 'object' ? request.params : {}
+  taskRunnerHandoffKey.value += 1
+  currentView.value = 'scripts'
+  activeInstanceUid.value = ''
+}
+
+function onTaskStatusChange(status) {
+  if (activeScript.value && activeTaskId.value) {
+    const t = activeScript.value.tasks.find(x => x.task_id === activeTaskId.value)
+    if (t) t.live = status
+  }
+}
+
+function hasEnhancedSidebarProgress(task) {
+  return isTaskLiveActive(task?.live?.status) &&
+    resolveTaskProgressConfig(activeScript.value?.adapter_id, task?.task_id).usage.sidebar === 'enhanced'
+}
+
+function taskProgressSummary(task) {
+  return buildTaskOverviewProgress(activeScript.value?.adapter_id, task?.task_id, task?.live || {})
+}
+
+function applyRuntimeStatus(next = {}) {
+  status.value = { ...status.value, ...(next || {}) }
+}
+
+async function refreshRuntimeStatus() {
+  const next = await window.cs.getStatus()
+  applyRuntimeStatus(next)
+  return next
+}
+
+async function repairCoreService() {
+  const result = await window.cs.restartBackend()
+  applyRuntimeStatus(result)
+  return result
+}
+
+function toggleSidebar() {
+  if (activeScript.value) return
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  writeSidebarCollapsed(window.localStorage, sidebarCollapsed.value)
+}
+
+function syncTheme() {
+  effectiveTheme.value = applyTheme(themePreference.value, {
+    documentRef: document,
+    systemPrefersDark: Boolean(systemThemeMedia?.matches),
+  })
+}
+
+function setThemePreference(preference) {
+  themePreference.value = writeThemePreference(
+    window.localStorage,
+    normalizeThemePreference(preference),
+  )
+  syncTheme()
+}
+
+function handleSystemThemeChange() {
+  if (themePreference.value === 'system') syncTheme()
+}
+
+function formatUpdateActionError(error) {
+  const message = String(error?.message || error || '').trim()
+  return message ? `桌面更新失败：${message}` : '桌面更新失败，请稍后重试。'
+}
+
+async function downloadUpdate() {
+  const result = await updateActionRunner.run(() => window.cs.downloadUpdate())
+  if (result?.status) updateStatus.value = result
+}
+
+async function retryUpdateCheck() {
+  const result = await updateActionRunner.run(() => window.cs.checkForUpdates())
+  if (result?.status) updateStatus.value = result
+}
+
+async function installUpdate() {
+  const result = await updateActionRunner.run(() => window.cs.installUpdate())
+  if (result?.status) updateStatus.value = result
+}
+
+let pollTimer = null
+let updateStatusCleanup = null
+let systemThemeCleanup = null
+onMounted(async () => {
+  systemThemeCleanup = observeSystemTheme(systemThemeMedia, handleSystemThemeChange)
+  window.cs.onStatus(({ key, value }) => { status.value[key] = value })
+  if (typeof window.cs.onUpdateStatus === 'function') {
+    updateStatusCleanup = window.cs.onUpdateStatus(nextStatus => {
+      updateStatus.value = { ...updateStatus.value, ...(nextStatus || {}) }
+    })
+  }
+  try {
+    if (typeof window.cs.getUpdateStatus === 'function') {
+      updateStatus.value = await window.cs.getUpdateStatus()
+    }
+  } catch (error) {
+    console.error('Failed to get update status', error)
+  }
+  try {
+    await refreshRuntimeStatus()
+  } catch (error) {
+    console.error('Failed to get initial status', error)
+  }
+
+  try {
+    await loadScriptGroups()
+  } catch (error) {
+    console.error('Failed to load initial script groups', error)
+  }
+  await refreshCloudApprovalStatus()
+
+  pollTimer = setInterval(async () => {
+    try {
+      await refreshRuntimeStatus()
+      await refreshCloudApprovalStatus()
+      await loadScriptGroups({ preserveOnShrink: true })
+    } catch (error) {
+      console.error('Failed to poll runtime status', error)
+    }
+  }, 5000)
+})
+onUnmounted(() => {
+  systemThemeCleanup?.()
+  systemThemeCleanup = null
+  clearInterval(pollTimer)
+  if (typeof updateStatusCleanup === 'function') updateStatusCleanup()
+  window.cs.offStatus()
+})
+
+// Expose to children via provide
+import { provide } from 'vue'
+provide('scriptGroups', scriptGroups)
+provide('loadScriptGroups', loadScriptGroups)
+provide('repairCoreService', repairCoreService)
+</script>
+
+<style>
+:root,
+:root[data-theme="dark"] {
+  --orange-rgb: 255, 107, 43;
+  --orange: #FF6B2B;
+  --orange-text: #FF8B5F;
+  --orange-dim: #cc5522;
+  --orange-bg: rgba(var(--orange-rgb), 0.12);
+  --orange-hover: #ff7a3e;
+  --orange-strong: #c94d16;
+  --on-orange: #17131A;
+  --bg: #141418;
+  --bg2: #1c1c22;
+  --bg3: #242430;
+  --bg4: #292932;
+  --dock-bg: color-mix(in srgb, var(--bg) 88%, #111827 12%);
+  --border: #2e2e3a;
+  --border-strong: #484858;
+  --text: #e2e0f0;
+  --text2: #aaa8bd;
+  --text3: #8e8ca4;
+  --green: #4ade80;
+  --red: #f87171;
+  --yellow: #fbbf24;
+  --blue: #60a5fa;
+  --soft-fill: rgba(255, 255, 255, 0.03);
+  --soft-fill-hover: rgba(255, 255, 255, 0.06);
+  --subtle-border: rgba(255, 255, 255, 0.1);
+  --input-focus: #17171d;
+  --tooltip-bg: #292932;
+  --shadow: rgba(0, 0, 0, 0.32);
+  --shadow-soft: 0 12px 30px rgba(0, 0, 0, 0.22);
+  --scrim: rgba(0, 0, 0, 0.68);
+  --radius: 10px;
+}
+
+:root[data-theme="light"] {
+  --orange-rgb: 255, 80, 0;
+  --orange: #FF5000;
+  --orange-text: #BD3C00;
+  --orange-dim: #D94700;
+  --orange-bg: rgba(var(--orange-rgb), 0.1);
+  --orange-hover: #E94700;
+  --orange-strong: #CC4000;
+  --on-orange: #ffffff;
+  --bg: #f7f7f8;
+  --bg2: #ffffff;
+  --bg3: #efeff1;
+  --bg4: #e6e6e9;
+  --dock-bg: #f2f2f4;
+  --border: #d8d8de;
+  --border-strong: #b9bac3;
+  --text: #24242b;
+  --text2: #565866;
+  --text3: #626470;
+  --green: #14783a;
+  --red: #d02020;
+  --yellow: #985c06;
+  --blue: #2563eb;
+  --soft-fill: rgba(30, 31, 38, 0.035);
+  --soft-fill-hover: rgba(30, 31, 38, 0.065);
+  --subtle-border: rgba(30, 31, 38, 0.1);
+  --input-focus: #ffffff;
+  --tooltip-bg: #303038;
+  --shadow: rgba(34, 35, 43, 0.14);
+  --shadow-soft: 0 12px 30px rgba(34, 35, 43, 0.11);
+  --scrim: rgba(28, 29, 35, 0.5);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+}
+#app {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+button { cursor: pointer; }
+button, input, select, textarea { color: inherit; }
+input, select, textarea { font-family: inherit; }
+::selection { background: var(--orange-bg); color: var(--text); }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+
+<style scoped>
+.layout {
+  display: grid;
+  grid-template-columns: 168px 1fr;
+  grid-template-rows: 40px 1fr;
+  height: 100vh;
+}
+
+.layout.sidebar-collapsed {
+  grid-template-columns: 56px 1fr;
+}
+
+/* 标题栏 */
+.titlebar {
+  grid-column: 1 / -1;
+  -webkit-app-region: drag;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 20px 0 12px;
+  gap: 8px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  -webkit-app-region: no-drag;
+}
+.logo { font-size: 18px; font-weight: 800; color: var(--text); white-space: nowrap; }
+.collapse-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text2);
+  font-size: 18px;
+  line-height: 1;
+  -webkit-app-region: no-drag;
+}
+.collapse-btn:hover,
+.collapse-btn:focus-visible {
+  color: var(--text);
+  background: var(--bg3);
+  outline: none;
+}
+.sidebar-collapsed .titlebar {
+  padding-left: 0;
+}
+.sidebar-collapsed .brand {
+  width: 56px;
+  justify-content: center;
+  margin-left: 0;
+}
+.sidebar-collapsed .logo {
+  display: none;
+}
+.titlebar-macos .titlebar {
+  /* macOS 红绿灯按钮区约 78px，右侧留空给全屏等 */
+  padding-left: 88px;
+}
+.titlebar-macos.sidebar-collapsed .titlebar {
+  padding-left: 88px;
+}
+.titlebar-macos.sidebar-collapsed .brand {
+  margin-left: -32px;
+}
+.status-bar { margin-left: auto; display: flex; gap: 16px; -webkit-app-region: no-drag; }
+.dot { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text3); }
+.dot i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--text3); }
+.dot.on i { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dot.off i { background: var(--red); }
+.dot.on { color: var(--text2); }
+
+/* 侧边栏 */
+.sidebar {
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 10px 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.sidebar-collapsed .sidebar {
+  position: relative;
+  z-index: 20;
+  overflow: visible;
+}
+nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.nav-btn {
+  position: relative;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 8px;
+  background: transparent; border: none;
+  color: var(--text2); font-size: 13px; text-align: left;
+  transition: all 0.15s;
+}
+.sidebar-collapsed nav {
+  padding: 0 6px;
+  overflow: visible;
+}
+.sidebar-collapsed .nav-btn {
+  justify-content: center;
+  padding: 10px 0;
+}
+.sidebar-collapsed .nav-btn > span:not(.icon) {
+  display: none;
+}
+.sidebar-collapsed .nav-btn .icon {
+  width: auto;
+  font-size: 17px;
+}
+.nav-btn:hover { background: var(--bg3); color: var(--text); }
+.nav-btn:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+.sidebar-collapsed .nav-btn::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 10px);
+  z-index: 1000;
+  min-width: max-content;
+  padding: 7px 10px;
+  border: 1px solid var(--subtle-border);
+  border-radius: 7px;
+  background: var(--tooltip-bg);
+  box-shadow: var(--shadow-soft);
+  color: #f7f7fa;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(-4px, -50%);
+  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s ease;
+}
+.sidebar-collapsed .nav-btn:hover::after,
+.sidebar-collapsed .nav-btn:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(0, -50%);
+}
+.nav-btn.active { background: var(--orange-bg); color: var(--orange-text); font-weight: 600; }
+.icon { font-size: 15px; width: 20px; }
+
+/* 二级菜单 */
+.sub-nav {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.back-btn {
+  margin: 0 8px 8px; padding: 8px 12px; border-radius: 8px;
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text2); font-size: 12px; text-align: left;
+  transition: all 0.15s;
+}
+.back-btn:hover { background: var(--bg3); color: var(--text); }
+.script-title {
+  padding: 6px 20px 10px;
+  font-size: 11px; font-weight: 700;
+  color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em;
+  display: flex; align-items: center; gap: 6px;
+}
+.task-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 8px 12px;
+  scrollbar-gutter: stable;
+}
+.task-btn {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 12px; border-radius: 8px;
+  background: transparent; border: none;
+  color: var(--text2); font-size: 13px; text-align: left;
+  transition: all 0.15s;
+}
+.task-btn:hover { background: var(--bg3); color: var(--text); }
+.task-btn.active { background: var(--orange-bg); color: var(--orange-text); font-weight: 600; }
+.task-btn-detailed {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.task-btn-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.task-btn-label {
+  min-width: 0;
+  flex: 1;
+}
+.task-btn-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.task-btn-percent {
+  font-size: 11px;
+  color: var(--orange-text);
+  font-variant-numeric: tabular-nums;
+}
+.running-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--orange); animation: pulse 1s infinite;
+}
+.task-btn-progress {
+  position: relative;
+  height: 5px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--soft-fill-hover);
+  border: 1px solid rgba(var(--orange-rgb), 0.16);
+}
+.task-btn-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--orange), #ff9a5f);
+}
+.task-btn-sub {
+  font-size: 11px;
+  color: var(--text3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* 主内容 */
+.content { overflow: hidden; background: var(--bg); height: 100%; min-height: 0; }
+
+@media (max-width: 760px) {
+  .layout.layout-ai-image {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 40px minmax(0, 1fr) 56px;
+  }
+
+  .layout-ai-image .titlebar {
+    grid-column: 1;
+    grid-row: 1;
+    padding-right: 12px;
+  }
+
+  .layout-ai-image .content {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .layout-ai-image .sidebar {
+    grid-column: 1;
+    grid-row: 3;
+    flex-direction: row;
+    padding: 0;
+    overflow-x: auto;
+    border-top: 1px solid var(--border);
+    border-right: 0;
+  }
+
+  .layout-ai-image nav {
+    width: auto;
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 4px;
+    padding: 0 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .layout-ai-image .nav-btn {
+    min-width: 48px;
+    flex: 1 0 48px;
+    justify-content: center;
+    padding: 8px;
+  }
+
+  .layout-ai-image .nav-btn > span:not(.icon) {
+    display: none;
+  }
+
+  .layout-ai-image .nav-btn .icon {
+    width: auto;
+    font-size: 18px;
+  }
+
+  .layout-ai-image .sidebar-update-footer {
+    flex: 0 0 52px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    margin-top: 0;
+    padding: 0 4px;
+    border-top: 0;
+    border-left: 1px solid var(--border);
+  }
+
+  .layout-ai-image .sidebar-update-footer :deep(.update-control) {
+    min-height: 44px;
+    padding: 4px;
+  }
+
+  .layout-ai-image .sidebar-update-footer :deep(.update-control:focus-visible) {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--orange);
+  }
+
+  .layout-ai-image .sidebar-update-footer :deep(.version-label),
+  .layout-ai-image .sidebar-update-footer :deep(.update-copy) {
+    display: none;
+  }
+
+  .layout-ai-image.sidebar-collapsed .sidebar,
+  .layout-ai-image.sidebar-collapsed nav {
+    overflow: visible;
+  }
+
+  .layout-ai-image.sidebar-collapsed .nav-btn::after {
+    top: auto;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translate(-50%, 4px);
+  }
+
+  .layout-ai-image.sidebar-collapsed .nav-btn:hover::after,
+  .layout-ai-image.sidebar-collapsed .nav-btn:focus-visible::after {
+    transform: translate(-50%, 0);
+  }
+}
+</style>

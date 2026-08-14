@@ -1,0 +1,144 @@
+"""全局配置读写"""
+import json
+from pathlib import Path
+from typing import Any
+
+from core import runtime_paths
+
+LEGACY_ONE_XM_BASE_URL = "https://api.1xm.ai/v1"
+DEFAULT_ONE_XM_BASE_URL = "https://one-xm-proxy.crawshrimp.com/v1"
+
+DEFAULT_CONFIG = {
+    "chrome": {
+        "cdp_port": 9222,
+        "remote_debugging_url": "http://127.0.0.1:9222",
+    },
+    "adapters_dir": "adapters",
+    "data_dir": "data",
+    "log_dir": "logs",
+    "notify": {
+        "dingtalk_webhook": "",
+        "dingtalk_secret": "",
+        "feishu_webhook": "",
+        "custom_webhook": "",
+    },
+    "ai": {
+        "1xm": {
+            "base_url": DEFAULT_ONE_XM_BASE_URL,
+            "gpt_image_2k_key": "",
+            "gpt_image_4k_key": "",
+            "gemini_3_1_flash_image_preview_key": "",
+            "gemini_3_pro_image_preview_key": "",
+        },
+        "video": {
+            "seedance_api_key": "",
+            "seedance_base_url": "https://ark.cn-beijing.volces.com",
+            "bailian_api_key": "",
+            "bailian_workspace_id": "",
+            "bailian_region": "cn-beijing",
+            "bailian_base_url": "",
+            "bailian_upload_api_key": "",
+            "bailian_uploads_url": "https://dashscope.aliyuncs.com/api/v1/uploads",
+        },
+        "llm": {
+            "api_key": "",
+            "overseas_openai_base_url": "https://ai-aigw.semir.com/overseas-openai-vip/v1",
+            "overseas_anthropic_base_url": "https://ai-aigw.semir.com/overseas-anthropic-vip",
+            "domestic_base_url": "https://ai-aigw.semir.com/bailian-codingplan/v1",
+            "default_model": "gpt-5.6-terra",
+        },
+    },
+    "cloud_approval": {
+        "base_url": "",
+        "machine_name": "",
+        "machine_enabled": False,
+        "registration_token": "",
+        "capabilities": ["generate_ai_image", "regenerate_ai_image", "submit_tmall_material_test", "crawl_tmall_material_test_data"],
+        "poll_timeout_seconds": 45,
+        "idle_heartbeat_seconds": 60,
+        "busy_heartbeat_seconds": 10,
+    },
+    "script_favorites": {},
+    "api_port": 18765,
+}
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    result = dict(base or {})
+    for key, value in (override or {}).items():
+        if isinstance(result.get(key), dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _expand_dotted_keys(cfg: dict) -> dict:
+    result: dict = {}
+    for key, value in (cfg or {}).items():
+        key_text = str(key or "").strip()
+        if not key_text:
+            continue
+        if "." not in key_text:
+            if isinstance(value, dict) and isinstance(result.get(key_text), dict):
+                result[key_text] = _deep_merge(result[key_text], value)
+            else:
+                result[key_text] = value
+            continue
+        target = result
+        parts = [part for part in key_text.split(".") if part]
+        for part in parts[:-1]:
+            existing = target.get(part)
+            if not isinstance(existing, dict):
+                existing = {}
+                target[part] = existing
+            target = existing
+        if parts:
+            target[parts[-1]] = value
+    return result
+
+
+def _config_path() -> Path:
+    return runtime_paths.data_root() / "config.json"
+
+
+def _apply_config_migrations(cfg: dict) -> dict:
+    ai = cfg.get("ai")
+    one_xm = ai.get("1xm") if isinstance(ai, dict) else None
+    if isinstance(one_xm, dict) and str(one_xm.get("base_url") or "").strip().rstrip("/") == LEGACY_ONE_XM_BASE_URL:
+        one_xm["base_url"] = DEFAULT_ONE_XM_BASE_URL
+    return cfg
+
+
+def load_config() -> dict:
+    path = _config_path()
+    if not path.exists():
+        save_config(DEFAULT_CONFIG)
+        return DEFAULT_CONFIG.copy()
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    return _apply_config_migrations(_deep_merge(DEFAULT_CONFIG, _expand_dotted_keys(data)))
+
+
+def save_config(cfg: dict) -> None:
+    path = _config_path()
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(_expand_dotted_keys(cfg), f, ensure_ascii=False, indent=2)
+
+
+def patch_config(patch: dict) -> dict:
+    cfg = _deep_merge(load_config(), _expand_dotted_keys(patch))
+    save_config(cfg)
+    return cfg
+
+
+def get(key: str, default: Any = None) -> Any:
+    cfg = load_config()
+    keys = key.split(".")
+    val = cfg
+    for k in keys:
+        if isinstance(val, dict):
+            val = val.get(k)
+        else:
+            return default
+    return val if val is not None else default

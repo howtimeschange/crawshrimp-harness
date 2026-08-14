@@ -1,0 +1,97 @@
+appId: com.crawshrimp.app
+productName: 抓虾
+copyright: "Copyright © 2025"
+electronVersion: "43.1.0"
+
+directories:
+  output: dist
+  buildResources: assets
+
+publish:
+  provider: github
+  owner: howtimeschange
+  repo: crawshrimp
+generateUpdatesFilesForAllChannels: false
+
+mac:
+  category: public.app-category.business
+  icon: assets/icon.icns
+  artifactName: crawshrimp-v${version}-mac-${arch}.${ext}
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: assets/entitlements.mac.plist
+  entitlementsInherit: assets/entitlements.mac.inherit.plist
+  sign: scripts/sign-macos-app.js
+  signIgnore:
+    - '/Contents/Resources/python/.*\.pyc$'
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+
+win:
+  icon: assets/icon.ico
+  artifactName: crawshrimp-v${version}-win-${arch}.${ext}
+  target:
+    - target: nsis
+      arch:
+        - x64
+  requestedExecutionLevel: asInvoker
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 抓虾
+
+dmg:
+  title: 抓虾
+  backgroundColor: "#ffffff"
+  window:
+    width: 540
+    height: 380
+
+files:
+  - "src/**/*"
+  - "dist/renderer/**/*"
+  - "package.json"
+  - "node_modules/**/*"
+
+extraResources:
+  # Python scripts (core/ + adapters/)
+  - from: "../core"
+    to: python-scripts/core
+  - from: "../adapters"
+    to: python-scripts/adapters
+    filter:
+      - "**/*"
+      - "!**/delivery/**"
+      - "!**/notes/**"
+      - "!**/.DS_Store"
+      - "!**/*.zip"
+  - from: "../integrations"
+    to: python-scripts/integrations
+    filter:
+      - "seedanceCLI/**/*"
+      - "bailianCLI/**/*"
+      - "!**/.env"
+      - "!**/.env.local"
+      - "!**/node_modules/**"
+      - "!**/outputs/**"
+      - "!**/.DS_Store"
+  # Python interpreter (downloaded by scripts/download-python.sh)
+  # Actual copy happens in afterPack hook
+
+# afterPack: copies per-arch Python bundle into Resources/python/
+afterPack: scripts/after-pack.js
+afterSign: scripts/notarize-macos-app.js
+
+asarUnpack:
+  - "**/*.node"

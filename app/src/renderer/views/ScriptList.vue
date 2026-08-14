@@ -1,0 +1,883 @@
+<template>
+  <div class="view">
+    <header class="view-header">
+      <h2>我的脚本</h2>
+      <div class="header-actions">
+        <button class="btn-ghost" @click="openInstallModal">+ 导入脚本</button>
+      </div>
+    </header>
+
+    <div class="script-content">
+      <div v-if="loading" class="placeholder">加载中…</div>
+      <div v-else-if="loadError && !groups.length" class="placeholder placeholder-stack">
+        <span>{{ loadError }}</span>
+        <button class="btn-ghost" @click="repairAndLoad">一键修复核心服务</button>
+      </div>
+      <div v-else-if="!groups.length" class="placeholder">
+        还没有脚本。点击「导入脚本」安装你的第一个适配包。
+      </div>
+
+      <template v-else>
+        <p v-if="favoriteError" class="favorite-error" role="status">{{ favoriteError }}</p>
+        <section v-for="section in scriptSections" :key="section.id" class="script-section">
+          <h3 class="script-section-title">{{ section.title }}</h3>
+          <div class="script-grid">
+            <div
+              v-for="entry in section.entries" :key="entry.group.adapter_id"
+              class="script-card"
+              :class="{ disabled: !entry.group.enabled }"
+              @click="$emit('open-script', entry.group)"
+            >
+              <button
+                class="favorite-btn"
+                type="button"
+                :class="{ active: isFavorite(entry.group.adapter_id) }"
+                :aria-label="isFavorite(entry.group.adapter_id) ? `取消收藏 ${entry.group.adapter_name}` : `收藏 ${entry.group.adapter_name}`"
+                :aria-pressed="isFavorite(entry.group.adapter_id)"
+                :disabled="favoritePendingIds.has(entry.group.adapter_id)"
+                @click.stop="toggleFavorite(entry.group.adapter_id)"
+              >
+                <IconBookmark class="favorite-icon" :size="17" :stroke-width="2" aria-hidden="true" />
+              </button>
+              <div class="card-top">
+                <span class="card-icon">🦐</span>
+                <div class="card-info">
+                  <div class="card-title-row">
+                    <strong>{{ entry.group.adapter_name }}</strong>
+                    <span v-if="entry.group.adapter_version" class="adapter-version">v{{ entry.group.adapter_version }}</span>
+                  </div>
+                  <span class="task-count">{{ entry.group.tasks.length }} 个任务</span>
+                </div>
+              </div>
+              <div class="task-chips">
+                <div class="task-chips-list" :style="{ maxHeight: `${entry.preview.maxHeight}px` }">
+                  <span v-for="t in entry.group.tasks" :key="t.task_id" class="chip">{{ t.task_name }}</span>
+                </div>
+                <button
+                  v-if="entry.preview.isOverflowing"
+                  class="more-btn"
+                  @click.stop="$emit('open-script', entry.group)"
+                >
+                  还有 {{ entry.preview.hiddenTaskCount }} 个任务，点击查看
+                </button>
+              </div>
+              <div v-if="entry.isEnhancedProgress && entry.progress" class="card-progress">
+                <div class="card-progress-head">
+                  <span class="running-badge">运行中</span>
+                  <span class="card-progress-task">{{ entry.runningTask.task_name }}</span>
+                  <span class="card-progress-percent">{{ entry.progress.percentLabel }}</span>
+                </div>
+                <div
+                  v-if="entry.progress.overall"
+                  class="card-progress-bar"
+                  role="progressbar"
+                  :aria-label="entry.progress.overall.ariaLabel"
+                  :aria-valuenow="entry.progress.overall.percentValue"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                >
+                  <div class="card-progress-fill" :style="{ width: `${entry.progress.overall.percentValue}%` }"></div>
+                </div>
+                <div v-if="entry.progress.batch" class="card-progress-sub">
+                  {{ entry.progress.batch.main }}
+                </div>
+                <div v-if="entry.progress.metaLine" class="card-progress-sub muted">
+                  {{ entry.progress.metaLine }}
+                </div>
+              </div>
+              <div class="card-bottom">
+                <span v-if="entry.runningTask" class="running-badge">运行中</span>
+                <span v-else-if="lastStatus(entry.group)" :class="['status-badge', lastStatus(entry.group)]">
+                  {{ lastStatusLabel(lastStatus(entry.group)) }}
+                </span>
+                <button class="remove-btn" @click.stop="removeAdapter(entry.group.adapter_id)">移除</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </template>
+    </div>
+
+    <!-- 导入弹窗 -->
+    <div
+      v-if="showInstall"
+      class="modal-backdrop"
+      @click.self="closeInstallModal"
+      @dragenter.prevent="handleDragEnter"
+      @dragover.prevent="handleDragOver"
+      @dragleave.prevent="handleDragLeave"
+      @drop.prevent="handleDrop"
+    >
+      <div class="modal install-modal" :class="{ success: installState === 'success' }">
+        <template v-if="installState === 'success'">
+          <div class="success-panel" aria-live="polite">
+            <div class="success-badge">✓</div>
+            <h3>导入成功</h3>
+            <p class="success-copy">
+              <strong>{{ successAdapterName }}</strong> {{ successDetail }}
+            </p>
+            <div class="success-meta">
+              <span class="success-pill">列表已刷新</span>
+              <span v-if="successAdapterVersion" class="success-pill">v{{ successAdapterVersion }}</span>
+            </div>
+            <button class="btn-success" @click="closeInstallModal">完成</button>
+          </div>
+        </template>
+
+        <template v-else>
+          <h3>导入脚本包</h3>
+          <p class="modal-sub">支持导入两种来源：包含 manifest.yaml 的适配包目录，或已经打包好的 .zip 适配包</p>
+          <div class="drop-zone" :class="{ active: isDragging, ready: !!installPath }">
+            <div class="drop-title">{{ isDragging ? '松开即可导入' : '拖拽适配包目录或 .zip 包到这里' }}</div>
+            <div class="drop-sub">{{ installSummary }}</div>
+          </div>
+          <div class="picker-row">
+            <button class="btn-orange-sm" :disabled="installing" @click="browseDirectory">选择目录</button>
+            <button class="btn-ghost" :disabled="installing" @click="browseZip">选择 ZIP</button>
+          </div>
+          <div v-if="installType !== 'zip'" class="install-mode-row">
+            <span class="install-mode-label">目录导入模式</span>
+            <label class="install-mode-option">
+              <input v-model="installMode" type="radio" value="copy" :disabled="installing" />
+              <span>复制</span>
+            </label>
+            <label class="install-mode-option">
+              <input v-model="installMode" type="radio" value="link" :disabled="installing" />
+              <span>link 开发模式</span>
+            </label>
+          </div>
+          <p v-if="installType !== 'zip'" class="install-mode-hint">
+            `link` 会让运行时直接指向源码目录；改完脚本后无需重新导入。ZIP 仍固定为复制安装。
+          </p>
+          <div class="input-row install-input-row">
+            <input
+              v-model="installPath"
+              placeholder="也可以直接粘贴目录路径或 .zip 文件路径"
+              class="input"
+              :disabled="installing"
+              @change="handleManualPathChange"
+            />
+            <span v-if="installType" class="path-kind">{{ installType === 'zip' ? 'ZIP' : '目录' }}</span>
+            <button v-if="installPath" class="clear-inline" :disabled="installing" @click="clearInstallSelection">清空</button>
+          </div>
+          <p v-if="msg" :class="['msg', msgErr ? 'err' : 'ok']">{{ msg }}</p>
+          <div class="modal-actions">
+            <button class="btn-orange" :disabled="!installPath || installing" @click="doInstall">
+              {{ installing ? '导入中…' : '导入' }}
+            </button>
+            <button class="btn-ghost" :disabled="installing" @click="closeInstallModal">取消</button>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { computed, ref, inject, onMounted, onUnmounted } from 'vue'
+import { IconBookmark } from '@tabler/icons-vue'
+import { getScriptCardTaskPreviewMeta } from '../utils/scriptCardPreview'
+import { partitionScriptGroups, shouldApplyScriptFavoritesSnapshot } from '../utils/scriptFavorites'
+import { buildTaskOverviewProgress, isTaskLiveActive, resolveTaskProgressConfig } from '../utils/taskProgress'
+import { formatScriptListLoadError, isCoreStartupConnectionError } from '../utils/coreStartupErrors'
+
+const emit = defineEmits(['open-script', 'reload'])
+const scriptGroups = inject('scriptGroups')
+const loadScriptGroups = inject('loadScriptGroups')
+const repairCoreService = inject('repairCoreService')
+
+const loading = ref(false)
+const loadError = ref('')
+const favoriteError = ref('')
+const favorites = ref({})
+const favoritePendingIds = ref(new Set())
+const showInstall = ref(false)
+const installPath = ref('')
+const installType = ref('')
+const installMode = ref('copy')
+const installing = ref(false)
+const isDragging = ref(false)
+const dragDepth = ref(0)
+const msg = ref('')
+const msgErr = ref(false)
+const installState = ref('idle')
+const successAdapterName = ref('')
+const successAdapterVersion = ref('')
+const successDetail = ref('')
+const successCloseTimer = ref(null)
+let pollTimer = null
+let favoriteMutationVersion = 0
+
+const groups = scriptGroups
+
+function buildDisplayEntry(group) {
+  const runningTask = group.tasks.find(task => isTaskLiveActive(task.live?.status)) || null
+  const isEnhancedProgress = !!runningTask &&
+    resolveTaskProgressConfig(group.adapter_id, runningTask.task_id).usage.scriptList === 'enhanced'
+  const preview = getScriptCardTaskPreviewMeta(group)
+  return {
+    group,
+    runningTask,
+    preview,
+    isEnhancedProgress,
+    progress: isEnhancedProgress
+      ? buildTaskOverviewProgress(group.adapter_id, runningTask.task_id, runningTask.live || {})
+      : null,
+  }
+}
+
+const scriptSections = computed(() => {
+  const partition = partitionScriptGroups(groups.value, favorites.value)
+  const sections = []
+  if (partition.favorites.length) {
+    sections.push({ id: 'favorites', title: '我的收藏', entries: partition.favorites.map(buildDisplayEntry) })
+  }
+  if (partition.scripts.length) {
+    sections.push({ id: 'scripts', title: '全部脚本', entries: partition.scripts.map(buildDisplayEntry) })
+  }
+  return sections
+})
+
+function isFavorite(adapterId) {
+  return Object.prototype.hasOwnProperty.call(favorites.value, adapterId)
+}
+
+async function loadFavorites({ quiet = false, force = false } = {}) {
+  if (quiet && !force && favoritePendingIds.value.size) return
+  const favoriteReadVersion = favoriteMutationVersion
+  try {
+    const response = await window.cs.getScriptFavorites()
+    if (!shouldApplyScriptFavoritesSnapshot(favoriteReadVersion, favoriteMutationVersion)) return
+    favorites.value = response?.favorites && typeof response.favorites === 'object' ? response.favorites : {}
+    favoriteError.value = ''
+  } catch (error) {
+    if (isCoreStartupConnectionError(error)) return
+    if (!quiet) favoriteError.value = error?.message || '收藏列表加载失败，请稍后重试'
+  }
+}
+
+async function toggleFavorite(adapterId) {
+  if (favoritePendingIds.value.has(adapterId)) return
+  favoriteMutationVersion += 1
+  favoritePendingIds.value = new Set(favoritePendingIds.value).add(adapterId)
+  try {
+    const response = isFavorite(adapterId)
+      ? await window.cs.unfavoriteScript(adapterId)
+      : await window.cs.favoriteScript(adapterId)
+    favorites.value = response?.favorites && typeof response.favorites === 'object' ? response.favorites : favorites.value
+    favoriteError.value = ''
+  } catch (error) {
+    favoriteError.value = error?.message || '收藏操作失败，请重试'
+  } finally {
+    const next = new Set(favoritePendingIds.value)
+    next.delete(adapterId)
+    favoritePendingIds.value = next
+    if (!favoritePendingIds.value.size) await loadFavorites({ quiet: true, force: true })
+  }
+}
+
+onMounted(async () => {
+  await Promise.all([loadGroups(), loadFavorites()])
+  pollTimer = window.setInterval(() => {
+    Promise.all([loadGroups({ quiet: true }), loadFavorites({ quiet: true })]).catch(() => {})
+  }, 2000)
+})
+
+async function loadGroups(options = {}) {
+  const quiet = !!options.quiet
+  if (!quiet) {
+    loading.value = true
+    loadError.value = ''
+  }
+  try {
+    await loadScriptGroups({ preserveOnShrink: quiet })
+  } catch (error) {
+    if (!quiet) {
+      if (!isCoreStartupConnectionError(error)) console.error('Failed to load script groups', error)
+    }
+    if (!quiet) {
+      loadError.value = formatScriptListLoadError(error)
+    }
+  } finally {
+    if (!quiet) {
+      loading.value = false
+    }
+  }
+}
+
+async function repairAndLoad() {
+  loading.value = true
+  loadError.value = ''
+  try {
+    await repairCoreService()
+    await loadScriptGroups()
+  } catch (error) {
+    loadError.value = error?.message || '核心服务修复失败，请打开诊断日志后联系开发者'
+  } finally {
+    loading.value = false
+  }
+}
+
+function lastStatus(g) {
+  for (const t of g.tasks) {
+    if (t.last_run?.status) return t.last_run.status
+  }
+  return null
+}
+
+function lastStatusLabel(status) {
+  if (status === 'done') return '上次成功'
+  if (status === 'stopped') return '上次停止'
+  return '上次失败'
+}
+
+const zipFilters = [
+  { name: 'ZIP 适配包', extensions: ['zip'] },
+  { name: '所有文件', extensions: ['*'] },
+]
+
+const installSummary = computed(() => {
+  if (installType.value === 'zip' && installPath.value) {
+    return '已选择 ZIP 包，导入时会自动解压并安装'
+  }
+  if (installType.value === 'directory' && installPath.value) {
+    return '已选择适配包目录，目录根下需要包含 manifest.yaml'
+  }
+  return '支持拖入单个目录或单个 .zip 包，也可以点击下方按钮选择'
+})
+
+async function removeAdapter(id) {
+  if (!confirm(`确认移除「${id}」？相关数据不会删除。`)) return
+  await window.cs.uninstallAdapter(id)
+  await Promise.all([loadScriptGroups(), loadFavorites()])
+}
+
+function resetDragState() {
+  dragDepth.value = 0
+  isDragging.value = false
+}
+
+function openInstallModal() {
+  resetInstallFeedback()
+  clearInstallSelection()
+  showInstall.value = true
+}
+
+function closeInstallModal() {
+  if (installing.value) return
+  clearSuccessTimer()
+  showInstall.value = false
+  resetInstallFeedback()
+  clearInstallSelection()
+}
+
+function clearInstallSelection() {
+  installPath.value = ''
+  installType.value = ''
+  installMode.value = 'copy'
+  msg.value = ''
+  msgErr.value = false
+  resetDragState()
+}
+
+function clearSuccessTimer() {
+  if (successCloseTimer.value) {
+    clearTimeout(successCloseTimer.value)
+    successCloseTimer.value = null
+  }
+}
+
+function resetInstallFeedback() {
+  clearSuccessTimer()
+  msg.value = ''
+  msgErr.value = false
+  installState.value = 'idle'
+  successAdapterName.value = ''
+  successAdapterVersion.value = ''
+  successDetail.value = ''
+}
+
+async function resolveInstallTarget(targetPath, expectedKind = '') {
+  const normalized = String(targetPath || '').trim()
+  if (!normalized) return { ok: false, error: '请选择适配包目录或 .zip 包' }
+
+  const stat = await window.cs.statFile(normalized)
+  const lower = normalized.toLowerCase()
+
+  if (expectedKind === 'zip') {
+    if (!stat?.isFile || !lower.endsWith('.zip')) {
+      return { ok: false, error: '请选择一个 .zip 适配包文件' }
+    }
+    return { ok: true, kind: 'zip', path: normalized }
+  }
+
+  if (expectedKind === 'directory') {
+    if (!stat?.isDirectory) {
+      return { ok: false, error: '请选择包含 manifest.yaml 的适配包目录' }
+    }
+    return { ok: true, kind: 'directory', path: normalized }
+  }
+
+  if (stat?.isDirectory) return { ok: true, kind: 'directory', path: normalized }
+  if (stat?.isFile && lower.endsWith('.zip')) return { ok: true, kind: 'zip', path: normalized }
+
+  return { ok: false, error: '仅支持适配包目录或 .zip 包' }
+}
+
+async function setInstallTarget(targetPath, expectedKind = '') {
+  const result = await resolveInstallTarget(targetPath, expectedKind)
+  installPath.value = String(targetPath || '').trim()
+  if (!result.ok) {
+    installType.value = ''
+    msg.value = result.error
+    msgErr.value = true
+    return false
+  }
+  installPath.value = result.path
+  installType.value = result.kind
+  msg.value = ''
+  msgErr.value = false
+  return true
+}
+
+async function browseDirectory() {
+  const p = await window.cs.browseFile({ directory: true, title: '选择适配包文件夹' })
+  if (p) await setInstallTarget(p, 'directory')
+}
+
+async function browseZip() {
+  const p = await window.cs.browseFile({ title: '选择 ZIP 适配包', filters: zipFilters })
+  if (p) await setInstallTarget(p, 'zip')
+}
+
+async function handleManualPathChange() {
+  if (!installPath.value.trim()) {
+    clearInstallSelection()
+    return
+  }
+  await setInstallTarget(installPath.value)
+}
+
+function hasDraggedFiles(event) {
+  return Array.from(event.dataTransfer?.types || []).includes('Files')
+}
+
+function handleDragEnter(event) {
+  if (!hasDraggedFiles(event)) return
+  dragDepth.value += 1
+  isDragging.value = true
+}
+
+function handleDragOver(event) {
+  if (!hasDraggedFiles(event)) return
+  event.dataTransfer.dropEffect = 'copy'
+  isDragging.value = true
+}
+
+function handleDragLeave(event) {
+  if (!hasDraggedFiles(event)) return
+  dragDepth.value = Math.max(0, dragDepth.value - 1)
+  if (dragDepth.value === 0) isDragging.value = false
+}
+
+async function handleDrop(event) {
+  resetDragState()
+  const files = Array.from(event.dataTransfer?.files || []).filter(file => file.path)
+  if (!files.length) return
+  if (files.length > 1) {
+    msg.value = '一次只能导入一个适配包目录或一个 .zip 包'
+    msgErr.value = true
+    return
+  }
+  await setInstallTarget(files[0].path)
+}
+
+async function doInstall() {
+  const resolved = await resolveInstallTarget(installPath.value, installType.value)
+  if (!resolved.ok) {
+    msg.value = resolved.error
+    msgErr.value = true
+    return
+  }
+
+  installPath.value = resolved.path
+  installType.value = resolved.kind
+  msg.value = ''
+  msgErr.value = false
+  installState.value = 'idle'
+  installing.value = true
+
+  const payload = resolved.kind === 'zip'
+    ? { file: resolved.path, install_mode: 'copy' }
+    : { path: resolved.path, install_mode: installMode.value }
+
+  try {
+    const r = await window.cs.installAdapter(payload)
+    if (r.ok) {
+      let refreshFailed = false
+      try {
+        await loadScriptGroups()
+        emit('reload')
+      } catch (error) {
+        refreshFailed = true
+        console.warn('Failed to reload script groups after install', error)
+      }
+      installing.value = false
+      successAdapterName.value = r.adapter?.name || resolved.path
+      successAdapterVersion.value = r.adapter?.version || ''
+      successDetail.value = refreshFailed
+        ? '已成功导入，但脚本列表刷新失败，请稍后手动刷新。'
+        : `已成功以「${r.adapter?.install_mode === 'link' ? 'link 开发模式' : '复制'}」导入，脚本列表已更新。`
+      installState.value = 'success'
+      clearInstallSelection()
+      clearSuccessTimer()
+      successCloseTimer.value = window.setTimeout(() => {
+        if (showInstall.value && installState.value === 'success') {
+          closeInstallModal()
+        }
+      }, 1800)
+      return
+    }
+    msg.value = r.detail || r.error || '导入失败'
+    msgErr.value = true
+  } catch (error) {
+    msg.value = error?.message || '导入失败'
+    msgErr.value = true
+  } finally {
+    installing.value = false
+  }
+}
+
+onUnmounted(() => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+  clearSuccessTimer()
+})
+</script>
+
+<style scoped>
+.view { height: 100%; display: flex; flex-direction: column; }
+.view-header {
+  display: flex; align-items: center; padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.view-header h2 { font-size: 18px; font-weight: 700; flex: 1; }
+.placeholder { color: var(--text3); text-align: center; padding: 60px; font-size: 14px; grid-column: 1/-1; }
+.placeholder-stack { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+
+.script-content {
+  flex: 1; overflow-y: auto; padding: 20px 24px;
+  display: flex; flex-direction: column; gap: 28px;
+}
+.script-section { display: flex; flex-direction: column; gap: 12px; }
+.script-section-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.favorite-error { margin: 0; color: var(--orange-text); font-size: 13px; }
+.script-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px; align-content: start;
+}
+.script-card {
+  position: relative;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+  padding: 18px; cursor: pointer; transition: all 0.15s;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.script-card:hover { border-color: var(--orange); background: var(--bg3); }
+.script-card.disabled { opacity: 0.5; }
+.card-top { display: flex; align-items: center; gap: 12px; padding-right: 48px; }
+.card-icon { font-size: 26px; }
+.card-info { flex: 1; }
+.card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.card-info strong {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.adapter-version {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.favorite-btn {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--subtle-border);
+  border-radius: 8px;
+  background: var(--soft-fill);
+  color: var(--text2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--soft-fill-hover);
+  transition: border-color 0.16s ease, color 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease, opacity 0.16s ease;
+}
+.favorite-icon {
+  fill: transparent;
+  stroke: currentColor;
+  transition: fill 0.16s ease, transform 0.16s cubic-bezier(.16, 1, .3, 1);
+}
+.favorite-btn:hover:not(:disabled),
+.favorite-btn:focus-visible:not(:disabled) {
+  border-color: rgba(var(--orange-rgb), .56);
+  color: #ffb28d;
+  background: rgba(var(--orange-rgb), .10);
+  box-shadow: 0 5px 12px rgba(0, 0, 0, .16), inset 0 1px 0 rgba(255, 255, 255, .07);
+  outline: none;
+  transform: translateY(-1px);
+}
+.favorite-btn:active:not(:disabled) { transform: translateY(0) scale(.94); }
+.favorite-btn.active {
+  border-color: rgba(var(--orange-rgb), .58);
+  color: var(--orange-text);
+  background: rgba(var(--orange-rgb), .16);
+  box-shadow: 0 4px 12px rgba(var(--orange-rgb), .12), inset 0 1px 0 rgba(255, 255, 255, .10);
+}
+.favorite-btn.active .favorite-icon { fill: currentColor; transform: translateY(-.5px); }
+.favorite-btn:disabled { cursor: wait; opacity: 0.55; }
+.task-count { font-size: 12px; color: var(--text3); }
+.task-chips {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.task-chips-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  overflow: hidden;
+}
+.chip {
+  font-size: 11px; padding: 3px 9px; border-radius: 20px;
+  background: var(--bg3); border: 1px solid var(--border); color: var(--text2);
+}
+.more-btn {
+  border: none;
+  background: transparent;
+  color: var(--orange-text);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0;
+}
+.more-btn:hover { color: #ff8d58; }
+.card-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 106, 41, 0.06);
+  border: 1px solid rgba(255, 106, 41, 0.12);
+}
+.card-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.card-progress-task {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-progress-percent {
+  font-size: 11px;
+  color: var(--orange-text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.card-progress-bar {
+  position: relative;
+  height: 7px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--soft-fill-hover);
+  border: 1px solid rgba(255, 106, 41, 0.16);
+}
+.card-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--orange), #ff9a5f);
+}
+.card-progress-sub {
+  font-size: 11px;
+  color: var(--text2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-progress-sub.muted {
+  color: var(--text3);
+}
+.card-bottom { display: flex; align-items: center; justify-content: space-between; }
+.running-badge { font-size: 11px; padding: 2px 8px; border-radius: 5px; background: var(--orange-bg); color: var(--orange-text); }
+.status-badge { font-size: 11px; padding: 2px 8px; border-radius: 5px; }
+.status-badge.done  { background: rgba(74,222,128,0.1); color: var(--green); }
+.status-badge.stopped { background: rgba(251,191,36,0.1); color: var(--yellow); }
+.status-badge.error { background: rgba(248,113,113,0.1); color: var(--red); }
+.remove-btn {
+  font-size: 11px; color: var(--text3); background: transparent; border: none;
+  padding: 3px 8px; border-radius: 5px;
+}
+.remove-btn:hover { color: var(--red); background: rgba(248,113,113,0.1); }
+
+/* Modal */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 16px; padding: 28px; width: 500px; display: flex; flex-direction: column; gap: 16px; }
+.install-modal { width: 560px; }
+.install-modal.success {
+  border-color: rgba(74, 222, 128, 0.25);
+  background: linear-gradient(180deg, rgba(22, 101, 52, 0.12), var(--bg2));
+}
+.modal h3 { font-size: 16px; font-weight: 700; }
+.modal-sub { font-size: 12px; color: var(--text3); margin-top: -8px; line-height: 1.6; }
+.drop-zone {
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  padding: 18px;
+  background: var(--soft-fill);
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+.drop-zone.active {
+  border-color: var(--orange);
+  background: rgba(255, 106, 41, 0.08);
+  transform: translateY(-1px);
+}
+.drop-zone.ready {
+  border-style: solid;
+  border-color: rgba(255, 106, 41, 0.45);
+}
+.drop-title { font-size: 14px; font-weight: 700; color: var(--text); }
+.drop-sub { margin-top: 6px; font-size: 12px; color: var(--text3); line-height: 1.6; }
+.picker-row { display: flex; gap: 10px; }
+.install-mode-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.install-mode-label { font-size: 12px; color: var(--text2); }
+.install-mode-option { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
+.install-mode-hint { margin: 6px 0 0; font-size: 12px; color: var(--text3); line-height: 1.5; }
+.input-row { display: flex; gap: 8px; }
+.install-input-row { align-items: center; }
+.input { flex: 1; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; color: var(--text); font-size: 13px; outline: none; }
+.input:focus { border-color: var(--orange); }
+.path-kind {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(255, 106, 41, 0.12);
+  color: var(--orange-text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.clear-inline {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--text3);
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+.clear-inline:hover:not(:disabled) { color: var(--red); background: rgba(248,113,113,0.1); }
+.msg { font-size: 12px; padding: 6px 10px; border-radius: 6px; }
+.msg.ok  { background: rgba(74,222,128,0.1); color: var(--green); }
+.msg.err { background: rgba(248,113,113,0.1); color: var(--red); }
+.modal-actions { display: flex; gap: 8px; }
+
+.success-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  padding: 18px 8px 4px;
+}
+.success-badge {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--green);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  background: radial-gradient(circle at top, rgba(74, 222, 128, 0.24), rgba(74, 222, 128, 0.08));
+  box-shadow: 0 0 0 6px rgba(74, 222, 128, 0.06);
+}
+.success-panel h3 {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text);
+}
+.success-copy {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text2);
+  max-width: 420px;
+}
+.success-copy strong {
+  color: var(--text);
+}
+.success-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.success-pill {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.12);
+  border: 1px solid rgba(74, 222, 128, 0.18);
+  color: var(--green);
+}
+.btn-success {
+  margin-top: 6px;
+  padding: 10px 20px;
+  border-radius: 10px;
+  border: 1px solid rgba(74, 222, 128, 0.25);
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.95), rgba(22, 163, 74, 0.95));
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.btn-success:hover { filter: brightness(1.05); }
+
+/* Buttons */
+.btn-orange { padding: 9px 20px; border-radius: 9px; border: none; background: var(--orange); color: white; font-size: 13px; font-weight: 700; }
+.btn-orange:hover { background: var(--orange-dim); }
+.btn-orange:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-orange-sm { padding: 9px 14px; border-radius: 8px; border: none; background: var(--orange); color: white; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.btn-ghost { padding: 9px 16px; border-radius: 9px; border: 1px solid var(--border); background: transparent; color: var(--text2); font-size: 13px; }
+.btn-ghost:hover { background: var(--bg3); color: var(--text); }
+.header-actions .btn-ghost { padding: 7px 14px; font-size: 12px; }
+</style>

@@ -1,0 +1,2293 @@
+# 抓虾适配包开发指南
+
+> 阅读本文档后，你（或 AI）应该能独立开发一个可运行的适配包。
+
+---
+
+## 目录
+
+1. [核心概念](#1-核心概念)
+2. [5 分钟上手](#2-5-分钟上手)
+3. [manifest.yaml 完整参考](#3-manifestyaml-完整参考)
+4. [JS 脚本协议](#4-js-脚本协议)
+5. [内置变量与工具](#5-内置变量与工具)
+6. [参数类型](#6-参数类型)
+7. [分页机制](#7-分页机制)
+8. [认证检查](#8-认证检查)
+9. [输出与通知](#9-输出与通知)
+10. [真实示例：JD 价格导出](#10-真实示例jd-价格导出)
+11. [真实示例：Temu 商品数据（含分页）](#11-真实示例temu-商品数据含分页)
+12. [常见问题](#12-常见问题)
+13. [底座 HTTP API 参考](#13-底座-http-api-参考)
+
+---
+
+## 1. 核心概念
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   crawshrimp 底座                    │
+│                                                      │
+│  Electron GUI  ←→  FastAPI (18765)  ←→  cdp_bridge  │
+│                          │                   │       │
+│                      js_runner           Chrome      │
+│                          │           (CDP port 9222) │
+│                    adapter_loader                    │
+└─────────────────────────────────────────────────────┘
+          ↑
+    你只需要写这部分
+          ↓
+┌──────────────────────┐
+│   适配包 (Adapter)   │
+│                      │
+│  manifest.yaml       │  声明元数据、任务、参数、输出
+│  *.js 脚本           │  在目标页面执行的抓取逻辑
+│  auth_check.js       │  （可选）检查登录状态
+│  *.xlsx / *.csv /    │  （可选）供任务参数下载的模板/说明文件
+│  *.pdf / *.docx      │
+│  icon.png            │  （可选）适配包图标
+└──────────────────────┘
+```
+
+**你不需要关心：**
+- Chrome 如何连接（底座通过 CDP websocket 直连）
+- JS 如何注入（底座调用 `Runtime.evaluate`）
+- 数据如何存储（底座写 Excel / JSON / SQLite）
+- 通知如何发送（底座调用钉钉 / Feishu API）
+- 分页如何循环（底座检测 `meta.has_more`，自动翻页）
+
+**你只需要关心：**
+- 目标页面上有什么 DOM 元素
+- 如何读取数据
+- 如何判断"还有下一页"
+
+---
+
+## 2. 5 分钟上手
+
+### 第一步：创建目录
+
+```
+my-adapter/
+  manifest.yaml
+  scrape.js
+```
+
+### 第二步：写 manifest.yaml
+
+```yaml
+id: my-adapter           # 唯一 ID，小写+连字符
+name: 示例适配包
+version: 1.0.0
+author: yourname
+description: "这是一个示例适配包"
+entry_url: https://example.com   # 用于匹配 Chrome tab
+
+tasks:
+  - id: scrape_table
+    name: 抓取表格
+    script: scrape.js
+    trigger:
+      type: manual
+    output:
+      - type: excel
+        filename: "结果_{date}.xlsx"
+```
+
+### 第三步：写 scrape.js
+
+```js
+;(async () => {
+  const data = []
+
+  document.querySelectorAll('table tbody tr').forEach(row => {
+    const cells = [...row.querySelectorAll('td')].map(td => td.textContent.trim())
+    if (cells.length >= 2) {
+      data.push({
+        '名称': cells[0],
+        '价格': cells[1],
+      })
+    }
+  })
+
+  return {
+    success: true,
+    data,                    // 必须是对象数组
+    meta: { has_more: false }
+  }
+})()
+```
+
+### 第四步：安装
+
+```bash
+# 方式一：GUI 安装
+# 打开抓虾 → 我的脚本 → 导入脚本
+# - 选择包含 manifest.yaml 的适配包目录
+# - 或选择 / 拖入打包好的 .zip 包
+
+# 方式二：API 安装
+curl -X POST http://127.0.0.1:18765/adapters/install \
+  -H 'Content-Type: application/json' \
+  -d '{"path": "/absolute/path/to/my-adapter"}'
+```
+
+开发阶段如果想让“仓库里的改动立刻影响运行时”，可以使用目录 `link` 安装：
+
+```bash
+curl -X POST http://127.0.0.1:18765/adapters/install \
+  -H 'Content-Type: application/json' \
+  -d '{"path": "/absolute/path/to/my-adapter", "install_mode": "link"}'
+```
+
+说明：
+
+- `install_mode=link` 只支持目录安装，不支持 zip
+- `link` 模式下，运行时目录会直接指向源码目录
+- 适合本地开发、dev harness 调试、回归和反复调整 phase/shared 逻辑
+- 发包和交付用户时，仍建议使用默认 `copy` 或 zip 安装
+
+### 开发前先用 dev harness 摸页面
+
+写 adapter 之前，先用仓库内置的 `scripts/crawshrimp_dev_harness.py` 建立页面认知。推荐顺序：
+
+1. `snapshot` 看当前页面结构和已有知识命中
+2. `knowledge` 查 notes / probe 自动生成的经验卡片
+3. `capture` / `eval` 做局部 DOM 或请求实验
+4. `probe` 只在需要结构化 bundle 时再跑
+
+常用命令：
+
+```bash
+./venv/bin/python scripts/crawshrimp_dev_harness.py snapshot \
+  --adapter my-adapter \
+  --task scrape_table
+
+./venv/bin/python scripts/crawshrimp_dev_harness.py knowledge \
+  --adapter my-adapter \
+  --task scrape_table \
+  --query table
+
+./venv/bin/python scripts/crawshrimp_dev_harness.py capture \
+  --adapter my-adapter \
+  --task scrape_table \
+  --capture-mode passive
+```
+
+如果 notes 或 probe 产物有新增，但知识搜索还没更新，可以手动重建：
+
+```bash
+./venv/bin/python scripts/crawshrimp_dev_harness.py rebuild-knowledge
+```
+
+知识索引默认写到运行时数据目录：
+
+- `knowledge/cards.json`
+- `knowledge/skills/<adapter>/<task>.md`
+
+### 重要：运行的是“已安装副本”，不是你的源码目录
+
+默认 `copy` 模式下，`/adapters/install` 不会直接让底座执行你的源码目录。安装时，底座会把适配包复制到运行时数据目录：
+
+- 默认：自动选择可写目录下的 `adapters/<adapter_id>/`
+- 如果设置了 `CRAWSHRIMP_DATA`：`$CRAWSHRIMP_DATA/adapters/<adapter_id>/`
+
+底座后续运行、扫描、加载的都是这个“已安装副本”。
+
+这意味着（默认 `copy` 模式）：
+
+- 你在仓库目录里改了 `manifest.yaml` / `*.js`，**不会自动生效**
+- 改完后如果不重新安装，GUI / API 继续跑的还是旧代码
+- 出现“我明明改了代码，但运行结果像旧版本”时，先检查是不是没重新安装，不要先怀疑业务逻辑
+
+开发阶段更推荐把下面这组动作当成固定流程：
+
+```bash
+# 1. 安装成 link，一次即可
+curl -X POST http://127.0.0.1:18765/adapters/install \
+  -H 'Content-Type: application/json' \
+  -d '{"path": "/absolute/path/to/repo/adapters/my-adapter", "install_mode": "link"}'
+
+# 2. 先用 dev harness 摸页面
+./venv/bin/python scripts/crawshrimp_dev_harness.py snapshot \
+  --adapter my-adapter \
+  --task scrape_table
+
+# 3. 再写 adapter / 跑任务
+```
+
+如果你刻意保留 `copy` 模式来验证真实交付语义，再使用下面的重装校验：
+
+```bash
+curl -X POST http://127.0.0.1:18765/adapters/install \
+  -H 'Content-Type: application/json' \
+  -d '{"path": "/absolute/path/to/repo/adapters/my-adapter"}'
+
+RUNTIME_DATA_DIR="$(PYTHONPATH=. ./venv/bin/python - <<'PY'
+from core import runtime_paths
+print(runtime_paths.data_root())
+PY
+)"
+
+diff -qr /absolute/path/to/repo/adapters/my-adapter "$RUNTIME_DATA_DIR/adapters/my-adapter"
+```
+
+如果使用的是 `install_mode=link`，则无需重复安装；运行时直接读取源码目录，但仍建议在 live 验证前确认当前脚本就是你预期的 checkout/branch。
+
+### 第五步：运行
+
+1. 在 Chrome 里打开目标网站（确保已登录）
+2. 打开抓虾 GUI → 选择你的适配包 → 点击任务 → 运行
+
+### 第六步：打包与发行（推荐）
+
+推荐把适配包发布为一个 `.zip` 文件，文件名建议带上适配包 ID 和版本号，例如：
+
+```text
+my-adapter-v1.0.0.zip
+```
+
+当前导入器支持两种 zip 结构：
+
+1. zip 根目录下直接就是 `manifest.yaml` 和脚本文件
+2. zip 根目录下只有一个一级目录，该目录内包含 `manifest.yaml`
+
+更推荐第二种，便于用户解压查看，也更适合在 GitHub Release / 飞书 / 钉钉里直接分发。
+
+macOS / Linux 打包示例：
+
+```bash
+cd /path/to/parent
+zip -r my-adapter-v1.0.0.zip my-adapter
+```
+
+Windows PowerShell 打包示例：
+
+```powershell
+Compress-Archive -Path .\my-adapter -DestinationPath .\my-adapter-v1.0.0.zip -Force
+```
+
+发布前建议检查：
+
+- `manifest.yaml` 的 `id` 稳定且唯一
+- `version` 已更新
+- zip 解压后仍能在根目录或唯一一级目录下找到 `manifest.yaml`
+- 至少用一次 GUI 的“导入脚本”或 `/adapters/install` 验证包体可安装
+
+升级规则：
+
+- 同一个 `id` 重新导入，会覆盖旧版本
+- 想并存两套脚本，请使用不同的 `id`
+
+---
+
+## 3. manifest.yaml 完整参考
+
+```yaml
+# ── 适配包基本信息 ─────────────────────────────────
+id: my-adapter               # 必填。唯一 ID，小写字母+数字+连字符
+name: 我的适配包              # 必填。GUI 显示名
+version: 1.0.0               # 可选。语义化版本
+icon: icon.png               # 可选。适配包图标，相对于适配包目录
+author: yourname             # 可选
+description: "一句话介绍"    # 可选
+
+entry_url: https://example.com
+# 必填。新页面模式会打开此 URL；current 模式默认用它匹配已打开 tab。
+
+tab_match_prefixes:
+  - https://example.com/admin
+  - https://example.com/console
+# 可选。current 模式下用于匹配已有 tab 的 URL 前缀；不填则使用 entry_url。
+
+# ── 认证检查（可选）────────────────────────────────
+auth:
+  check_script: auth_check.js   # 返回 { data: [{ logged_in: bool }] }
+  login_url: https://example.com/login  # 未登录时打开此页面
+
+# ── 任务列表 ────────────────────────────────────────
+tasks:
+  - id: task_id             # 必填。任务 ID，在适配包内唯一
+    name: 任务名称           # 必填
+    description: "说明文字"  # 可选
+    script: task.js         # 必填。相对于适配包目录的 JS 文件路径
+    param_probe_script: task-param-probe.js  # 可选。运行前动态探测参数选项/默认值
+    entry_url: https://example.com/admin/task  # 可选。覆盖 adapter 级 entry_url
+    tab_match_prefixes:                      # 可选。覆盖 adapter 级 tab_match_prefixes
+      - https://example.com/admin/task
+    skip_auth: false        # 可选。跳过 adapter 级 auth_check
+    execution_ui_mode: precheck_before_live  # 可选。声明桌面端执行交互
+    validation_only_label: 仅校验 Excel      # 可选。仅校验按钮文案
+    auto_precheck_note: 执行前会自动做 Excel 预检  # 可选。按钮旁提示文案
+
+    # ── 参数（可选）──────────────────────────────
+    params:
+      - id: param_id
+        type: text           # 见"参数类型"章节
+        label: 参数名称
+        default: ""
+        required: false
+        placeholder: "输入提示"
+        hint: "提示文字"
+        quick_fill_options: ["近7日", "近30日"]  # text/textarea 快捷填充值
+        ui_span: full        # compact | half | third | full
+        visible_when:        # 可选。按其他参数值控制显示
+          id: mode
+          equals: current
+
+      # file_excel 参数可选：把模板文件一起打进适配包
+      - id: input_file
+        type: file_excel
+        label: Excel 文件
+        required: true
+        templates:
+          - file: templates/input-template.xlsx
+            label: Excel 填写模板
+            description: 按模板填写后上传
+            version: "2026.03"
+          - file: docs/field-guide.csv
+            label: CSV 字段说明
+            description: 字段释义和填写示例
+            version: "2026.03"
+        hint: "用户可先下载模板填写，再回到这里上传"
+
+    # ── 触发方式（可选，默认 manual）──────────────
+    trigger:
+      type: manual           # manual | interval | cron
+      interval_minutes: 60   # type=interval 时有效
+      cron: "0 9 * * 1-5"   # type=cron 时有效（标准 5 段 cron）
+
+    # ── 输出（可选）──────────────────────────────
+    output:
+      - type: excel          # 当前任务导出支持 excel | json | notify
+        filename: "结果_{date}.xlsx"   # 支持 {date} {datetime} {adapter_id} {task_id}
+        columns: ["店铺", "SKU", "状态", "原因"]  # 可选。显式列顺序
+        column_groups:                 # 可选。Excel 两层表头
+          - label: 基础信息
+            columns: ["店铺", "SKU"]
+          - label: 执行结果
+            columns: ["状态", "原因"]
+      - type: notify
+        channel: dingtalk    # dingtalk | feishu | webhook
+        condition: "data.length > 0"  # 可选，满足条件才发送
+```
+
+### 入口、tab 匹配与 current/new 模式
+
+- `entry_url` 是 adapter 必填字段；任务级 `entry_url` 可以覆盖 adapter 级入口，适合同一个 adapter 下有多个业务入口。
+- `mode=current` 会使用当前 Chrome tab（桌面端会尽量传 `current_tab_id`），并校验 URL 是否匹配 `tab_match_prefixes`；没有显式传当前 tab 时，后端只会在唯一匹配 tab 时继续，多个匹配 tab 会报错，避免跑错页面。
+- `mode=new` 会新建或复用目标入口页，并在登录检查通过后导航回业务入口。
+- `tab_match_prefixes` 建议写业务后台的稳定前缀，不要写过宽的站点首页。
+- `skip_auth: true` 只影响当前 task；默认仍会执行 adapter 级 `auth.check_script`。
+
+### 动态参数探测 `param_probe_script`
+
+`param_probe_script` 用于在运行前根据当前页面状态动态补全参数，例如店铺列表、站点列表、页面筛选项。它只在桌面端 current 模式下触发；new 模式不会为了探测参数额外打开页面。
+
+探测脚本仍然是 async IIFE，底座会注入：
+
+```js
+window.__CRAWSHRIMP_PARAMS__ = { /* 当前表单参数 */ }
+window.__CRAWSHRIMP_PARAM_PROBE__ = true
+```
+
+脚本返回的 `data` 是参数 patch 数组；每个 patch 必须有 `id`，其余字段会覆盖对应 `params[]` 配置：
+
+```js
+;(async () => {
+  const storeOptions = [...document.querySelectorAll('[data-store-id]')].map(el => ({
+    value: el.getAttribute('data-store-id'),
+    label: el.textContent.trim(),
+  }))
+
+  return {
+    success: true,
+    data: [
+      {
+        id: 'store_id',
+        options: storeOptions,
+        default: storeOptions[0]?.value || '',
+        hint: `从当前页面探测到 ${storeOptions.length} 个店铺`,
+      },
+    ],
+    meta: { has_more: false },
+  }
+})()
+```
+
+对应 API 是 `POST /tasks/{adapter_id}/{task_id}/params/probe`，返回 `{ ok: true, patches: [...] }`。
+
+### 任务执行 UI 声明字段
+
+这 3 个字段用于声明“桌面端应该如何呈现任务执行交互”，不会改变脚本本身的参数协议：
+
+- `execution_ui_mode`
+  - 可选，当前支持 `precheck_before_live`
+  - 当值为 `precheck_before_live` 时，桌面端会把 `execute_mode` 的单选项收起，改成“主按钮先预检，再自动 live” + “次按钮仅校验”
+- `validation_only_label`
+  - 可选，覆盖“仅校验”按钮文案
+- `auto_precheck_note`
+  - 可选，显示在执行按钮旁的提示文案
+
+推荐接入方式：
+
+```yaml
+tasks:
+  - id: voucher_batch_create
+    script: voucher-create.js
+    execution_ui_mode: precheck_before_live
+    validation_only_label: 仅校验 Excel
+    auto_precheck_note: 执行前会自动做 Excel 预检
+    params:
+      - id: execute_mode
+        type: radio
+        label: 运行方式
+        default: plan
+        options:
+          - value: plan
+            label: 先做 Excel 预检
+          - value: live
+            label: 进入 live 执行
+```
+
+说明：
+
+- 这是一组**前端交互声明**，不是新的运行协议
+- 脚本和后端仍建议保留 `execute_mode=plan/live`，因为桌面端只是自动帮你先跑 `plan`，通过后再发起 `live`
+- 如果不声明这 3 个字段，桌面端继续按普通任务交互渲染，不会有额外行为
+
+---
+
+## 4. JS 脚本协议
+
+### 必须遵守的格式
+
+每个脚本**必须**是一个 async IIFE（立即执行异步函数），**必须**返回一个对象：
+
+```js
+;(async () => {
+  // 你的逻辑...
+  return {
+    success: true,   // bool，必填
+    data: [...],     // 对象数组，成功时必填
+    meta: {
+      has_more: false  // bool，必填（true 触发自动翻页）
+    }
+  }
+})()
+```
+
+失败时：
+
+```js
+;(async () => {
+  return {
+    success: false,
+    error: '描述失败原因的字符串'
+  }
+})()
+```
+
+### 关键规则
+
+| 规则 | 说明 |
+|------|------|
+| **必须是 async IIFE** | `js_runner` 用 `await Runtime.evaluate()` 执行，非 async 无法使用 `await` |
+| **data 必须是数组** | 每个元素是一个扁平对象，key 就是 Excel 的列名 |
+| **不要修改 DOM 状态** | 脚本不应该提交表单、触发非读取操作（除非任务本来就是操作类） |
+| **不依赖全局变量** | 每次注入都是独立 evaluate，上次执行的变量不会保留（除非挂在 `window` 上） |
+
+### 多 Phase 状态机（操作类任务）
+
+对于需要依次完成多个交互步骤的任务（如表单填写、店铺切换、日期选择），使用 **多 Phase 状态机**。
+
+底座会重复注入同一脚本，通过 `window.__CRAWSHRIMP_PHASE__` 区分当前阶段，脚本通过 `meta.action` 返回 `next_phase` / `cdp_clicks` / `inject_files` / `file_chooser_upload` / `capture_click_requests` / `capture_url_requests` / `download_urls` / `download_clicks` / `capture_screenshot` / `reload_page` / `complete` 来驱动状态机。
+
+#### 推荐的 Phase 粒度（最佳实践）
+
+推荐按**业务步骤**拆 phase，而不是按“字段 / 按钮 / 单次点击”拆 phase。经验上，下面这种粒度更稳：
+
+- `ensure_auth` / `ensure_store`
+- `open_form`
+- `fill_form`
+- `submit`
+- `post_submit`
+
+不建议把“填日期”“点月份箭头”“切下拉框”“点确认按钮”都拆成独立 phase。字段级 phase 会让脚本在重渲染、弹层消失、节点失效时变得很脆弱，也更难处理多门店、多行循环。
+
+```
+底座注入脚本 (phase="main")
+  ↓
+返回 { success: true, data: [], meta: { action: "next_phase", next_phase: "fill_form" } }
+  ↓
+底座注入脚本 (phase="fill_form")
+  ↓
+返回 { success: true, data: [], meta: { action: "cdp_clicks", clicks: [{x,y}, ...], next_phase: "submit", sleep_ms: 500 } }
+  ↓
+底座执行 CDP 坐标点击
+  ↓
+底座注入脚本 (phase="submit")
+  ↓
+返回 { success: true, data: [...], meta: { action: "complete", has_more: false } }  ← 本行完成，继续下一行
+```
+
+#### `action` 值说明
+
+| action | 说明 |
+|--------|------|
+| `next_phase` | 切换到 `meta.next_phase` 指定的 phase，立刻重新注入脚本 |
+| `cdp_clicks` | 用 CDP 真实鼠标依次点击 `meta.clicks` 里的坐标，点完后等 `meta.sleep_ms`（ms），再切换到 `meta.next_phase` |
+| `inject_files` | 直接把本地文件注入到页面上的 `input[type=file]`，触发 `input/change` 事件 |
+| `file_chooser_upload` | 通过 CDP 拦截原生文件选择器并设置文件，适合隐藏 input 或点击后才创建 input 的页面 |
+| `capture_click_requests` | 先执行 CDP 点击，再捕获当前 tab 中匹配的网络请求/响应 |
+| `capture_url_requests` | 打开临时 tab 访问指定 URL，并捕获匹配的网络请求/响应 |
+| `download_urls` | 下载一组 URL 到本次运行的 runtime 产物目录，并加入输出文件列表 |
+| `download_clicks` | 点击页面按钮后监听系统下载目录，收集由页面触发的下载文件 |
+| `capture_screenshot` | 用 CDP 对当前页面截 PNG，可截整页并加入输出文件列表 |
+| `reload_page` | 执行 `Page.reload(ignoreCache=true)`，等待后切到 `meta.next_phase` |
+| `complete` | 当前页/当前 phase 路径结束；顶层 `data` 会被累计，`meta.has_more=true` 时进入下一页 |
+
+#### Phase 状态机脚本骨架
+
+```js
+;(async () => {
+  // 底座注入当前 phase
+  const phase  = window.__CRAWSHRIMP_PHASE__  || 'main'
+  // 底座注入参数（含批量行数据，见 file_excel 章节）
+  const params  = window.__CRAWSHRIMP_PARAMS__ || {}
+  // 跨 phase 共享状态（挂 window，不会被清除）
+  const shared  = window.__CRAWSHRIMP_SHARED__ = window.__CRAWSHRIMP_SHARED__ || {}
+
+  // 辅助：返回 next_phase 并带等待时间
+  function nextPhase(name, sleepMs, newShared) {
+    return {
+      success: true,
+      data: [],
+      meta: {
+        action: 'next_phase',
+        next_phase: name,
+        sleep_ms: sleepMs || 0,
+        shared: newShared ?? shared,
+      },
+    }
+  }
+
+  // 辅助：返回 cdp_clicks
+  function cdpClicks(clicks, nextPhaseName, sleepMs) {
+    return {
+      success: true,
+      data: [],
+      meta: {
+        action: 'cdp_clicks',
+        clicks,
+        next_phase: nextPhaseName,
+        sleep_ms: sleepMs || 300,
+        shared,
+      },
+    }
+  }
+
+  try {
+    if (phase === 'main') {
+      // 初始化：导航、校验、准备
+      // ...
+      return nextPhase('fill_form', 800)
+    }
+
+    if (phase === 'fill_form') {
+      // 填写表单
+      // ...
+      // 获取提交按钮坐标
+      const btn = document.querySelector('.submit-btn')
+      const r   = btn.getBoundingClientRect()
+      return cdpClicks([{ x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) }], 'post_submit', 1000)
+    }
+
+    if (phase === 'post_submit') {
+      // 等待成功，收集结果
+      const result = { '执行状态': '成功', '错误原因': '' }
+      return { success: true, data: [result], meta: { action: 'complete', has_more: false, shared } }
+    }
+
+  } catch (e) {
+    // phase 失败，记录错误原因并结束本行
+    return {
+      success: true,
+      data: [{ '执行状态': '失败', '错误原因': e.message }],
+      meta: { action: 'complete', has_more: false, shared },
+    }
+  }
+})()
+```
+
+#### `window.__CRAWSHRIMP_PHASE__` 的值
+
+底座在每次注入前设置：
+- 第一次执行：`"main"`
+- 后续由脚本 `next_phase` 字段控制
+- 如果旧脚本里使用 `init`，建议在入口兼容 `main`：`if (phase === 'main' || phase === 'init')`
+
+#### 常用 action 参数格式
+
+`next_phase`：
+
+```js
+return {
+  success: true,
+  data: [],
+  meta: {
+    action: 'next_phase',
+    next_phase: 'fill_form',
+    sleep_ms: 800,
+    shared,
+  },
+}
+```
+
+`cdp_clicks`：
+
+```js
+{
+  success: true,
+  data: [],
+  meta: {
+    action: 'cdp_clicks',
+    clicks: [
+      { x: 320, y: 480 },  // 相对于 viewport 的坐标，单位 px
+      { x: 400, y: 480 },
+    ],
+    next_phase: 'submit',  // 点完后切换到哪个 phase
+    sleep_ms: 500           // 所有坐标点完后统一等待时长（ms）
+  }
+}
+```
+
+坐标获取建议用 `getBoundingClientRect()`：
+
+```js
+function coord(el) {
+  const r = el.getBoundingClientRect()
+  return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+}
+```
+
+`inject_files` 适合页面已有稳定 file input 的场景：
+
+```js
+return {
+  success: true,
+  data: [],
+  meta: {
+    action: 'inject_files',
+    items: [
+      {
+        selector: 'input[type="file"][name="images"]',
+        files: params.label_images?.paths || [],
+      },
+    ],
+    next_phase: 'after_upload',
+    sleep_ms: 800,
+    shared,
+  },
+}
+```
+
+`file_chooser_upload` 适合点击按钮后弹出原生文件选择器的场景：
+
+```js
+return {
+  success: true,
+  data: [],
+  meta: {
+    action: 'file_chooser_upload',
+    strict: true,
+    shared_key: 'upload_result',
+    items: [
+      {
+        label: '上传标签图',
+        clicks: [coord(uploadButton)],
+        files: params.label_images?.paths || [],
+        timeout_ms: 12000,
+        settle_ms: 800,
+      },
+    ],
+    next_phase: 'after_upload',
+    sleep_ms: 500,
+    shared,
+  },
+}
+```
+
+`capture_click_requests` 适合“点击查询/导出按钮后，页面发起接口请求”的场景。捕获结果可通过 `shared_key` 合并到 `shared`，下一阶段从 `shared.query_capture` 读取：
+
+```js
+return {
+  success: true,
+  data: [],
+  meta: {
+    action: 'capture_click_requests',
+    clicks: [coord(queryButton)],
+    matches: [
+      { url_contains: '/api/report/list' },
+    ],
+    min_matches: 1,
+    timeout_ms: 10000,
+    settle_ms: 1000,
+    include_response_body: true,
+    strict: true,
+    shared_key: 'query_capture',
+    next_phase: 'parse_api_response',
+    shared,
+  },
+}
+```
+
+`matches` 每一项都是一个匹配条件对象，当前支持：
+
+```js
+{
+  url_contains: '/api/report/list',
+  url_regex: '/api/report/\\d+',
+  method: 'POST',
+  status: 200,
+  mime_type_contains: 'json',
+  body_contains: '"success":true',
+}
+```
+
+`capture_url_requests` 会打开临时 tab 访问 `meta.url`，适合直接请求一个页面或接口并捕获它的派生请求：
+
+```js
+return {
+  success: true,
+  data: [],
+  meta: {
+    action: 'capture_url_requests',
+    url: 'https://example.com/report/export',
+    matches: [{ url_contains: '/api/export/status' }],
+    shared_key: 'export_capture',
+    next_phase: 'parse_export_capture',
+    strict: true,
+    shared,
+  },
+}
+```
+
+`download_urls` 会把文件保存到本次运行产物目录，并把成功文件加入任务输出文件列表：
+
+```js
+return {
+  success: true,
+  data: [],
+  meta: {
+    action: 'download_urls',
+    items: [
+      {
+        url: signedUrl,
+        filename: 'report.xlsx',
+        label: '报表',
+        headers: { Authorization: `Bearer ${token}` },
+        retry_attempts: 3,
+        timeout_seconds: 60,
+      },
+    ],
+    concurrency: 2,
+    strict: true,
+    shared_key: 'download_result',
+    next_phase: 'complete_download',
+    shared,
+  },
+}
+```
+
+`download_clicks` 用于页面按钮触发浏览器下载的场景。底座会点击后观察 `~/Downloads`，可用 `expected_name_regex` 收窄匹配：
+
+```js
+return {
+  success: true,
+  data: [],
+  meta: {
+    action: 'download_clicks',
+    strict: true,
+    shared_key: 'download_click_result',
+    items: [
+      {
+        label: '导出 Excel',
+        clicks: [coord(exportButton)],
+        expected_name_regex: 'report.*\\.xlsx$',
+        timeout_ms: 60000,
+      },
+    ],
+    next_phase: 'after_download',
+    shared,
+  },
+}
+```
+
+`capture_screenshot` 用于把当前页面保存成 PNG 产物。移动端长页建议保留默认的整页截图和滚动预热：
+
+```js
+return {
+  success: true,
+  data: [],
+  meta: {
+    action: 'capture_screenshot',
+    filename: '安踏童装旗舰店_1745656365_会员中心.png',
+    label: '会员中心整页截图',
+    full_page: true,
+    scroll_before_capture: true,
+    scroll_rounds: 2,
+    shared_key: 'screenshot',
+    next_phase: 'record_screenshot',
+    shared,
+  },
+}
+```
+
+`reload_page`：
+
+```js
+return {
+  success: true,
+  data: [],
+  meta: {
+    action: 'reload_page',
+    next_phase: 'after_reload',
+    sleep_ms: 1500,
+    shared,
+  },
+}
+```
+
+通用字段约定：
+
+- `sleep_ms`：动作完成后的等待时间，单位毫秒。
+- `next_phase`：动作完成后进入的 phase；不填时多数动作会留在当前 phase。
+- `shared`：跨 phase 状态。返回了 `meta.shared` 时，底座会替换当前 shared。
+- `shared_key`：运行时动作的结果会合并到 `shared[shared_key]`。
+- `shared_append: true`：把运行时结果追加到 `shared[shared_key]` 数组，而不是覆盖。
+- `strict: true`：动作未达到预期时直接抛错；不设时结果会写入 shared，由脚本自行判断。
+
+#### 前端框架页面的交互优先级（最佳实践）
+
+对于 React / Vue 驱动的后台页面，推荐按下面顺序尝试交互：
+
+1. **组件状态注入 / 组件事件调用**
+2. **组件内部真实 click 事件**
+3. **原生 DOM click / input / change**
+4. **CDP 坐标点击**
+
+如果某个控件可以通过 `onChange`、`modelValue`、Fiber props、Vue component instance 等方式稳定改值，优先使用注入方案；只有在状态注入不可达时，再退回 DOM 点击或 CDP 坐标点击。
+
+#### DOM 探查 + 单页闭环开发流程（最佳实践）
+
+对于新站点、新业务流程、顽固表单控件，推荐先走一遍 **DOM Lab**，不要一上来就直接跑整表任务。
+
+推荐顺序：
+
+1. **先开 live 页面，再探查 DOM**
+   - 打开真实页面，确认页面 URL、当前店铺/账号、关键入口是否正确。
+   - 记录关键截图、主要表单区域、`data-testid`、文本锚点、组件类名。
+
+2. **先做页面级 DOM 体检**
+   - 抓取关键区域的 DOM 结构、显示文本、可见输入框、按钮、下拉、日期控件。
+   - 判断它是原生控件、React 组件、Vue 组件，还是带 portal 的弹层组件。
+
+3. **对顽固控件做“最小实验”**
+   - 不要一口气跑完整任务。
+   - 先只验证一个控件能不能稳定改值，例如：
+     - 日期能不能写到输入框并回读正确
+     - 下拉能不能切到目标值
+     - radio / checkbox 能不能切换后触发依赖字段出现
+
+4. **找到真正能改状态的方法**
+   - 优先顺序：状态注入 → 组件事件 → 原生 DOM 事件 → CDP 坐标点击。
+   - 每次尝试后都要**回读当前展示值**，不要只看点击动作是否执行。
+
+5. **先完成单页闭环，再回写 adapter**
+   - 在一个页面上完成“填值 → 回读 → 提交 → 识别成功/失败信号”的完整闭环。
+   - 单页没跑通前，不建议反复跑多门店 / 多行 Excel 批量任务。
+
+6. **把已验证成功的关键方法单独备份**
+   - 比如把“日期注入”“下拉切换”另存为保底 helper 或备份文件。
+   - 后续大重构时，至少还有一份可验证成功的方案可回退。
+
+7. **最后再做整任务回归**
+   - 页面级闭环通过后，再做：
+     - 单券型回归
+     - 多券型回归
+     - 多门店回归
+     - 异常场景回归（重复时间、权限不足、登录失效等）
+
+建议产出物：
+
+- DOM 报告（关键 selector / 文本 / data-testid / 组件实例线索）
+- 关键步骤截图
+- 已验证有效的交互路径说明
+- 成功信号与失败信号清单
+
+这套流程适合所有“操作类适配包”，尤其适合日期、下拉、级联表单、Portal 弹层、React / Vue 后台页面。
+
+#### 提交前校验红字检测（最佳实践）
+
+表单类脚本在 `submit` phase 点确认前，应先扫描页面上的校验错误，避免无效点击：
+
+```js
+if (phase === 'submit') {
+  // 扫描页面已有校验错误（如"结束时间不能超过开始时间后的3个月"）
+  const preErrors = [...document.querySelectorAll(
+    '.form-item__help, .form-item__extra, [class*="error-msg"]'
+  )].filter(el => el.offsetParent !== null)
+    .map(el => el.textContent.trim())
+    .filter(Boolean)
+
+  if (preErrors.length > 0) {
+    // 直接记录失败，不点确认
+    return {
+      success: true,
+      data: [{ '执行状态': '失败', '错误原因': `校验错误：${preErrors.join(' | ')}` }],
+      meta: { action: 'complete', has_more: false, shared },
+    }
+  }
+  // 无错误，继续点确认...
+}
+```
+
+#### 成功信号不要只看跳转（最佳实践）
+
+很多后台页面提交成功后，不一定立刻跳转。建议同时检查以下信号：
+
+- URL 已切到成功页 / 列表页
+- Toast / Message 成功提示
+- 页内成功卡片、成功标题、`返回列表页面` / `查看详情` 等按钮或文案
+
+如果只认跳转，容易把“已成功但仍停留在当前页”的情况误判为失败。
+
+#### 字段填写独立 try-catch（最佳实践）
+
+`form_fill` 类 phase 里，每个字段的填写应独立 try-catch，避免单个字段失败阻断后续字段：
+
+```js
+if (phase === 'form_fill') {
+  const warnings = []
+
+  try { await setDiscountType(row['折扣类型']) }
+  catch (e) { warnings.push(`折扣类型：${e.message}`) }
+
+  try { await fillAmount(row['金额']) }
+  catch (e) { warnings.push(`金额：${e.message}`) }
+
+  if (warnings.length > 0) console.warn(`[FORM] 字段警告：${warnings.join(' | ')}`)
+  return nextPhase('submit', 300)
+}
+```
+
+#### 动态字段与重渲染（最佳实践）
+
+- 某个字段切换后会触发后续字段出现 / 消失时，必须先等待依赖字段真正渲染出来，再继续填写。
+- 组件发生重渲染后，**重新获取 DOM 节点**，不要复用旧引用。
+- 对下拉、日期、radio 等组件，回读时优先读取当前展示区的值，而不是容器全文本，避免把 portal / 弹层里的文本也算进去。
+
+这类问题在 Vue / React 的 Select、DatePicker、依赖型表单区块里非常常见。
+
+#### 任务进度与前端进度条
+
+批量任务的进度条不是脚本直接回传一整坨 UI 数据，而是底座根据 `meta.shared` 里的运行上下文统一推导出来的。
+
+脚本侧最常用的进度字段：
+
+| 字段 | 放置位置 | 含义 |
+|------|------|------|
+| `total_rows` | `meta.shared.total_rows` | 本次任务总共有多少条源数据 |
+| `current_exec_no` | `meta.shared.current_exec_no` | 当前正在处理第几条逻辑任务，`1` 开始 |
+| `current_row_no` | `meta.shared.current_row_no` | 当前源表行号；如果和逻辑序号一致，也可以填同一个值 |
+| `current_buyer_id` | `meta.shared.current_buyer_id` | 当前目标标识，例如 SPU、买家 ID、商品 ID |
+| `current_store` | `meta.shared.current_store` | 当前店铺 / 站点 / 账号标识 |
+| `batch_no` | `meta.shared.batch_no` | 当前条目内部的子批次 / 子分页序号 |
+| `total_batches` | `meta.shared.total_batches` | 当前条目内部总共有多少子批次 / 子分页 |
+
+底座会自动补齐并向前端下发这些展示字段，你通常**不需要手工维护**：
+
+- `current` / `total`
+- `completed`
+- `percent`
+- `progress_text`
+- `phase`
+
+也就是说，脚本开发者只需要维护 `meta.shared` 里的“业务上下文”，不要自己拼百分比，更不要把进度条文案写死在脚本里。
+
+推荐模式：
+
+```js
+function nextPhase(name, sleepMs = 800, newShared = shared, data = []) {
+  return {
+    success: true,
+    data,
+    meta: {
+      action: 'next_phase',
+      next_phase: name,
+      sleep_ms: sleepMs,
+      shared: newShared,
+    },
+  }
+}
+
+if (phase === 'main') {
+  return nextPhase('prepare_row', 0, {
+    ...shared,
+    total_rows: rows.length,
+    current_exec_no: 0,
+    current_row_no: 0,
+    current_buyer_id: '',
+    current_store: '',
+    batch_no: 0,
+    total_batches: 0,
+  })
+}
+
+if (phase === 'prepare_row') {
+  const current = rows[rowIndex]
+  return nextPhase('collect_detail', 200, {
+    ...shared,
+    total_rows: rows.length,
+    current_exec_no: rowIndex + 1,
+    current_row_no: Number(current.row_no || rowIndex + 1),
+    current_buyer_id: current.spu || '',
+    current_store: current.store || current.outerSite || '',
+    batch_no: 0,
+    total_batches: 0,
+  })
+}
+
+if (phase === 'collect_detail_page') {
+  return nextPhase('collect_detail_page', 600, {
+    ...shared,
+    batch_no: pageNo,
+    total_batches: totalPages,
+  })
+}
+```
+
+使用约定：
+
+- `current_exec_no` 只在“切到下一条逻辑任务”时递增，不要在同一条的重试、刷新、等待阶段里反复增加。
+- `batch_no` / `total_batches` 只描述“当前条目内部”的二级进度，例如弹窗翻页、站点切换、粒度组合遍历。
+- 页面超时恢复、查询重试、弹窗重开时，应尽量复用当前 `shared`，这样前端不会把同一条任务误判成跳号。
+- 如果任务只是单页抓取，没有逐行/逐批处理，也可以完全不写这些字段，前端会退回普通运行态。
+
+前端展示策略说明：
+
+- 默认所有任务都走经典进度 UI。
+- 只有前端显式配置为 enhanced 的任务，才会显示更丰富的双层进度条和状态文案。
+- 当前 enhanced 仅用于 `temu / goods_traffic_list`、`temu / goods_traffic_detail`；这不是 manifest 配置项，而是桌面端策略配置。
+
+如果你在开发新的批量任务：
+
+1. 先按上面的 shared 字段把**标准进度**喂完整。
+2. 确认经典进度 UI 已经够用，再决定是否真的需要 enhanced。
+3. 如果确实需要 enhanced，不要在页面组件里硬编码任务 ID，而是走桌面端的统一进度配置。
+
+---
+
+## 5. 内置变量与工具
+
+底座在执行脚本前，会向页面注入以下变量：
+
+### `window.__CRAWSHRIMP_PARAMS__`
+
+包含任务运行时的所有参数值，格式是 `{ [param_id]: value }`。
+
+```js
+const params = window.__CRAWSHRIMP_PARAMS__ || {}
+const keyword = params.keyword || ''
+const threshold = params.threshold || 50
+```
+
+### `window.__CRAWSHRIMP_PAGE__`
+
+当前页码，从 `1` 开始，每次分页 +1。
+
+```js
+const page = window.__CRAWSHRIMP_PAGE__ || 1
+if (page === 1) {
+  // 第一页：做初始化（导航、设置筛选条件等）
+} else {
+  // 后续页：直接抓当前页内容
+}
+```
+
+### `window.__CRAWSHRIMP_SHARED__`
+
+多 Phase 任务里，跨 phase / 跨页共享的运行状态建议统一放这里。
+脚本每次返回 `meta.shared` 时，底座会把它带到下一次注入；前端 live 进度也会从这里读取关键字段。
+
+```js
+const shared = window.__CRAWSHRIMP_SHARED__ || {}
+
+function nextPhase(name, sleepMs = 300, newShared = shared) {
+  return {
+    success: true,
+    data: [],
+    meta: { action: 'next_phase', next_phase: name, sleep_ms: sleepMs, shared: newShared },
+  }
+}
+```
+
+### 批量任务实时进度（live）协议
+
+桌面端看到的 `live.current / live.total / live.records / live.percent` 不是脚本直接返回的字段。
+底座会在每次 phase 执行前读取 `shared` 和当前累计产出条数，自动组装 live 状态。
+
+推荐把下面这些字段写进 `meta.shared`：
+
+| shared 字段 | live 字段 | 用途 |
+|------|------|------|
+| `total_rows` | `live.total` | 本轮总任务数 |
+| `current_exec_no` | `live.current` | 当前执行到第几条 |
+| `current_row_no` | `live.row_no` | 源表行号 |
+| `batch_no` | `live.batch_no` | 当前批次序号 |
+| `total_batches` | `live.total_batches` | 总批次数 |
+| `current_buyer_id` | `live.buyer_id` | 当前目标标识 |
+| `current_store` | `live.store` | 当前店铺 / 站点 / 维度上下文 |
+
+说明：
+
+- `live.completed` / `live.records` 由底座根据当前累计 `data.length` 自动计算
+- `live.phase` 由当前 phase 名自动带出
+- `live.percent` / `live.progress_text` 由底座根据 `current_exec_no / total_rows` 自动计算
+- `current_buyer_id` / `current_store` 是历史命名，实际也可以承载 SPU、店铺、站点、粒度等“当前处理对象”
+
+经典有界进度写法：
+
+```js
+function withRowProgress(shared, row, index, totalRows) {
+  return {
+    ...shared,
+    total_rows: totalRows,
+    current_exec_no: index + 1,
+    current_row_no: Number(row?.row_no || index + 1),
+    current_buyer_id: row?.buyer_id || row?.spu || '',
+    current_store: row?.store || row?.outerSite || '',
+  }
+}
+
+return nextPhase('run_row', 300, withRowProgress(shared, currentRow, rowIndex, rows.length))
+```
+
+未知总量任务的写法：
+
+- 不要伪造 `total_rows` / `current_exec_no`
+- 只要脚本持续产出 `data`，底座的 `live.records` 就会增长
+- 如果有批次、站点、当前目标等上下文，仍然建议继续写 `batch_no / total_batches / current_store / current_buyer_id`
+
+这类任务的增强进度条是否启用，由前端白名单决定；SDK 侧只需要保证 live 元数据真实、稳定，不要为了“显示百分比”去硬凑总量。
+
+### `window.__CRAWSHRIMP_STATE__`（自定义状态）
+
+如果你需要跨页传递状态，可以把数据挂在 `window` 上任意自定义变量。底座不会清除 window 变量，只要 tab 不刷新，变量就存在。
+
+```js
+// 第 1 页初始化
+window.__MY_ADAPTER_STATE__ = { collected: [], region_idx: 0 }
+
+// 第 N 页读取
+const state = window.__MY_ADAPTER_STATE__ || { collected: [], region_idx: 0 }
+```
+
+> ⚠️ 注意：如果任务跨越了页面导航（`location.href = ...`），window 变量会丢失。
+
+---
+
+## 6. 参数类型
+
+manifest 里 `params[].type` 支持以下类型：
+
+| type | 说明 | 示例 |
+|------|------|------|
+| `text` | 单行文本输入 | 关键词、URL |
+| `textarea` | 多行文本输入 | 多个 ID、JSON 配置、备注 |
+| `directory` | 本地目录选择器，注入绝对路径字符串 | 输出目录、素材目录 |
+| `number` | 数字输入（可设 min/max） | 阈值、页数 |
+| `radio` | 单选（横向按钮组） | 模式选择 |
+| `select` | 下拉选择 | 时间范围 |
+| `checkbox` | 多选（复选框组） | 地区、类别 |
+| `week` | 单周选择，值形如 `YYYY-Www` | 2026-W18 |
+| `month` | 单月选择，值形如 `YYYY-MM` | 2026-05 |
+| `date_range` | 日期区间（开始日期 + 结束日期） | 自定义时间段 |
+| `week_range` | 周区间 | 自定义周范围 |
+| `month_range` | 月区间 | 自定义月范围 |
+| `file_excel` | Excel/CSV 文件选择器（底座读取后注入 rows） | 批量任务用的 SKU 列表 |
+| `file_images` | 多图文件选择器（底座注入 paths 数组） | 标签图、实拍图、素材图 |
+| `file_zip` | 多 ZIP 文件选择器（底座注入 paths 数组） | 图包、素材包 |
+| `file_pdf` | 多 PDF 文件选择器（底座注入 paths 数组） | 标签 PDF、吊牌 PDF |
+
+### 参数通用字段
+
+| 字段 | 适用范围 | 说明 |
+|------|------|------|
+| `id` | 全部 | 参数 key，运行时注入到 `window.__CRAWSHRIMP_PARAMS__` |
+| `type` | 全部 | 参数类型 |
+| `label` | 全部 | GUI 显示名 |
+| `default` | 全部 | 默认值；checkbox 建议用数组，文件类可用 `{ paths: [...] }` |
+| `required` | 全部 | 是否必填 |
+| `placeholder` | text / textarea / directory | 输入或选择前的提示 |
+| `hint` | 全部 | 参数下方说明文字 |
+| `options` | radio / select / checkbox | 选项数组，格式为 `{ value, label }` |
+| `quick_fill_options` | text / textarea | 快捷填充值按钮 |
+| `rows` | textarea | 显示行数，当前 GUI 会限制在 2-8 行 |
+| `ui_span` | 全部 | GUI 布局提示：`compact` / `half` / `third` / `full` |
+| `ui_variant` | checkbox 等 | 当前 checkbox 支持 `dropdown_multi` 下拉多选 |
+| `visible_when` | 全部 | 按其他参数值控制显示 |
+| `min` / `max` / `step` | number | 数字输入限制 |
+| `template_file` / `template_label` | file_excel | 旧版单模板下载写法 |
+| `templates` | file_excel | 新版多模板下载写法 |
+
+### visible_when 示例
+
+`visible_when` 支持单条规则或规则数组。规则字段名可写 `id` / `field` / `param_id`，判断条件支持 `equals`、`not_equals`、`in` / `one_of`、`not_in`。
+
+```yaml
+- id: custom_range
+  type: date_range
+  label: 自定义日期
+  visible_when:
+    id: time_range
+    equals: 自定义
+
+- id: advanced_note
+  type: textarea
+  label: 高级备注
+  visible_when:
+    - id: mode
+      in: [live, debug]
+    - id: enable_advanced
+      equals: "yes"
+```
+
+隐藏的参数不会出现在本次运行的 params 里。
+
+### text / textarea 示例
+
+```yaml
+- id: shop_url
+  type: text
+  label: 店铺链接
+  placeholder: "例: https://mall.jd.com/index-xxx.html"
+  hint: 填写京东店铺主页地址
+  required: true
+
+- id: sku_text
+  type: textarea
+  label: SKU 列表
+  rows: 6
+  placeholder: "一行一个 SKU"
+  quick_fill_options:
+    - "测试 SKU 1\n测试 SKU 2"
+  hint: 适合少量临时输入；批量任务优先使用 file_excel
+```
+
+脚本里读取：
+
+```js
+const shopUrl = params.shop_url || ''
+const skuText = params.sku_text || ''
+```
+
+### directory / number 示例
+
+```yaml
+- id: output_dir
+  type: directory
+  label: 输出目录
+  required: true
+
+- id: max_pages
+  type: number
+  label: 最大页数
+  default: 5
+  min: 1
+  max: 100
+  step: 1
+```
+
+脚本里读取：
+
+```js
+const outputDir = params.output_dir || ''
+const maxPages = Number(params.max_pages || 1)
+```
+
+### select 示例（含自定义日期联动）
+
+```yaml
+- id: time_range
+  type: select
+  label: 时间区间
+  default: ""
+  options:
+    - value: ""
+      label: 默认
+    - value: "近7日"
+      label: 近 7 日
+    - value: "自定义"
+      label: 自定义日期
+  hint: 选「自定义日期」后将出现日期选择器
+```
+
+当用户选了「自定义」时，GUI 会显示日期区间控件，并额外注入：
+
+```js
+params.custom_start // YYYY-MM-DD
+params.custom_end
+params.custom_range // { start: 'YYYY-MM-DD', end: 'YYYY-MM-DD' }
+```
+
+### checkbox 示例
+
+```yaml
+- id: regions
+  type: checkbox
+  label: 地区
+  options:
+    - value: "全球"
+      label: 全球
+    - value: "美国"
+      label: 美国
+    - value: "欧区"
+      label: 欧区
+```
+
+如果选项很多，可以用下拉多选：
+
+```yaml
+- id: stores
+  type: checkbox
+  label: 店铺
+  ui_variant: dropdown_multi
+  options:
+    - value: store_a
+      label: A 店
+    - value: store_b
+      label: B 店
+```
+
+脚本里读取（数组）：
+
+```js
+const regions = params.regions || ['全球', '美国', '欧区']  // 未选时默认全部
+```
+
+### week / month / range 示例
+
+```yaml
+- id: report_week
+  type: week
+  label: 统计周
+
+- id: report_month
+  type: month
+  label: 统计月
+
+- id: date_scope
+  type: date_range
+  label: 日期范围
+
+- id: week_scope
+  type: week_range
+  label: 周范围
+
+- id: month_scope
+  type: month_range
+  label: 月范围
+```
+
+脚本里读取：
+
+```js
+const reportWeek = params.report_week       // "2026-W18"
+const reportMonth = params.report_month     // "2026-05"
+const dateScope = params.date_scope || {}    // { start: "2026-05-01", end: "2026-05-31" }
+const weekScope = params.week_scope || {}    // { start: "2026-W18", end: "2026-W20" }
+const monthScope = params.month_scope || {}  // { start: "2026-05", end: "2026-06" }
+```
+
+### file_excel 示例
+
+```yaml
+- id: sku_list
+  type: file_excel
+  label: SKU 列表文件
+  hint: 选择包含 SKU ID 的 Excel/CSV 文件
+```
+
+带多模板下载的示例：
+
+```yaml
+- id: voucher_file
+  type: file_excel
+  label: 优惠券设置 Excel
+  required: true
+  templates:
+    - file: templates/voucher-template.xlsx
+      label: Excel 填写模板
+      description: 标准导入表，填写后直接上传
+      version: "2026.03"
+    - file: docs/field-guide.csv
+      label: CSV 字段说明
+      description: 字段含义和样例值
+      version: "2026.03"
+    - file: docs/usage-guide.pdf
+      label: PDF 操作说明
+      description: 提供流程截图和填写示例
+      version: "2026.03"
+  hint: 先下载模板并填写，再上传 Excel
+```
+
+说明：
+
+- `templates`：模板数组；每项支持 `file`、`label`、`description`、`version`
+- `file`：适配包内模板文件相对路径，支持 `.xlsx` / `.xls` / `.csv` / `.pdf` / `.docx`
+- `label`：GUI 显示名
+- `description`：模板说明文案
+- `version`：模板版本号，方便用户区分新旧模板
+- 为兼容旧适配包，单模板写法 `template_file` / `template_label` 仍然可用
+- 底座在 `/tasks` 返回值里会自动补一个运行时字段 `templates[].path`；旧写法也会继续补 `template_path`
+- 桌面端检测到模板后，会在文件选择器下方显示模板卡片，并通过“另存为”复制到用户指定位置
+
+脚本里读取：
+
+```js
+const file = params.sku_list
+// file.headers → ['SKU ID', '商品名称', ...]
+// file.rows    → [{ 'SKU ID': '123', '商品名称': '...' }, ...]
+// file.sheet_name → 当前默认读取的 sheet 名（xlsx/xls/xlsm）
+// file.sheets?.Vouchers?.rows → 多 sheet 工作簿里某个 sheet 的对象数组
+//
+// ⚠️ 底座会自动过滤全空行（所有单元格为空的行）
+// Excel 表格格式区域可能延伸到数据行之外，不必担心读到空行
+const skuIds = file.rows.map(row => row['SKU ID'])
+```
+
+多 sheet 约定：
+
+- 为兼容旧脚本，`file.rows` / `file.headers` 仍然指向默认 sheet（未显式指定时就是第一个 sheet）
+- 对于 `.xlsx/.xls/.xlsm`，底座会额外注入 `file.sheets`
+- `file.sheets` 的 key 是 sheet 名，value 结构如下：
+
+```js
+{
+  headers: ['列1', '列2'],
+  rows: [{ '列1': '...', '列2': '...' }],
+  total: 1
+}
+```
+
+这样一个 Excel 模板就可以同时承载主表、子表、阶梯表和说明页，脚本里按 sheet 名自行读取即可。
+
+如果直接通过 API 运行任务，只传 `{ path: "/abs/file.xlsx" }` 也可以；后端会在执行前自动补齐 `rows`、`headers`、`sheet_name` 和 `sheets`。
+
+**批量操作模式**：`file_excel` 常和多 Phase 状态机配合。当前底座不会替你把 Excel 每一行拆成多次独立运行；脚本应自己读取 `file.rows`，用 `meta.shared` 维护当前行号，在每行完成后 `next_phase` 到下一行，全部结束时返回 `complete`。
+
+**超时恢复边界**：如果页面只是短暂卡死、刷新后可继续，优先让底座执行器处理恢复，不要把这类逻辑散到每个脚本里。脚本应继续专注于业务状态机；执行器负责超时、重连和必要的页面刷新重试。
+
+### file_images / file_zip / file_pdf 示例
+
+```yaml
+- id: label_images
+  type: file_images
+  label: 标签图
+  required: true
+  hint: 支持多选，适合图片上传类任务
+
+- id: material_zips
+  type: file_zip
+  label: 素材 ZIP
+  hint: 可一次选择多个 ZIP 包
+
+- id: label_pdfs
+  type: file_pdf
+  label: 标签 PDF
+  hint: 可一次选择多个 PDF 文件
+```
+
+脚本里读取：
+
+```js
+const images = params.label_images?.paths || []
+const zips = params.material_zips?.paths || []
+const pdfs = params.label_pdfs?.paths || []
+```
+
+说明：
+
+- `file_images` 当前支持 `.png/.jpg/.jpeg`
+- `file_zip` 当前按 ZIP 文件选择器渲染
+- `file_pdf` 当前按 PDF 文件选择器渲染
+- GUI 会把多选结果注入成 `{ paths: [] }`
+- 文件上传到页面时，优先配合 `inject_files` 或 `file_chooser_upload` action
+
+---
+
+## 7. 分页机制
+
+底座的分页逻辑：
+
+```
+执行脚本 (page=1)
+  ↓
+检查返回值
+  ↓
+meta.has_more === true ?
+  ├── 是 → page+1 → 再次注入同一脚本 → 循环
+  └── 否 → 停止，合并所有 data，写文件
+```
+
+### 简单翻页（按钮点击）
+
+适用于有「下一页」按钮的场景：
+
+```js
+;(async () => {
+  const data = []
+
+  // 抓当前页
+  document.querySelectorAll('.item').forEach(el => {
+    data.push({ name: el.querySelector('.name')?.textContent.trim() })
+  })
+
+  // 判断是否有下一页
+  const nextBtn = document.querySelector('.pagination .next:not(.disabled)')
+  if (nextBtn) {
+    nextBtn.click()
+    await new Promise(r => setTimeout(r, 2000))  // 等待加载
+  }
+
+  return {
+    success: true,
+    data,
+    meta: { has_more: !!nextBtn }
+  }
+})()
+```
+
+### 跨页导航（location.href）
+
+适用于需要改 URL 才能翻页的场景（如 JD 商品列表）：
+
+```js
+;(async () => {
+  const page = window.__CRAWSHRIMP_PAGE__ || 1
+
+  if (page === 1) {
+    // 第一页：导航到列表
+    location.href = 'https://example.com/list?page=1'
+    await new Promise(r => setTimeout(r, 3000))
+  }
+
+  // 等目标元素出现
+  for (let i = 0; i < 20; i++) {
+    if (document.querySelectorAll('.item').length > 0) break
+    await new Promise(r => setTimeout(r, 500))
+  }
+
+  // 抓当前页...
+  const data = []
+  document.querySelectorAll('.item').forEach(el => {
+    data.push({ name: el.textContent.trim() })
+  })
+
+  // 找下一页链接
+  const nextLink = document.querySelector('a.next-page')
+  const hasMore = !!nextLink
+
+  if (hasMore) {
+    location.href = nextLink.href  // 提前导航，下次执行时页面已加载
+    await new Promise(r => setTimeout(r, 1000))
+  }
+
+  return { success: true, data, meta: { has_more: hasMore } }
+})()
+```
+
+### 跨地区 / 多维度循环（复杂分页）
+
+适用于需要切换选项卡、地区或筛选维度的场景（如 Temu 售后多地区）：
+
+```js
+;(async () => {
+  const REGIONS = ['全球', '美国', '欧区']
+  const params = window.__CRAWSHRIMP_PARAMS__ || {}
+  const targetRegions = params.regions?.length ? params.regions : REGIONS
+
+  // 跨页状态持久化（挂在 window 上，只要 tab 不刷新就存在）
+  if (!window.__MY_STATE__) {
+    window.__MY_STATE__ = { regionIdx: 0, pageInRegion: 1 }
+  }
+  const state = window.__MY_STATE__
+
+  const region = targetRegions[state.regionIdx]
+
+  // 1. 切换到当前地区（点 DOM）
+  // ...
+
+  // 2. 抓当前页数据
+  const pageData = []
+  document.querySelectorAll('.row').forEach(row => {
+    pageData.push({ region, value: row.textContent.trim() })
+  })
+
+  // 3. 判断当前地区是否还有下一页
+  const hasNextPage = !!document.querySelector('.next-page:not(.disabled)')
+  if (hasNextPage) {
+    document.querySelector('.next-page').click()
+    await new Promise(r => setTimeout(r, 1500))
+    state.pageInRegion++
+    return { success: true, data: pageData, meta: { has_more: true } }
+  }
+
+  // 4. 当前地区抓完，切到下一个地区
+  state.regionIdx++
+  state.pageInRegion = 1
+  const hasMoreRegion = state.regionIdx < targetRegions.length
+  if (!hasMoreRegion) {
+    window.__MY_STATE__ = null  // 清理，方便下次重新开始
+  }
+
+  return { success: true, data: pageData, meta: { has_more: hasMoreRegion } }
+})()
+```
+
+---
+
+## 8. 认证检查
+
+可选，但推荐加上。底座会在脚本执行前调用 `auth_check.js`，如果返回未登录，GUI 提示用户去登录。
+
+```js
+// auth_check.js
+;(async () => {
+  // 方法一：检查特定 DOM 元素
+  const isLoggedIn = document.querySelector('.user-nickname') !== null
+
+  // 方法二：检查 cookie
+  // const isLoggedIn = document.cookie.includes('user_id=')
+
+  // 方法三：检查 localStorage
+  // const isLoggedIn = !!localStorage.getItem('auth_token')
+
+  return {
+    success: true,
+    data: [{ logged_in: isLoggedIn }],
+    meta: { has_more: false }
+  }
+})()
+```
+
+在 manifest.yaml 里声明：
+
+```yaml
+auth:
+  check_script: auth_check.js
+  login_url: https://example.com/login
+```
+
+底座行为：
+- `logged_in: false` → GUI 提示用户去登录，可选自动打开 `login_url`
+- 未声明 `auth` → 底座不做检查，直接执行脚本
+
+#### `current` 模式最佳实践
+
+- `current` 模式应绑定用户真实当前 tab，而不是“随便找一个 URL 匹配的 tab”。
+- `current` 模式也应执行 `auth_check.js`，不要因为 URL 看起来对就跳过登录检查。
+- 如果当前浏览器里同时开了多个同平台页面，优先要求前端把当前 tab id 传给后端，而不是在后端猜测。
+
+这样可以显著降低“跑错页”“半登录态误执行”“多标签页串线”的风险。
+
+#### 本地开发地址一致性（最佳实践）
+
+如果项目使用 Electron + Vite，开发环境里的地址要统一：
+
+- Vite `server.host`
+- Electron `loadURL(...)`
+- `wait-on` 或其他启动探活脚本
+
+建议统一使用 `127.0.0.1`，避免一部分走 `localhost`、一部分走 IPv4 / IPv6，导致前端明明启动了但 Electron 仍然连不上。
+
+#### 业务失败 vs 脚本失败（最佳实践）
+
+像“时间区间重复”“平台规则不允许创建”“已有活动冲突”这类情况，通常属于**业务规则拒绝**，不是脚本崩溃。
+
+建议：
+
+- 在结果 Excel 里把它们写成业务失败原因
+- 不要把这类错误都归结为 timeout / exception
+- 批量任务里让后续行继续执行
+
+这样结果更利于运营人员理解和处理。
+
+---
+
+## 9. 输出与通知
+
+### Excel 输出
+
+```yaml
+output:
+  - type: excel
+    filename: "数据_{date}.xlsx"
+    # {date}     → YYYYMMDD
+    # {datetime} → YYYYMMDD_HHmmss
+    # {timestamp} → YYYYMMDD-HHmmss
+    # {adapter_id} → 适配包 ID
+    # {task_id}  → 任务 ID
+```
+
+data 数组里每个对象的 key 就是列名，多轮分页和多 phase 产出的 data 会合并后导出。
+
+当前 Excel 输出还支持显式列顺序、两层表头和按字段拆分多 sheet：
+
+```yaml
+output:
+  - type: excel
+    filename: "活动结果_{date}.xlsx"
+    columns:
+      - 店铺
+      - 站点
+      - SKU
+      - 执行状态
+      - 错误原因
+    column_groups:
+      - label: 范围
+        columns: [店铺, 站点]
+      - label: 结果
+        columns: [执行状态, 错误原因]
+```
+
+按行字段拆 sheet：
+
+```yaml
+output:
+  - type: excel
+    filename: "分站点结果_{date}.xlsx"
+    sheet_key: 站点
+    sheets:
+      - name: 美国
+        columns: [店铺, SKU, 执行状态, 错误原因]
+      - name: 欧区
+        columns: [店铺, SKU, 执行状态, 错误原因]
+```
+
+说明：
+
+- `columns` 只控制导出顺序；data 里额外出现的字段会追加到后面。
+- `column_groups` 生成两层表头；组内字段建议和 `columns` 连续排列。
+- `sheet_key` 指定 data 行里的字段名，底座按该字段值拆 sheet。
+- `sheets` 可为特定 sheet 指定列顺序和表头分组；未配置的 sheet 会使用全局 `columns` / `column_groups`。
+- 以 `__` 开头的字段不会导出到 Excel，适合脚本内部临时字段。
+
+### 通知（钉钉 / Feishu）
+
+```yaml
+output:
+  - type: notify
+    channel: dingtalk          # dingtalk | feishu | webhook
+    condition: "data.length > 0"  # 可选，JS 真值表达式
+```
+
+`condition` 支持的变量：
+- `data.length` — 本次抓取的总行数
+
+也可以使用 `&&` / `||`，底座会转换成 Python 表达式执行。例如：
+
+```yaml
+output:
+  - type: notify
+    channel: feishu
+    condition: "data.length > 0 && data.length < 1000"
+```
+
+当前通知内容由底座统一生成：标题为“适配包名 - 任务名”，正文包含记录数和前 3 行样例。脚本返回的 `meta.notify_title` / `meta.notify_body` 目前不会被通知模块读取；如果需要完全自定义通知内容，建议在脚本里产出专门的摘要行，或扩展 `core/notifier.py` 的发送协议后再写入文档。
+
+### 森马大数据统一同步（ODPS / DataWorks）
+
+森马大数据团队统一数据写入入口为 DataWorks API Gateway：
+
+```text
+POST http://dataworksapi.semirapp.com/api/v1/dataworks/write_odps
+Content-Type: application/json
+Authorization: APPCODE <AppCode>
+```
+
+底座通过 `POST /data-sync/odps` 统一同步已导出的 Excel。适配器开发者不需要在 JS 脚本里直接请求 DataWorks；只需要保证导出的 Excel 字段稳定，然后在 `core/odps_sync.py` 维护任务映射：
+
+- `TASK_TABLE_MAP`：`(adapter_id, task_id)` → ODPS 表名，例如 `("temu", "mall_flux") -> "imp_ods_temu_mall_flux"`
+- `TASK_FIELD_MAP`：导出中文列名 → ODPS 字段名
+- `TASK_FIELD_TYPE_MAP`：导出中文列名 → ODPS 字段类型
+
+请求体遵循森马大数据团队约定：
+
+```json
+{
+  "table_name": "imp_ods_temu_mall_flux",
+  "fields": [
+    {"name": "platform_name", "type": "string", "comment": "平台名称"}
+  ],
+  "data": [
+    {"platform_name": "Temu"}
+  ],
+  "write_mode": "append",
+  "partition_spec": {"dt": "2026-05-18"}
+}
+```
+
+同步地址默认固定为森马大数据统一入口，普通用户只需要在设置页填写 `ODPS AppCode`。开发和联调场景仍可按优先级覆盖：
+
+1. 同步请求体里的 `endpoint` / `app_code`
+2. 设置页里的 `odps.app_code`
+3. 环境变量 `CRAWSHRIMP_ODPS_ENDPOINT` / `CRAWSHRIMP_ODPS_APP_CODE`
+
+凭证规则：
+
+- SDK、适配包、测试和提交记录里不要硬编码真实 AppCode / AppSecret。
+- 内部测试可在设置页填写 AppCode，或用环境变量临时注入。
+- 面向普通用户分发时，推荐走服务端中转，把 AppCode 留在服务端；桌面端只上传标准 payload 或导出文件，避免网关凭证泄露。
+- 日志和错误信息不要打印 AppCode。
+
+真实联调最小命令：
+
+```bash
+curl -sS -x '' -X POST http://127.0.0.1:18765/data-sync/odps \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "adapter_id": "temu",
+    "task_id": "mall_flux",
+    "paths": ["/absolute/path/to/export.xlsx"],
+    "endpoint": "http://dataworksapi.semirapp.com/api/v1/dataworks/write_odps",
+    "app_code": "<AppCode>"
+  }'
+```
+
+接口调通的成功信号为 `success: true`，并返回写入行数，例如 `message: append 成功`、`count: 6`。
+
+---
+
+## 10. 真实示例：JD 价格导出
+
+完整文件：[`adapters/jd/price-export.js`](../adapters/jd/price-export.js)
+
+### 核心思路
+
+1. **第 1 页**：从 `params.shop_url` 解析 shop_id，构造 `advance_search` URL，导航并等待
+2. **每页**：分段滚动触发懒加载 → 读 `li.jSubObject` + `span.jdNum` → 用 `p.3.cn` API 补查空价格
+3. **翻页**：找 `a[text=下一页]`，如果存在则提前 `location.href` 导航，返回 `has_more: true`
+
+```js
+;(async () => {
+  const params  = window.__CRAWSHRIMP_PARAMS__ || {}
+  const page    = window.__CRAWSHRIMP_PAGE__ || 1
+  const shopUrl = params.shop_url || ''
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
+
+  // 第一页：解析并导航
+  if (page === 1) {
+    const shopId = shopUrl.match(/index-(\d+)/)?.[1]
+    if (!shopId) return { success: false, error: '无法解析店铺 ID，请检查 URL 格式' }
+
+    if (!location.href.includes('advance_search')) {
+      location.href = `https://mall.jd.com/advance_search-${shopId}-${shopId}-${shopId}-0-0-0-1-1-60.html`
+      await sleep(5000)
+    }
+  }
+
+  // 等商品加载（最多 20 秒）
+  for (let i = 0; i < 25; i++) {
+    if (document.querySelectorAll('li.jSubObject').length > 0) { await sleep(3000); break }
+    await sleep(800)
+  }
+
+  // 滚动触发懒加载
+  const h = document.body.scrollHeight
+  for (let i = 1; i <= 8; i++) { window.scrollTo(0, h / 8 * i); await sleep(200) }
+  window.scrollTo(0, 0); await sleep(800)
+
+  // 读取商品数据
+  const items = []
+  document.querySelectorAll('li.jSubObject').forEach(li => {
+    const el = li.querySelector('span.jdNum')
+    if (!el) return
+    const skuId    = el.getAttribute('jdprice') || ''
+    const price    = el.innerText.trim().replace(/[^0-9.]/g, '') || null
+    const prePrice = (el.getAttribute('preprice') || '').replace(/[^0-9.]/g, '') || null
+    const name     = li.querySelector('.jDesc a')?.innerText.trim() || ''
+    items.push({ skuId, name, price, originalPrice: prePrice })
+  })
+
+  // 用 p.3.cn API 补查价格为空的 SKU
+  const missing = items.filter(i => !i.price).map(i => i.skuId)
+  if (missing.length > 0) {
+    const priceMap = await new Promise(resolve => {
+      const map = {}
+      const xhr = new XMLHttpRequest()
+      xhr.open('GET', `https://p.3.cn/prices/mgets?skuIds=${missing.map(id => 'J_' + id).join(',')}&type=1&area=1_72_2799_0`, true)
+      xhr.timeout = 8000
+      xhr.onload  = () => { try { JSON.parse(xhr.responseText).forEach(r => { map[r.id.replace('J_', '')] = { price: r.p, orig: r.op || r.m } }) } catch(e) {} resolve(map) }
+      xhr.onerror = xhr.ontimeout = () => resolve(map)
+      xhr.send()
+    })
+    items.forEach(i => { if (!i.price && priceMap[i.skuId]) { i.price = priceMap[i.skuId].price; i.originalPrice = i.originalPrice || priceMap[i.skuId].orig } })
+  }
+
+  // 找下一页
+  const nextLink = [...document.querySelectorAll('a')].find(a => a.innerText.trim() === '下一页')
+  if (nextLink) { location.href = nextLink.href; await sleep(1000) }
+
+  const data = items.map(i => ({
+    'SKU ID':   i.skuId,
+    '商品名称': i.name,
+    '页面价':   i.price ? parseFloat(i.price) : '',
+    '吊牌价':   i.originalPrice ? parseFloat(i.originalPrice) : '',
+  }))
+
+  return { success: true, data, meta: { has_more: !!nextLink, count: items.length } }
+})()
+```
+
+---
+
+## 11. 真实示例：Temu 商品数据（含时间筛选 + 分页）
+
+完整文件：[`adapters/temu/goods-data.js`](../adapters/temu/goods-data.js)
+
+### 核心挑战
+
+Temu 商家后台使用 Beast 组件库，**选择器带版本哈希后缀**，不能用 `table tr`。必须用 `[class*="TB_tr_"]` 前缀匹配。
+
+### 关键选择器速查
+
+| 选择器前缀（用 `[class*="..."]` 匹配） | 对应元素 |
+|---------------------------------------|---------|
+| `TB_tr_` | 表格行 |
+| `TB_td_` | 表格单元格 |
+| `PGT_next_` | 下一页按钮 |
+| `PGT_disabled_` | 禁用的翻页按钮（到末页时出现） |
+| `PGT_totalText_` | 总条数文本 |
+| `ST_selector_` | Beast Select 容器（下拉选择组件） |
+| `RPR_outerPickerWrapper` | 日期选择器外层 |
+| `RPR_input_` | 日期输入框 |
+
+### 时间筛选
+
+```js
+// 点击 Beast Select 下拉
+const sel = document.querySelector('[class*="ST_selector_"]')
+sel?.click()
+await new Promise(r => setTimeout(r, 300))
+
+// 找选项并点击
+const option = [...document.querySelectorAll('[class*="ST_option_"]')]
+  .find(el => el.textContent.trim() === '近7日')
+option?.click()
+await new Promise(r => setTimeout(r, 500))
+```
+
+### 分页
+
+```js
+const nextBtn  = document.querySelector('[class*="PGT_next_"]')
+const disabled = document.querySelector('[class*="PGT_disabled_"]')
+const hasMore  = !!nextBtn && !disabled
+
+if (hasMore) {
+  const signature = document.querySelector('[class*="TB_tr_"]')?.textContent
+  nextBtn.click()
+  // 等内容变化
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 500))
+    if (document.querySelector('[class*="TB_tr_"]')?.textContent !== signature) break
+  }
+}
+```
+
+---
+
+## 12. 常见问题
+
+**Q：脚本执行后什么都没返回？**
+
+1. 确认 Chrome 以 `--remote-debugging-port=9222` 启动
+2. 确认目标网站 tab 是活跃的（底座找 URL 前缀匹配的 tab）
+3. 先在 DevTools Console 测试脚本（见下方调试技巧）
+
+**Q：数据只有第一页？**
+
+检查 `meta.has_more` 是否返回 `true`。只有 `has_more: true` 底座才会继续调用。
+
+**Q：跨页导航后页面还没加载就抓取了？**
+
+在脚本开头等待目标元素：
+
+```js
+async function waitFor(selector, timeout = 15000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    if (document.querySelector(selector)) return true
+    await new Promise(r => setTimeout(r, 500))
+  }
+  return false
+}
+await waitFor('li.jSubObject')
+```
+
+**Q：如何在 DevTools 里调试脚本？**
+
+```js
+// 粘贴到 DevTools Console，执行前先设置模拟参数
+window.__CRAWSHRIMP_PARAMS__ = { shop_url: 'https://mall.jd.com/index-xxx.html' }
+window.__CRAWSHRIMP_PAGE__ = 1
+
+// 然后粘贴你的 async IIFE 并执行
+// 在 Console 里可以实时看到返回值
+```
+
+**Q：我刚改了仓库里的脚本，为什么运行的还是旧代码？**
+
+因为底座执行的是“已安装副本”，不是你的源码目录。
+
+安装逻辑会把适配包复制到运行时数据目录：
+
+- 默认：自动选择可写目录下的 `adapters/<adapter_id>/`
+- 或：`$CRAWSHRIMP_DATA/adapters/<adapter_id>/`
+
+所以开发阶段的正确顺序是：
+
+1. 改仓库源码
+2. 重新调用一次 `/adapters/install`
+3. 用 `diff -qr` 或 `shasum` 确认源码目录和执行副本一致
+4. 再运行任务
+
+示例：
+
+```bash
+curl -X POST http://127.0.0.1:18765/adapters/install \
+  -H 'Content-Type: application/json' \
+  -d '{"path": "/Users/me/project/crawshrimp/adapters/temu"}'
+
+RUNTIME_DATA_DIR="$(PYTHONPATH=. ./venv/bin/python - <<'PY'
+from core import runtime_paths
+print(runtime_paths.data_root())
+PY
+)"
+
+diff -qr \
+  /Users/me/project/crawshrimp/adapters/temu \
+  "$RUNTIME_DATA_DIR/adapters/temu"
+```
+
+如果你在用 AI agent / Codex 开发适配包，建议把这条写进自定义 Prompt：
+
+```text
+修改 crawshrimp 适配包后，不要假设运行环境会直接读取仓库源码目录。底座执行的是已安装副本（运行时数据目录/adapters/<adapter_id>/，或 $CRAWSHRIMP_DATA/adapters/<adapter_id>/）。每次修改 adapter 后，必须重新调用 POST /adapters/install 安装当前目录，并用 diff/shasum 校验源码目录与执行副本一致，再进行任务运行或问题排查。
+```
+
+**Q：`entry_url` 应该填什么？**
+
+填目标网站 URL 的公共前缀，底座找所有以此**开头**的 tab：
+
+```yaml
+# ✅ 匹配 agentseller.temu.com 下的所有页面
+entry_url: https://agentseller.temu.com
+
+# ✅ 匹配京东商城
+entry_url: https://mall.jd.com
+
+# ❌ 过于宽泛（可能误匹配其他 tab）
+entry_url: https://www.temu.com
+```
+
+**Q：`file_excel` 参数如何使用？**
+
+底座自动读取 Excel/CSV 文件并注入 rows：
+
+```js
+const file = window.__CRAWSHRIMP_PARAMS__.sku_list
+// file.headers → ['SKU', '名称', '价格']
+// file.rows    → [{ 'SKU': '123', '名称': 'xxx', '价格': '99' }, ...]
+
+for (const row of file.rows) {
+  const skuId = row['SKU']
+  // 用 skuId 做后续操作...
+}
+```
+
+如果希望用户先下载一个或多个模板文件再上传，请在 manifest 里补上：
+
+```yaml
+- id: sku_list
+  type: file_excel
+  label: SKU 列表文件
+  required: true
+  templates:
+    - file: templates/sku-template.xlsx
+      label: Excel 填写模板
+    - file: docs/sku-guide.docx
+      label: Word 填写说明
+      description: 字段解释、常见错误和填写示例
+      version: "2026.03"
+```
+
+并把这些模板文件一起放进适配包目录或 zip 包里。
+
+**Q：`file_images` 参数如何使用？**
+
+底座会把用户选择的图片路径注入成 `paths` 数组：
+
+```js
+const labelImages = window.__CRAWSHRIMP_PARAMS__.label_images?.paths || []
+for (const filePath of labelImages) {
+  console.log('待上传图片', filePath)
+}
+```
+
+manifest 示例：
+
+```yaml
+- id: label_images
+  type: file_images
+  label: 标签图
+  required: true
+  hint: 选择一张或多张图片
+```
+
+---
+
+## 13. 底座 HTTP API 参考
+
+底座 FastAPI 服务运行在 `http://127.0.0.1:18765`，适配开发阶段可直接调用调试。
+
+### 任务管理
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/adapters` | 列出所有已安装适配包 |
+| `POST` | `/adapters/install` | 安装适配包（`{"path": "/abs/path"}` 或 `{"zip_base64": "..."}`） |
+| `DELETE` | `/adapters/{adapter_id}` | 卸载适配包 |
+| `PATCH` | `/adapters/{adapter_id}/enable` | 启用/禁用适配包（`{"enabled": true}`） |
+| `GET` | `/tasks` | 列出所有任务 |
+| `POST` | `/tasks/{adapter_id}/{task_id}/run` | 运行任务（body 为 params JSON） |
+| `POST` | `/tasks/{adapter_id}/{task_id}/pause` | 暂停运行中的任务 |
+| `POST` | `/tasks/{adapter_id}/{task_id}/resume` | 继续暂停中的任务 |
+| `POST` | `/tasks/{adapter_id}/{task_id}/stop` | 停止运行中的任务 |
+| `GET` | `/tasks/{adapter_id}/{task_id}/status` | 查询任务运行状态 |
+| `GET` | `/tasks/{adapter_id}/{task_id}/logs` | 获取任务日志（完整历史，含多轮运行分隔线） |
+| `DELETE` | `/tasks/{adapter_id}/{task_id}/logs` | 清空该任务的日志 |
+| `POST` | `/tasks/{adapter_id}/{task_id}/params/probe` | 运行任务级 `param_probe_script`，返回动态参数 patch |
+
+### 日志接口说明
+
+- **GET /logs**：返回 `{ "logs": ["line1", "line2", ...] }`，包含所有历史运行记录
+- 每次新运行时，底座自动在末尾追加分隔线 `─── 新运行 HH:MM:SS ───`，不覆盖历史
+- **DELETE /logs**：清空该任务日志（在内存中，进程重启后自动清空）
+
+```bash
+# 按目录安装
+curl -X POST http://127.0.0.1:18765/adapters/install \
+  -H 'Content-Type: application/json' \
+  -d '{"path": "/absolute/path/to/my-adapter"}'
+
+# 开发模式按 link 安装
+curl -X POST http://127.0.0.1:18765/adapters/install \
+  -H 'Content-Type: application/json' \
+  -d '{"path": "/absolute/path/to/my-adapter", "install_mode": "link"}'
+
+# 按 zip 安装（示意；实际可由 GUI 直接选择或拖入 zip）
+# body 里的 zip_base64 为 zip 文件内容的 base64 编码
+
+# 查看任务日志
+curl http://127.0.0.1:18765/tasks/shopee-plus-v2/voucher_batch_create/logs
+
+# 清空任务日志
+curl -X DELETE http://127.0.0.1:18765/tasks/shopee-plus-v2/voucher_batch_create/logs
+
+# 运行任务（传 file_excel 参数）
+curl -X POST http://127.0.0.1:18765/tasks/shopee-plus-v2/voucher_batch_create/run \
+  -H 'Content-Type: application/json' \
+  -d '{"params": {"input_file": {"path": "/Users/me/vouchers.xlsx"}}}'
+
+# current 模式运行时可传当前 Chrome tab id
+curl -X POST http://127.0.0.1:18765/tasks/my-adapter/task_id/run \
+  -H 'Content-Type: application/json' \
+  -d '{"params": {"mode": "current"}, "current_tab_id": "ABCDEF"}'
+
+# 动态参数探测
+curl -X POST http://127.0.0.1:18765/tasks/my-adapter/task_id/params/probe \
+  -H 'Content-Type: application/json' \
+  -d '{"params": {"mode": "current"}, "current_tab_id": "ABCDEF"}'
+```
+
+### Excel 文件读取
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/files/read-excel` | 读取 Excel/CSV 文件，返回 headers + rows |
+| `POST` | `/files/delete` | 删除本地文件，并清理历史运行里的输出文件引用 |
+
+```bash
+curl -X POST http://127.0.0.1:18765/files/read-excel \
+  -H 'Content-Type: application/json' \
+  -d '{"path": "/Users/me/data.xlsx", "sheet": "Sheet1", "header_row": 1}'
+```
+
+返回：
+
+```json
+{
+  "headers": ["列A", "列B"],
+  "sheet_name": "Sheet1",
+  "rows": [
+    { "列A": "val1", "列B": "val2" }
+  ],
+  "total": 1,
+  "sheets": {
+    "Sheet1": {
+      "headers": ["列A", "列B"],
+      "rows": [{ "列A": "val1", "列B": "val2" }],
+      "total": 1
+    }
+  }
+}
+```
+
+> **注意**：底座会自动过滤全空行，不会把 Excel 格式区域延伸出的空白行返回给调用方。
+
+### 数据查询
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/data/{adapter_id}/{task_id}` | 查询历史运行结果 |
+| `GET` | `/data/{adapter_id}/{task_id}/export` | 导出结果文件 |
+
+### 开发调试接口
+
+这些接口主要给 dev harness、探测脚本和 AI 辅助开发使用：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/settings/chrome-tabs` | 列出当前可见 Chrome page tab，便于定位 current tab |
+| `POST` | `/dev-harness/snapshot` | 采集当前页面快照和上下文 |
+| `POST` | `/dev-harness/eval` | 在目标页面执行小段 JS 实验 |
+| `POST` | `/dev-harness/capture` | 捕获页面请求/响应 |
+| `POST` | `/probe/run` | 运行结构化页面 probe，并生成 probe bundle |
+| `GET` | `/probe/{probe_id}` | 读取 probe 摘要 |
+| `GET` | `/probe/{probe_id}/bundle` | 读取完整 probe bundle |
+| `POST` | `/knowledge/rebuild` | 重建 notes/probe 知识索引 |
+| `GET` | `/knowledge/search` | 搜索已沉淀的页面/适配器知识 |
+
+---
+
+## 参见
+
+- [`adapters/temu/`](../adapters/temu/) — Temu 完整适配包（4 个任务）
+- [`adapters/jd/`](../adapters/jd/) — JD 价格监控适配包（2 个任务）
+- [`sdk/manifest.schema.json`](manifest.schema.json) — manifest.yaml 的 JSON Schema
+- [SPEC.md](../SPEC.md) — 系统架构规范

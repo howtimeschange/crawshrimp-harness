@@ -1,0 +1,214 @@
+"""
+Notification push
+Supports: DingTalk webhook / Feishu webhook / custom webhook
+
+DingTalk and Feishu both support rich Markdown-style messages.
+Webhook sends raw JSON POST.
+"""
+import json
+import logging
+import operator
+import re
+import base64
+import hashlib
+import hmac
+import time
+from typing import List, Optional
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.request import urlopen, Request
+from urllib.error import URLError
+
+from core.config import get as cfg_get
+
+logger = logging.getLogger(__name__)
+
+_DATA_LENGTH_COMPARISON_RE = re.compile(r"^\s*data\.length\s*(==|!=|>=|<=|>|<)\s*(\d+)\s*$")
+_DATA_FIELD_COMPARISON_RE = re.compile(
+    r"^\s*data\[(\d+)\]\.([A-Za-z0-9_\-\u4e00-\u9fff]+)\s*(==|!=)\s*(['\"])(.*?)\4\s*$"
+)
+_COMPARISON_OPERATORS = {
+    "==": operator.eq,
+    "!=": operator.ne,
+    ">=": operator.ge,
+    "<=": operator.le,
+    ">": operator.gt,
+    "<": operator.lt,
+}
+
+
+class NotifyError(Exception):
+    pass
+
+
+def send(channel: str, title: str, records: int,
+         adapter_name: str = "", task_name: str = "",
+         sample_rows: Optional[List[dict]] = None,
+         error: Optional[str] = None,
+         message: Optional[str] = None):
+    """
+    Dispatch notification to configured channel.
+    channel: 'dingtalk' | 'feishu' | 'webhook'
+    """
+    if channel == "dingtalk":
+        _send_dingtalk(title, records, adapter_name, task_name, sample_rows, error, message)
+    elif channel == "feishu":
+        _send_feishu(title, records, adapter_name, task_name, sample_rows, error, message)
+    elif channel == "webhook":
+        _send_webhook(title, records, adapter_name, task_name, sample_rows, error, message)
+    else:
+        logger.warning(f"Unknown notification channel: {channel}")
+
+
+def _post_json(url: str, payload: dict):
+    if not url:
+        raise NotifyError("Webhook URL not configured")
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = Request(url, data=body, headers={"Content-Type": "application/json"})
+    try:
+        with urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            return result
+    except URLError as e:
+        raise NotifyError(f"HTTP request failed: {e}")
+
+
+def _build_signed_dingtalk_url(url: str, secret: str) -> str:
+    clean_url = str(url or "").strip()
+    clean_secret = str(secret or "").strip()
+    if not clean_url or not clean_secret:
+        return clean_url
+    timestamp = str(int(time.time() * 1000))
+    string_to_sign = f"{timestamp}\n{clean_secret}".encode("utf-8")
+    digest = hmac.new(clean_secret.encode("utf-8"), string_to_sign, digestmod=hashlib.sha256).digest()
+    sign = base64.b64encode(digest).decode("utf-8")
+    parsed = urlparse(clean_url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query["timestamp"] = timestamp
+    query["sign"] = sign
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+def _build_text(title: str, records: int, adapter_name: str,
+                task_name: str, sample_rows: Optional[List[dict]],
+                error: Optional[str],
+                message: Optional[str] = None) -> str:
+    if message:
+        return str(message)
+    lines = [f"**{title}**"]
+    if adapter_name:
+        lines.append(f"Platform: {adapter_name}")
+    if task_name:
+        lines.append(f"Task: {task_name}")
+    if error:
+        lines.append(f"ERROR: {error}")
+    else:
+        lines.append(f"Records: {records}")
+        if sample_rows:
+            lines.append("--- Sample ---")
+            for row in sample_rows[:3]:
+                lines.append("  " + "  |  ".join(f"{k}: {v}" for k, v in list(row.items())[:4]))
+    return "\n".join(lines)
+
+
+def _send_dingtalk(title: str, records: int, adapter_name: str,
+                   task_name: str, sample_rows: Optional[List[dict]], error: Optional[str],
+                   message: Optional[str] = None):
+    url = cfg_get("notify.dingtalk_webhook", "")
+    secret = cfg_get("notify.dingtalk_secret", "") or cfg_get("notify.dingtalk_sign_secret", "")
+    text = _build_text(title, records, adapter_name, task_name, sample_rows, error, message)
+    payload = {
+        "msgtype": "markdown",
+        "markdown": {
+            "title": title,
+            "text": text,
+        }
+    }
+    result = _post_json(_build_signed_dingtalk_url(url, secret), payload)
+    if result.get("errcode") != 0:
+        raise NotifyError(f"DingTalk error: {result}")
+    logger.info(f"DingTalk notification sent: {title}")
+
+
+def _send_feishu(title: str, records: int, adapter_name: str,
+                 task_name: str, sample_rows: Optional[List[dict]], error: Optional[str],
+                 message: Optional[str] = None):
+    url = cfg_get("notify.feishu_webhook", "")
+    text = _build_text(title, records, adapter_name, task_name, sample_rows, error, message)
+    payload = {
+        "msg_type": "text",
+        "content": {"text": text}
+    }
+    result = _post_json(url, payload)
+    if result.get("code") not in (0, None):
+        raise NotifyError(f"Feishu error: {result}")
+    logger.info(f"Feishu notification sent: {title}")
+
+
+def _send_webhook(title: str, records: int, adapter_name: str,
+                  task_name: str, sample_rows: Optional[List[dict]], error: Optional[str],
+                  message: Optional[str] = None):
+    url = cfg_get("notify.custom_webhook", "")
+    payload = {
+        "title": title,
+        "adapter": adapter_name,
+        "task": task_name,
+        "records": records,
+        "error": error,
+        "message": message,
+        "sample": (sample_rows or [])[:5],
+    }
+    _post_json(url, payload)
+    logger.info(f"Webhook notification sent: {title}")
+
+
+def should_notify(condition: Optional[str], data: list) -> bool:
+    """
+    Evaluate an output condition expression.
+    Supports a small JS-style whitelist such as:
+    - data.length > 0
+    - data.length >= 1 && data.length < 100
+    """
+    if not condition:
+        return True
+    try:
+        result = _evaluate_condition(condition, data)
+        if result is None:
+            logger.warning("Unsupported notification condition '%s', defaulting to True", condition)
+            return True
+        return result
+    except Exception as e:
+        logger.warning("Condition eval failed '%s': %s, defaulting to True", condition, e)
+        return True
+
+
+def _evaluate_condition(condition: str, data: list) -> Optional[bool]:
+    expression = str(condition or "").strip()
+    if not expression:
+        return True
+    if "||" in expression:
+        parts = expression.split("||")
+        values = [_evaluate_condition(part, data) for part in parts]
+        if any(value is None for value in values):
+            return None
+        return any(values)
+    parts = expression.split("&&")
+    values = [_evaluate_condition_part(part, data) for part in parts]
+    if any(value is None for value in values):
+        return None
+    return all(values)
+
+
+def _evaluate_condition_part(condition: str, data: list) -> Optional[bool]:
+    matched = _DATA_LENGTH_COMPARISON_RE.match(condition)
+    if not matched:
+        field_match = _DATA_FIELD_COMPARISON_RE.match(condition)
+        if not field_match:
+            return None
+        index_raw, field, op, _quote, expected = field_match.groups()
+        index = int(index_raw)
+        actual = ""
+        if 0 <= index < len(data) and isinstance(data[index], dict):
+            actual = str(data[index].get(field) or "")
+        return actual == expected if op == "==" else actual != expected
+    op, expected_raw = matched.groups()
+    return bool(_COMPARISON_OPERATORS[op](len(data), int(expected_raw)))

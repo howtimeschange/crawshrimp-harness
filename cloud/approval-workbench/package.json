@@ -1,0 +1,26 @@
+{
+  "name": "crawshrimp-cloud-approval-workbench",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "vite build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "seed:prompts": "node scripts/seed-prompt-library.mjs",
+    "check": "npm run typecheck && npm run test && npm run build"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.7",
+    "vite": "^8.1.4",
+    "vue": "^3.4.21",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260701.0",
+    "miniflare": "^4.20260701.0",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.0.0"
+  }
+}

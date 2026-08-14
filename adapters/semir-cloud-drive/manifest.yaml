@@ -1,0 +1,436 @@
+id: semir-cloud-drive
+name: 森马云盘图片工具
+version: 0.1.3
+author: codex
+description: "森马云盘素材图批量检索下载，并串联豆包/Gemini 自动生图"
+entry_url: https://fmp.semirapp.com/web/index#/home/file
+
+auth:
+  check_script: auth_check.js
+  login_url: https://fmp.semirapp.com/web/index#/home/file
+
+tasks:
+  - id: batch_image_download
+    name: 批量下载图片并打包
+    description: 按款号或款色编码检索森马云盘图片，下载后整理并打包导出
+    script: batch-image-download.js
+    skip_auth: false
+    params:
+      - id: mode
+        type: radio
+        label: 打开方式
+        default: current
+        options:
+          - value: current
+            label: 当前页面（推荐）
+          - value: new
+            label: 全新页面
+      - id: cloud_path
+        type: text
+        label: 云盘路径
+        required: true
+        placeholder: "例如：巴拉营运BU-商品//巴拉货控/02 产品上新模块/2-2 巴拉产品上新/"
+        hint: 从森马云盘根目录开始填写目标搜索范围
+        quick_fill_options:
+          - 巴拉营运BU-商品//巴拉货控/02 产品上新模块/2-2 巴拉产品上新/
+      - id: item_codes
+        type: textarea
+        label: 款号或款色编码
+        rows: 5
+        required: true
+        placeholder: "一行一个，例如：\n208226111002\n208226111002-00316"
+        hint: 支持混合输入款号和款色编码；输入款号时的保存策略由下方“款号匹配模式”控制
+      - id: spu_match_mode
+        type: select
+        label: 款号匹配模式
+        default: color_skc_all
+        ui_span: third
+        options:
+          - value: color_skc_all
+            label: 匹配全部款色图（默认）
+          - value: representative
+            label: 仅保留一张款号代表图
+        hint: 默认输入款号时匹配全部“款号-五位色码”图片；代表图模式会随机保存一张款色图，并按款号命名
+      - id: duplicate_mode
+        type: select
+        label: 重复图处理
+        default: first_per_stem
+        ui_span: third
+        options:
+          - value: first_per_stem
+            label: 同名/同编码图只保留一张（推荐）
+          - value: all
+            label: 保留全部匹配图
+        hint: 当同一张图在多个子目录重复出现时，默认只保留一张；如需全部下载可切换
+      - id: package_layout
+        type: select
+        label: 导出结构
+        default: by_code
+        ui_span: third
+        options:
+          - value: by_code
+            label: 按款号分文件夹（默认）
+          - value: flat
+            label: 总文件夹平铺全部图片
+        hint: 默认按款号建立子文件夹；如需把所有图片直接放在一个总文件夹里，可切换为平铺导出
+      - id: export_folder
+        type: directory
+        label: 导出目录
+        placeholder: "点击选择导出目录"
+        hint: 可选。点击选择本地目录；留空则使用任务默认输出目录
+        ui_span: third
+      - id: package_name
+        type: text
+        label: 导出包名称
+        ui_span: third
+        placeholder: "例如：巴拉产品上新图片包"
+        hint: 可选。留空则按任务时间自动命名
+    trigger:
+      type: manual
+    output:
+      - type: excel
+        filename: "森马云盘图片下载结果_{timestamp}.xlsx"
+        columns:
+          - 输入编码
+          - 匹配类型
+          - 文件名
+          - 云盘路径
+          - 下载结果
+          - 本地文件
+          - 备注
+  - id: shein_image_package_download
+    name: SHEIN 图包下载
+    description: 按款号在森马云盘指定范围内定位同名文件夹，递归下载完整目录并合并导出一个 ZIP 图包
+    script: shein-image-package-download.js
+    skip_auth: false
+    params:
+      - id: mode
+        type: radio
+        label: 打开方式
+        default: current
+        options:
+          - value: current
+            label: 当前页面（推荐）
+          - value: new
+            label: 全新页面
+      - id: cloud_path
+        type: text
+        label: 森马云盘搜索范围
+        required: true
+        default: "海外业务中心-数字业务部//0-balabala+minibla视觉/3-海外（♦️运营用）/3-主图1340x1785/"
+        placeholder: "海外业务中心-数字业务部//0-balabala+minibla视觉/3-海外（♦️运营用）/3-主图1340x1785/"
+        hint: 支持“挂载点//目录/子目录”或直接粘贴森马云盘文件夹地址；只会采用该范围内与款号完全同名的文件夹
+        quick_fill_options:
+          - 海外业务中心-数字业务部//0-balabala+minibla视觉/3-海外（♦️运营用）/3-主图1340x1785/
+      - id: style_codes
+        type: textarea
+        label: 款号
+        rows: 10
+        required: true
+        placeholder: "一行一个，例如：\n208326120201\n208326102001"
+        hint: 支持换行、空格、逗号或顿号分隔；重复款号会自动去重
+      - id: export_folder
+        type: directory
+        label: ZIP 导出目录
+        required: true
+        placeholder: "点击选择 ZIP 保存目录"
+        hint: 完整图包 ZIP 和下载结果表会保存到该目录
+        ui_span: third
+      - id: package_name
+        type: text
+        label: ZIP 包名称
+        default: SHEIN图包
+        ui_span: third
+        placeholder: "例如：SHEIN图包_26Q3"
+        hint: 同名文件已存在时会自动追加序号，不会覆盖原文件
+    trigger:
+      type: manual
+    output:
+      - type: excel
+        filename: "SHEIN图包下载结果_{timestamp}.xlsx"
+        columns:
+          - 款号
+          - 款号文件夹
+          - 文件名
+          - 云盘路径
+          - ZIP内路径
+          - 文件大小
+          - 下载结果
+          - 备注
+  - id: tmall_material_match_buy
+    name: 森马-天猫素材批量爬取-搭配购
+    description: 读取款号、款色与对应ID，在森马视觉模拍目录按 SPU 或 SKC 维度检索搭配购 3 系列素材图，按对应ID命名并打包导出
+    script: tmall-material-match-buy.js
+    skip_auth: false
+    params:
+      - id: mode
+        type: radio
+        label: 打开方式
+        default: current
+        options:
+          - value: current
+            label: 当前页面（推荐）
+          - value: new
+            label: 全新页面
+      - id: input_file
+        type: file_excel
+        label: 搭配购款号 Excel
+        required: true
+        templates:
+          - file: templates/tmall-material-match-buy-template.csv
+            label: Excel / CSV 模板
+            description: 填写三列：款号、款色、对应ID。SPU 维度按款号检索；SKC 维度按“款号-款色”检索，并按对应ID（1）、对应ID（2）命名。
+            version: "2026.06.10.1"
+        hint: 必须包含“款号”“对应ID”两列；选择 SKC 维度时还必须填写“款色”。每行会单独搜索并下载命中的 3 系列图片。
+      - id: match_dimension
+        type: radio
+        label: 抓取维度
+        default: spu
+        options:
+          - value: spu
+            label: SPU 维度（款号）
+          - value: skc
+            label: SKC 维度（款色）
+        hint: SPU 按款号匹配所有款色文件夹；SKC 按“款号-款色”精准匹配单个款色文件夹。
+      - id: cloud_path
+        type: text
+        label: 云盘路径
+        required: true
+        default: "森马视觉//01-拍摄企划/01-服饰/00-季度所有图片/2026年/26Q2/模拍/"
+        placeholder: "森马视觉//01-拍摄企划/01-服饰/00-季度所有图片/2026年/26Q2/模拍/"
+        hint: 从森马云盘根目录开始填写目标搜索范围
+        quick_fill_options:
+          - 森马视觉//01-拍摄企划/01-服饰/00-季度所有图片/2026年/26Q2/模拍/
+      - id: upload_time_range
+        type: date_range
+        label: 文件上传时间范围
+        required: true
+        hint: 会按云盘返回的上传/创建/更新时间字段过滤；无法识别时间的文件不会下载。
+      - id: folder_scan_depth
+        type: number
+        label: 文件夹扫描层级
+        default: 3
+        min: 1
+        max: 8
+        step: 1
+        ui_span: third
+      - id: export_folder
+        type: directory
+        label: 导出目录
+        placeholder: "点击选择导出目录"
+        hint: 可选。点击选择本地目录；留空则使用任务默认输出目录
+        ui_span: third
+      - id: package_name
+        type: text
+        label: 导出包名称
+        default: 搭配购素材包
+        ui_span: third
+        placeholder: "例如：搭配购素材包"
+        hint: 可选。留空则按任务时间自动命名
+    trigger:
+      type: manual
+    output:
+      - type: excel
+        filename: "森马天猫搭配购素材爬取结果_{timestamp}.xlsx"
+        columns:
+          - 表格行号
+          - 抓取维度
+          - 款号
+          - 款色
+          - 检索编码
+          - 对应ID
+          - 文件名
+          - 原文件名
+          - 云盘路径
+          - 文件时间
+          - 下载结果
+          - 本地文件
+          - 执行结果
+          - 备注
+  - id: tmall_material_new_624
+    name: 森马-天猫AI生图参考素材准备
+    description: 批量粘贴 SKC，在森马视觉图片包目录检索 3 全身图与 SKC 同名静物图，并按新命名规则打包导出
+    script: tmall-material-match-buy.js
+    skip_auth: false
+    params:
+      - id: mode
+        type: radio
+        label: 打开方式
+        default: current
+        options:
+          - value: current
+            label: 当前页面（推荐）
+          - value: new
+            label: 全新页面
+      - id: asset_rule
+        type: select
+        label: 取图规则
+        default: new_624
+        hidden: true
+        options:
+          - value: new_624
+            label: 6.24 新规则
+      - id: skc_codes
+        type: textarea
+        label: SKC 编码
+        rows: 8
+        required: true
+        placeholder: "一行一个 SKC，例如：\n103526124101A-80325\n109526101005-00333"
+        hint: 直接从表格复制 SKC 列粘贴即可；每行按“款号-色码”匹配一个图片包。
+      - id: cloud_path
+        type: text
+        label: 云盘路径
+        required: true
+        default: "森马视觉//01-拍摄企划/01-服饰/00-季度所有图片/2026年/26Q3/模特/服饰/AI/"
+        placeholder: "森马视觉//01-拍摄企划/01-服饰/00-季度所有图片/2026年/26Q3/模特/服饰/AI/6-4/6-04批次 6 套/"
+        hint: 从森马云盘根目录开始填写目标搜索范围，可填到批次目录或具体 SKC 图片包上级目录
+        quick_fill_options:
+          - 森马视觉//01-拍摄企划/01-服饰/00-季度所有图片/2026年/26Q3/模特/服饰/AI/
+          - 森马视觉//01-拍摄企划/01-服饰/00-季度所有图片/2026年/26Q3/模特/服饰/AI/6-4/6-04批次 6 套/
+      - id: upload_time_range
+        type: date_range
+        label: 文件上传时间范围
+        required: true
+        hint: 会按云盘返回的上传/创建/更新时间字段过滤；无法识别时间的文件不会下载。
+      - id: folder_scan_depth
+        type: number
+        label: 文件夹扫描层级
+        default: 2
+        min: 1
+        max: 8
+        step: 1
+        ui_span: third
+      - id: export_folder
+        type: directory
+        label: 导出目录
+        placeholder: "点击选择导出目录"
+        hint: 可选。点击选择本地目录；留空则使用任务默认输出目录
+        ui_span: third
+      - id: package_name
+        type: text
+        label: 导出包名称
+        default: 天猫素材新624图片包
+        ui_span: third
+        placeholder: "例如：天猫素材新624图片包"
+        hint: 可选。留空则按任务时间自动命名
+    trigger:
+      type: manual
+    output:
+      - type: excel
+        filename: "森马天猫素材爬取新624结果_{timestamp}.xlsx"
+        columns:
+          - 输入序号
+          - SKC编码
+          - 图片类型
+          - 款号
+          - 款色
+          - 检索编码
+          - 文件名
+          - 原文件名
+          - 云盘路径
+          - 文件时间
+          - 下载结果
+          - 本地文件
+          - 执行结果
+          - 备注
+  - id: batch_ai_generate
+    name: 下载素材并自动生图
+    description: 读取 Excel 按行下载森马云盘素材图，再自动跳转 Doubao / Gemini 上传参考图并执行生图
+    script: batch-ai-generate.js
+    skip_auth: false
+    params:
+      - id: mode
+        type: radio
+        label: 打开方式
+        default: current
+        options:
+          - value: current
+            label: 当前页面（推荐）
+          - value: new
+            label: 全新页面
+      - id: cloud_path
+        type: text
+        label: 云盘路径
+        required: true
+        placeholder: "例如：巴拉营运BU-商品//巴拉货控/02 产品上新模块/2-2 巴拉产品上新/"
+        hint: 先从森马云盘此目录范围内检索素材图，再跳转 AI 站点执行生图
+        quick_fill_options:
+          - 巴拉营运BU-商品//巴拉货控/02 产品上新模块/2-2 巴拉产品上新/
+      - id: input_file
+        type: file_excel
+        label: 生图任务 Excel
+        required: true
+        templates:
+          - file: templates/semir-ai-generate-template.csv
+            label: Excel / CSV 模板
+            description: 填写款号或款色号、Prompt 和商品属性字段；支持“款号/款色号”合并列，或分开的“款号”“款色号”列。
+            version: "2026.04.23.1"
+        hint: 至少需要编码列和 Prompt 列；其余非空列会自动拼进商品属性描述。
+      - id: ai_provider
+        type: select
+        label: AI 站点
+        default: doubao
+        ui_span: third
+        options:
+          - value: doubao
+            label: 豆包（推荐）
+          - value: gemini
+            label: Gemini
+      - id: duplicate_mode
+        type: select
+        label: 素材图去重
+        default: first_per_stem
+        ui_span: third
+        options:
+          - value: first_per_stem
+            label: 同名/同编码图只保留一张（推荐）
+          - value: all
+            label: 保留全部匹配图
+        hint: 输入款号时会匹配该款下全部五位色码图片；同图多目录重复时默认只保留一张。
+      - id: material_package_mode
+        type: select
+        label: 素材包导出
+        default: discard
+        ui_span: third
+        options:
+          - value: discard
+            label: 仅保留结果表（推荐）
+          - value: zip
+            label: 导出素材包（zip）
+        hint: 生图任务默认在完成后清理下载素材；如需留档可额外导出一份素材包。
+      - id: generate_timeout_seconds
+        type: number
+        label: 单条生图超时秒数
+        default: 240
+        min: 60
+        max: 1800
+        step: 10
+        ui_span: third
+      - id: provider_ready_timeout_seconds
+        type: number
+        label: 登录等待秒数
+        default: 300
+        min: 30
+        max: 1800
+        step: 10
+        hint: 跳转到 AI 站点后若未登录，会轮询等待你手动登录完成。
+    trigger:
+      type: manual
+    output:
+      - type: excel
+        filename: "森马云盘AI生图执行结果_{timestamp}.xlsx"
+        columns:
+          - 表格行号
+          - 输入编码
+          - 匹配类型
+          - AI站点
+          - 原始Prompt
+          - 最终Prompt
+          - 商品属性
+          - 素材图数量
+          - 素材图文件
+          - 素材云盘路径
+          - 生图文件数量
+          - 生图文件
+          - 执行结果
+          - 备注

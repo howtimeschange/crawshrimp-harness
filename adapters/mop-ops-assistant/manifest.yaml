@@ -1,0 +1,543 @@
+id: mop-ops-assistant
+name: MOP 运营助手
+version: 0.1.1
+author: codex
+description: "千牛素材中心与 MOP 云盘运营自动化：批量提交 KOL 短视频、发布搜推图文素材、下载云盘模拍图并梳理搭配关系"
+entry_url: https://qn.taobao.com/home.htm/material-center/video-production/img2video
+tab_match_prefixes:
+  - https://qn.taobao.com/
+  - https://myseller.taobao.com/
+  - https://h5api.m.taobao.com/
+
+auth:
+  check_script: auth_check.js
+  login_url: https://qn.taobao.com/home.htm/material-center/video-production/img2video
+
+tasks:
+  - id: cloud_folder_download
+    name: MOP云盘文件夹下载
+    description: 输入森马云盘目录地址或“挂载点//目录”路径，可只导出搭配表、按指定款号下载匹配文件夹，或全量下载目录内容。
+    script: cloud-folder-download.js
+    entry_url: https://fmp.semirapp.com/web/index#/home/file
+    tab_match_prefixes:
+      - https://fmp.semirapp.com/
+      - https://iam.semirapp.com/
+    skip_auth: false
+    params:
+      - id: mode
+        type: radio
+        label: 打开方式
+        default: new
+        options:
+          - value: new
+            label: 全新页面（推荐）
+          - value: current
+            label: 当前页面
+        hint: 请先在 9222 端口 Chrome 登录森马云盘；默认会新开云盘文件页，并打开或访问目标 MOP 文件夹。
+      - id: cloud_path
+        type: text
+        label: 云盘路径/地址
+        required: true
+        default: "品牌电商项目部//MOP品牌/MOP_26 模拍图/26ss/1月拍摄电商专供0121/"
+        placeholder: "品牌电商项目部//MOP品牌/MOP_26 模拍图/26ss/1月拍摄电商专供0121/ 或森马云盘地址栏 URL"
+        hint: 支持“挂载点//目录/子目录”格式，也支持直接粘贴森马云盘文件夹 URL；实际下载范围由下方执行模式决定。
+        quick_fill_options:
+          - 品牌电商项目部//MOP品牌/MOP_26 模拍图/26ss/1月拍摄电商专供0121/
+      - id: task_mode
+        type: radio
+        label: 执行模式
+        default: relationship_only
+        options:
+          - value: relationship_only
+            label: 只下搭配表
+          - value: selected_styles
+            label: 指定款号下载
+          - value: full_download
+            label: 全量下载
+        hint: “只下搭配表”只读取顶层文件夹并导出搭配关系；“指定款号下载”只下载匹配到的款号/搭配文件夹；“全量下载”会下载整个目录，耗时和空间都较大。
+      - id: style_codes
+        type: textarea
+        label: 指定款号
+        rows: 5
+        required: false
+        placeholder: "一行一个，例如：\n653100C4202Z\n653124B2108Z100"
+        hint: 仅“指定款号下载”使用；输入任一搭配款号会下载包含该款号的整个顶层搭配文件夹。
+        visible_when:
+          field: task_mode
+          equals: selected_styles
+      - id: max_depth
+        type: number
+        label: 扫描层级
+        default: 12
+        min: 1
+        max: 50
+        step: 1
+        ui_span: third
+        hint: 从目标目录下的款号/搭配文件夹开始递归扫描，默认足够覆盖常规图片、视频、子素材目录。
+        visible_when:
+          field: task_mode
+          in: [selected_styles, full_download]
+      - id: max_files
+        type: number
+        label: 最多下载文件数
+        default: 10000
+        min: 1
+        max: 100000
+        step: 100
+        ui_span: third
+        hint: 防止误选超大目录；达到上限后会停止继续加入下载队列。
+        visible_when:
+          field: task_mode
+          in: [selected_styles, full_download]
+      - id: download_concurrency
+        type: number
+        label: 下载并发
+        default: 6
+        min: 1
+        max: 20
+        step: 1
+        ui_span: third
+        hint: 同时下载文件数量；网盘不稳定时可降低。
+        visible_when:
+          field: task_mode
+          in: [selected_styles, full_download]
+      - id: package_name
+        type: text
+        label: 本地文件夹名称
+        default: MOP云盘模拍图包
+        ui_span: third
+        placeholder: "例如：MOP_26SS_1月模拍图"
+        hint: 留空则按任务时间自动命名；最终会生成同名本地文件夹。
+        visible_when:
+          field: task_mode
+          in: [selected_styles, full_download]
+      - id: export_folder
+        type: directory
+        label: 导出目录
+        placeholder: "点击选择导出目录"
+        hint: 可选。留空则使用任务默认输出目录；填写后本地文件夹和搭配关系表会复制到该目录。
+        ui_span: third
+    trigger:
+      type: manual
+    output:
+      - type: excel
+        filename: "MOP云盘文件夹下载与搭配关系_{timestamp}.xlsx"
+        sheet_key: __sheet_name
+        sheets:
+          - name: 搭配关系
+            columns:
+              - 序号
+              - 文件夹名
+              - 云盘路径
+              - 搭配款数
+              - 款号1
+              - 款号2
+              - 款号3
+              - 款号4
+              - 款号5
+              - 款号6
+              - 备注
+          - name: 下载明细
+            columns:
+              - 序号
+              - 顶层文件夹
+              - 文件名
+              - 云盘路径
+              - 本地目录内路径
+              - 文件大小
+              - 下载结果
+              - 备注
+
+  - id: search_recommend_material_publish
+    name: 搜推素材
+    description: 读取 Excel 商品 ID 或商家编码、图片、标题和内容描述，调用千牛素材中心搜推素材图文发布接口逐行提交。
+    script: search-recommend-material-publish.js
+    entry_url: https://qn.taobao.com/home.htm/material-center/material-management?tab=recommend
+    skip_auth: false
+    execution_ui_mode: precheck_before_live
+    validation_only_label: 仅校验 Excel / 素材规划
+    auto_precheck_note: 执行前会先校验商品 ID/商家编码、标题、内容描述和素材路径；live 模式会先按商家编码解析商品 ID，再上传本地图片并发布搜推图文素材。
+    params:
+      - id: mode
+        type: radio
+        label: 打开方式
+        default: new
+        options:
+          - value: current
+            label: 当前页面
+          - value: new
+            label: 全新页面（推荐）
+        hint: 请先在 9222 端口 Chrome 登录千牛素材中心；默认会新开搜推素材页。
+      - id: input_file
+        type: file_excel
+        label: 搜推素材任务 Excel
+        required: true
+        templates:
+          - file: templates/search-recommend-material-template.xlsx
+            label: Excel 填写模板
+            description: 包含“填写任务 / 字段说明”两张表；支持商品 ID 或商家编码、达人、素材图片、添加标题和内容描述。
+            version: "2026.06.11.4"
+          - file: templates/search-recommend-material-template.csv
+            label: CSV 简版填写模板
+            description: 只包含搜推图文素材发布需要的填写字段，支持商品 ID 或商家编码二选一，可选达人。
+            version: "2026.06.11.4"
+          - file: templates/search-recommend-material-field-guide.csv
+            label: 字段与素材包说明
+            description: 说明商家编码解析、达人分配、标题、内容描述、图片数量、业务图包和手动多选图片命名规则。
+            version: "2026.06.11.4"
+        hint: “商品ID”和“商家编码”二选一；商品ID为空时会按商家编码去千牛“我的商品”解析。重复商家编码多行会按顺序分配多个达人图片包，也可填写“达人”精确指定。
+      - id: execute_mode
+        type: radio
+        label: 运行方式
+        default: plan
+        options:
+          - value: plan
+            label: 先做预检
+          - value: live
+            label: 上传并发布
+        hint: 预检不会发布；live 会逐行上传本地图片并调用千牛搜推素材发布接口。
+      - id: material_root
+        type: directory
+        label: 素材根目录
+        required: false
+        include_file_listing: true
+        placeholder: "例如：/Users/you/Desktop/搜推素材包"
+        hint: 可选。未在 Excel 写素材图片时，优先识别业务图包“素材根目录/含商家编码的商品文件夹/图片/主图/达人/图片”，顶层目录可用 + 关联多个商家编码；未匹配时兼容“素材根目录/商品ID或商家编码/01.jpg...”。
+      - id: material_images
+        type: file_images
+        label: 手动选择素材图片
+        required: false
+        hint: 可选。多选图片时，文件名请以商品ID或商家编码开头，如 1051467606993_01.jpg / 455133A2114Z_01.jpg，或放在同名文件夹下。
+      - id: default_material_count
+        type: number
+        label: 默认素材张数
+        default: 3
+        min: 3
+        max: 9
+        step: 1
+        ui_span: third
+        hint: 使用素材根目录且单行未填“素材张数”时生效；单行同款会按每个达人文件夹各生成一条内容；重复同款多行会按行顺序分配达人包，每条取该达人前 N 张；搜推图文要求至少 3 张、最多 9 张。
+      - id: crop_ratio
+        type: select
+        label: 自动裁剪比例
+        default: "3:4"
+        ui_span: third
+        options:
+          - value: "3:4"
+            label: "3:4"
+          - value: "1:1"
+            label: "1:1"
+        hint: 上传前会自动居中裁剪到该比例；单行“裁剪比例”列可覆盖。
+      - id: submit_delay_ms
+        type: number
+        label: 每个商品提交间隔毫秒
+        default: 2500
+        min: 0
+        max: 30000
+        step: 500
+        ui_span: third
+        hint: 控制批量提交节奏，避免过快触发平台限流。
+    trigger:
+      type: manual
+    output:
+      - type: excel
+        filename: "MOP搜推素材发布结果_{timestamp}.xlsx"
+        columns:
+          - 表格行号
+          - 商品ID
+          - 商家编码
+          - 达人
+          - 商品标题
+          - 添加标题
+          - 内容描述
+          - 裁剪比例
+          - 素材来源
+          - 素材数量
+          - 素材明细
+          - 发布内容ID
+          - 执行结果
+          - 备注
+          - 抓取时间
+
+  - id: kol_material_img2video_batch
+    name: 批量KOL素材转短视频
+    description: 读取 Excel 商品 ID 或商家编码和素材图片，调用千牛素材中心展示视频接口逐行提交生成任务。
+    script: kol-material-img2video-batch.js
+    entry_url: https://qn.taobao.com/home.htm/material-center/video-production/img2video
+    skip_auth: false
+    execution_ui_mode: precheck_before_live
+    validation_only_label: 仅校验 Excel / 素材规划
+    auto_precheck_note: 执行前会先校验商品 ID/商家编码和素材路径；live 模式会先按商家编码解析商品 ID，再上传本地图片并提交展示视频生成任务。
+    params:
+      - id: mode
+        type: radio
+        label: 打开方式
+        default: new
+        options:
+          - value: current
+            label: 当前页面
+          - value: new
+            label: 全新页面（推荐）
+        hint: 请先在 9222 端口 Chrome 登录千牛素材中心；默认会新开视频生产页。
+      - id: input_file
+        type: file_excel
+        label: KOL 短视频任务 Excel
+        required: true
+        templates:
+          - file: templates/kol-material-img2video-template.xlsx
+            label: Excel 填写模板
+            description: 包含“填写任务 / 字段说明”两张表；支持填写商品 ID 或商家编码，可选达人。
+            version: "2026.06.11.4"
+          - file: templates/kol-material-img2video-template.csv
+            label: CSV 简版填写模板
+            description: 只包含展示视频批量生成需要的填写字段，支持商品 ID 或商家编码二选一，可选达人。
+            version: "2026.06.11.4"
+          - file: templates/kol-material-img2video-field-guide.csv
+            label: 字段与素材包说明
+            description: 说明商家编码解析、达人分配、业务图包摆放方式和手动多选图片命名规则。
+            version: "2026.06.11.4"
+        hint: “商品ID”和“商家编码”二选一；商品ID为空时会按商家编码去千牛“我的商品”解析。重复商家编码多行会按顺序分配多个达人图片包，也可填写“达人”精确指定。
+      - id: execute_mode
+        type: radio
+        label: 运行方式
+        default: plan
+        options:
+          - value: plan
+            label: 先做预检
+          - value: live
+            label: 上传并提交生成
+        hint: 预检不会提交；live 会逐行上传本地图片并调用千牛展示视频生成接口。
+      - id: material_root
+        type: directory
+        label: 素材根目录
+        required: false
+        include_file_listing: true
+        placeholder: "例如：/Users/you/Desktop/KOL素材包"
+        hint: 可选。未在 Excel 写素材图片时，优先识别业务图包“素材根目录/含商家编码的商品文件夹/图片/主图/达人/图片”，顶层目录可用 + 关联多个商家编码；未匹配时兼容“素材根目录/商品ID或商家编码/01.jpg...”。
+      - id: material_images
+        type: file_images
+        label: 手动选择素材图片
+        required: false
+        hint: 可选。多选图片时，文件名请以商品ID或商家编码开头，如 728857154429_01.jpg / 46X096070266_01.jpg，或放在同名文件夹下。
+      - id: default_material_count
+        type: number
+        label: 默认素材张数
+        default: 3
+        min: 1
+        max: 12
+        step: 1
+        ui_span: third
+        hint: 使用素材根目录且单行未填“素材张数”时生效；单行同款会按每个达人文件夹各生成一条内容；重复同款多行会按行顺序分配达人包，每条取该达人前 N 张；未匹配时兼容 01.jpg 旧规则。
+      - id: ratio
+        type: select
+        label: 默认比例
+        default: "3:4"
+        ui_span: third
+        options:
+          - value: "3:4"
+            label: "3:4"
+          - value: "1:1"
+            label: "1:1"
+          - value: "9:16"
+            label: "9:16"
+          - value: "16:9"
+            label: "16:9"
+        hint: 展示视频会使用此比例；单行“比例”列可覆盖。
+      - id: use_item_pics_fallback
+        type: checkbox
+        label: 缺少素材时使用商品主图兜底
+        default: false
+        hint: 勾选后，单行没有素材图片时会读取千牛商品素材接口中的商品图片作为兜底。
+      - id: submit_delay_ms
+        type: number
+        label: 每个商品提交间隔毫秒
+        default: 2500
+        min: 0
+        max: 30000
+        step: 500
+        ui_span: third
+        hint: 控制批量提交节奏，避免过快触发平台限流。
+    trigger:
+      type: manual
+    output:
+      - type: excel
+        filename: "MOP批量KOL素材转短视频结果_{timestamp}.xlsx"
+        columns:
+          - 表格行号
+          - 商品ID
+          - 商家编码
+          - 达人
+          - 商品标题
+          - 比例
+          - 素材来源
+          - 素材数量
+          - 素材明细
+          - 提交任务ID
+          - 执行结果
+          - 备注
+          - 抓取时间
+
+  - id: dress_collocation_material_draft
+    name: 搭配素材草稿
+    hidden: true
+    description: 输入 1-9 张搭配素材图、商品 ID、标题和文案，自动生成 3:4 安全图并保存千牛搭配素材草稿；只保存草稿，不发布内容。
+    script: dress-collocation-material-draft.js
+    entry_url: https://qn.taobao.com/home.htm/material-center/material-management?tab=recommend&subTab=SCU
+    tab_match_prefixes:
+      - https://qn.taobao.com/
+      - https://scenario-front.taobao.com/
+    skip_auth: false
+    execution_ui_mode: precheck_before_live
+    validation_only_label: 仅校验素材 / 草稿规划
+    auto_precheck_note: 执行前会校验商品 ID、标题、文案和图片；live 模式会把本地图片处理成 3:4 安全图并保存搭配素材草稿，不会点击或调用发布。
+    params:
+      - id: mode
+        type: radio
+        label: 打开方式
+        default: new
+        options:
+          - value: current
+            label: 当前页面（推荐）
+          - value: new
+            label: 打开素材列表
+        hint: 请先在 9222 端口 Chrome 登录千牛；当前停留在搭配素材草稿编辑页时会优先更新该草稿。
+      - id: execute_mode
+        type: radio
+        label: 运行方式
+        default: plan
+        options:
+          - value: plan
+            label: 先做预检
+          - value: live
+            label: 上传并保存草稿
+        hint: 预检不会上传；live 只保存草稿，不发布内容。
+      - id: material_images
+        type: file_images
+        label: 搭配素材图
+        required: true
+        hint: 支持 1-9 张；本地图片会自动放入 750x1000 的 3:4 画布，人物完整保留，边缘用柔化背景补齐。
+      - id: product_ids
+        type: textarea
+        label: 商品 ID
+        rows: 3
+        required: true
+        placeholder: "一行一个，例如：\n1057386891909\n1060933035333"
+        hint: 脚本会关联为搭配商品，并按上下装默认位置生成标签锚点。
+      - id: title
+        type: text
+        label: 标题
+        required: true
+        max_length: 30
+        placeholder: MOP桑蚕丝混纺牛仔套装
+      - id: description
+        type: textarea
+        label: 文案
+        rows: 4
+        required: true
+        max_length: 1000
+        placeholder: 莫代尔棉桑蚕丝牛仔叠穿马甲套装，为造型增添丹宁的率性质感
+      - id: draft_id
+        type: text
+        label: 草稿 ID
+        required: false
+        placeholder: 可选，例如 409527360556
+        hint: 留空时优先使用当前 URL 的 id；否则会在搭配素材列表中按标题和商品 ID 查找草稿。
+    trigger:
+      type: manual
+    output:
+      - type: excel
+        filename: "MOP搭配素材草稿结果_{timestamp}.xlsx"
+        columns:
+          - 搭配ID
+          - 发布内容ID
+          - 商品ID
+          - 标题
+          - 文案
+          - 素材数量
+          - 素材明细
+          - 切图策略
+          - 执行结果
+          - 备注
+          - 抓取时间
+
+  - id: dress_collocation_material_publish
+    name: 搭配素材发布
+    description: 读取 Excel 中款号与商品 ID 的对应关系、标题和文案，从素材根目录按款号组合搜索 MOP 云盘下载文件夹，自动生成 3:4 安全图并调用千牛搭配素材发布接口真实发布内容。
+    script: dress-collocation-material-draft.js
+    entry_url: https://qn.taobao.com/home.htm/material-center/material-management?tab=recommend&subTab=SCU
+    tab_match_prefixes:
+      - https://qn.taobao.com/
+      - https://scenario-front.taobao.com/
+    skip_auth: false
+    execution_ui_mode: precheck_before_live
+    validation_only_label: 仅校验 Excel / 素材规划
+    auto_precheck_note: 执行前会校验款号、商品 ID、标题、文案和本地素材目录匹配；live_publish 模式会把匹配到的本地图片处理成 3:4 安全图并真实发布搭配素材内容。
+    params:
+      - id: mode
+        type: radio
+        label: 打开方式
+        default: new
+        options:
+          - value: current
+            label: 当前页面（推荐）
+          - value: new
+            label: 打开素材列表
+        hint: 请先在 9222 端口 Chrome 登录千牛；当前停留在搭配素材草稿编辑页时会优先发布该草稿。
+      - id: execute_mode
+        type: radio
+        label: 运行方式
+        default: live_publish
+        options:
+          - value: plan
+            label: 先做预检
+          - value: live_publish
+            label: 上传并真实发布
+        hint: 预检不会上传；live_publish 会调用千牛发布接口，产生真实发布内容。
+      - id: input_file
+        type: file_excel
+        label: 搭配素材发布任务 Excel
+        required: true
+        templates:
+          - file: templates/dress-collocation-material-publish-template.csv
+            label: CSV 简版填写模板
+            description: 每行填写款号1/商品ID1 到 款号6/商品ID6，以及标题、文案；脚本会用款号组合到素材根目录搜索 MOP 云盘下载文件夹。
+            version: "2026.08.12.1"
+        hint: 表格每行填写“款号1/商品ID1、款号2/商品ID2...标题、文案”；脚本会按款号组合在素材根目录中搜索类似“653100C4202Z+653100C2003Z(2)”的文件夹，不需要在表格里手动填图片路径。
+      - id: material_root
+        type: directory
+        label: 素材根目录
+        required: true
+        include_file_listing: true
+        placeholder: "例如：/Users/you/Downloads/MOP云盘模拍图包"
+        hint: 选择“MOP云盘文件夹下载”脚本下载出来的本地素材包根目录；脚本会递归扫描图片，并用表格里的款号组合匹配本地文件夹名。
+      - id: submit_delay_ms
+        type: number
+        label: 每行提交间隔毫秒
+        default: 2500
+        hidden: true
+        min: 0
+        max: 30000
+        step: 500
+        ui_span: third
+        hint: 控制批量真实发布节奏，避免过快触发平台限流。
+    trigger:
+      type: manual
+    output:
+      - type: excel
+        filename: "MOP搭配素材真实发布结果_{timestamp}.xlsx"
+        columns:
+          - 表格行号
+          - 搭配ID
+          - 发布内容ID
+          - 文件夹名
+          - 款号
+          - 商品ID
+          - 标题
+          - 文案
+          - 素材来源
+          - 素材数量
+          - 素材明细
+          - 切图策略
+          - 执行结果
+          - 备注
+          - 抓取时间

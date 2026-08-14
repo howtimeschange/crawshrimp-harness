@@ -1,0 +1,16 @@
+[project]
+name = "crawshrimp-staffdeck-mcp"
+version = "0.1.0"
+description = "StaffDeck MCP sidecar for Crawshrimp local automation."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+crawshrimp-staffdeck-mcp = "staffdeck_mcp.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["staffdeck_mcp*"]

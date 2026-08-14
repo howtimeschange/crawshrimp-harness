@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>四大跨境平台数字员工与周提效</title>
+<style>
+  @page { size: 960pt 540pt; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 960pt;
+    height: 540pt;
+    overflow: hidden;
+    position: relative;
+    background: #F7FAFC;
+    color: #102A43;
+    font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  .top-rule { position: absolute; left: 42pt; right: 42pt; top: 107pt; height: 1.2pt; background: #B9CDE0; }
+  .accent-rule { position: absolute; left: 42pt; top: 107pt; width: 92pt; height: 3pt; background: #1F4E78; }
+  .header { position: absolute; left: 42pt; top: 30pt; width: 805pt; }
+  .header h1 { font-size: 25pt; line-height: 1.2; font-weight: 750; letter-spacing: .2pt; color: #163E63; }
+  .header p { margin-top: 8pt; font-size: 10.5pt; line-height: 1.4; color: #526D82; }
+  .logo { position: absolute; left: 870pt; top: 31pt; width: 39pt; height: 39pt; object-fit: contain; }
+  .left-rail { position: absolute; left: 42pt; top: 136pt; width: 214pt; height: 294pt; background: #1F4E78; }
+  .left-rail .tag { position: absolute; left: 19pt; top: 19pt; }
+  .left-rail .tag p { font-size: 10pt; color: #D9EAF7; font-weight: 650; letter-spacing: .4pt; }
+  .left-rail .number { position: absolute; left: 18pt; top: 52pt; }
+  .left-rail .number h2 { font-size: 47pt; line-height: .95; color: #FFFFFF; font-weight: 780; letter-spacing: -1pt; }
+  .left-rail .number p { margin-top: 6pt; font-size: 15pt; line-height: 1; color: #D9EAF7; font-weight: 650; }
+  .left-rail .proof { position: absolute; left: 19pt; right: 19pt; bottom: 22pt; padding-top: 13pt; border-top: 1pt solid rgba(255,255,255,.34); }
+  .left-rail .proof p { font-size: 10.5pt; line-height: 1.6; color: #ECF5FB; }
+  .left-rail .proof p + p { margin-top: 4pt; color: #BFD6E8; }
+  .main { position: absolute; left: 284pt; top: 140pt; width: 628pt; }
+  .main h2 { font-size: 18pt; line-height: 1.25; color: #163E63; font-weight: 730; }
+  .main .desc { margin-top: 6pt; font-size: 10.5pt; line-height: 1.45; color: #526D82; }
+  .estimate { position: absolute; left: 0; top: 82pt; width: 172pt; height: 159pt; background: #E2F0D9; border-left: 4pt solid #4D7C50; }
+  .estimate h3 { position: absolute; left: 18pt; top: 16pt; font-size: 34pt; line-height: 1; color: #2E5B32; font-weight: 780; letter-spacing: -.7pt; }
+  .estimate p { position: absolute; left: 19pt; right: 15pt; top: 65pt; font-size: 10pt; line-height: 1.5; color: #395C3A; }
+  .estimate .small { top: 115pt; color: #527153; font-size: 8.5pt; }
+  .route { position: absolute; left: 200pt; top: 82pt; width: 428pt; height: 159pt; }
+  .route-line { position: absolute; top: 29pt; left: 0; right: 16pt; height: 2pt; background: #7FA7C4; }
+  .step { position: absolute; top: 0; width: 132pt; height: 153pt; }
+  .step.one { left: 0; }
+  .step.two { left: 145pt; }
+  .step.three { left: 290pt; }
+  .step .dot { position: absolute; left: 0; top: 19pt; width: 20pt; height: 20pt; border-radius: 10pt; background: #1F4E78; }
+  .step .dot p { text-align: center; font-size: 10pt; line-height: 20pt; color: #FFFFFF; font-weight: 700; }
+  .step h3 { position: absolute; left: 0; top: 52pt; right: 2pt; font-size: 12pt; line-height: 1.3; color: #1F4E78; font-weight: 720; }
+  .step p { position: absolute; left: 0; top: 91pt; right: 2pt; font-size: 9.2pt; line-height: 1.5; color: #526D82; }
+  .platform-strip { position: absolute; left: 0; top: 268pt; width: 628pt; height: 76pt; border-top: 1pt solid #C8D8E5; border-bottom: 1pt solid #C8D8E5; }
+  .platform-title { position: absolute; left: 0; top: 12pt; }
+  .platform-title p { font-size: 9pt; letter-spacing: .4pt; color: #658096; font-weight: 680; }
+  .platforms { position: absolute; left: 0; top: 34pt; right: 0; display: flex; }
+  .platform { width: 157pt; height: 30pt; border-left: 2pt solid #7FA7C4; padding-left: 8pt; }
+  .platform p { font-size: 10pt; line-height: 1.1; color: #1F4E78; font-weight: 720; }
+  .platform .sub { margin-top: 3pt; font-size: 8.2pt; color: #658096; font-weight: 500; }
+  .footer { position: absolute; left: 42pt; right: 42pt; bottom: 18pt; }
+  .footer p { font-size: 8pt; line-height: 1.35; color: #71879A; }
+</style>
+</head>
+<body>
+  <!-- Assumption: 本页面向内部管理层，聚焦已验证收益、可替代操作试算与优先建设路径。 -->
+  <div class="header">
+    <h1>四大跨境平台数字员工：先夯实数据底座，再复制高频执行场景</h1>
+    <p>以抓虾现有脚本为起点，将可验证的单点能力逐步封装为跨平台可复用的 Skill / Agent</p>
+  </div>
+  <img class="logo" src="../assets/crawshrimp-icon.png" alt="抓虾图标">
+  <div class="top-rule"></div>
+  <div class="accent-rule"></div>
+
+  <div class="left-rail">
+    <div class="tag"><p>已验证收益</p></div>
+    <div class="number"><h2>10h</h2><p>／周</p></div>
+    <div class="proof"><p>抓虾数据获取：每日≥2小时</p><p>按 5 个工作日折算</p></div>
+  </div>
+
+  <div class="main">
+    <h2>先让运营“看结果、判异常”，再让数字员工接管重复操作</h2>
+    <p class="desc">从单点脚本验证，过渡到统一工作台与标准化 Skill / Agent；人效目标是业务增长时不同比例增加人力。</p>
+
+    <div class="estimate">
+      <h3>21.5h</h3>
+      <p>／周 · 当前可替代操作的合理试算</p>
+      <p class="small">不作为正式人效承诺</p>
+    </div>
+
+    <div class="route">
+      <div class="route-line"></div>
+      <div class="step one"><div class="dot"><p>1</p></div><h3>数据与 BI 数据员工</h3><p>基础数据抓取、自动同步、异常定位<br>当前已跑通</p></div>
+      <div class="step two"><div class="dot"><p>2</p></div><h3>活动商品管理员工</h3><p>已报活动统一记录、价格冲突校验、到手价核算<br>下一优先级</p></div>
+      <div class="step three"><div class="dot"><p>3</p></div><h3>站点与活动提醒员工</h3><p>重点款上下架 / 价格异动预警；Shopee 多站点活动日程提醒</p></div>
+    </div>
+
+    <div class="platform-strip">
+      <div class="platform-title"><p>按平台差异匹配数字员工重点</p></div>
+      <div class="platforms">
+        <div class="platform"><p>Temu</p><p class="sub">数据、价格与站点异动</p></div>
+        <div class="platform"><p>Shopee</p><p class="sub">多站点活动日程提醒</p></div>
+        <div class="platform"><p>Amazon</p><p class="sub">复盘与批量运营动作</p></div>
+        <div class="platform"><p>SHEIN</p><p class="sub">供货与活动提报协同</p></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer"><p>口径说明：工具仍处测试迭代阶段；未建设、平台承接及重复使用同一份数据的场景不计入。会议纪要中的 “Tim/Tom” 暂按流程表映射为 Temu，平台命名待业务复核。</p></div>
+</body>
+</html>

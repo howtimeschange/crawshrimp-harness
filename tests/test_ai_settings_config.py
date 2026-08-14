@@ -1,0 +1,112 @@
+import unittest
+from unittest.mock import patch
+
+from core.config import DEFAULT_CONFIG, load_config, patch_config, save_config
+
+
+class AiSettingsConfigTests(unittest.TestCase):
+    def test_default_config_exposes_1xm_keys_without_real_secret_values(self):
+        one_xm = DEFAULT_CONFIG["ai"]["1xm"]
+
+        self.assertEqual(one_xm["gpt_image_2k_key"], "")
+        self.assertEqual(one_xm["gpt_image_4k_key"], "")
+        self.assertEqual(one_xm["gemini_3_1_flash_image_preview_key"], "")
+        self.assertEqual(one_xm["gemini_3_pro_image_preview_key"], "")
+        self.assertEqual(one_xm["base_url"], "https://one-xm-proxy.crawshrimp.com/v1")
+        self.assertEqual(DEFAULT_CONFIG["notify"]["dingtalk_secret"], "")
+
+    def test_load_config_migrates_legacy_1xm_default_base_url_to_proxy(self):
+        with patch("core.config._config_path") as config_path:
+            import tempfile
+            from pathlib import Path
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                path = Path(tmpdir) / "config.json"
+                config_path.return_value = path
+                save_config({"ai.1xm.base_url": "https://api.1xm.ai/v1"})
+
+                loaded = load_config()
+
+        self.assertEqual(loaded["ai"]["1xm"]["base_url"], "https://one-xm-proxy.crawshrimp.com/v1")
+
+    def test_load_config_preserves_custom_1xm_base_url(self):
+        with patch("core.config._config_path") as config_path:
+            import tempfile
+            from pathlib import Path
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                path = Path(tmpdir) / "config.json"
+                config_path.return_value = path
+                save_config({"ai.1xm.base_url": "https://custom-proxy.example/v1"})
+
+                loaded = load_config()
+
+        self.assertEqual(loaded["ai"]["1xm"]["base_url"], "https://custom-proxy.example/v1")
+
+    def test_default_config_exposes_video_provider_fields_without_secret_values(self):
+        video = DEFAULT_CONFIG["ai"]["video"]
+
+        self.assertEqual(video["seedance_api_key"], "")
+        self.assertEqual(video["bailian_api_key"], "")
+        self.assertEqual(video["bailian_workspace_id"], "")
+        self.assertEqual(video["bailian_region"], "cn-beijing")
+        self.assertEqual(video["bailian_upload_api_key"], "")
+        self.assertEqual(video["bailian_uploads_url"], "https://dashscope.aliyuncs.com/api/v1/uploads")
+
+    def test_default_config_exposes_llm_routes_without_a_real_secret(self):
+        llm = DEFAULT_CONFIG["ai"]["llm"]
+
+        self.assertEqual(llm["api_key"], "")
+        self.assertEqual(llm["overseas_openai_base_url"], "https://ai-aigw.semir.com/overseas-openai-vip/v1")
+        self.assertEqual(llm["overseas_anthropic_base_url"], "https://ai-aigw.semir.com/overseas-anthropic-vip")
+        self.assertEqual(llm["domestic_base_url"], "https://ai-aigw.semir.com/bailian-codingplan/v1")
+        self.assertEqual(llm["default_model"], "gpt-5.6-terra")
+
+    def test_save_config_expands_dotted_settings_keys(self):
+        with patch("core.config._config_path") as config_path:
+            import tempfile
+            from pathlib import Path
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                path = Path(tmpdir) / "config.json"
+                config_path.return_value = path
+                save_config({
+                    "ai.1xm.gpt_image_2k_key": "unit-2k",
+                    "ai.1xm.gemini_3_1_flash_image_preview_key": "unit-flash",
+                    "ai.1xm.gemini_3_pro_image_preview_key": "unit-pro",
+                    "notify.dingtalk_webhook": "https://example.test/hook",
+                    "notify.dingtalk_secret": "unit-secret",
+                })
+                loaded = load_config()
+
+        self.assertEqual(loaded["ai"]["1xm"]["gpt_image_2k_key"], "unit-2k")
+        self.assertEqual(loaded["ai"]["1xm"]["gemini_3_1_flash_image_preview_key"], "unit-flash")
+        self.assertEqual(loaded["ai"]["1xm"]["gemini_3_pro_image_preview_key"], "unit-pro")
+        self.assertEqual(loaded["notify"]["dingtalk_webhook"], "https://example.test/hook")
+        self.assertEqual(loaded["notify"]["dingtalk_secret"], "unit-secret")
+
+    def test_patch_config_updates_only_targeted_settings(self):
+        with patch("core.config._config_path") as config_path:
+            import tempfile
+            from pathlib import Path
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                path = Path(tmpdir) / "config.json"
+                config_path.return_value = path
+                save_config({
+                    "notify.dingtalk_webhook": "https://example.test/old",
+                    "notify.feishu_webhook": "https://open.feishu.cn/old",
+                    "data_dir": "/tmp/crawshrimp-data",
+                })
+                patch_config({
+                    "notify.dingtalk_webhook": "https://example.test/new",
+                })
+                loaded = load_config()
+
+        self.assertEqual(loaded["notify"]["dingtalk_webhook"], "https://example.test/new")
+        self.assertEqual(loaded["notify"]["feishu_webhook"], "https://open.feishu.cn/old")
+        self.assertEqual(loaded["data_dir"], "/tmp/crawshrimp-data")
+
+
+if __name__ == "__main__":
+    unittest.main()

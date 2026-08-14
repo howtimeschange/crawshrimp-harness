@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>跨境平台与独立站：工作流、数字员工与效果</title>
+<style>
+  @page { size: 960pt 540pt; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { width: 960pt; height: 540pt; overflow: hidden; position: relative; background: #F7FAFC; color: #102A43; font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; }
+  .title { position: absolute; left: 42pt; top: 26pt; width: 800pt; }
+  .title h1 { font-size: 22pt; line-height: 1.22; color: #163E63; font-weight: 760; letter-spacing: .1pt; }
+  .title p { margin-top: 6pt; font-size: 10pt; line-height: 1.4; color: #59738A; }
+  .logo { position: absolute; right: 43pt; top: 26pt; width: 38pt; height: 38pt; object-fit: contain; }
+  .metrics { position: absolute; left: 42pt; top: 92pt; right: 42pt; height: 54pt; display: flex; gap: 11pt; }
+  .metric { height: 54pt; padding: 8pt 13pt; }
+  .metric.one { width: 190pt; background: #1F4E78; }
+  .metric.two { width: 192pt; background: #E2F0D9; border-left: 3pt solid #4D7C50; }
+  .metric.three { flex: 1; background: #D9EAF7; border-left: 3pt solid #4F81BD; }
+  .metric h2 { font-size: 18pt; line-height: 1; font-weight: 780; }
+  .metric p { margin-top: 4pt; font-size: 8.5pt; line-height: 1.15; }
+  .metric.one h2 { color: #FFFFFF; } .metric.one p { color: #D9EAF7; }
+  .metric.two h2 { color: #2E5B32; } .metric.two p { color: #527153; }
+  .metric.three h2 { color: #1F4E78; } .metric.three p { color: #55738C; }
+  .table { position: absolute; left: 42pt; right: 42pt; top: 155pt; }
+  .heads { height: 27pt; display: grid; grid-template-columns: 100pt 292pt 220pt 264pt; background: #1F4E78; }
+  .head { padding: 7pt 10pt; border-right: 1pt solid rgba(255,255,255,.26); }
+  .head:last-child { border-right: 0; }
+  .head p { font-size: 10pt; color: #FFFFFF; font-weight: 700; letter-spacing: .3pt; }
+  .row { height: 59pt; display: grid; grid-template-columns: 100pt 292pt 220pt 264pt; border-bottom: 1pt solid #C8D8E5; }
+  .row:nth-child(odd) { background: #FFFFFF; }
+  .cell { position: relative; padding: 9pt 11pt; border-right: 1pt solid #D6E2EB; }
+  .cell:last-child { border-right: 0; }
+  .platform { padding: 7pt 10pt; background: #EAF2F8; border-left: 5pt solid #1F4E78; }
+  .platform p { font-size: 14pt; line-height: 1; color: #1F4E78; font-weight: 760; }
+  .platform .sub { margin-top: 4pt; font-size: 7.8pt; color: #5C7B93; font-weight: 600; }
+  .cell { padding: 6pt 10pt; }
+  .cell h3 { font-size: 9.4pt; line-height: 1.16; color: #173E62; font-weight: 720; }
+  .cell p { margin-top: 2pt; font-size: 7.4pt; line-height: 1.22; color: #526D82; }
+  .employee h3 { color: #1F4E78; }
+  .effect { padding-right: 9pt; }
+  .effect h3 { color: #2E5B32; }
+  .effect p { color: #46685B; }
+  .status { position: absolute; right: 8pt; top: 6pt; padding: 2pt 5pt; background: #E2F0D9; }
+  .status p { margin: 0; font-size: 7.2pt; color: #3C663F; font-weight: 700; }
+  .footer { position: absolute; left: 42pt; right: 42pt; bottom: 10pt; border-top: 1pt solid #C8D8E5; padding-top: 5pt; }
+  .footer p { font-size: 7.7pt; line-height: 1.35; color: #71879A; }
+</style>
+</head>
+<body>
+  <!-- Assumption: 面向管理层，用一张映射页清楚说明每个平台的工作流、数字员工和可衡量效果。 -->
+  <div class="title"><h1>跨境平台与独立站：将高频工作流映射为数字员工，并以提效支撑增收</h1><p>抓虾覆盖运营动作，Listingify 负责上新刊登治理，库存同步插件负责独立站库存回写；运营保留决策、审批、对外沟通和高风险提交。</p></div>
+  <img class="logo" src="../assets/crawshrimp-icon.png" alt="抓虾图标">
+
+  <div class="metrics">
+    <div class="metric one"><h2>10h／周</h2><p>已验证：Temu 数据获取</p></div>
+    <div class="metric two"><h2>21.5h／周</h2><p>当前脚本可替代操作的合理试算</p></div>
+    <div class="metric three"><h2>3 套工具协同</h2><p>抓虾：运营动作｜Listingify：上新刊登｜库存插件：独立站库存</p></div>
+  </div>
+
+  <div class="table">
+    <div class="heads"><div class="head"><p>平台</p></div><div class="head"><p>高频工作流 / 事项</p></div><div class="head"><p>对应数字员工</p></div><div class="head"><p>效果：提效与增收路径</p></div></div>
+    <div class="row">
+      <div class="cell platform"><p>Temu</p><p class="sub">全托管</p></div>
+      <div class="cell"><h3>数据复盘、核价 / 活动巡检、重点款异动</h3><p>抓取经营数据；重点款上下架 / 价格异动看板待建设。</p></div>
+      <div class="cell employee"><h3>抓虾 · 经营数据分析员</h3><p>促销风控员；站点异动预警员（规划）</p></div>
+      <div class="cell effect"><h3>已验证 10h／周；试算 +7.5h／周</h3><p>异常前置，减少错价 / 断货；释放时间经营重点款。</p></div>
+    </div>
+    <div class="row">
+      <div class="cell platform"><p>Shopee</p><p class="sub">多站点</p></div>
+      <div class="cell"><h3>活动排期、券批量配置、买家会话处理</h3><p>活动提醒待建设；已支持多店券配置与按表批量发信。</p></div>
+      <div class="cell employee"><h3>抓虾 · 活动排期与提醒员工</h3><p>券配置与买家沟通员工</p></div>
+      <div class="cell effect"><h3>合理试算 7h／周</h3><p>减少漏报与重复配置，提高活动覆盖和转化机会。</p><div class="status"><p>提醒能力待建设</p></div></div>
+    </div>
+    <div class="row">
+      <div class="cell platform"><p>Amazon</p><p class="sub">全链路自主</p></div>
+      <div class="cell"><h3>素材标签、评论洞察、上新资料准备</h3><p>现有标签 / 评论抓取；Listingify 的商品与内容中台可复用，适配器待接入。</p></div>
+      <div class="cell employee"><h3>抓虾 · 素材与评论洞察员工</h3><p>Listingify · 商品资料准备员工</p></div>
+      <div class="cell effect"><h3>合理试算 2.75h／周</h3><p>缩短上新准备；提升 Listing 表达与选品判断效率。</p></div>
+    </div>
+    <div class="row">
+      <div class="cell platform"><p>SHEIN</p><p class="sub">轻运营</p></div>
+      <div class="cell"><h3>数据 / 质量复盘；批次上新、字段 / 图片预检、发布追踪</h3><p>抓虾侧聚焦经营与质量；Listingify 已跑通上新刊登闭环。</p></div>
+      <div class="cell employee"><h3>抓虾 · 经营与质量巡检员工</h3><p>Listingify · 上新刊登执行员工</p></div>
+      <div class="cell effect"><h3>试算 4.25h／周；上新闭环单列验证</h3><p>降低错填与返工，提高发布成功和上新交付质量。</p></div>
+    </div>
+    <div class="row">
+      <div class="cell platform"><p>独立站</p><p class="sub">Shopify</p></div>
+      <div class="cell"><h3>SKU 探查、逻辑仓库存汇总、库存回写、结果审计</h3><p>按逻辑仓比例汇总可售库存，支持手动 / 定时同步与明细追溯。</p></div>
+      <div class="cell employee"><h3>库存同步插件 · 库存同步与审计助手</h3><p>SKU 快照、逻辑仓比例、回写任务与执行记录</p></div>
+      <div class="cell effect"><h3>不计入 21.5h／周，单列采集验证</h3><p>减少超卖 / 错售与断货风险，用库存准确性守住独立站销售。</p></div>
+    </div>
+  </div>
+
+  <div class="footer"><p>口径说明：10h／周为会议纪要已验证的“数据获取每日≥2小时”折算；21.5h／周为当前抓虾脚本可替代操作的合理试算。Listingify 上新刊登与库存同步插件已扩展纳入数字员工范围，但需按业务批次另行采集工时 / 成功率，不并入 21.5h／周；会议纪要中的 “Tim/Tom” 暂按流程表映射为 Temu，平台命名待业务复核。</p></div>
+</body>
+</html>
