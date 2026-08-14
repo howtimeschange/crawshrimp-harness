@@ -237,7 +237,7 @@ window.__ModuleLoader__.load({
 
     // ---- 产物媒体注入:会话消息流内直接显示图片(多图)/视频(可播放)/附件(可点击) ----
     const ARTIFACT_CSS = [
-      '.cs-artifact-block { margin: 6px 0; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-bg-layer-1); padding: 10px 12px; max-width: 560px; }',
+      '.cs-artifact-block { margin: 10px 0; border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-1); padding: 10px 12px; max-width: 560px; align-self: flex-start; }',
       '.cs-artifact-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }',
       '.cs-artifact-icon { width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex: none; background: var(--dsw-alias-state-business-tertiary); }',
       '.cs-artifact-name { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
@@ -380,13 +380,24 @@ window.__ModuleLoader__.load({
       const existing = [...document.querySelectorAll('.cs-artifact-block')]
         .some((b) => b.dataset.artifactPath === String(artifact.path))
       if (existing) return
-      const host = document.querySelector('.wSkVaW_scrollBody')
-      if (!host) {
-        // 消息区尚未渲染(会话切换/重载中):几秒后重试一次,避免事件丢失
+      // 插入消息列表内(最后一条消息之后),像一条消息出现在信息流里;
+      // 不能挂 scrollBody 末尾——那是输入框(composerSeat)之后,会挤压对话框。
+      const column = document.querySelector('.Md3f7G_column')
+      if (!column) {
         setTimeout(() => renderArtifactShow(data), 2500)
         return
       }
-      host.appendChild(makeArtifactBlock(artifact, data.urls || {}))
+      const block = makeArtifactBlock(artifact, data.urls || {})
+      column.appendChild(block)
+      // 滚动到底,让新「消息」立即可见
+      const scrollEl = document.querySelector('.wSkVaW_scrollBody')
+      if (scrollEl) {
+        try {
+          scrollEl.scrollTop = scrollEl.scrollHeight
+        } catch (error) {
+          // 忽略
+        }
+      }
     }
 
     // ---- 默认工作区:自动采用抓虾运行时目录,不需要用户指定 ----
