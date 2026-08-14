@@ -47,3 +47,27 @@ def test_tool_result_extraction():
 
 def test_tool_result_no_call_id():
     assert _extract_tool_call_id({"message": {"source": {"kind": "model"}}}) is None
+
+
+def test_redact_text_masks_credentials():
+    from core.agent.service import redact_text
+    assert "***" in redact_text("Authorization: Bearer abcdefghijklmnopqrstuvwxyz123")
+    assert "sk-***" in redact_text("openai key is sk-abcdefgh12345678 today")
+    assert "***" in redact_text('{"token": "abcdefghijklmnopqrstuvwxyz123456"}')
+    # 短值不误伤
+    assert redact_text("token: short") == "token: short"
+
+
+def test_analyze_rows_operations():
+    from core.agent.mcp_gateway import _analyze_rows
+    header = ["name", "price"]
+    rows = [["a", "10"], ["b", "20"], ["c", "30"]]
+    desc = _analyze_rows(header, rows, {"op": "describe", "column": "price"})
+    assert desc["min"] == 10.0 and desc["max"] == 30.0
+    vc = _analyze_rows(header, rows, {"op": "value_counts", "column": "name"})
+    assert len(vc) == 3
+    gb = _analyze_rows(header, rows, {"op": "groupby", "column": "price", "by": "name"})
+    assert gb[0]["count"] == 1 and "sum" in gb[0]
+    flt = _analyze_rows(header, rows, {"op": "filter", "column": "price",
+                                       "condition": {"column": "price", "op": ">", "value": 15}})
+    assert flt["matched"] == 2

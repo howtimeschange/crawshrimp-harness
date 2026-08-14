@@ -316,8 +316,10 @@ def _execute_plan(plan: dict, params: dict) -> dict:
     import uuid
     uid = f"ti-{uuid.uuid4().hex[:16]}"
     try:
+        tool_call_id = _current_tool_call_id()
         instance = ctx.create_task_instance(plan["adapter_id"], plan["task_id"],
-                                            plan["task_id"], params)
+                                            plan["task_id"], params,
+                                            source="agent", source_ref=tool_call_id or "")
         uid = instance.get("uid") or instance.get("instance_uid") or uid
     except Exception as exc:  # noqa: BLE001
         db.update_plan(plan["plan_id"], status="failed")
@@ -464,6 +466,179 @@ def _build_text_preview(text: str, filename: str, artifact_id: int) -> dict:
     }, evidence={"task_instance_uid": None, "artifact_ids": [artifact_id]})
 
 
+def tool_data_analyze(artifact_id: int, operation: dict) -> dict:
+    """受限数据分析:describe/groupby/filter/value_counts(纯 Python,行数上限内)。"""
+    guard = _require_run()
+    if guard:
+        return guard
+    if not ctx.read_artifact_bytes:
+        return _failed("ARTIFACT_NOT_ALLOWED", "产物读取不可用")
+    loaded = ctx.read_artifact_bytes(artifact_id)
+    if not loaded:
+        return _failed("ARTIFACT_NOT_ALLOWED", f"产物不存在: {artifact_id}")
+    content, filename = loaded
+    preview = _build_text_preview(content, filename, artifact_id)
+    if preview.get("status") != "ready" or not isinstance(preview.get("data"), dict):
+        return _failed("PREVIEW_TOO_LARGE", "产物不可文本化分析(二进制请用界面)")
+    data = preview["data"]
+    header = list(data.get("header") or [])
+    rows = [list(r) for r in (data.get("rows") or [])]
+    op = str((operation or {}).get("op") or "")
+    column = str((operation or {}).get("column") or "")
+    if op not in ("describe", "groupby", "filter", "value_counts"):
+        return _failed("INVALID_PARAMETERS", f"不支持的分析操作: {op}(仅 describe/groupby/filter/value_counts)")
+    if column and column not in header:
+        return _failed("INVALID_PARAMETERS", f"列不存在: {column}")
+    try:
+        result = _analyze_rows(header, rows, operation)
+    except Exception as exc:  # noqa: BLE001
+        return _failed("TASK_FAILED", f"分析失败: {exc}")
+    return _ok({"artifact_id": artifact_id, "operation": operation, "result": result},
+               evidence={"task_instance_uid": None, "artifact_ids": [artifact_id]})
+
+
+def _analyze_rows(header, rows, operation):
+    op = str((operation or {}).get("op") or "")
+    column = str((operation or {}).get("column") or "")
+    idx = header.index(column) if column in header else None
+    if op == "describe":
+        values = [r[idx] for r in rows if idx is not None and idx < len(r) and r[idx] not in ("", None)]
+        numeric = []
+        for v in values:
+            try:
+                numeric.append(float(str(v).replace(",", "")))
+            except ValueError:
+                pass
+        out = {"column": column, "count": len(values), "non_empty": len(values)}
+        if numeric and len(numeric) == len(values):
+            out.update({
+                "min": round(min(numeric), 4), "max": round(max(numeric), 4),
+                "mean": round(sum(numeric) / len(numeric), 4),
+                "sum": round(sum(numeric), 4),
+            })
+        else:
+            uniq = sorted({str(v) for v in values})
+            out["unique_count"] = len(uniq)
+            out["top_values"] = uniq[:10]
+        return out
+    if op == "value_counts":
+        counts = {}
+        for r in rows:
+            if idx is not None and idx < len(r):
+                key = str(r[idx])[:80]
+                counts[key] = counts.get(key, 0) + 1
+        return [{"value": k, "count": v} for k, v in sorted(counts.items(), key=lambda x: -x[1])[:50]]
+    if op == "groupby":
+        by = str((operation or {}).get("by") or "")
+        if by not in header or idx is None:
+            return {"error": f"groupby 需要合法的 by 列(当前: {by!r})"}
+        by_idx = header.index(by)
+        groups = {}
+        for r in rows:
+            key = str(r[by_idx])[:80] if by_idx < len(r) else ""
+            val = r[idx] if idx < len(r) else ""
+            groups.setdefault(key, []).append(val)
+        out = []
+        for k, vals in groups.items():
+            numeric = []
+            for v in vals:
+                try:
+                    numeric.append(float(str(v).replace(",", "")))
+                except ValueError:
+                    pass
+            entry = {"group": k, "count": len(vals)}
+            if numeric and len(numeric) == len(vals):
+                entry["sum"] = round(sum(numeric), 4)
+                entry["mean"] = round(sum(numeric) / len(numeric), 4)
+            out.append(entry)
+        return out[:50]
+    if op == "filter":
+        cond = (operation or {}).get("condition") or {}
+        cond_col = str(cond.get("column") or "")
+        cond_op = str(cond.get("op") or "==")
+        cond_val = cond.get("value")
+        if cond_col not in header:
+            return {"error": f"condition 列不存在: {cond_col}"}
+        cidx = header.index(cond_col)
+        matched = []
+        for r in rows:
+            cell = str(r[cidx]) if cidx < len(r) else ""
+            ok = False
+            try:
+                num_cell = float(str(cell).replace(",", ""))
+                num_val = float(str(cond_val))
+                if cond_op == "==": ok = num_cell == num_val
+                elif cond_op == "!=": ok = num_cell != num_val
+                elif cond_op == ">": ok = num_cell > num_val
+                elif cond_op == "<": ok = num_cell < num_val
+                elif cond_op == ">=": ok = num_cell >= num_val
+                elif cond_op == "<=": ok = num_cell <= num_val
+            except (TypeError, ValueError):
+                s_cell, s_val = cell, str(cond_val)
+                if cond_op == "==": ok = s_cell == s_val
+                elif cond_op == "!=": ok = s_cell != s_val
+                elif cond_op == "contains": ok = s_val in s_cell
+            if ok:
+                matched.append(r)
+        return {"matched": len(matched), "rows": matched[:50], "truncated": len(matched) > 50}
+    return {"error": "unknown op"}
+
+
+def tool_data_export(task_instance_uid: str, artifact_id: int, name: str = "", format: str = "xlsx") -> dict:
+    """把已授权产物的受限预览导出为 xlsx/csv 产物(需审批)。"""
+    guard = _require_run()
+    if guard:
+        return guard
+    if not ctx.write_artifact:
+        return _failed("ARTIFACT_NOT_ALLOWED", "产物写出不可用")
+    if format not in ("xlsx", "csv"):
+        return _failed("INVALID_PARAMETERS", f"不支持的格式: {format}")
+    loaded = ctx.read_artifact_bytes(artifact_id)
+    if not loaded:
+        return _failed("ARTIFACT_NOT_ALLOWED", f"产物不存在: {artifact_id}")
+    content, filename = loaded
+    preview = _build_text_preview(content, filename, artifact_id)
+    if preview.get("status") != "ready" or not isinstance(preview.get("data"), dict):
+        return _failed("PREVIEW_TOO_LARGE", "仅支持表格/文本产物的导出")
+    header = list(preview["data"].get("header") or [])
+    rows = [list(r) for r in (preview["data"].get("rows") or [])]
+    safe_name = re.sub(r"[^A-Za-z0-9._\u4e00-\u9fff-]", "_", (name or "").strip() or f"export-{artifact_id}")
+    if not safe_name.endswith(f".{format}"):
+        safe_name = f"{safe_name}.{format}"
+    summary = {"kind": "data_export", "task_instance_uid": task_instance_uid,
+               "artifact_id": artifact_id, "name": safe_name, "format": format, "risk": "local_write"}
+    decision = _await_approval_blocking({"plan_id": f"export-{artifact_id}-{format}", "params_json": "{}",
+                                         "params_sha256": "", "risk": "local_write",
+                                         "adapter_id": "", "task_id": ""}, summary)
+    if decision != "approved":
+        return _rejected("rejected", "APPROVAL_REJECTED" if decision == "rejected" else "APPROVAL_EXPIRED",
+                         "导出未获批准")
+    import io
+    out_bytes = io.BytesIO()
+    if format == "xlsx":
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(header)
+        for r in rows:
+            ws.append(r)
+        wb.save(out_bytes)
+    else:
+        import csv
+        text = io.StringIO()
+        writer = csv.writer(text)
+        writer.writerow(header)
+        writer.writerows(rows)
+        out_bytes = io.BytesIO(text.getvalue().encode("utf-8-sig"))
+    artifact = ctx.write_artifact(task_instance_uid, safe_name, out_bytes.getvalue(),
+                                  "export" if format == "xlsx" else "export_csv")
+    if not artifact:
+        return _failed("TASK_FAILED", "产物登记失败")
+    return _ok({"artifact_id": artifact.get("id"), "name": safe_name, "format": format},
+               status="ready", evidence={"task_instance_uid": task_instance_uid,
+                                         "artifact_ids": [artifact.get("id")]})
+
+
 def _build_xlsx_preview(content: bytes, artifact_id: int) -> dict:
     try:
         import io
@@ -575,6 +750,10 @@ async def tool_browser_eval(expression: str) -> dict:
         return _failed("CONTEXT_REQUIRED", f"eval 失败: {exc}")
 
 
+SENSITIVE_ACT_TEXTS = ("发布", "提交", "确认", "支付", "上传", "下单", "立即购买", "删除", "解绑", "注销")
+CREDENTIAL_SELECTOR_HINTS = ("password", "passwd", "pwd", "token", "cookie", "api_key", "apikey", "secret")
+
+
 async def tool_browser_act(action: str, selector: str = "", text: str = "",
                            delta_y: float = 0, ms: int = 0) -> dict:
     client, tab, guard = _browser_client()
@@ -582,10 +761,41 @@ async def tool_browser_act(action: str, selector: str = "", text: str = "",
         return guard
     if action not in ("click", "type", "scroll", "wait"):
         return _failed("INVALID_PARAMETERS", f"不支持的 action: {action}")
+
+    # 凭证字段:直接阻断,提示人工操作(方案 §8.2)
+    haystack = f"{selector or ''} {text or ''}".lower()
+    if action == "type" and any(h in haystack for h in CREDENTIAL_SELECTOR_HINTS):
+        return _rejected("rejected", "INVALID_PARAMETERS",
+                         "检测到凭证类输入框,智能体不代填密钥/密码/Cookie,请人工在浏览器中操作")
+
     grant = ctx.grant or {}
     toolset = json.loads(grant.get("toolset_json") or "[]") if grant.get("toolset_json") else []
+
+    # 升级授权:本次运行未授权 act → 阻塞请求能力升级(方案 §8.1)
     if "act" not in toolset:
-        return _rejected("rejected", "ARTIFACT_NOT_ALLOWED", "本次运行未授权页面操作(act)")
+        summary = {"kind": "capability_upgrade", "capability": "act", "run_id": _run_id_or_none(),
+                   "tab_url": (tab or {}).get("url", ""), "risk": "local_write"}
+        decision = _await_approval_blocking({"plan_id": f"grant-act-{_run_id_or_none()}", "params_json": "{}",
+                                             "params_sha256": "", "risk": "local_write",
+                                             "adapter_id": "", "task_id": ""}, summary)
+        if decision != "approved":
+            return _rejected("rejected", "APPROVAL_REJECTED" if decision == "rejected" else "APPROVAL_EXPIRED",
+                             "页面操作未获授权,未执行")
+        toolset = list(toolset) + ["act"]
+        if grant.get("grant_id"):
+            db.update_grant_toolset(grant["grant_id"], toolset)
+        ctx.grant = dict(ctx.grant or {}, toolset_json=json.dumps(toolset))
+
+    # 敏感动作:逐次审批(方案 §8.2)
+    if action == "click" and any(t in (text or "") for t in SENSITIVE_ACT_TEXTS):
+        summary = {"kind": "sensitive_click", "text": text, "selector": selector,
+                   "tab_url": (tab or {}).get("url", ""), "risk": "external_write"}
+        decision = _await_approval_blocking({"plan_id": f"sensitive-click-{_run_id_or_none()}", "params_json": "{}",
+                                             "params_sha256": "", "risk": "external_write",
+                                             "adapter_id": "", "task_id": ""}, summary)
+        if decision != "approved":
+            return _rejected("rejected", "APPROVAL_REJECTED" if decision == "rejected" else "APPROVAL_EXPIRED",
+                             "敏感操作未获批准,未执行")
     try:
         async with client:
             result = await client.act(action, {"selector": selector, "text": text,
@@ -747,6 +957,11 @@ def _run_id_or_none() -> Optional[str]:
     return (ctx.active_run or {}).get("run_id")
 
 
+def _current_tool_call_id() -> str:
+    run = ctx.active_run or {}
+    return str(run.get("run_id") or "")
+
+
 def _cap_json(value: Any, max_chars: int = 8000) -> Any:
     text = json.dumps(value, ensure_ascii=False, default=str)
     if len(text) > max_chars:
@@ -763,12 +978,32 @@ def _safe_task_summary(detail: dict) -> str:
     return "; ".join(pieces)[:300]
 
 
+EXPECTED_TOOLS = [
+    "tasks_search", "task_describe", "task_prepare", "task_run", "task_status",
+    "task_wait", "task_control", "artifacts_list", "data_preview",
+    "browser_observe", "browser_eval", "browser_act", "browser_verify",
+    "browser_navigate", "browser_capture_requests",
+    "script_list", "script_describe", "script_run", "script_create_draft",
+    "script_publish", "script_test",
+    "data_analyze", "data_export",
+]
+
+
 def create_agent_mcp_server() -> MCPServer:
+    _registered: set[str] = set()
+
     mcp = MCPServer(
         name="crawshrimp",
         version="0.1.0",
         instructions="抓虾智能体工具网关:浏览器自动化、任务编排、脚本与数据。所有副作用受抓虾授权与审批边界约束。",
     )
+
+    _orig_add_tool = mcp.add_tool
+    def _track_add(fn, **kwargs):
+        if kwargs.get("name"):
+            _registered.add(str(kwargs["name"]))
+        _orig_add_tool(fn, **kwargs)
+    mcp.add_tool = _track_add
 
     mcp.add_tool(tool_tasks_search, name="tasks_search",
                  description="搜索当前启用且允许智能体使用的抓虾任务(query 可留空)")
@@ -784,6 +1019,10 @@ def create_agent_mcp_server() -> MCPServer:
                  description="pause/resume/stop 已关联 Task Instance;始终需要用户审批")
     mcp.add_tool(tool_artifacts_list, name="artifacts_list", description="列出 Task Instance 的产物元数据")
     mcp.add_tool(tool_data_preview, name="data_preview", description="按 artifact ID 返回受限表格/文本预览")
+    mcp.add_tool(tool_data_analyze, name="data_analyze",
+                 description="对已授权产物做受限分析(describe/groupby/filter/value_counts,纯 Python)")
+    mcp.add_tool(tool_data_export, name="data_export",
+                 description="把产物的受限预览导出为 xlsx/csv 新产物(需审批)")
     mcp.add_tool(tool_browser_observe, name="browser_observe",
                  description="当前授权页面结构化摘要(标题/正文/链接/按钮/输入框),非原始 HTML")
     mcp.add_tool(tool_browser_eval, name="browser_eval", description="在当前页面执行 JS 表达式并返回 JSON 值")
@@ -801,5 +1040,14 @@ def create_agent_mcp_server() -> MCPServer:
     mcp.add_tool(tool_script_publish, name="script_publish",
                  description="提交脚本发布请求;审批卡 + 脚本审核页人工复核双闸门")
     mcp.add_tool(tool_script_test, name="script_test", description="草稿测试(内容校验;完整 dry-run 后续版本)")
+
+    # 注册表快照断言(方案 §6.2):模型可见工具集合必须与清单完全一致
+    actual = set(_registered)
+    expected = set(EXPECTED_TOOLS)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        raise RuntimeError(
+            f"agent 工具注册表不一致: 缺失={missing or '无'} 多余={extra or '无'}")
 
     return mcp

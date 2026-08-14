@@ -83,13 +83,38 @@
             </div>
           </div>
 
+          <div v-else-if="m.kind === 'task'" class="task-card">
+            <div class="task-card-head">
+              <span class="task-card-icon">📋</span>
+              <span class="task-card-name">任务实例</span>
+              <span class="task-card-status running">运行中</span>
+            </div>
+            <div class="task-card-uid">{{ m.taskInstanceUid }}</div>
+            <div class="task-card-actions">
+              <button class="task-open-btn" type="button" @click="openTaskInstance(m.taskInstanceUid)">
+                在任务中心打开
+              </button>
+            </div>
+          </div>
+
           <div v-else-if="m.kind === 'notice'" class="chat-notice">
             {{ m.text }}
           </div>
         </template>
       </div>
 
-      <div class="chat-composer">
+      <div class="chat-composer-wrap">
+        <div class="composer-chips">
+          <button
+            :class="['composer-chip', { active: attachBrowser }]"
+            type="button"
+            title="将当前 9222 Chrome 页面作为本次运行上下文(仅授予观察/求值/验证,页面操作需逐次授权)"
+            @click="attachBrowser = !attachBrowser"
+          >
+            🌐 带上当前浏览器页面
+          </button>
+        </div>
+        <div class="chat-composer">
         <textarea
           v-model="draft"
           class="composer-input"
@@ -99,6 +124,7 @@
           @keydown.enter.exact.prevent="send"
         ></textarea>
         <button class="composer-send" type="button" :disabled="!sessionId || !draft.trim()" @click="send">发送</button>
+        </div>
       </div>
     </div>
 
@@ -123,6 +149,9 @@ const props = defineProps({
   sessionId: { type: String, default: '' },
 })
 
+const emit = defineEmits(['open-task-instance'])
+
+const attachBrowser = ref(false)
 const sessionTitle = ref('新会话')
 const browserOpen = ref(true)
 const draft = ref('')
@@ -189,7 +218,10 @@ async function scrollToBottom() {
 
 function approvalSummary(m) {
   const s = m.summary || {}
-  if (s.kind === 'script_publish') return `发布脚本修订:${s.rev_id || ''}`
+  if (s.kind === 'script_publish') return `发布脚本修订:${s.rev_id || ''}(经审批后进入脚本审核页复核)`
+  if (s.kind === 'capability_upgrade') return `页面操作授权请求:允许智能体在本次运行中执行浏览器点击/输入(当前页面 ${s.tab_url || ''})`
+  if (s.kind === 'sensitive_click') return `敏感操作:点击「${s.text || s.selector || ''}」(${s.tab_url || ''})`
+  if (s.kind === 'data_export') return `导出产物 ${s.name || ''} 为 ${s.format || ''}`
   if (s.action) return `任务控制:对 ${s.task_instance_uid} 执行 ${s.action}`
   const params = s.params || {}
   const paramText = Object.entries(params).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')
@@ -296,6 +328,16 @@ function handleEvent(event, data) {
       scrollToBottom()
       break
     }
+    case 'task.linked': {
+      pushMessage({
+        kind: 'task',
+        taskInstanceUid: data?.task_instance_uid || '',
+        planId: data?.plan_id || '',
+        status: 'running',
+      })
+      scrollToBottom()
+      break
+    }
     case 'session.updated': {
       if (data?.title) sessionTitle.value = data.title
       break
@@ -314,9 +356,10 @@ async function send() {
   pushMessage({ role: 'user', text })
   scrollToBottom()
   try {
+    const refs = attachBrowser.value ? [{ type: 'browser_tab', id: 'current' }] : []
     const result = await window.cs.agentApi('POST', `/agent/sessions/${props.sessionId}/turns`, {
       text,
-      context_refs: [],
+      context_refs: refs,
     })
     queuePosition.value = result?.queue_depth || 0
   } catch (error) {
@@ -333,6 +376,10 @@ async function stopRun() {
     pushMessage({ kind: 'notice', text: `停止失败:${error?.message || error}` })
     scrollToBottom()
   }
+}
+
+function openTaskInstance(instanceUid) {
+  emit('open-task-instance', instanceUid)
 }
 
 async function decideApproval(m, decision) {
@@ -652,13 +699,88 @@ onUnmounted(() => {
   color: var(--text3);
   font-size: 11.5px;
 }
+.chat-composer-wrap {
+  border-top: 1px solid var(--border);
+  background: var(--bg2);
+}
+.composer-chips {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px 0;
+}
+.composer-chip {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text3);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.composer-chip:hover {
+  color: var(--text2);
+}
+.composer-chip.active {
+  border-color: var(--orange);
+  color: var(--orange);
+  background: var(--orange-bg);
+}
+.task-card {
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg2);
+  padding: 10px 14px;
+}
+.task-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.task-card-icon {
+  font-size: 14px;
+}
+.task-card-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.task-card-status {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text3);
+}
+.task-card-status.running {
+  color: var(--orange);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.task-card-uid {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text3);
+  font-family: monospace;
+}
+.task-card-actions {
+  margin-top: 8px;
+}
+.task-open-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.task-open-btn:hover {
+  color: var(--orange);
+  border-color: var(--orange);
+}
 .chat-composer {
   display: flex;
   align-items: flex-end;
   gap: 8px;
   padding: 12px 16px;
-  border-top: 1px solid var(--border);
-  background: var(--bg2);
 }
 .composer-input {
   flex: 1;

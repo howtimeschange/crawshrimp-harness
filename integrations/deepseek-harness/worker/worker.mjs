@@ -194,8 +194,23 @@ function attachRunEventHandlers(run) {
       const event = params.event || {}
       const seq = Number(event.seq || 0)
       if (seq > run.lastSeq) run.lastSeq = seq
+      const type = event.type
+      const name = String(event.data?.name || '')
+      if (type === 'step/start') run.counters.steps += 1
+      if (type === 'tool/call') {
+        run.counters.toolCalls += 1
+        if (name.includes('browser_observe')) run.counters.observe += 1
+        if (name.includes('browser_act')) run.counters.act += 1
+      }
+      const exceeded = budgetName()
+      if (exceeded) {
+        notifyHarness(run.runId, event)
+        finishRun({ status: 'failed', reason: { kind: 'error', error: { code: 'BUDGET_EXCEEDED', message: exceeded } }, messageId: run.messageId, lastSeq: run.lastSeq })
+        stopRuntime()  // 中断模型继续执行
+        return
+      }
       notifyHarness(run.runId, event)
-      if (event.type === 'turn/end') {
+      if (type === 'turn/end') {
         run.sawTurnEnd = true
         run.turnEndReason = event.data?.reason ?? null
         if (run.sawIdle) settleRun(run)
@@ -218,6 +233,25 @@ function settleRun(run) {
   finishRun({ status, reason, messageId: run.messageId, lastSeq: run.lastSeq })
 }
 
+const DEFAULT_BUDGET = { maxSteps: 60, maxToolCalls: 80, maxObserve: 40, maxAct: 50, wallclockMs: 30 * 60 * 1000 }
+
+function normalizeBudget(budget) {
+  const b = { ...DEFAULT_BUDGET, ...(budget || {}) }
+  for (const key of Object.keys(b)) b[key] = Number(b[key]) || DEFAULT_BUDGET[key]
+  return b
+}
+
+function budgetName() {
+  const run = state.activeRun
+  if (!run) return ''
+  const b = run.budget
+  if (run.counters.steps >= b.maxSteps) return `步数预算耗尽(${b.maxSteps})`
+  if (run.counters.toolCalls >= b.maxToolCalls) return `工具调用预算耗尽(${b.maxToolCalls})`
+  if (run.counters.observe >= b.maxObserve) return `页面观察预算耗尽(${b.maxObserve})`
+  if (run.counters.act >= b.maxAct) return `页面操作预算耗尽(${b.maxAct})`
+  return ''
+}
+
 async function startRun(params) {
   if (state.activeRun) {
     return { ok: false, error: { code: 'BUSY', message: '已有一个 active run' } }
@@ -230,9 +264,11 @@ async function startRun(params) {
     return { ok: false, error: { code: 'INVALID_PARAMS', message: 'runId/sessionId/text 必填' } }
   }
 
+  const budget = normalizeBudget(params.budget)
   const run = {
     runId, sessionId,
     messageId: null, sawTurnEnd: false, sawIdle: false, turnEndReason: null, lastSeq: 0,
+    budget, counters: { steps: 0, toolCalls: 0, observe: 0, act: 0 },
     resolve: null,
     timer: setTimeout(() => {
       console.error(`[worker] run ${runId} 超过 ${RUN_ABSOLUTE_TIMEOUT_MS}ms 绝对上限,终止`)

@@ -175,7 +175,10 @@
         v-if="currentView === 'agent'"
         :session-id="agentSessionId"
         @open-settings="openSettingsPanel"
+        @open-task-instance="openTaskInstanceFromAgent"
       />
+      <!-- 脚本审核(双闸门第二闸门) -->
+      <AgentScriptReview v-if="currentView === 'agent_script_review'" />
       <!-- 设置 -->
       <SettingsPage
         v-if="currentView === 'settings'"
@@ -207,6 +210,7 @@ import DataFiles   from './views/DataFiles.vue'
 import SettingsPage from './views/SettingsPage.vue'
 import CloudApprovalFrame from './views/CloudApprovalFrame.vue'
 import AgentHome from './views/AgentHome.vue'
+import AgentScriptReview from './views/AgentScriptReview.vue'
 import AgentSessionBar from './components/agent/AgentSessionBar.vue'
 import SidebarUpdateFooter from './components/SidebarUpdateFooter.vue'
 import { buildScriptGroups } from './utils/scriptGroups'
@@ -281,6 +285,7 @@ const updateActionRunner = createUpdateActionRunner({
 
 const navItems = [
   { id: 'agent',  icon: '🤖', label: '智能体' },
+  { id: 'agent_script_review', icon: '🧾', label: '脚本审核' },
   { id: 'scripts',  icon: '📄', label: '我的脚本' },
   { id: 'task_center', icon: '📋', label: '任务中心' },
   { id: 'ai_image', icon: '🎨', label: 'AI 生图' },
@@ -319,6 +324,11 @@ const agentSessionId = ref('')
 
 function onAgentSessionSelected(sessionId) {
   agentSessionId.value = sessionId || ''
+}
+
+function openTaskInstanceFromAgent(instanceUid) {
+  activeInstanceUid.value = instanceUid || ''
+  currentView.value = 'task_center'
 }
 
 function openSettingsPanel(panelId) {

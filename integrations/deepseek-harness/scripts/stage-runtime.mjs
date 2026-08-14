@@ -83,6 +83,24 @@ for (const rel of REQUIRED_STAGE_FILES) {
   if (!existsSync(join(stageRoot, rel))) fail(`staging missing required file: ${rel}`)
 }
 
+// 禁止包校验(方案 §6.2):生产闭包中不得出现禁用能力族
+const BANNED_PACKAGES = [
+  'dsh-tool-bash', 'dsh-tool-bash-persistent', 'dsh-terminal', 'dsh-tool-terminal',
+  'dsh-subprocess', 'dsh-subprocess-local',
+  'dsh-subagent', 'dsh-tool-subagent', 'dsh-subagent-acp', 'dsh-subagent-claude-code',
+  'dsh-subagent-codex', 'dsh-subagent-dsh-sdk',
+  'dsh-web-search-deepseek', 'dsh-web-search-exa', 'dsh-web-search-perplexity', 'dsh-tool-web',
+  'dsh-session-telemetry', 'dsh-session-telemetry-otel',
+]
+{
+  const scoped = join(stageRoot, 'node_modules', '@deepseek-ai')
+  if (existsSync(scoped)) {
+    const { readdirSync } = require('node:fs')
+    const banned = readdirSync(scoped).filter((name) => BANNED_PACKAGES.some((b) => name === b))
+    if (banned.length) fail(`生产闭包含禁用包: ${banned.join(', ')}`)
+  }
+}
+
 if (skipBootCheck) {
   console.log('[stage-runtime] boot check skipped')
 } else {

@@ -192,6 +192,82 @@ def create_grant(session_id: str, req: GrantCreateRequest) -> dict:
     return {"grant": grant}
 
 
+# ---------- 脚本审核(双闸门第二闸门) ----------
+
+@router.get("/script-revisions")
+def list_script_revisions(status: str = "") -> dict:
+    import json as _json
+    from core.agent import db as _db
+    rows = []
+    with _db._lock:
+        conn = _db._conn()
+        try:
+            for r in conn.execute("SELECT * FROM agent_script_revisions ORDER BY updated_at DESC").fetchall():
+                d = dict(r)
+                if status and d.get("status") != status:
+                    continue
+                rows.append(d)
+        finally:
+            conn.close()
+    return {"revisions": rows}
+
+
+@router.get("/script-revisions/{rev_id}")
+def get_script_revision(rev_id: str) -> dict:
+    from pathlib import Path
+    rev = db.get_script_revision(rev_id)
+    if not rev:
+        raise HTTPException(404, "修订不存在")
+    content = ""
+    try:
+        content = Path(rev["draft_path"]).read_text(encoding="utf-8")
+    except OSError:
+        pass
+    return {"revision": rev, "content": content[:200000]}
+
+
+class ScriptReviewRequest(BaseModel):
+    decision: str  # publish | reject
+
+
+@router.post("/script-revisions/{rev_id}/review")
+def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
+    """人工复核闸门:把草稿发布到已发布脚本库,或拒绝。"""
+    from pathlib import Path
+    import hashlib as _hashlib
+    from core.agent import db as _db
+
+    if req.decision not in ("publish", "reject"):
+        raise HTTPException(422, "decision 仅支持 publish/reject")
+    rev = db.get_script_revision(rev_id)
+    if not rev:
+        raise HTTPException(404, "修订不存在")
+    if rev["status"] != "pending_review":
+        if rev["status"] == "published" and req.decision == "publish":
+            return {"ok": True, "idempotent": True, "status": "published"}
+        raise HTTPException(409, f"修订状态不允许复核: {rev['status']}")
+    if req.decision == "reject":
+        _db.update_script_revision(rev_id, status="rejected")
+        return {"ok": True, "status": "rejected"}
+
+    draft = Path(rev["draft_path"])
+    if not draft.exists():
+        _db.update_script_revision(rev_id, status="rejected")
+        raise HTTPException(409, "草稿文件已不存在,无法发布")
+    content = draft.read_text(encoding="utf-8")
+    adapter_id = rev.get("adapter_id") or "general"
+    import re as _re
+    safe_adapter = _re.sub(r"[^A-Za-z0-9._-]", "_", str(adapter_id))
+    from core.agent.service import _data_root
+    publish_dir = _data_root() / "agent" / "published-scripts" / safe_adapter
+    publish_dir.mkdir(parents=True, exist_ok=True)
+    dest = publish_dir / draft.name
+    dest.write_text(content, encoding="utf-8")
+    sha = _hashlib.sha256(content.encode("utf-8")).hexdigest()
+    _db.update_script_revision(rev_id, status="published", source_sha256=sha)
+    return {"ok": True, "status": "published", "path": str(dest), "source_sha256": sha}
+
+
 def build_agent_mcp_asgi(token_provider) -> Any:
     """构建带 Bearer 鉴权的 MCP ASGI 应用(独立端口服务,SDK session manager 需要自身 lifespan)。
 

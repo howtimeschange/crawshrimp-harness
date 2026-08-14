@@ -7390,14 +7390,17 @@ async def lifespan(app: FastAPI):
         try:
             _agent = AgentService()
             _agent.bind_callbacks(
-                create_task_instance=lambda adapter_id, task_id, title, params:
-                    data_sink.create_task_instance(adapter_id, task_id, title, params),
+                create_task_instance=lambda adapter_id, task_id, title, params,
+                    source="manual", source_ref="":
+                    data_sink.create_task_instance(adapter_id, task_id, title, params,
+                                                   source=source, source_ref=source_ref),
                 get_task_instance=data_sink.get_task_instance_detail,
                 run_task_instance=_agent_run_task_instance,
                 control_task_instance=_agent_control_task_instance,
                 list_task_artifacts=lambda uid:
                     (data_sink.get_task_instance_detail(uid) or {}).get("artifacts") or [],
                 read_artifact_bytes=_agent_read_artifact_bytes,
+                write_artifact=_agent_write_artifact,
             )
             agent_api.set_agent_service(_agent)
             app.state.agent_service = _agent
@@ -11356,6 +11359,29 @@ def _agent_read_artifact_bytes(artifact_id):
         return path.read_bytes(), str(row.get("label") or path.name)
     except OSError:
         return None
+
+
+def _agent_write_artifact(instance_uid: str, filename: str, content_bytes: bytes, kind: str):
+    """智能体网关回调:导出受限预览为 xlsx/csv 产物并登记。"""
+    instance = data_sink.get_task_instance(instance_uid)
+    if not instance:
+        return None
+    safe_name = re.sub(r"[^A-Za-z0-9._\u4e00-\u9fff-]", "_", str(filename or "export.bin"))
+    export_dir = data_sink._data_root() / "agent-exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    dest = export_dir / safe_name
+    try:
+        dest.write_bytes(content_bytes)
+    except OSError:
+        return None
+    artifact = data_sink.add_task_instance_artifact(
+        instance_uid,
+        kind=kind,
+        label=safe_name,
+        path=str(dest),
+        meta={"source": "agent"},
+    )
+    return artifact
 
 
 @app.post("/task-instances/{instance_uid}/run")

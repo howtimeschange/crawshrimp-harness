@@ -106,6 +106,8 @@ def init_db():
                 completed_at  TEXT
             )
         """)
+        _ensure_column(conn, "task_instances", "source", "TEXT NOT NULL DEFAULT 'manual'")
+        _ensure_column(conn, "task_instances", "source_ref", "TEXT NOT NULL DEFAULT ''")
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_task_instances_adapter_task_status
             ON task_instances (adapter_id, task_id, status, updated_at)
@@ -1472,7 +1474,8 @@ def soft_delete_ai_video_job(job_uid: str) -> bool:
     return True
 
 
-def create_task_instance(adapter_id: str, task_id: str, title: str, params: Optional[Mapping[str, Any]] = None) -> dict:
+def create_task_instance(adapter_id: str, task_id: str, title: str, params: Optional[Mapping[str, Any]] = None,
+                         source: str = "manual", source_ref: str = "") -> dict:
     """Insert a draft task instance and return the inserted row."""
     now = _now_iso()
     instance_uid = uuid.uuid4().hex
@@ -1480,9 +1483,10 @@ def create_task_instance(adapter_id: str, task_id: str, title: str, params: Opti
         conn.execute("""
             INSERT INTO task_instances (
                 instance_uid, adapter_id, task_id, title, status, current_step,
-                params_json, summary_json, archived, created_at, updated_at
+                params_json, summary_json, archived, created_at, updated_at,
+                source, source_ref
             )
-            VALUES (?, ?, ?, ?, 'draft', 'config', ?, '{}', 0, ?, ?)
+            VALUES (?, ?, ?, ?, 'draft', 'config', ?, '{}', 0, ?, ?, ?, ?)
         """, (
             instance_uid,
             str(adapter_id or "").strip(),
@@ -1491,6 +1495,8 @@ def create_task_instance(adapter_id: str, task_id: str, title: str, params: Opti
             _json_dumps(dict(params or {})),
             now,
             now,
+            str(source or "manual").strip() or "manual",
+            str(source_ref or "").strip(),
         ))
         conn.commit()
     return get_task_instance(instance_uid) or {}

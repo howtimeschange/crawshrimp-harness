@@ -645,6 +645,17 @@ def get_grant(grant_id: str) -> Optional[dict]:
             conn.close()
 
 
+def update_grant_toolset(grant_id: str, toolset: list[str]) -> None:
+    with _lock:
+        conn = _conn()
+        try:
+            conn.execute("UPDATE agent_capability_grants SET toolset_json = ? WHERE grant_id = ?",
+                         (_json(toolset), grant_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+
 def revoke_grant(grant_id: str) -> None:
     with _lock:
         conn = _conn()

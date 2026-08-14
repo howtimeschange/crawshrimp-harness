@@ -26,6 +26,14 @@ FILTERED_EVENT_TYPES = {"request/header", "request/context"}
 
 RUN_FINAL_STATUSES = {"completed", "failed", "canceled", "interrupted"}
 
+# 分级预算(方案 §11):按 Run 类型;worker 侧计数执行
+BUDGET_PROFILES = {
+    "browser": {"maxSteps": 80, "maxToolCalls": 120, "maxObserve": 40, "maxAct": 50,
+                "wallclockMs": 30 * 60 * 1000},
+    "default": {"maxSteps": 30, "maxToolCalls": 40, "maxObserve": 5, "maxAct": 0,
+                "wallclockMs": 15 * 60 * 1000},
+}
+
 
 def _data_root() -> Path:
     import os as _os
@@ -81,6 +89,7 @@ class AgentService:
         mcp_gateway.ctx.get_task_instance = callbacks.get("get_task_instance")
         mcp_gateway.ctx.list_task_artifacts = callbacks.get("list_task_artifacts")
         mcp_gateway.ctx.read_artifact_bytes = callbacks.get("read_artifact_bytes")
+        mcp_gateway.ctx.write_artifact = callbacks.get("write_artifact")
         mcp_gateway.ctx.request_approval = self.request_approval
         mcp_gateway.ctx.emit_event = lambda event_type, payload: None
 
@@ -254,10 +263,12 @@ class AgentService:
             if not generation_ok:
                 raise RuntimeError(self.runtime_error or "runtime 启动失败")
 
+            budget = BUDGET_PROFILES["browser"] if self._is_browser_run(item) else BUDGET_PROFILES["default"]
             summary = await self.worker.request("worker.run", {
                 "runId": run_id,
                 "sessionId": self._runtime_session_id(session_id),
                 "text": item["text"],
+                "budget": budget,
             }, timeout=30 * 60 + 60)
 
             result = (summary or {}).get("summary") or {}
@@ -276,6 +287,7 @@ class AgentService:
                     "runId": run_id,
                     "sessionId": new_sid,
                     "text": item["text"],
+                    "budget": budget,
                 }, timeout=30 * 60 + 60)
                 result = (summary or {}).get("summary") or {}
             status = result.get("status")
@@ -303,6 +315,11 @@ class AgentService:
             self.active_run = None
             db.update_session(session_id, status="idle")
             await self.broadcast(session_id, 0, "session.updated", {"session_id": session_id, "status": "idle"})
+
+    @staticmethod
+    def _is_browser_run(item: dict) -> bool:
+        refs = item.get("context_refs") or []
+        return any(r.get("type") == "browser_tab" for r in refs)
 
     def _runtime_session_id(self, session_id: str) -> str:
         session = db.get_session(session_id)
@@ -430,8 +447,9 @@ class AgentService:
     def runtime_status(self) -> dict:
         cfg = load_config()
         llm = (cfg.get("ai") or {}).get("llm") or {}
+        import os as _os
         return {
-            "enabled": True,
+            "enabled": _os.environ.get("CRAWSHRIMP_AGENT_ENABLED", "1") not in ("0", "false", "no"),
             "state": self.runtime_state,
             "generation": self.generation,
             "model": llm.get("default_model") or "gpt-5.6-terra",
@@ -526,7 +544,7 @@ class AgentService:
                     db.update_tool_call(tool_call["tool_call_id"], result_json={"text": result_text[:4000]},
                                         status="succeeded", finished_at=_now_iso())
                 await self.broadcast(session_id, _seq(session_id), "tool.completed", {
-                    "run_id": run_id, "dsh_call_id": call_id, "result": result_text[:2000],
+                    "run_id": run_id, "dsh_call_id": call_id, "result": redact_text(result_text)[:2000],
                 })
             return
 
@@ -653,6 +671,28 @@ def _extract_text(data: dict) -> str:
         if isinstance(content, list):
             return "".join(str(b.get("text") or "") for b in content if isinstance(b, dict))
     return ""
+
+
+import re as _re
+
+_REDACT_PATTERNS = [
+    (_re.compile(r"(Bearer\s+)[A-Za-z0-9._\-]{16,}"), r"\1***"),
+    (_re.compile(r"(sk-[A-Za-z0-9]{8,})"), "sk-***"),
+    (_re.compile(r"(api[_-]?key[\"']?\s*[:=]\s*[\"']?)[A-Za-z0-9]{16,}"), r"\1***"),
+    (_re.compile(r"(authorization[\"']?\s*[:=]\s*[\"']?)[^\"',\s]{16,}"), r"\1***"),
+    (_re.compile(r"(cookie[\"']?\s*[:=]\s*[\"']?)[^\"',\s]{16,}"), r"\1***"),
+    (_re.compile(r"(token[\"']?\s*[:=]\s*[\"']?)[A-Za-z0-9._\-]{24,}"), r"\1***"),
+]
+
+
+def redact_text(text: str) -> str:
+    """对可能包含密钥/Cookie/Authorization 的文本做模式脱敏(注入防御第一道)。"""
+    if not text:
+        return ""
+    out = str(text)
+    for pattern, repl in _REDACT_PATTERNS:
+        out = pattern.sub(repl, out)
+    return out
 
 
 def _extract_tool_call_id(data: dict) -> Optional[str]:
