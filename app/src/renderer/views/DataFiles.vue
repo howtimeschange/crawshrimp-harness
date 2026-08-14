@@ -386,13 +386,14 @@ onUnmounted(clearNoticeTimer)
 </script>
 
 <style scoped>
-/* === 根容器：position 绝对定位，完全跳出 grid 链 === */
+/* === 根容器:跟随内容区容器(统一导航下数据文件嵌入右侧内容区) === */
 .df-root {
-  position: fixed;
-  top: 40px;          /* 避开 macOS 标题栏 */
-  left: 168px;        /* 避开侧边栏 */
+  position: relative;
+  top: 0;
+  left: 0;
   right: 0;
   bottom: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--bg);
