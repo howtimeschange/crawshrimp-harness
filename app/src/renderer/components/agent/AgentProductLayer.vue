@@ -1,6 +1,6 @@
 <template>
-  <div v-if="cards.length" class="agent-product-layer">
-    <div v-for="card in cards" :key="card.uid" class="product-card" :class="card.kind">
+  <div v-if="visibleCards.length" class="agent-product-layer">
+    <div v-for="card in visibleCards" :key="card.uid" class="product-card" :class="card.kind">
       <!-- 任务卡 -->
       <template v-if="card.kind === 'task'">
         <div class="product-card-head">
@@ -39,19 +39,30 @@
           <button class="product-card-close" type="button" title="关闭" @click="dismiss(card)">×</button>
         </div>
         <div class="product-card-body">{{ card.text }}</div>
+        <div v-if="card.runtimeSessionId && card.global" class="product-card-actions">
+          <button class="product-btn" type="button" @click="openApprovalSession(card)">切换到审批会话</button>
+        </div>
       </template>
     </div>
   </div>
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
-const emit = defineEmits(['open-task-instance', 'browser-auto-open', 'browser-open-tabs', 'artifact-show'])
+const props = defineProps({
+  activeRuntimeSessionId: { type: String, default: '' },
+})
+
+const emit = defineEmits(['open-task-instance', 'browser-auto-open', 'browser-open-tabs'])
 
 const cards = ref([])
+const visibleCards = computed(() => cards.value.filter((card) =>
+  card.global || (props.activeRuntimeSessionId && card.runtimeSessionId === props.activeRuntimeSessionId)
+).slice(-4))
 let stopEvents = null
 let taskPollTimer = null
+let lastEventSeq = -1
 
 function taskStatusLabel(card) {
   if (card.status === 'completed') return '已完成'
@@ -70,7 +81,7 @@ function taskStatusClass(card) {
 
 // 任务卡实时刷新:每 5s 轮询任务实例状态(方案 §11 任务卡由前端独立跟进进度)
 async function pollTaskStatuses() {
-  const taskCards = cards.value.filter((c) => c.kind === 'task' && c.status === 'running')
+  const taskCards = visibleCards.value.filter((c) => c.kind === 'task' && c.status === 'running')
   for (const card of taskCards) {
     try {
       const result = await window.cs.agentApi('GET', `/agent/task-instances/${card.taskInstanceUid}`)
@@ -81,7 +92,7 @@ async function pollTaskStatuses() {
       if (card.status === 'completed' && Array.isArray(result.artifacts) && result.artifacts.length) {
         for (const item of result.artifacts.slice(0, 3)) {
           const filename = item.label || item.filename || ''
-          if (filename && !cards.value.some((c) => c.kind === 'artifact' && c.filename === filename)) {
+          if (filename && !cards.value.some((c) => c.kind === 'artifact' && c.runtimeSessionId === card.runtimeSessionId && c.filename === filename)) {
             pushCard({
               kind: 'artifact',
               artifactId: item.id,
@@ -89,7 +100,7 @@ async function pollTaskStatuses() {
               path: item.path || '',
               size: item.size || 0,
               taskInstanceUid: card.taskInstanceUid,
-            })
+            }, card.runtimeSessionId)
           }
         }
       }
@@ -97,19 +108,52 @@ async function pollTaskStatuses() {
   }
 }
 
-function pushCard(card) {
+async function reconcilePendingApprovals() {
+  try {
+    const result = await window.cs.agentApi('GET', '/agent/approvals?status=pending')
+    const pending = Array.isArray(result?.approvals) ? result.approvals : []
+    const pendingIds = new Set(pending.map((item) => String(item?.approval_id || '')).filter(Boolean))
+    cards.value = cards.value.filter((card) =>
+      !(card.global && card.kind === 'approval') || pendingIds.has(String(card.approvalId || ''))
+    )
+    for (const item of pending) {
+      const runtimeSessionId = String(item?.runtime_session_id || '')
+      const approvalId = String(item?.approval_id || '')
+      if (!runtimeSessionId || runtimeSessionId === props.activeRuntimeSessionId || !approvalId) continue
+      if (!cards.value.some((card) => card.kind === 'approval' && card.approvalId === approvalId)) {
+        pushCard({ kind: 'approval', approvalId, text: '另一个会话正在等待审批。' }, runtimeSessionId, true)
+      }
+    }
+  } catch { /* 后端暂时不可达,保留现状并在下轮重试 */ }
+}
+
+function pushCard(card, runtimeSessionId = props.activeRuntimeSessionId, global = false) {
+  card.runtimeSessionId = String(runtimeSessionId || '')
+  card.global = Boolean(global)
   card.uid = card.uid || `${card.kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
   // 同一任务的重复卡只保留最新一张
   const dupKey = card.kind === 'task' ? card.taskInstanceUid : null
   if (dupKey) {
-    cards.value = cards.value.filter((c) => !(c.kind === 'task' && c.taskInstanceUid === dupKey))
+    cards.value = cards.value.filter((c) => !(c.kind === 'task' && c.taskInstanceUid === dupKey && c.runtimeSessionId === card.runtimeSessionId))
+  }
+  if (card.kind === 'artifact') {
+    const artifactKey = String(card.artifactId || `${card.path}:${card.filename}`)
+    cards.value = cards.value.filter((c) => c.kind !== 'artifact' || c.runtimeSessionId !== card.runtimeSessionId || String(c.artifactId || `${c.path}:${c.filename}`) !== artifactKey)
+  }
+  if (card.global && card.kind === 'approval') {
+    cards.value = cards.value.filter((c) => !(c.global && c.kind === 'approval' &&
+      (c.approvalId === card.approvalId || c.runtimeSessionId === card.runtimeSessionId)))
   }
   cards.value.push(card)
-  if (cards.value.length > 4) cards.value = cards.value.slice(-4)
+  if (cards.value.length > 40) cards.value = cards.value.slice(-40)
 }
 
 function dismiss(card) {
   cards.value = cards.value.filter((c) => c !== card)
+}
+
+function openApprovalSession(card) {
+  postToSession({ __crawshrimp: 'open-runtime-session', runtimeSessionId: card.runtimeSessionId })
 }
 
 function formatSize(size) {
@@ -138,6 +182,22 @@ async function revealArtifact(card) {
 }
 
 function handleEvent(eventType, data) {
+  const runtimeSessionId = String(data?.runtime_session_id || '')
+  const isActive = Boolean(runtimeSessionId) && runtimeSessionId === props.activeRuntimeSessionId
+  if (eventType === 'tool.approval_required') {
+    if (!isActive) {
+      pushCard({ kind: 'approval', approvalId: String(data?.approval_id || ''), text: '另一个会话正在等待审批。' }, runtimeSessionId, true)
+    }
+    return
+  }
+  if (eventType === 'tool.approval_resolved') {
+    const approvalId = String(data?.approval_id || '')
+    cards.value = cards.value.filter((card) => !(card.global && card.kind === 'approval' &&
+      (approvalId ? card.approvalId === approvalId : card.runtimeSessionId === runtimeSessionId)))
+  } else if (['run.completed', 'run.failed', 'run.canceled', 'run.interrupted'].includes(eventType)) {
+    cards.value = cards.value.filter((card) => !(card.global && card.kind === 'approval' &&
+      card.runtimeSessionId === runtimeSessionId))
+  }
   switch (eventType) {
     case 'task.linked': {
       pushCard({
@@ -145,7 +205,7 @@ function handleEvent(eventType, data) {
         taskInstanceUid: data?.task_instance_uid || '',
         planId: data?.plan_id || '',
         status: 'running',
-      })
+      }, runtimeSessionId)
       break
     }
     case 'artifact.created': {
@@ -156,34 +216,27 @@ function handleEvent(eventType, data) {
         path: data?.path || '',
         size: data?.size || 0,
         taskInstanceUid: data?.task_instance_uid || '',
-      })
+      }, runtimeSessionId)
       // 会话内直接显示:图片多图/视频可播放/附件可点击。
-      // 直接 postMessage 到智能体会话 iframe(不经 App/props 中转,链路最短最稳);
-      // 同时保留 emit 供其他消费方。
-      emit('artifact-show', {
-        filename: data?.filename || '',
-        path: data?.path || '',
-        size: data?.size || 0,
-        mediaKind: data?.media_kind || 'file',
-        zipImages: Array.isArray(data?.zip_images) ? data.zip_images : [],
-      })
-      pushArtifactToSession(data)
+      // 直接 postMessage 到智能体会话 iframe(不经 App/props 中转,链路最短最稳)。
+      rememberArtifact(data, runtimeSessionId)
+      if (isActive) pushArtifactToSession(data, runtimeSessionId)
       break
     }
     case 'run.failed': {
-      pushCard({ kind: 'notice', text: `运行失败:${data?.error || data?.error_code || '未知错误'}` })
+      if (isActive) pushCard({ kind: 'notice', text: `运行失败:${data?.error || data?.error_code || '未知错误'}` }, runtimeSessionId)
       break
     }
     case 'run.canceled': {
-      pushCard({ kind: 'notice', text: '已停止回答(已启动的业务任务不受影响)' })
+      if (isActive) pushCard({ kind: 'notice', text: '已停止回答(已启动的业务任务不受影响)' }, runtimeSessionId)
       break
     }
     case 'browser.activity': {
       // 智能体正在调用浏览器工具 → 多窗口实时浏览器跟随会话/页面
       const tabs = Array.isArray(data?.tabs) ? data.tabs : []
-      if (tabs.length) {
+      if (isActive && tabs.length) {
         emit('browser-open-tabs', { tabs, activeTabId: data?.active_tab_id || '' })
-      } else {
+      } else if (isActive) {
         emit('browser-auto-open')
       }
       break
@@ -191,7 +244,7 @@ function handleEvent(eventType, data) {
     case 'tool.requested': {
       // 浏览器类工具调用(browser_observe/act/navigate 等)→ 自动弹出实时浏览器
       const name = String(data?.tool_name || '')
-      if (name.startsWith('browser_')) emit('browser-auto-open')
+      if (isActive && name.startsWith('browser_')) emit('browser-auto-open')
       break
     }
     default:
@@ -202,9 +255,19 @@ function handleEvent(eventType, data) {
 let rebindTimer = null
 
 // ---- 会话内媒体直接显示:SSE 事件 → iframe(DSH 消息流)直接注入 ----
-const sentSessionArtifacts = []
+const artifactsByRuntime = new Map()
 
-async function pushArtifactToSession(data) {
+function rememberArtifact(data, runtimeSessionId) {
+  if (!runtimeSessionId) return
+  const items = artifactsByRuntime.get(runtimeSessionId) || []
+  const key = String(data?.artifact_id || `${data?.path || ''}:${data?.filename || ''}`)
+  const next = items.filter((item) => String(item?.artifact_id || `${item?.path || ''}:${item?.filename || ''}`) !== key)
+  next.push({ ...data })
+  artifactsByRuntime.set(runtimeSessionId, next.slice(-12))
+}
+
+async function pushArtifactToSession(data, runtimeSessionId) {
+  if (!runtimeSessionId || runtimeSessionId !== props.activeRuntimeSessionId) return
   const path = String(data?.path || '').trim()
   if (!path) return
   const urlFor = async (entry) => {
@@ -235,24 +298,33 @@ async function pushArtifactToSession(data) {
     ts: Date.now(),
   }
   // 稳定定位智能体会话 iframe(AgentWebView 根容器内)
-  const target = (document.querySelector('.agent-web-view iframe') || document.querySelector('iframe'))?.contentWindow
-  if (target) {
-    target.postMessage(msg, '*')
-  }
-  sentSessionArtifacts.push(msg)
-  if (sentSessionArtifacts.length > 12) sentSessionArtifacts.shift()
+  postToSession(msg)
+}
+
+function sessionFrame() {
+  return document.querySelector('.agent-web-view iframe')
+}
+
+function postToSession(message) {
+  const iframe = sessionFrame()
+  if (!iframe?.contentWindow) return
+  try { iframe.contentWindow.postMessage(message, new URL(iframe.src).origin) } catch { /* iframe 未就绪 */ }
 }
 
 function onSessionMessage(event) {
   const data = event?.data
   if (!data || !data.__crawshrimp) return
   // 仅接受智能体会话 iframe 的请求
-  const iframeEl = document.querySelector('.agent-web-view iframe') || document.querySelector('iframe')
-  if (event.source && iframeEl && event.source !== iframeEl.contentWindow) return
+  const iframeEl = sessionFrame()
+  let expectedOrigin = ''
+  try { expectedOrigin = new URL(iframeEl?.src || '').origin } catch { return }
+  if (!iframeEl || event.source !== iframeEl.contentWindow || event.origin !== expectedOrigin) return
   if (data.__crawshrimp === 'artifact-replay') {
     // iframe(会话界面)重载后请求重放:把最近的产物媒体消息重发一遍
-    if (iframeEl?.contentWindow && sentSessionArtifacts.length) {
-      for (const msg of sentSessionArtifacts) iframeEl.contentWindow.postMessage(msg, '*')
+    const requested = String(data.runtimeSessionId || props.activeRuntimeSessionId || '')
+    if (requested !== props.activeRuntimeSessionId) return
+    for (const artifact of artifactsByRuntime.get(requested) || []) {
+      void pushArtifactToSession(artifact, requested)
     }
   }
 }
@@ -260,8 +332,15 @@ function onSessionMessage(event) {
 async function bindEvents() {
   stopEvents?.()
   try {
-    stopEvents = window.cs.streamGlobalAgentEvents(0, {
-      onEvent: ({ event: eventType, data }) => handleEvent(eventType, data),
+    stopEvents = window.cs.streamGlobalAgentEvents(lastEventSeq, {
+      onEvent: ({ id, event: eventType, data }) => {
+        const seq = Number(id)
+        if (Number.isFinite(seq) && seq >= 0) {
+          if (lastEventSeq >= 0 && seq <= lastEventSeq) return
+          lastEventSeq = seq
+        }
+        handleEvent(eventType, data)
+      },
       onError: (error) => {
         console.warn('[agent] 全局事件流连接失败,4s 后重连:', error?.message)
         scheduleRebind()
@@ -285,8 +364,18 @@ function scheduleRebind() {
 
 onMounted(() => {
   bindEvents()
-  taskPollTimer = setInterval(pollTaskStatuses, 5000)
+  void reconcilePendingApprovals()
+  taskPollTimer = setInterval(() => {
+    void pollTaskStatuses()
+    void reconcilePendingApprovals()
+  }, 5000)
   window.addEventListener('message', onSessionMessage)
+})
+watch(() => props.activeRuntimeSessionId, (runtimeSessionId) => {
+  emit('browser-open-tabs', { tabs: [], activeTabId: '' })
+  for (const artifact of artifactsByRuntime.get(String(runtimeSessionId || '')) || []) {
+    void pushArtifactToSession(artifact, String(runtimeSessionId || ''))
+  }
 })
 onUnmounted(() => {
   stopEvents?.()

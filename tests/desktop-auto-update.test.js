@@ -136,7 +136,7 @@ test('updater IPC action handlers always return the stable status snapshot', () 
   assert.doesNotMatch(downloadHandler, /async \(\) => updateService\.downloadUpdate\(\)/)
 })
 
-test('renderer shell wires the collapsible update footer without remounting content', () => {
+test('renderer shell keeps update controls in titlebar and the script detail sidebar', () => {
   const app = readRepoFile('app/src/renderer/App.vue')
 
   assert.match(app, /import \{ createUpdateActionRunner \} from '\.\/utils\/updateActions\.js'/)
@@ -159,28 +159,19 @@ test('renderer shell wires the collapsible update footer without remounting cont
   assert.match(app, /updateActionRunner\.run\(\(\) => window\.cs\.checkForUpdates\(\)\)/)
   assert.match(app, /updateActionRunner\.run\(\(\) => window\.cs\.installUpdate\(\)\)/)
   assert.doesNotMatch(app, /\.sidebar-update-footer\s*\{[^}]*display:\s*none/)
-  assert.match(app, /grid-template-rows:\s*40px minmax\(0,\s*1fr\) 56px/)
-  assert.match(cssRule(app, '.layout-ai-image .sidebar'), /padding:\s*0\b/)
-  assert.doesNotMatch(cssRule(app, '.layout-ai-image .sidebar'), /env\(safe-area-inset-bottom\)/)
-  assert.match(cssRule(app, '.layout-ai-image .sidebar-update-footer'), /height:\s*56px/)
-  assert.match(cssRule(app, '.layout-ai-image .sidebar-update-footer'), /padding:\s*0 4px/)
-  assert.match(cssRule(app, '.layout-ai-image .sidebar-update-footer :deep(.update-control)'), /min-height:\s*44px/)
-  assert.match(cssRule(app, '.layout-ai-image .sidebar-update-footer :deep(.update-control:focus-visible)'), /box-shadow:\s*inset 0 0 0 2px var\(--orange\)/)
+  assert.match(app, /class="titlebar-update-btn"/)
+  assert.match(app, /<aside v-if="activeScript" class="sidebar">/)
   assert.match(app, /function shouldClearActiveScriptForNav\(item\)/)
   assert.match(app, /return Boolean\(activeScript\.value\) && item\.id !== currentView\.value/)
   assert.match(app, /if \(shouldClearActiveScriptForNav\(item\)\) \{[\s\S]*?activeScript\.value = null[\s\S]*?activeTaskId\.value = null[\s\S]*?\}/)
   assert.match(app, /'sidebar-collapsed': effectiveSidebarCollapsed/)
-  assert.match(app, /<button\s+v-if="!activeScript"[\s\S]*?class="collapse-btn"/)
-  assert.match(app, /<nav v-if="!activeScript"/)
-  assert.doesNotMatch(app, /<nav v-if="!activeScript \|\|/)
   assert.match(app, /:collapsed="effectiveSidebarCollapsed"/)
   assert.match(app, /function toggleSidebar\(\) \{\s*if \(activeScript\.value\) return[\s\S]*?writeSidebarCollapsed\(window\.localStorage,\s*sidebarCollapsed\.value\)/)
 
-  const sidebarStart = app.indexOf('<aside class="sidebar">')
-  const navBranchStart = app.indexOf('v-if="!activeScript"', sidebarStart)
-  const navBranchEnd = app.indexOf('<!-- 主内容区 -->', sidebarStart)
+  const sidebarStart = app.indexOf('<aside v-if="activeScript" class="sidebar">')
+  const navBranchEnd = app.indexOf('<!-- 主内容区:', sidebarStart)
   const footerIndex = app.indexOf('<SidebarUpdateFooter', sidebarStart)
-  assert.ok(footerIndex > navBranchStart && footerIndex < navBranchEnd)
+  assert.ok(footerIndex > sidebarStart && footerIndex < navBranchEnd)
 
   const contentStart = app.indexOf('<main class="content">')
   const contentEnd = app.indexOf('</main>', contentStart)
@@ -203,17 +194,13 @@ test('titlebar reserves the macOS window-control area only on macOS', () => {
   assert.match(cssRule(app, '.titlebar-macos.sidebar-collapsed .brand'), /margin-left:\s*-32px/)
 })
 
-test('collapsed primary navigation exposes immediate hover and keyboard tooltips', () => {
+test('primary navigation is injected into DSH while script details retain a dedicated sidebar', () => {
   const app = readRepoFile('app/src/renderer/App.vue')
 
-  assert.match(app, /:data-tooltip="effectiveSidebarCollapsed \? item\.label : null"/)
-  assert.match(app, /:title="effectiveSidebarCollapsed \? undefined : item\.label"/)
-  assert.match(cssRule(app, '.sidebar-collapsed .sidebar'), /overflow:\s*visible/)
-  assert.match(cssRule(app, '.sidebar-collapsed .sidebar'), /z-index:\s*20/)
-  assert.match(cssRule(app, '.sidebar-collapsed nav'), /overflow:\s*visible/)
-  assert.doesNotMatch(app, /(?:^|\n)\.nav-btn::after\s*\{/)
-  assert.match(app, /\.sidebar-collapsed \.nav-btn::after\s*\{[^}]*content:\s*attr\(data-tooltip\)[^}]*position:\s*absolute/s)
-  assert.match(app, /\.sidebar-collapsed \.nav-btn:hover::after[\s\S]*\.sidebar-collapsed \.nav-btn:focus-visible::after/)
+  assert.match(app, /<AgentWebView[\s\S]*:nav-items="filteredNavItems"/)
+  assert.match(app, /<aside v-if="activeScript" class="sidebar">/)
+  assert.match(app, /class="sub-nav"/)
+  assert.doesNotMatch(app, /class="nav-btn"/)
 })
 
 test('collapsed update footer exposes immediate hover and keyboard tooltip without clipping', () => {

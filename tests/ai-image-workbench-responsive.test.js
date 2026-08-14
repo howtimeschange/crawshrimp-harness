@@ -5,18 +5,15 @@ const test = require('node:test')
 const app = fs.readFileSync('app/src/renderer/App.vue', 'utf8')
 const workbench = fs.readFileSync('app/src/renderer/views/AiImageWorkbench.vue', 'utf8')
 
-test('AI image app shell moves global navigation to a compact bottom bar on narrow windows', () => {
+test('AI image app shell keeps DSH navigation mounted behind a bounded overlay', () => {
   const rootClassBinding = app.match(/<div\s+class="layout"\s+:class="(\{[\s\S]*?\})"\s*>/)?.[1]
   assert.ok(rootClassBinding, 'root layout should bind a class object')
   assert.match(rootClassBinding, /'layout-ai-image'\s*:\s*currentView\s*===\s*'ai_image'/)
   assert.match(rootClassBinding, /'sidebar-collapsed'\s*:\s*effectiveSidebarCollapsed/)
-  assert.match(app, /:aria-label="item\.label"/)
-  assert.match(app, /:title="effectiveSidebarCollapsed \? undefined : item\.label"/)
-  assert.match(app, /:data-tooltip="effectiveSidebarCollapsed \? item\.label : null"/)
-  assert.match(app, /<SidebarUpdateFooter[\s\S]*:busy="updateActionBusy"/)
-  assert.match(app, /@media \(max-width: 760px\)[\s\S]*\.layout\.layout-ai-image[\s\S]*grid-template-rows:\s*40px minmax\(0, 1fr\) 56px;/)
-  assert.match(app, /\.layout-ai-image \.sidebar[\s\S]*grid-row:\s*3;/)
-  assert.match(app, /\.layout-ai-image nav[\s\S]*flex-direction:\s*row;/)
+  assert.match(app, /<AgentWebView[\s\S]*:nav-items="filteredNavItems"/)
+  assert.match(app, /class="embed-overlay"/)
+  assert.match(app, /:style="\{ left: `\$\{embedLeft\}px` \}"/)
+  assert.match(app, /const embedLeft = computed\(\(\) => \(activeScript\.value \? 0 : railWidth\.value\)\)/)
 })
 
 test('AI image workbench switches between input and result panes instead of stacking a broken narrow layout', () => {

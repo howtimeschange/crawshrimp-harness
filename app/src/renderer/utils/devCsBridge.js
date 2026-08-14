@@ -1,9 +1,8 @@
 const DEFAULT_API_BASE = 'http://127.0.0.1:18765'
-const API_PORT_PROBE_RANGE = Array.from({ length: 11 }, (_, index) => 18765 + index)
+const API_PORT_PROBE_RANGE = Array.from({ length: 101 }, (_, index) => 18765 + index)
 const TOKEN_STORAGE_KEY = 'crawshrimp.apiToken'
 const API_BASE_STORAGE_KEY = 'crawshrimp.apiBase'
 const LOCAL_PROMPT_LIBRARY_STORAGE_KEY = 'crawshrimp.localPromptLibraries.v1'
-const TOKEN_QUERY_KEYS = ['crawshrimp_token', 'api_token', 'token']
 const API_BASE_QUERY_KEYS = ['crawshrimp_api_base', 'api_base']
 let discoveredApiBase = ''
 
@@ -25,7 +24,17 @@ function readQueryValue(keys = []) {
 }
 
 function normalizeApiBase(value) {
-  return String(value || '').trim().replace(/\/+$/, '')
+  try {
+    const parsed = new URL(String(value || '').trim())
+    const host = parsed.hostname.toLowerCase()
+    const port = Number(parsed.port || 80)
+    const loopback = ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host)
+    if (parsed.protocol !== 'http:' || !loopback || port < 18765 || port > 18865) return ''
+    if (parsed.username || parsed.password) return ''
+    return parsed.origin
+  } catch {
+    return ''
+  }
 }
 
 function rememberApiBase(value) {
@@ -57,11 +66,6 @@ function apiBase() {
 }
 
 function apiToken() {
-  const queryToken = readQueryValue(TOKEN_QUERY_KEYS)
-  if (queryToken) {
-    try { window.localStorage?.setItem(TOKEN_STORAGE_KEY, queryToken) } catch {}
-    return queryToken
-  }
   try {
     return String(window.localStorage?.getItem(TOKEN_STORAGE_KEY) || '').trim()
   } catch {
@@ -80,13 +84,18 @@ async function parseResponse(response) {
 }
 
 function buildUrl(path) {
-  if (/^https?:\/\//i.test(String(path || ''))) return String(path)
-  return `${apiBase()}${String(path || '').startsWith('/') ? '' : '/'}${path}`
+  const requestPath = String(path || '')
+  if (!requestPath.startsWith('/') || /^\/\//.test(requestPath)) throw devModeError('本地 API 路径必须以单个 / 开头')
+  return `${apiBase()}${requestPath}`
 }
 
 function buildUrlWithBase(base, path) {
-  if (/^https?:\/\//i.test(String(path || ''))) return String(path)
-  return `${normalizeApiBase(base)}${String(path || '').startsWith('/') ? '' : '/'}${path}`
+  const requestPath = String(path || '')
+  const localBase = normalizeApiBase(base)
+  if (!localBase || !requestPath.startsWith('/') || /^\/\//.test(requestPath)) {
+    throw devModeError('只允许访问本机 Crawshrimp API')
+  }
+  return `${localBase}${requestPath}`
 }
 
 function apiBaseCandidates(initialBase = '') {
@@ -151,7 +160,7 @@ async function apiCall(method, path, body) {
   if (!response.ok) {
     const detail = payload?.detail || payload?.error || payload?.message || String(payload || response.statusText)
     if (response.status === 401) {
-      throw devModeError(`开发浏览器模式缺少本地 API token：请在 localStorage.${TOKEN_STORAGE_KEY} 写入当前 .crawshrimp-dev/api-token，或用 ?crawshrimp_token=... 打开页面`)
+      throw devModeError(`开发浏览器模式缺少本地 API token：请在 localStorage.${TOKEN_STORAGE_KEY} 写入当前数据目录的 api-token；凭证不允许放入 URL query`)
     }
     throw devModeError(detail)
   }
@@ -283,6 +292,57 @@ function upsertDevPromptLibrary(payload = {}) {
   return { ok: true, library: next, libraries: saved }
 }
 
+function streamAgentSse(path, handlers = {}) {
+  const controller = new AbortController()
+  const headers = { Accept: 'text/event-stream' }
+  const token = apiToken()
+  if (token) headers['X-Crawshrimp-Token'] = token
+  void (async () => {
+    try {
+      const response = await fetch(buildUrl(path), { headers, signal: controller.signal })
+      if (!response.ok || !response.body) throw new Error(`SSE 连接失败: ${response.status}`)
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let boundary
+        while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+          const chunk = buffer.slice(0, boundary)
+          buffer = buffer.slice(boundary + 2)
+          let id = ''; let event = 'message'; const dataLines = []
+          for (const line of chunk.split('\n')) {
+            if (line.startsWith('id: ')) id = line.slice(4).trim()
+            else if (line.startsWith('event: ')) event = line.slice(7).trim()
+            else if (line.startsWith('data: ')) dataLines.push(line.slice(6))
+          }
+          if (dataLines.length) {
+            const raw = dataLines.join('\n')
+            let data
+            try { data = JSON.parse(raw) } catch { data = raw }
+            handlers.onEvent?.({ id, event, data })
+          }
+        }
+      }
+      handlers.onDone?.()
+    } catch (error) {
+      if (error?.name !== 'AbortError') handlers.onError?.(error)
+    }
+  })()
+  return () => controller.abort()
+}
+
+async function devAgentMediaUrl(path, entry = '') {
+  const signed = await apiCall('POST', '/agent/artifacts/sign', { path: String(path || ''), entry: String(entry || '') })
+  const query = new URLSearchParams({
+    path: String(signed?.path || path || ''), expires: String(signed?.expires || ''), sig: String(signed?.signature || ''),
+  })
+  if (entry) query.set('entry', String(signed?.entry || entry))
+  return buildUrl(`/agent/artifacts/${entry ? 'entry' : 'file'}?${query}`)
+}
+
 export function createDevCsBridge() {
   function disabledUpdateStatus() {
     return {
@@ -327,6 +387,18 @@ export function createDevCsBridge() {
       const tabs = await apiCall('GET', '/settings/chrome-tabs')
       return Array.isArray(tabs) ? (tabs[0] || null) : null
     },
+    listAgentBrowserTabs: async () => {
+      const tabs = await apiCall('GET', '/settings/chrome-tabs')
+      return { ok: true, tabs: (Array.isArray(tabs) ? tabs : []).map((tab) => ({ id: tab.id, url: tab.url || '', title: tab.title || '' })) }
+    },
+    agentApi: (method, path, body) => apiCall(method, path, body),
+    agentMediaUrl: (path, entry) => devAgentMediaUrl(path, entry),
+    streamAgentEvents: (sessionId, afterSeq, handlers) => streamAgentSse(
+      `/agent/sessions/${encodePathPart(sessionId)}/events?after_seq=${Number(afterSeq) || 0}`, handlers,
+    ),
+    streamGlobalAgentEvents: (afterSeq, handlers) => streamAgentSse(
+      `/agent/events?after_seq=${Number(afterSeq) || 0}`, handlers,
+    ),
 
     getAdapters: () => apiCall('GET', '/adapters'),
     installAdapter: (payload) => apiCall('POST', '/adapters/install', payload || {}),

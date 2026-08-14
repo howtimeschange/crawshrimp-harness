@@ -164,15 +164,19 @@ CRAWSHRIMP_LLM_CONFIG = """config:
         - id: gpt-5.6-terra
           contextWindow: 200000
           maxTokens: 32000
+          input: [text, image]
         - id: gpt-5.6-sol
           contextWindow: 200000
           maxTokens: 32000
+          input: [text, image]
         - id: gpt-5.6-luna
           contextWindow: 200000
           maxTokens: 32000
+          input: [text, image]
         - id: gpt-5.5
           contextWindow: 128000
           maxTokens: 16384
+          input: [text, image]
     crawshrimp-overseas-anthropic:
       displayName: 抓虾-海外 Anthropic
       apiKeyEnv: CRAWSHRIMP_LLM_API_KEY
@@ -182,9 +186,11 @@ CRAWSHRIMP_LLM_CONFIG = """config:
         - id: claude-sonnet-5
           contextWindow: 200000
           maxTokens: 32000
+          input: [text, image]
         - id: claude-opus-4-8
           contextWindow: 200000
           maxTokens: 32000
+          input: [text, image]
     crawshrimp-domestic-openai:
       displayName: 抓虾-国内 OpenAI 兼容
       apiKeyEnv: CRAWSHRIMP_LLM_API_KEY
@@ -194,18 +200,23 @@ CRAWSHRIMP_LLM_CONFIG = """config:
         - id: qwen3.8-max-preview
           contextWindow: 128000
           maxTokens: 16384
+          input: [text]
         - id: qwen3.7-plus
           contextWindow: 128000
           maxTokens: 16384
+          input: [text]
         - id: deepseek-v4-pro
           contextWindow: 128000
           maxTokens: 16384
+          input: [text]
         - id: glm-5.2
           contextWindow: 128000
           maxTokens: 16384
+          input: [text]
         - id: kimi-k2.7-code
           contextWindow: 128000
           maxTokens: 16384
+          input: [text]
     crawshrimp-deepseek-official:
       displayName: DeepSeek 官方
       apiKeyEnv: CRAWSHRIMP_DEEPSEEK_API_KEY
@@ -215,9 +226,11 @@ CRAWSHRIMP_LLM_CONFIG = """config:
         - id: deepseek-v4-flash
           contextWindow: 128000
           maxTokens: 8192
+          input: [text]
         - id: deepseek-v4-pro
           contextWindow: 128000
           maxTokens: 16384
+          input: [text]
 """
 
 PERSONA = """你是抓虾桌面应用中的操作智能体。

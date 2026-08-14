@@ -86,10 +86,16 @@
               </template>
             </div>
 
-            <pre class="detail-content">{{ content || '(草稿内容为空)' }}</pre>
+            <div class="package-files">
+              <section v-for="file in packageFiles" :key="file.name" class="package-file">
+                <div class="package-file-name">{{ file.name }}</div>
+                <pre class="detail-content">{{ file.content || '(文件内容为空)' }}</pre>
+              </section>
+              <pre v-if="!packageFiles.length" class="detail-content">{{ content || '(草稿内容为空)' }}</pre>
+            </div>
 
             <div v-if="isReviewable" class="detail-actions">
-              <button class="approve-btn" type="button" :disabled="busy" @click="decide('publish')">
+              <button class="approve-btn" type="button" :disabled="busy || !canPublish" @click="decide('publish')">
                 批准发布
               </button>
               <button class="reject-btn" type="button" :disabled="busy" @click="decide('reject')">
@@ -114,6 +120,7 @@ const revisions = ref([])
 const selectedId = ref('')
 const selected = ref(null)
 const content = ref('')
+const packageFiles = ref([])
 const loading = ref(false)
 const busy = ref('')
 const resultMessage = ref('')
@@ -124,6 +131,7 @@ const testingTask = ref(null)
 const testAdapterId = ref('')
 
 const isReviewable = computed(() => ['pending_review', 'testing'].includes(selected.value?.status))
+const canPublish = computed(() => selected.value?.status === 'testing' && Boolean(selected.value?.test_adapter_id))
 const isManifestDraft = computed(() => {
   const path = String(selected.value?.draft_path || '')
   return path.split('/').pop() === 'manifest.yaml'
@@ -168,18 +176,20 @@ async function select(rev) {
   resultMessage.value = ''
   busyMessage.value = ''
   content.value = ''
+  packageFiles.value = []
   testingTask.value = null
   testAdapter.value = null
   testTasks.value = []
   try {
     const result = await window.cs.agentApi('GET', `/agent/script-revisions/${rev.rev_id}`)
     content.value = result?.content || ''
+    packageFiles.value = result?.files || []
   } catch (error) {
     content.value = `(读取失败:${error?.message || error})`
   }
   // 已测试安装的修订:直接恢复适配器信息与任务列表
-  if (rev.status === 'testing' && rev.adapter_id) {
-    await refreshTestAdapter(rev.adapter_id)
+  if (rev.status === 'testing' && rev.test_adapter_id) {
+    await refreshTestAdapter(rev.test_adapter_id)
   }
 }
 
@@ -268,6 +278,26 @@ onMounted(load)
   flex-direction: column;
   height: 100%;
   background: var(--bg);
+}
+.package-files {
+  display: grid;
+  gap: 12px;
+}
+.package-file {
+  min-width: 0;
+}
+.package-file-name {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: var(--bg2);
+  color: var(--text2);
+  font: 600 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.package-file .detail-content {
+  margin-top: 0;
+  border-radius: 0 0 8px 8px;
 }
 .review-head {
   display: flex;

@@ -97,6 +97,7 @@ const IS_DEV   = !app.isPackaged
 const CLOUD_APPROVAL_APP_ENV = IS_DEV ? 'development' : 'production'
 const BACKEND_STARTUP_ATTEMPTS = process.platform === 'win32' ? 60 : 20
 const BACKEND_LAUNCH_RETRIES = process.platform === 'win32' ? 3 : 2
+const BACKEND_STOP_GRACE_MS = 7000
 const BACKEND_INSTANCE_ID = crypto.randomUUID()
 const AI_VIDEO_CAPABILITY_SECRET = crypto.randomBytes(32).toString('hex')
 const LEGACY_RUNTIME_MARKERS = [
@@ -113,6 +114,7 @@ const LEGACY_RUNTIME_MARKERS = [
 let resolvedCrawshrimpDataDir = ''
 let preferredCrawshrimpDataDir = ''
 let desktopServicesStartupPromise = null
+let backendRecoveryBarrier = null
 let dataDirRecoveryInfo = { recovered: false, from: '', to: '', errors: [] }
 
 function balaWorkspaceMediaUrl(workspaceRoot = '', filePath = '') {
@@ -1192,6 +1194,7 @@ function spawnBackendProcess() {
       CRAWSHRIMP_API_TOKEN: apiToken,
       CRAWSHRIMP_BACKEND_INSTANCE_ID: BACKEND_INSTANCE_ID,
       CRAWSHRIMP_AI_VIDEO_CAPABILITY_SECRET: AI_VIDEO_CAPABILITY_SECRET,
+      CRAWSHRIMP_AGENT_ATTACHMENT_TMP_ROOT: path.join(app.getPath('userData'), 'tmp-agent-attachments'),
       CRAWSHRIMP_APP_ENV: CLOUD_APPROVAL_APP_ENV,
       CRAWSHRIMP_NODE_EXECUTABLE: process.execPath,
       CRAWSHRIMP_NODE_MODULES_DIR: path.join(__dirname, '..', 'node_modules'),
@@ -1244,6 +1247,31 @@ function stopProcessTreeByPid(pid, proc = null) {
   } catch {
     return false
   }
+}
+
+function forceStopProcessTreeByPid(pid, proc = null) {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    if (process.platform === 'win32') {
+      execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { timeout: 3000, stdio: 'ignore' })
+    } else if (proc && typeof proc.kill === 'function') {
+      proc.kill('SIGKILL')
+    } else {
+      process.kill(pid, 'SIGKILL')
+    }
+    return true
+  } catch {
+    return !isPidAlive(pid)
+  }
+}
+
+async function waitForManagedBackendStop(proc, timeoutMs = BACKEND_STOP_GRACE_MS) {
+  const pid = Number(proc?.pid || 0)
+  if (!Number.isInteger(pid) || pid <= 0) return true
+  if (await waitForPidExit(pid, timeoutMs)) return true
+  log(`[api] backend pid=${pid} exceeded graceful shutdown; forcing process exit`)
+  if (!forceStopProcessTreeByPid(pid, proc)) return false
+  return await waitForPidExit(pid, 3000)
 }
 
 // ── Chrome / CDP ──────────────────────────────────────────────────────────────
@@ -1488,7 +1516,13 @@ function apiCall(method, urlPath, body = null, options = {}) {
     urlPath,
     body,
     options,
-    runWhenReady: (request, runOptions) => backendController.runWhenReady(request, runOptions),
+    runWhenReady: async (request, runOptions) => {
+      // 手动恢复期间 renderer 的轮询不能抢先触发 ensureReady，否则会在旧进程
+      // 释放 backend.lock 前启动一个无所有权实例，并把端口连续推向回退区间。
+      const recovery = backendRecoveryBarrier
+      if (recovery) await recovery
+      return backendController.runWhenReady(request, runOptions)
+    },
     describeFailure: describeApiCallFailure,
   })
 }
@@ -2229,6 +2263,11 @@ async function stopForeignBackendRuntime(runtime = {}) {
 
   log(`[api] terminating stale crawshrimp backend pid=${runtimePid}`)
   if (!stopProcessTreeByPid(runtimePid)) return false
+  if (await waitForPidExit(runtimePid)) return true
+  // 防 PID 复用：升级为 SIGKILL 前重新确认目标仍是同一类后端进程。
+  if (!readPidCommandLine(runtimePid).includes('core.api_server')) return false
+  log(`[api] stale backend pid=${runtimePid} exceeded graceful shutdown; forcing process exit`)
+  if (!forceStopProcessTreeByPid(runtimePid)) return false
   return await waitForPidExit(runtimePid)
 }
 
@@ -2277,29 +2316,43 @@ const backendController = createBackendController({
 })
 
 const restartBackend = createSingleFlightRecovery(async () => {
-  log('[api] manual recovery requested')
-  desktopServicesStartupPromise = null
-  backendController.stop()
-  resolvedCrawshrimpDataDir = ''
-  await prepareBackendEndpoint()
-  await backendController.ensureReady()
-  const health = await getBackendHealth(1500)
-  if (!health.ok || !isCompatibleBackendRuntime(health.data?.runtime)) {
-    throw new Error('核心服务已重启，但健康检查未通过。')
+  let releaseRecovery = null
+  const recoveryBarrier = new Promise(resolve => { releaseRecovery = resolve })
+  backendRecoveryBarrier = recoveryBarrier
+  try {
+    log('[api] manual recovery requested')
+    desktopServicesStartupPromise = null
+    const previousBackend = backendProcess
+    backendController.stop()
+    if (previousBackend && !await waitForManagedBackendStop(previousBackend)) {
+      throw new Error('旧核心服务未能停止，请查看诊断日志。')
+    }
+    // 旧实例已确定退出后优先回到默认端口；确有占用时仍按 +1..+100 回退。
+    apiPort = DEFAULT_API_PORT
+    resolvedCrawshrimpDataDir = ''
+    await prepareBackendEndpoint()
+    await backendController.ensureReady()
+    const health = await getBackendHealth(1500)
+    if (!health.ok || !isCompatibleBackendRuntime(health.data?.runtime)) {
+      throw new Error('核心服务已重启，但健康检查未通过。')
+    }
+    const result = {
+      ok: true,
+      api: true,
+      apiState: backendController.getState(),
+      apiPort,
+      apiBase: `http://127.0.0.1:${apiPort}`,
+      apiToken: getApiToken(),
+      dataDir: getCrawshrimpDataDir(),
+      apiDiagnostic: backendController.getDiagnostics(),
+      dataDirRecovery: { ...dataDirRecoveryInfo },
+    }
+    log(`[api] manual recovery complete on port ${apiPort}`)
+    return result
+  } finally {
+    if (backendRecoveryBarrier === recoveryBarrier) backendRecoveryBarrier = null
+    releaseRecovery?.()
   }
-  const result = {
-    ok: true,
-    api: true,
-    apiState: backendController.getState(),
-    apiPort,
-    apiBase: `http://127.0.0.1:${apiPort}`,
-    apiToken: getApiToken(),
-    dataDir: getCrawshrimpDataDir(),
-    apiDiagnostic: backendController.getDiagnostics(),
-    dataDirRecovery: { ...dataDirRecoveryInfo },
-  }
-  log(`[api] manual recovery complete on port ${apiPort}`)
-  return result
 })
 
 async function startBackend() {
@@ -2323,9 +2376,13 @@ async function startChromeOnLaunch() {
   return result
 }
 
-function stopBackend() {
+async function stopBackend() {
+  const previousBackend = backendProcess
   backendController.stop()
   desktopServicesStartupPromise = null
+  if (previousBackend && !await waitForManagedBackendStop(previousBackend)) {
+    throw new Error('核心服务进程未能停止。')
+  }
 }
 
 async function getActiveTasksForQuit() {
@@ -2755,19 +2812,29 @@ secureHandle('agent:pick-attachments', async () => {
 })
 
 secureHandle('agent:save-clipboard-image', async (_, payload = {}) => {
-  const buffer = Buffer.from(payload.buffer || [])
-  const name = String(payload.name || `paste-${Date.now()}.png`).replace(/[^A-Za-z0-9._-]/g, '_')
-  const dir = path.join(app.getPath('userData'), 'tmp-agent-images')
-  fs.mkdirSync(dir, { recursive: true })
-  const dest = path.join(dir, name)
-  fs.writeFileSync(dest, buffer)
-  return { ok: true, path: dest, name, size: buffer.length, mime: payload.mime || 'image/png' }
+  try {
+    const MAX_BYTES = 200 * 1024 * 1024
+    const incomingBytes = Number(payload.buffer?.byteLength ?? payload.buffer?.length ?? 0)
+    if (incomingBytes > MAX_BYTES) return { ok: false, error: '附件过大(>200MB)' }
+    const buffer = Buffer.from(payload.buffer || [])
+    if (buffer.length > MAX_BYTES) return { ok: false, error: '附件过大(>200MB)' }
+    const name = String(payload.name || `paste-${Date.now()}.png`).replace(/[^A-Za-z0-9._-]/g, '_')
+    const dir = path.join(app.getPath('userData'), 'tmp-agent-attachments')
+    await fs.promises.mkdir(dir, { recursive: true })
+    const dest = path.join(dir, `${Date.now()}-${name}`)
+    await fs.promises.writeFile(dest, buffer)
+    return { ok: true, path: dest, name, size: buffer.length, mime: payload.mime || 'image/png' }
+  } catch (error) {
+    return { ok: false, error: String(error.message || error) }
+  }
 })
 
 secureHandle('agent:save-attachment', async (_, payload = {}) => {
   try {
-    const buffer = Buffer.from(payload.buffer || [])
     const MAX_BYTES = 200 * 1024 * 1024
+    const incomingBytes = Number(payload.buffer?.byteLength ?? payload.buffer?.length ?? 0)
+    if (incomingBytes > MAX_BYTES) return { ok: false, error: '附件过大(>200MB)' }
+    const buffer = Buffer.from(payload.buffer || [])
     if (buffer.length > MAX_BYTES) {
       return { ok: false, error: '附件过大(>200MB)' }
     }
@@ -2785,12 +2852,16 @@ secureHandle('agent:save-attachment', async (_, payload = {}) => {
 
 secureHandle('agent:read-image-dataurl', async (_, filePath) => {
   try {
-    const stats = fs.statSync(filePath)
+    const stats = await fs.promises.stat(filePath)
     if (stats.size > 8 * 1024 * 1024) return { ok: false, error: '图片过大(>8MB)' }
-    const buffer = fs.readFileSync(filePath)
-    const ext = path.extname(filePath).toLowerCase()
-    const mimeMap = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' }
-    return { ok: true, dataUrl: `data:${mimeMap[ext] || 'image/png'};base64,${buffer.toString('base64')}` }
+    const buffer = await fs.promises.readFile(filePath)
+    let mime = ''
+    if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) mime = 'image/png'
+    else if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) mime = 'image/jpeg'
+    else if (buffer.subarray(0, 6).toString('ascii') === 'GIF87a' || buffer.subarray(0, 6).toString('ascii') === 'GIF89a') mime = 'image/gif'
+    else if (buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') mime = 'image/webp'
+    if (!mime) return { ok: false, error: '文件内容不是受支持的图片格式' }
+    return { ok: true, dataUrl: `data:${mime};base64,${buffer.toString('base64')}` }
   } catch (error) {
     return { ok: false, error: String(error.message || error) }
   }

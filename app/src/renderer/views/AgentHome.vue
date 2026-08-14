@@ -287,14 +287,22 @@ function approvalSummary(m) {
 
 // ---------- SSE ----------
 
+let lastEventSeq = 0
+
 function bindEvents() {
   stopEvents?.()
   stopEvents = null
   if (!props.sessionId) return
 
-  let afterSeq = 0
-  stopEvents = window.cs.streamAgentEvents(props.sessionId, afterSeq, {
-    onEvent: ({ event, data }) => handleEvent(event, data),
+  stopEvents = window.cs.streamAgentEvents(props.sessionId, lastEventSeq, {
+    onEvent: ({ id, event, data }) => {
+      const seq = Number(id)
+      if (Number.isFinite(seq) && seq > 0) {
+        if (seq <= lastEventSeq) return
+        lastEventSeq = seq
+      }
+      handleEvent(event, data)
+    },
     onError: (error) => {
       console.warn('[agent] SSE 断开:', error?.message)
       pushMessage({ kind: 'notice', text: '事件流断开,3 秒后重连…' })
@@ -512,9 +520,13 @@ async function onPaste(event) {
       event.preventDefault()
       const blob = item.getAsFile()
       if (!blob) continue
+      if (Number(blob.size || 0) > 200 * 1024 * 1024) {
+        pushMessage({ kind: 'notice', text: '粘贴图片超过 200MB 上限，未上传' })
+        return
+      }
       const buffer = await blob.arrayBuffer()
       const saved = await window.cs.saveAgentClipboardImage({
-        buffer: Array.from(new Uint8Array(buffer)),
+        buffer: new Uint8Array(buffer),
         name: `paste-${Date.now()}.png`,
         mime: blob.type || 'image/png',
       })
@@ -598,6 +610,7 @@ async function loadSession() {
 
 watch(() => props.sessionId, () => {
   stopEvents?.()
+  lastEventSeq = 0
   loadSession()
 })
 

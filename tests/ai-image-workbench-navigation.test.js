@@ -22,13 +22,14 @@ test('App registers AI image route after task center and before data files', () 
   assert.doesNotMatch(app, /<AiImageWorkbench[\s\S]*v-show=/)
 })
 
-test('App keeps the global sidebar visible on the AI image page', () => {
+test('App keeps DSH as the primary navigation and opens AI image as an overlay', () => {
   const app = read('app/src/renderer/App.vue')
 
-  assert.doesNotMatch(app, /v-if="currentView !== 'ai_image'"[\s\S]*class="sidebar"/)
-  assert.doesNotMatch(app, /layout-focus/)
-  assert.doesNotMatch(app, /content-focus/)
-  assert.match(app, /<aside class="sidebar">/)
+  assert.match(app, /<AgentWebView[\s\S]*:nav-items="filteredNavItems"/)
+  assert.match(app, /class="embed-overlay"/)
+  assert.match(app, /v-if="currentView !== 'agent'"/)
+  assert.match(app, /<aside v-if="activeScript" class="sidebar">/)
+  assert.doesNotMatch(app, /<aside class="sidebar">/)
 })
 
 test('Settings page accepts focus panel id and exposes 1XM image model keys', () => {

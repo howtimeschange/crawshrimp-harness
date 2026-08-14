@@ -52,7 +52,7 @@ const props = defineProps({
   browserTabs: { type: Object, default: () => ({ tabs: [], activeTabId: '' }) }, // 浏览器活动快照 → 多窗口跟随
 })
 
-const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav', 'repair-core'])
+const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav', 'runtime-session', 'repair-core'])
 
 const webUrl = ref('')
 const error = ref('')
@@ -63,7 +63,9 @@ const browserWindows = ref([])
 const recoverAttempts = ref(0)
 const workspaceRoot = ref('')
 const frameEl = ref(null)
+const activeRuntimeSessionId = ref('')
 let pollTimer = null
+let tabPollTimer = null
 let warmStarted = false
 let recovering = false
 
@@ -73,6 +75,14 @@ const frameSrc = computed(() => {
   if (props.theme === 'light' || props.theme === 'dark') url.searchParams.set('theme', props.theme)
   return url.href
 })
+const frameOrigin = computed(() => {
+  try { return webUrl.value ? new URL(webUrl.value, window.location.href).origin : '' } catch { return '' }
+})
+
+function postToFrame(message) {
+  if (!frameEl.value?.contentWindow || !frameOrigin.value) return
+  frameEl.value.contentWindow.postMessage(message, frameOrigin.value)
+}
 
 async function loadRuntime() {
   try {
@@ -154,22 +164,20 @@ function onFrameLoad() {
 }
 
 function pushWorkspace() {
-  if (!frameEl.value?.contentWindow || !workspaceRoot.value) return
-  frameEl.value.contentWindow.postMessage({ __crawshrimp: 'workspace', root: workspaceRoot.value }, '*')
+  if (!workspaceRoot.value) return
+  postToFrame({ __crawshrimp: 'workspace', root: workspaceRoot.value })
 }
 
 function pushTheme() {
-  if (!frameEl.value?.contentWindow) return
-  frameEl.value.contentWindow.postMessage({ __crawshrimp: 'theme', theme: props.theme }, '*')
+  postToFrame({ __crawshrimp: 'theme', theme: props.theme })
 }
 
 function pushNav() {
-  if (!frameEl.value?.contentWindow) return
-  frameEl.value.contentWindow.postMessage({
+  postToFrame({
     __crawshrimp: 'nav',
     items: (props.navItems || []).map((item) => ({ id: item.id, icon: item.icon, label: item.label })),
     active: props.activeNav,
-  }, '*')
+  })
 }
 
 // iframe 内菜单点击 / 侧边栏宽度变化 / 会话导航 → shell
@@ -178,7 +186,7 @@ function onWindowMessage(event) {
   if (!data || !data.__crawshrimp) return
   // 仅接受智能体会话 iframe 的消息(防其他内嵌页面冒用特权通道)
   const sessionWin = frameEl.value?.contentWindow
-  if (sessionWin && event.source && event.source !== sessionWin) return
+  if (!sessionWin || event.source !== sessionWin || event.origin !== frameOrigin.value) return
   if (data.__crawshrimp === 'nav-click') {
     if (Number(data.railWidth) > 0) emit('rail-metrics', { width: data.railWidth, collapsed: false })
     // 菜单切换时最小化实时浏览器窗口,避免浮动窗口盖住界面拦截点击
@@ -188,6 +196,9 @@ function onWindowMessage(event) {
     emit('rail-metrics', { width: data.width, collapsed: data.collapsed })
   } else if (data.__crawshrimp === 'session-nav') {
     emit('session-nav', data.kind || 'session')
+  } else if (data.__crawshrimp === 'active-runtime-session') {
+    activeRuntimeSessionId.value = String(data.runtimeSessionId || '')
+    emit('runtime-session', activeRuntimeSessionId.value)
   } else if (data.__crawshrimp === 'open-file') {
     // 会话内附件点击 → 系统默认应用打开
     const p = String(data.path || '').trim()
@@ -196,22 +207,24 @@ function onWindowMessage(event) {
     }
   } else if (data.__crawshrimp === 'upload-attachment') {
     // 会话界面拖入/粘贴文件 → 保存 + 注册为会话附件
-    registerAttachmentFile(data.file)
+    registerAttachmentFile(data.file, data.runtimeSessionId)
   } else if (data.__crawshrimp === 'upload-attachment-pick') {
     // 会话界面 📎 按钮 → 打开原生选择器逐个注册
-    handlePickAttachments()
+    handlePickAttachments(data.runtimeSessionId)
   }
 }
 
 const MAX_ATTACHMENT_BYTES = 200 * 1024 * 1024
 
-async function registerAttachmentFile(file) {
+async function registerAttachmentFile(file, runtimeSessionId = '') {
   if (!file || typeof window.cs?.saveAgentAttachment !== 'function') return
   if (Number(file.size || 0) > MAX_ATTACHMENT_BYTES) {
     console.warn('[agent] 附件过大(>200MB),已跳过:', file.name)
     return
   }
   try {
+    const runtimeId = String(runtimeSessionId || activeRuntimeSessionId.value || '')
+    if (!runtimeId) throw new Error('当前 DSH 会话尚未就绪')
     const buffer = new Uint8Array(await file.arrayBuffer())
     const saved = await window.cs.saveAgentAttachment({
       buffer,
@@ -221,37 +234,47 @@ async function registerAttachmentFile(file) {
     if (!saved?.ok) return
     const registered = await window.cs.agentApi('POST', '/agent/attachments/inbox', {
       name: saved.name, path: saved.path, mime: saved.mime, size: saved.size,
+      runtime_session_id: runtimeId,
     })
     const att = registered?.attachment
     if (att) {
-      frameEl.value?.contentWindow?.postMessage({
+      const imagePart = await attachmentImagePart(att)
+      postToFrame({
         __crawshrimp: 'attachment-added',
         name: att.filename,
         attachmentId: att.attachment_id,
-      }, '*')
+        runtimeSessionId: runtimeId,
+        imagePart,
+      })
     }
   } catch (error) {
     console.warn('[agent] 附件注册失败:', error?.message)
   }
 }
 
-async function handlePickAttachments() {
+async function handlePickAttachments(runtimeSessionId = '') {
   if (typeof window.cs?.pickAgentAttachments !== 'function') return
   try {
+    const runtimeId = String(runtimeSessionId || activeRuntimeSessionId.value || '')
+    if (!runtimeId) throw new Error('当前 DSH 会话尚未就绪')
     const result = await window.cs.pickAgentAttachments()
     if (!result?.ok) return
     for (const file of result.files || []) {
       try {
         const registered = await window.cs.agentApi('POST', '/agent/attachments/inbox', {
           name: file.name, path: file.path, mime: file.mime, size: file.size,
+          runtime_session_id: runtimeId,
         })
         const att = registered?.attachment
         if (att) {
-          frameEl.value?.contentWindow?.postMessage({
+          const imagePart = await attachmentImagePart(att)
+          postToFrame({
             __crawshrimp: 'attachment-added',
             name: att.filename,
             attachmentId: att.attachment_id,
-          }, '*')
+            runtimeSessionId: runtimeId,
+            imagePart,
+          })
         }
       } catch (error) {
         console.warn('[agent] 附件注册失败:', error?.message)
@@ -259,6 +282,20 @@ async function handlePickAttachments() {
     }
   } catch (error) {
     console.warn('[agent] 附件选择失败:', error?.message)
+  }
+}
+
+async function attachmentImagePart(attachment) {
+  if (!String(attachment?.mime || '').startsWith('image/')) return null
+  if (Number(attachment?.size || 0) > 8 * 1024 * 1024) return null
+  if (typeof window.cs?.readAgentImageDataUrl !== 'function') return null
+  try {
+    const result = await window.cs.readAgentImageDataUrl(String(attachment.path || ''))
+    const match = /^data:([^;]+);base64,(.+)$/.exec(String(result?.dataUrl || ''))
+    if (!result?.ok || !match) return null
+    return { type: 'image', mediaType: match[1], data: match[2], name: attachment.filename || 'image' }
+  } catch {
+    return null
   }
 }
 
@@ -304,10 +341,21 @@ onMounted(() => {
       autoRecover()
     }
   }, 5000)
+  tabPollTimer = setInterval(async () => {
+    if (!browserWindows.value.length || typeof window.cs?.listAgentBrowserTabs !== 'function') return
+    try {
+      const snapshot = await window.cs.listAgentBrowserTabs()
+      if (!snapshot?.ok) return
+      const live = new Set((snapshot.tabs || []).map((tab) => String(tab.id || '')).filter(Boolean))
+      const closed = browserWindows.value.filter((win) => !live.has(String(win.tabId)))
+      for (const win of closed) await closeBrowserWindow(win.tabId)
+    } catch { /* 下一次快照重试 */ }
+  }, 2000)
 })
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
+  if (tabPollTimer) clearInterval(tabPollTimer)
   window.removeEventListener('message', onWindowMessage)
 })
 
@@ -328,7 +376,11 @@ watch(() => props.browserAutoOpen, (count) => {
 
 // 多窗口实时浏览器:按会话/页面(tab)绑定,一个页面一个窗口
 watch(() => props.browserTabs, (payload) => {
-  if (!payload || !Array.isArray(payload.tabs) || !payload.tabs.length) return
+  if (!payload || !Array.isArray(payload.tabs)) return
+  if (!payload.tabs.length) {
+    for (const win of browserWindows.value) void closeBrowserWindow(win.tabId)
+    return
+  }
   const next = []
   for (const tab of payload.tabs) {
     if (!tab || !tab.id) continue
@@ -353,10 +405,16 @@ watch(() => props.browserTabs, (payload) => {
   }
 }, { deep: true })
 
-function closeBrowserWindow(tabId) {
+async function closeBrowserWindow(tabId) {
   browserWindows.value = browserWindows.value.filter((w) => w.tabId !== String(tabId))
   if (typeof window.cs?.stopAgentBrowserStream === 'function') {
-    window.cs.stopAgentBrowserStream(String(tabId))
+    await window.cs.stopAgentBrowserStream(String(tabId))
+    if (typeof window.cs?.getAgentBrowserStreamState === 'function') {
+      const state = await window.cs.getAgentBrowserStreamState()
+      if ((state?.streams || []).some((stream) => String(stream.targetId) === String(tabId))) {
+        console.warn('[agent] 浏览器流关闭后仍存在:', tabId)
+      }
+    }
   }
 }
 

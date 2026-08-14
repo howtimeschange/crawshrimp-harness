@@ -34,6 +34,43 @@ window.__ModuleLoader__.load({
       '--dsw-specific-sidebar-fill': { light: '#ffffff', dark: '#1c1c22' },
     }
 
+    let currentRuntimeSessionId = ''
+    let lastPublishedRuntimeSessionId = ''
+    const pendingImagePartsBySession = new Map()
+    const pendingImageSubmitting = new Set()
+    const pendingAttachmentHintsBySession = new Map()
+
+    function persistedRuntimeSessionId() {
+      // 新建会话在发送首条消息前，sessions.list 的 current 仍可能为空；
+      // 锁版 DSH 已把预分配 sessionId 写入该持久化键。附件入口必须能在
+      // 空会话直接使用，不能要求用户先发一条纯文本来“激活”会话。
+      try {
+        const raw = window.localStorage?.getItem?.('dsh.sessions.current') || ''
+        const value = raw ? JSON.parse(raw) : null
+        return String(value?.sessionId || '')
+      } catch (error) {
+        return ''
+      }
+    }
+
+    function activeRuntimeSessionId() {
+      const persisted = persistedRuntimeSessionId()
+      if (persisted && persisted !== currentRuntimeSessionId) currentRuntimeSessionId = persisted
+      return persisted || currentRuntimeSessionId
+    }
+
+    function shellOrigin() {
+      try {
+        const origin = new URL(document.referrer).origin
+        return origin && origin !== 'null' ? origin : '*'
+      } catch (error) {
+        return '*'
+      }
+    }
+    function postToShell(message) {
+      window.parent.postMessage(message, shellOrigin())
+    }
+
     // DeepSeek 蓝阶 / 通用蓝阶 → 抓虾橙阶(light 用 #FF5000 系,dark 用 #FF6B2B 系)
     const ORANGE_STEPS = {
       light: {
@@ -151,7 +188,7 @@ window.__ModuleLoader__.load({
       btn.addEventListener('click', () => {
         // 携带 max(当前宽, 历史最大宽):折叠动画中点菜单也不会压到菜单栏
         const width = Math.max(currentRailWidth(), lastMaxRailWidth)
-        window.parent.postMessage({ __crawshrimp: 'nav-click', id: item.id, railWidth: width }, '*')
+        postToShell({ __crawshrimp: 'nav-click', id: item.id, railWidth: width })
       })
       return btn
     }
@@ -232,7 +269,7 @@ window.__ModuleLoader__.load({
       if (!width) return
       const rail = document.querySelector('.hHd-Xa_root')
       const collapsed = rail ? rail.classList.contains('hHd-Xa_collapsed') : false
-      window.parent.postMessage({ __crawshrimp: 'rail-metrics', width, collapsed }, '*')
+      postToShell({ __crawshrimp: 'rail-metrics', width, collapsed })
     }
 
     // ---- 产物媒体注入:会话消息流内直接显示图片(多图)/视频(可播放)/附件(可点击) ----
@@ -289,7 +326,7 @@ window.__ModuleLoader__.load({
       block.className = 'cs-artifact-block'
       block.dataset.artifactPath = String(artifact.path || '')
       const open = () => {
-        if (artifact.path) window.parent.postMessage({ __crawshrimp: 'open-file', path: artifact.path }, '*')
+        if (artifact.path) postToShell({ __crawshrimp: 'open-file', path: artifact.path })
       }
 
       const head = document.createElement('div')
@@ -424,7 +461,7 @@ window.__ModuleLoader__.load({
     }
 
     function mountAttachButton() {
-      if (typeof document === 'undefined' || !document.documentElement || !document.dataset) return
+      if (typeof document === 'undefined' || !document.documentElement?.dataset) return
       try {
         const composer = document.querySelector('.wSkVaW_composerSeat')
         if (!composer) return
@@ -436,7 +473,7 @@ window.__ModuleLoader__.load({
         btn.textContent = '📎 附件'
         btn.title = '上传附件(图片/表格/文本)'
         btn.addEventListener('click', () => {
-          window.parent.postMessage({ __crawshrimp: 'upload-attachment-pick' }, '*')
+          postToShell({ __crawshrimp: 'upload-attachment-pick', runtimeSessionId: activeRuntimeSessionId() })
         })
         // 插到 composer 最前(输入框上方);不能用内部 stack 作锚点(slot 结构中非直接子节点会抛 HierarchyRequestError)
         composer.insertBefore(btn, composer.firstElementChild)
@@ -455,7 +492,7 @@ window.__ModuleLoader__.load({
       for (const item of items) {
         if (item.kind !== 'file') continue
         const file = item.getAsFile()
-        if (file) window.parent.postMessage({ __crawshrimp: 'upload-attachment', file }, '*')
+        if (file) postToShell({ __crawshrimp: 'upload-attachment', file, runtimeSessionId: activeRuntimeSessionId() })
       }
     }
 
@@ -465,7 +502,7 @@ window.__ModuleLoader__.load({
       if (!files || !files.length) return
       event.preventDefault()
       for (const file of files) {
-        window.parent.postMessage({ __crawshrimp: 'upload-attachment', file }, '*')
+        postToShell({ __crawshrimp: 'upload-attachment', file, runtimeSessionId: activeRuntimeSessionId() })
       }
     }
 
@@ -478,6 +515,57 @@ window.__ModuleLoader__.load({
       setter.call(ta, current ? current + '\n' + hint : hint)
       ta.dispatchEvent(new Event('input', { bubbles: true }))
       ta.focus()
+    }
+
+    function queueAttachmentHint(sessionId, name, attachmentId) {
+      if (!sessionId) return
+      if (sessionId === activeRuntimeSessionId()) {
+        insertAttachmentHint(name, attachmentId)
+        return
+      }
+      const hints = pendingAttachmentHintsBySession.get(sessionId) || []
+      hints.push({ name, attachmentId })
+      pendingAttachmentHintsBySession.set(sessionId, hints.slice(-20))
+    }
+
+    function flushAttachmentHints(sessionId) {
+      const hints = pendingAttachmentHintsBySession.get(sessionId) || []
+      if (!hints.length) return
+      pendingAttachmentHintsBySession.delete(sessionId)
+      for (const hint of hints) insertAttachmentHint(hint.name, hint.attachmentId)
+    }
+
+    async function submitPendingImages(ctx, event) {
+      const sessionId = activeRuntimeSessionId()
+      const pendingImageParts = pendingImagePartsBySession.get(sessionId) || []
+      if (!sessionId || !pendingImageParts.length || pendingImageSubmitting.has(sessionId)) return false
+      const session = sessionId && ctx.sessions?.binding?.(sessionId)?.session
+      const ta = document.querySelector('textarea')
+      if (!session || !ta) return false
+      event?.preventDefault?.()
+      event?.stopPropagation?.()
+      event?.stopImmediatePropagation?.()
+      pendingImageSubmitting.add(sessionId)
+      try {
+        const text = String(ta.value || '').trim()
+        const content = [
+          ...pendingImageParts.map((part) => ({
+            type: 'image', mediaType: part.mediaType, data: part.data, name: part.name,
+          })),
+          ...(text ? [{ type: 'text', text }] : []),
+        ]
+        const result = await session.prompt(content, 'queue')
+        if (!result?.ok) throw new Error(result?.error?.message || '图片消息发送失败')
+        pendingImagePartsBySession.delete(sessionId)
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
+        setter.call(ta, '')
+        ta.dispatchEvent(new Event('input', { bubbles: true }))
+      } catch (error) {
+        console.warn('[crawshrimp] 图片消息发送失败:', error?.message || error)
+      } finally {
+        pendingImageSubmitting.delete(sessionId)
+      }
+      return true
     }
 
     // 与 DSH 原生 UI 统一:原「加号」按钮改造为上传附件;旁边单开「@」命令按钮。
@@ -534,7 +622,7 @@ window.__ModuleLoader__.load({
             if (!btn || btn.classList.contains('cs-cmd-at-btn')) return
             e.stopPropagation()
             e.preventDefault()
-            window.parent.postMessage({ __crawshrimp: 'upload-attachment-pick' }, '*')
+            postToShell({ __crawshrimp: 'upload-attachment-pick', runtimeSessionId: activeRuntimeSessionId() })
           }, true)
         }
       } catch (error) {
@@ -543,9 +631,9 @@ window.__ModuleLoader__.load({
     }
 
     function mountAttachmentCapture() {
-      if (typeof document === 'undefined' || !document.documentElement || !document.dataset) return
-      if (document.dataset.csAttachCapture === '1') return
-      document.dataset.csAttachCapture = '1'
+      if (typeof document === 'undefined' || !document.documentElement?.dataset) return
+      if (document.documentElement.dataset.csAttachCapture === '1') return
+      document.documentElement.dataset.csAttachCapture = '1'
       document.addEventListener('paste', handlePasteAttachments)
       document.addEventListener('dragover', (e) => e.preventDefault())
       document.addEventListener('drop', handleDropAttachments)
@@ -561,6 +649,20 @@ window.__ModuleLoader__.load({
         await ctx.workspaces.create(root)
       } catch (error) {
         // 已存在/暂不可用:下一轮消息再试
+      }
+    }
+
+    function publishCurrentSession(ctx) {
+      try {
+        const snap = ctx.sessions?.list?.getSnapshot?.() || {}
+        const current = String(persistedRuntimeSessionId() || snap.current || '')
+        if (!current || current === lastPublishedRuntimeSessionId) return
+        currentRuntimeSessionId = current
+        lastPublishedRuntimeSessionId = current
+        flushAttachmentHints(current)
+        postToShell({ __crawshrimp: 'active-runtime-session', runtimeSessionId: current })
+      } catch (error) {
+        // 会话列表尚未就绪，下一轮轮询重试。
       }
     }
 
@@ -588,21 +690,50 @@ window.__ModuleLoader__.load({
         // 无 URL 参数,交给 shell 的 postMessage
       }
       window.addEventListener('message', (event) => {
+        const expectedOrigin = shellOrigin()
+        if (event.source !== window.parent || (expectedOrigin !== '*' && event.origin !== expectedOrigin)) return
         const data = event && event.data
         if (data && data.__crawshrimp === 'theme') adopt(data.theme)
         if (data && data.__crawshrimp === 'nav') renderNav(data.items, data.active)
         if (data && data.__crawshrimp === 'workspace') ensureDefaultWorkspace(ctx, data.root)
         if (data && data.__crawshrimp === 'artifact-show') renderArtifactShow(data)
-        if (data && data.__crawshrimp === 'attachment-added') insertAttachmentHint(data.name, data.attachmentId)
+        if (data && data.__crawshrimp === 'attachment-added') {
+          const sessionId = String(data.runtimeSessionId || currentRuntimeSessionId || '')
+          queueAttachmentHint(sessionId, data.name, data.attachmentId)
+          if (data.imagePart?.type === 'image' && data.imagePart.mediaType && data.imagePart.data) {
+            if (sessionId) {
+              const items = pendingImagePartsBySession.get(sessionId) || []
+              items.push(data.imagePart)
+              pendingImagePartsBySession.set(sessionId, items.slice(-5))
+            }
+          }
+        }
+        if (data && data.__crawshrimp === 'open-runtime-session' && data.runtimeSessionId) {
+          try { ctx.sessions.open(String(data.runtimeSessionId)) } catch (error) { /* 会话已删除 */ }
+        }
       })
+      document.addEventListener('click', (event) => {
+        const target = event.target
+        const primary = target && typeof target.closest === 'function' ? target.closest('.uV2eYG_primary') : null
+        if (primary && (pendingImagePartsBySession.get(activeRuntimeSessionId()) || []).length) {
+          void submitPendingImages(ctx, event)
+        }
+      }, true)
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey && event.target?.closest?.('textarea')
+            && (pendingImagePartsBySession.get(activeRuntimeSessionId()) || []).length) {
+          void submitPendingImages(ctx, event)
+        }
+      }, true)
       // apply 时 DOM 可能尚未就绪:轮询挂载(幂等),保证附件入口一定出现
       setInterval(() => {
         mountAttachmentCapture()
         mountUnifiedButtons()
+        publishCurrentSession(ctx)
       }, 1000)
       // 页面/会话重载后向 shell 请求重放产物媒体(iframe 重载期间到达的事件会丢失)
       try {
-        window.parent.postMessage({ __crawshrimp: 'artifact-replay' }, '*')
+        postToShell({ __crawshrimp: 'artifact-replay', runtimeSessionId: activeRuntimeSessionId() })
       } catch (error) {
         // 忽略
       }
@@ -611,12 +742,12 @@ window.__ModuleLoader__.load({
         const target = event.target
         if (!target || !(target instanceof Element)) return
         if (target.closest('.hHd-Xa_newSession')) {
-          window.parent.postMessage({ __crawshrimp: 'session-nav', kind: 'new' }, '*')
+          postToShell({ __crawshrimp: 'session-nav', kind: 'new' })
           return
         }
         const region = target.closest('.hHd-Xa_regionArea')
         if (region && !target.closest('.qDHVXG_sectionHeader')) {
-          window.parent.postMessage({ __crawshrimp: 'session-nav', kind: 'session' }, '*')
+          postToShell({ __crawshrimp: 'session-nav', kind: 'session' })
         }
       })
       // 侧边栏重渲染后兜底重插 + 宽度变化推送
@@ -646,8 +777,8 @@ window.__ModuleLoader__.load({
     }
 
     exports.apply = apply
-    // kernel 服务依赖声明:apply 内访问 ctx.theme/ctx.workspaces 必须显式 inject
-    exports.inject = ['theme', 'workspaces']
+    // kernel 服务依赖声明:apply 内访问 ctx.theme/ctx.workspaces/ctx.sessions 必须显式 inject
+    exports.inject = ['theme', 'workspaces', 'sessions']
     return module.exports
   },
 })

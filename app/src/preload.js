@@ -5,7 +5,6 @@ const DEFAULT_API_BASE = 'http://127.0.0.1:18765'
 const TOKEN_STORAGE_KEY = 'crawshrimp.apiToken'
 const API_BASE_STORAGE_KEY = 'crawshrimp.apiBase'
 const LOCAL_PROMPT_LIBRARY_FALLBACK_STORAGE_KEY = 'crawshrimp.localPromptLibraries.fallback.v1'
-const TOKEN_QUERY_KEYS = ['crawshrimp_token', 'api_token', 'token']
 const API_BASE_QUERY_KEYS = ['crawshrimp_api_base', 'api_base']
 
 function readQueryValue(keys = []) {
@@ -33,14 +32,28 @@ function writeStorageValue(key, value) {
   } catch {}
 }
 
+function normalizeLocalApiBase(value) {
+  try {
+    const parsed = new URL(String(value || '').trim())
+    const host = parsed.hostname.toLowerCase()
+    const port = Number(parsed.port || 80)
+    const loopback = ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host)
+    if (parsed.protocol !== 'http:' || !loopback || port < 18765 || port > 18865) return ''
+    if (parsed.username || parsed.password) return ''
+    return parsed.origin
+  } catch {
+    return ''
+  }
+}
+
 function apiBase() {
-  const queryBase = readQueryValue(API_BASE_QUERY_KEYS)
+  const queryBase = normalizeLocalApiBase(readQueryValue(API_BASE_QUERY_KEYS))
   if (queryBase) {
     writeStorageValue(API_BASE_STORAGE_KEY, queryBase)
     return queryBase.replace(/\/+$/, '')
   }
-  const storedBase = readStorageValue(API_BASE_STORAGE_KEY)
-  return String(storedBase || DEFAULT_API_BASE).replace(/\/+$/, '')
+  const storedBase = normalizeLocalApiBase(readStorageValue(API_BASE_STORAGE_KEY))
+  return storedBase || DEFAULT_API_BASE
 }
 
 function rememberApiConnectionFromStatus(status) {
@@ -55,17 +68,12 @@ function rememberApiConnectionFromStatus(status) {
 }
 
 function apiToken() {
-  const queryToken = readQueryValue(TOKEN_QUERY_KEYS)
-  if (queryToken) {
-    writeStorageValue(TOKEN_STORAGE_KEY, queryToken)
-    return queryToken
-  }
   return readStorageValue(TOKEN_STORAGE_KEY)
 }
 
 function buildUrl(requestPath) {
   const value = String(requestPath || '')
-  if (/^https?:\/\//i.test(value)) return value
+  if (!value.startsWith('/') || /^\/\//.test(value)) throw new Error('本地 API 路径必须以单个 / 开头')
   return `${apiBase()}${value.startsWith('/') ? '' : '/'}${value}`
 }
 
@@ -87,19 +95,30 @@ async function apiCall(method, requestPath, body) {
   if (body !== undefined && body !== null) {
     headers['Content-Type'] = 'application/json'
     options.body = JSON.stringify(body)  }
-  // 稳定性:后端重启/端口漂移时请求可能静默挂起,统一 60s 超时兜底。
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 60000)
+  // 长操作单独给足时间；超时文案明确提示后台可能仍在收尾，避免用户盲目重试造成双执行。
+  const longOperation = /^\/agent\/(?:runtime\/restart|data\/clear|script-revisions\/)/.test(String(requestPath || ''))
+  const timeoutMs = longOperation ? 5 * 60 * 1000 : 60 * 1000
+  const controller = typeof globalThis.AbortController === 'function' ? new globalThis.AbortController() : null
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null
   try {
-    const response = await fetch(buildUrl(requestPath), { ...options, signal: controller.signal })
+    const response = await fetch(buildUrl(requestPath), {
+      ...options,
+      ...(controller ? { signal: controller.signal } : {}),
+    })
     const payload = await parseResponse(response)
     if (!response.ok) {
       const detail = payload?.detail || payload?.error || payload?.message || String(payload || response.statusText || '请求失败')
       throw new Error(detail)
     }
     return payload
+  } catch (error) {
+    if (String(error?.name || '') === 'AbortError') {
+      const seconds = Math.round(timeoutMs / 1000)
+      throw new Error(`请求等待超过 ${seconds} 秒；后台可能仍在处理，请先刷新状态，不要立即重复提交`)
+    }
+    throw error
   } finally {
-    clearTimeout(timer)
+    if (timer) clearTimeout(timer)
   }
 }
 
@@ -117,24 +136,21 @@ async function agentApi(method, requestPath, body) {
 
 /**
  * 产物媒体 URL:<img>/<video> 标签无法携带自定义头。
- * 使用后端派生的专用媒体 token(仅 /agent/artifacts/* 可用),master token 不进 URL。
+ * 每个 URL 使用后端签发的短期 capability，绑定 path/entry/expiry；master token 不进 URL。
  */
-let cachedMediaToken = ''
-
 async function agentMediaUrl(path, entry) {
   const base = apiBase()
-  let token = cachedMediaToken
-  if (!token) {
-    try {
-      const rt = await agentApi('GET', '/agent/runtime')
-      token = String(rt?.media_token || '')
-      if (token) cachedMediaToken = token
-    } catch { /* 回退 master token(兼容旧后端) */ }
-  }
-  if (!token) token = apiToken()
-  const query = new URLSearchParams({ path: String(path || ''), token: String(token || '') })
+  const signed = await agentApi('POST', '/agent/artifacts/sign', {
+    path: String(path || ''),
+    entry: String(entry || ''),
+  })
+  const query = new URLSearchParams({
+    path: String(signed?.path || path || ''),
+    expires: String(signed?.expires || ''),
+    sig: String(signed?.signature || ''),
+  })
   if (entry) {
-    query.set('entry', String(entry))
+    query.set('entry', String(signed?.entry || entry))
     return `${base}/agent/artifacts/entry?${query.toString()}`
   }
   return `${base}/agent/artifacts/file?${query.toString()}`
@@ -405,6 +421,7 @@ contextBridge.exposeInMainWorld('cs', {
 
   startAgentBrowserStream: (targetId) => ipcRenderer.invoke('agent:browser:stream:start', { targetId: String(targetId || '') }),
   stopAgentBrowserStream: (targetId) => ipcRenderer.invoke('agent:browser:stream:stop', { targetId: String(targetId || '') }),
+  listAgentBrowserTabs: () => ipcRenderer.invoke('agent:browser:tabs'),
   getAgentBrowserStreamState: () => ipcRenderer.invoke('agent:browser:stream:state'),
   onAgentBrowserFrame: (cb) => {
     const listener = (_, payload) => cb(payload || {})

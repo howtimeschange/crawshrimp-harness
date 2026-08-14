@@ -80,7 +80,7 @@ test('desktop backend terminates stale crawshrimp backend processes for the same
 test('desktop services restart when macOS reopens the app after all windows close', () => {
   const main = readRepoFile('app/src/main.js')
 
-  assert.match(main, /const BACKEND_LAUNCH_RETRIES = process\.platform === 'win32' \? 2 : 1/)
+  assert.match(main, /const BACKEND_LAUNCH_RETRIES = process\.platform === 'win32' \? 3 : 2/)
   assert.match(main, /let desktopServicesStartupPromise = null/)
   assert.match(main, /async function ensureDesktopServicesStarted\(\)/)
   assert.match(main, /if \(!startup\.api\.ok\) desktopServicesStartupPromise = null/)
@@ -142,7 +142,11 @@ test('desktop exposes structured backend diagnostics and one-click recovery', ()
 
   assert.match(main, /const \{ createSingleFlightRecovery, isOwnedBackendRuntime, classifyBackendHealth \} = require\('\.\/serviceRecovery'\)/)
   assert.match(main, /const restartBackend = createSingleFlightRecovery\(async \(\) => \{/)
+  assert.match(main, /backendRecoveryBarrier = recoveryBarrier/)
+  assert.match(main, /if \(recovery\) await recovery/)
   assert.match(main, /backendController\.stop\(\)/)
+  assert.match(main, /await waitForManagedBackendStop\(previousBackend\)/)
+  assert.match(main, /apiPort = DEFAULT_API_PORT/)
   assert.match(main, /await prepareBackendEndpoint\(\)/)
   assert.match(main, /await backendController\.ensureReady\(\)/)
   assert.match(main, /secureHandle\('restart-backend', async \(\) => restartBackend\(\)\)/)
@@ -153,6 +157,18 @@ test('desktop exposes structured backend diagnostics and one-click recovery', ()
   assert.match(restartBlock, /apiToken: getApiToken\(\)/)
   assert.match(preload, /restartBackend:\s*\(\) => ipcRenderer\.invoke\('restart-backend'\)/)
   assert.match(preload, /openDiagnosticLog:\s*\(\) => ipcRenderer\.invoke\('open-diagnostic-log'\)/)
+})
+
+test('backend shutdown is bounded for long-lived SSE connections', () => {
+  const main = readRepoFile('app/src/main.js')
+  const apiServer = readRepoFile('core/api_server.py')
+
+  assert.match(main, /const BACKEND_STOP_GRACE_MS = 7000/)
+  assert.match(main, /let backendRecoveryBarrier = null/)
+  assert.match(main, /async function waitForManagedBackendStop\(proc, timeoutMs = BACKEND_STOP_GRACE_MS\)/)
+  assert.match(main, /forceStopProcessTreeByPid\(pid, proc\)/)
+  assert.match(main, /async function stopBackend\(\)/)
+  assert.match(apiServer, /timeout_graceful_shutdown=5/)
 })
 
 test('desktop adopts a writable fallback selected by its owned Python backend', () => {

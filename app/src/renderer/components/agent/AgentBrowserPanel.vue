@@ -113,6 +113,7 @@ watch(() => props.minimizeSignal, (count) => {
 
 const MIN_W = 360
 const MIN_H = 260
+const storageKey = computed(() => `crawshrimp.browserWindow.${String(props.tabId || 'default')}`)
 
 const win = reactive({
   x: 0,
@@ -134,7 +135,7 @@ function clamp(v, min, max) {
 
 function loadPrefs() {
   try {
-    const raw = localStorage.getItem('crawshrimp.browserWindow')
+    const raw = localStorage.getItem(storageKey.value)
     if (!raw) return
     const p = JSON.parse(raw)
     if (Number.isFinite(p.w) && Number.isFinite(p.h)) {
@@ -150,7 +151,7 @@ function loadPrefs() {
 
 function savePrefs() {
   try {
-    localStorage.setItem('crawshrimp.browserWindow', JSON.stringify({
+    localStorage.setItem(storageKey.value, JSON.stringify({
       x: saved.x, y: saved.y, w: saved.w, h: saved.h,
       minimized: minimized.value, maximized: maximized.value,
     }))
@@ -278,13 +279,14 @@ onMounted(() => {
   placeDefault()
   if (window.cs?.onAgentBrowserFrame) {
     offFrame = window.cs.onAgentBrowserFrame((payload) => {
-      if (props.tabId && payload?.targetId && String(payload.targetId) !== String(props.tabId)) return
+      if (String(payload?.targetId || '') !== String(props.tabId || '')) return
       frame.value = payload
       if (payload?.url) frameUrl.value = payload.url
     })
   }
   if (window.cs?.onAgentBrowserStatus) {
     offStatus = window.cs.onAgentBrowserStatus((payload) => {
+      if (String(payload?.targetId || '') !== String(props.tabId || '')) return
       statusState.value = payload?.state || 'connecting'
       if (payload?.message) statusMessage.value = payload.message
       if (payload?.url) frameUrl.value = payload.url

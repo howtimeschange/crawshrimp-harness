@@ -104,6 +104,7 @@
           @nav-select="onAgentNavSelect"
           @rail-metrics="onRailMetrics"
           @session-nav="onSessionNav"
+          @runtime-session="onRuntimeSession"
           @repair-core="repairCoreService"
         />
       </div>
@@ -189,6 +190,7 @@
       </div>
       <!-- 全局产品事件浮层(审批/任务/产物卡,由 shell 渲染) -->
       <AgentProductLayer
+        :active-runtime-session-id="activeRuntimeSessionId"
         @open-task-instance="openTaskInstanceFromAgent"
         @browser-auto-open="browserAutoOpenCount += 1"
         @browser-open-tabs="onBrowserOpenTabs"
@@ -355,6 +357,11 @@ function onRailMetrics(metrics) {
 const browserAutoOpenCount = ref(0)
 // 浏览器活动快照(tabs + 活跃 tab)→ 多窗口实时浏览器按会话/页面跟随
 const browserTabs = ref({ tabs: [], activeTabId: '' })
+const activeRuntimeSessionId = ref('')
+function onRuntimeSession(runtimeSessionId) {
+  activeRuntimeSessionId.value = String(runtimeSessionId || '')
+  browserTabs.value = { tabs: [], activeTabId: '' }
+}
 function onBrowserOpenTabs(payload) {
   browserTabs.value = {
     tabs: Array.isArray(payload?.tabs) ? payload.tabs : [],
