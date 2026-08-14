@@ -2762,6 +2762,17 @@ secureHandle('agent:save-clipboard-image', async (_, payload = {}) => {
   return { ok: true, path: dest, name, size: buffer.length, mime: payload.mime || 'image/png' }
 })
 
+secureHandle('agent:save-attachment', async (_, payload = {}) => {
+  const buffer = Buffer.from(payload.buffer || [])
+  const rawName = String(payload.name || `file-${Date.now()}`)
+  const name = rawName.replace(/[^A-Za-z0-9._\u4e00-\u9fff-]/g, '_').slice(-120) || 'file'
+  const dir = path.join(app.getPath('userData'), 'tmp-agent-attachments')
+  fs.mkdirSync(dir, { recursive: true })
+  const dest = path.join(dir, `${Date.now()}-${name}`)
+  fs.writeFileSync(dest, buffer)
+  return { ok: true, path: dest, name, size: buffer.length, mime: payload.mime || '' }
+})
+
 secureHandle('agent:read-image-dataurl', async (_, filePath) => {
   try {
     const stats = fs.statSync(filePath)

@@ -900,6 +900,34 @@ def tool_fs_write(path: str, content: str) -> dict:
     return _ok({"path": str(p), "size": len(text.encode("utf-8")), "message": "已写入(经审批授权)"})
 
 
+def tool_fs_exec(command: str, timeout_ms: int = 60000) -> dict:
+    """执行本机命令(用户已授权全局访问;命令执行经审批卡授权,审计保留)。"""
+    guard = _require_run()
+    if guard:
+        return guard
+    cmd = str(command or "").strip()
+    if not cmd:
+        return _failed("INVALID_PARAMETERS", "command 不能为空")
+    summary = {"kind": "fs_exec", "command": cmd[:300]}
+    decision = _await_approval_blocking(
+        {"plan_id": f"fs-exec-{uuid.uuid4().hex[:8]}", "params_json": "{}", "params_sha256": "",
+         "risk": "external_write", "adapter_id": "", "task_id": ""}, summary)
+    if decision != "approved":
+        return _rejected("rejected", "APPROVAL_REJECTED" if decision == "rejected" else "APPROVAL_EXPIRED",
+                         "命令执行未获批准")
+    import subprocess as _sp
+    limit = max(1000, min(int(timeout_ms or 60000), 300000))
+    try:
+        proc = _sp.run(cmd, shell=True, capture_output=True, text=True, timeout=limit / 1000)
+    except _sp.TimeoutExpired:
+        return _failed("TIMEOUT", f"命令超时({limit}ms)")
+    except Exception as exc:  # noqa: BLE001
+        return _failed("EXEC_FAILED", str(exc))
+    return _ok({"exit_code": proc.returncode,
+                "stdout": (proc.stdout or "")[-20000:],
+                "stderr": (proc.stderr or "")[-8000:]})
+
+
 def tool_attachment_read(attachment_id: str, max_chars: int = 12000) -> dict:
     """读取用户上传的附件(文本/csv/xlsx 预览;图片返回元数据)。"""
     guard = _require_run()
@@ -1407,14 +1435,14 @@ async def tool_browser_navigate(url: str) -> dict:
     client, tab, guard = _browser_client()
     if guard:
         return guard
-    grant = ctx.grant or {}
-    prefix = grant.get("url_prefix") or ""
-    if prefix and not (url or "").startswith(prefix):
-        return _rejected("rejected", "CONTEXT_REQUIRED", f"目标 URL 不在授权前缀 {prefix} 内")
+    # 访问权限已全面放开:任意 http(s) URL 可导航(敏感操作最多经审批卡)
+    target = str(url or "").strip()
+    if not target.startswith(("http://", "https://")):
+        return _rejected("rejected", "INVALID_PARAMETERS", "仅支持 http/https URL")
     try:
         async with client:
-            await client.navigate(url)
-        return _ok({"navigated": True, "url": url}, evidence={"task_instance_uid": None, "artifact_ids": []})
+            await client.navigate(target)
+        return _ok({"navigated": True, "url": target}, evidence={"task_instance_uid": None, "artifact_ids": []})
     except Exception as exc:  # noqa: BLE001
         return _failed("CONTEXT_REQUIRED", f"navigate 失败: {exc}")
 
@@ -1623,7 +1651,7 @@ EXPECTED_TOOLS = [
     "data_analyze", "data_export",
     "skill_list", "skill_read",
     "attachment_read",
-    "fs_read", "fs_list", "fs_write",
+    "fs_read", "fs_list", "fs_write", "fs_exec",
     "image_generate", "image_assets", "video_generate", "video_assets",
     "repo_install", "repo_update", "repo_list", "repo_learn",
 ]
@@ -1686,6 +1714,7 @@ def create_agent_mcp_server() -> MCPServer:
     mcp.add_tool(tool_fs_read, name="fs_read", description="读取本机任意文本文件(用户已授权智能体全盘读取;大文件/二进制受限)")
     mcp.add_tool(tool_fs_list, name="fs_list", description="列出本机目录内容(名称/类型/大小)")
     mcp.add_tool(tool_fs_write, name="fs_write", description="写本机文件(全面开放;写操作经审批卡授权,审计保留)")
+    mcp.add_tool(tool_fs_exec, name="fs_exec", description="执行本机命令(用户已授权全局访问;经审批卡授权,审计保留)")
 
     mcp.add_tool(tool_image_generate, name="image_generate",
                  description="调用抓虾 AI 生图:按提示词生成图片(1-4 张),等待完成后下载到本地产物目录,返回文件路径")

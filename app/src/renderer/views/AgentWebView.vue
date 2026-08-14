@@ -182,6 +182,65 @@ function onWindowMessage(event) {
     if (p && typeof window.cs?.openFile === 'function') {
       window.cs.openFile(p).catch(() => {})
     }
+  } else if (data.__crawshrimp === 'upload-attachment') {
+    // 会话界面拖入/粘贴文件 → 保存 + 注册为会话附件
+    registerAttachmentFile(data.file)
+  } else if (data.__crawshrimp === 'upload-attachment-pick') {
+    // 会话界面 📎 按钮 → 打开原生选择器逐个注册
+    handlePickAttachments()
+  }
+}
+
+async function registerAttachmentFile(file) {
+  if (!file || typeof window.cs?.saveAgentAttachment !== 'function') return
+  try {
+    const buffer = new Uint8Array(await file.arrayBuffer())
+    const saved = await window.cs.saveAgentAttachment({
+      buffer: Array.from(buffer),
+      name: file.name || 'file',
+      mime: file.type || '',
+    })
+    if (!saved?.ok) return
+    const registered = await window.cs.agentApi('POST', '/agent/attachments/inbox', {
+      name: saved.name, path: saved.path, mime: saved.mime, size: saved.size,
+    })
+    const att = registered?.attachment
+    if (att) {
+      frameEl.value?.contentWindow?.postMessage({
+        __crawshrimp: 'attachment-added',
+        name: att.filename,
+        attachmentId: att.attachment_id,
+      }, '*')
+    }
+  } catch (error) {
+    console.warn('[agent] 附件注册失败:', error?.message)
+  }
+}
+
+async function handlePickAttachments() {
+  if (typeof window.cs?.pickAgentAttachments !== 'function') return
+  try {
+    const result = await window.cs.pickAgentAttachments()
+    if (!result?.ok) return
+    for (const file of result.files || []) {
+      try {
+        const registered = await window.cs.agentApi('POST', '/agent/attachments/inbox', {
+          name: file.name, path: file.path, mime: file.mime, size: file.size,
+        })
+        const att = registered?.attachment
+        if (att) {
+          frameEl.value?.contentWindow?.postMessage({
+            __crawshrimp: 'attachment-added',
+            name: att.filename,
+            attachmentId: att.attachment_id,
+          }, '*')
+        }
+      } catch (error) {
+        console.warn('[agent] 附件注册失败:', error?.message)
+      }
+    }
+  } catch (error) {
+    console.warn('[agent] 附件选择失败:', error?.message)
   }
 }
 

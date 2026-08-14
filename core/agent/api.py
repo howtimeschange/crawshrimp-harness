@@ -158,6 +158,50 @@ def patch_session(session_id: str, req: dict) -> dict:
     return {"ok": True, "session": db.get_session(session_id)}
 
 
+@router.post("/attachments/inbox")
+def create_inbox_attachment(req: AttachmentCreateRequest) -> dict:
+    """会话界面拖入/粘贴/📎 按钮上传附件:自动挂到最近活跃会话。
+
+    shell 无 iframe 会话上下文,附件按最近活跃会话登记;模型经
+    attachment_read(attachment_id)读取,不依赖会话归属。
+    """
+    import re as _re
+    import shutil as _shutil
+    import uuid as _uuid
+    import os as _os
+    from pathlib import Path as _P
+    from core.agent.service import _data_root
+
+    src = _P(str(req.path or "")).expanduser()
+    if not src.is_file():
+        raise HTTPException(422, "文件不存在")
+    session = None
+    with db._lock:
+        conn = db._conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM agent_sessions ORDER BY updated_at DESC LIMIT 1").fetchone()
+            if row:
+                session = dict(row)
+        finally:
+            conn.close()
+    if not session:
+        raise HTTPException(409, "尚无会话,请先在智能体界面开始对话")
+    safe_name = _re.sub(r"[^A-Za-z0-9._\u4e00-\u9fff-]", "_", str(req.name or src.name))
+    attachment_id = f"att-{_uuid.uuid4().hex[:12]}"
+    dest_dir = _data_root() / "agent" / "attachments" / attachment_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / safe_name
+    try:
+        _shutil.copyfile(str(src), str(dest))
+    except OSError as exc:
+        raise HTTPException(422, f"复制附件失败: {exc}") from exc
+    size = int(req.size) or _os.path.getsize(dest)
+    row = db.create_attachment(attachment_id, session["session_id"], None, None,
+                               safe_name, str(dest), str(req.mime or ""), size)
+    return {"attachment": row}
+
+
 @router.post("/sessions/{session_id}/attachments")
 def create_attachment(session_id: str, req: AttachmentCreateRequest) -> dict:
     """渲染端经原生选择器挑选文件后注册为会话附件(拷贝进受控附件目录)。"""

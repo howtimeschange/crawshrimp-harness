@@ -400,6 +400,147 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // ---- 会话附件上传:📎 按钮 + 拖入 + 粘贴 ----
+    const ATTACH_CSS = [
+      '.cs-attach-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; margin: 0 8px 8px 0; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font-size: 12.5px; cursor: pointer; transition: background-color 120ms cubic-bezier(0.4, 0, 0.2, 1); }',
+      '.cs-attach-btn:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }',
+      '.cs-attach-btn:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }',
+      '@media (prefers-reduced-motion: reduce) { .cs-attach-btn { transition: none; } }',
+    ].join('\n')
+
+    function injectAttachCss() {
+      const tagId = 'crawshrimp-slots/attach'
+      if (typeof document !== 'undefined' && document.querySelector('style[data-plugin-css=' + JSON.stringify(tagId) + ']') === null) {
+        const tag = document.createElement('style')
+        tag.dataset.plugin = 'crawshrimp-slots'
+        tag.dataset.pluginCss = tagId
+        tag.textContent = ATTACH_CSS
+        document.head.appendChild(tag)
+      }
+    }
+
+    function mountAttachButton() {
+      if (typeof document === 'undefined' || !document.documentElement || !document.dataset) return
+      try {
+        const composer = document.querySelector('.wSkVaW_composerSeat')
+        if (!composer) return
+        if (document.querySelector('.cs-attach-btn')) return
+        injectAttachCss()
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'cs-attach-btn'
+        btn.textContent = '📎 附件'
+        btn.title = '上传附件(图片/表格/文本)'
+        btn.addEventListener('click', () => {
+          window.parent.postMessage({ __crawshrimp: 'upload-attachment-pick' }, '*')
+        })
+        // 插到 composer 最前(输入框上方);不能用内部 stack 作锚点(slot 结构中非直接子节点会抛 HierarchyRequestError)
+        composer.insertBefore(btn, composer.firstElementChild)
+      } catch (error) {
+        // DOM 未就绪/结构变化:忽略,下一轮 mutation 再试
+      }
+    }
+
+    function handlePasteAttachments(event) {
+      const items = (event.clipboardData || {}).items || []
+      for (const item of items) {
+        if (item.kind !== 'file') continue
+        const file = item.getAsFile()
+        if (file) window.parent.postMessage({ __crawshrimp: 'upload-attachment', file }, '*')
+      }
+    }
+
+    function handleDropAttachments(event) {
+      const files = (event.dataTransfer || {}).files
+      if (!files || !files.length) return
+      event.preventDefault()
+      for (const file of files) {
+        window.parent.postMessage({ __crawshrimp: 'upload-attachment', file }, '*')
+      }
+    }
+
+    function insertAttachmentHint(name, attachmentId) {
+      const ta = document.querySelector('textarea')
+      if (!ta) return
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
+      const hint = `[附件: ${name} (attachment_id: ${attachmentId})]`
+      const current = ta.value || ''
+      setter.call(ta, current ? current + '\n' + hint : hint)
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+      ta.focus()
+    }
+
+    // 与 DSH 原生 UI 统一:原「加号」按钮改造为上传附件;旁边单开「@」命令按钮。
+    function mountUnifiedButtons() {
+      if (typeof document === 'undefined' || !document.documentElement) return
+      try {
+        const composer = document.querySelector('.wSkVaW_composerSeat')
+        if (!composer) return
+        const addBtn = composer.querySelector('.uV2eYG_add')
+        if (!addBtn) return
+        if (addBtn.dataset.csUnified === '1' && document.querySelector('.cs-cmd-at-btn')) return
+        addBtn.dataset.csUnified = '1'
+        // 原加号 → 上传附件(保留 DSH 原生按钮样式,仅替换图标与语义)
+        addBtn.title = '上传附件'
+        addBtn.setAttribute('aria-label', '上传附件')
+        if (!addBtn.querySelector('.cs-upload-glyph')) {
+          addBtn.innerHTML = ''
+          const glyph = document.createElement('span')
+          glyph.className = 'cs-upload-glyph'
+          glyph.textContent = '📎'
+          glyph.style.cssText = 'font-size:15px;line-height:1;'
+          addBtn.appendChild(glyph)
+        }
+        // 旁边单开 @ 命令按钮(克隆原生加号按钮的结构与样式)
+        if (!document.querySelector('.cs-cmd-at-btn')) {
+          const at = addBtn.cloneNode(false)
+          at.className = (addBtn.className || '') + ' cs-cmd-at-btn'
+          at.title = '命令'
+          at.setAttribute('aria-label', '命令')
+          at.innerHTML = ''
+          const glyph2 = document.createElement('span')
+          glyph2.className = 'cs-upload-glyph'
+          glyph2.textContent = '@'
+          glyph2.style.cssText = 'font-size:15px;font-weight:700;line-height:1;'
+          at.appendChild(glyph2)
+          addBtn.parentElement.insertBefore(at, addBtn.nextSibling)
+          at.addEventListener('click', (e) => {
+            e.stopPropagation()
+            window.__csForwardCmd = true
+            try {
+              addBtn.click()
+            } finally {
+              setTimeout(() => { window.__csForwardCmd = false }, 60)
+            }
+          })
+        }
+        // 拦截加号点击(捕获阶段)→ 改为触发上传;@ 转发时放行原命令行为
+        if (!document.__csUploadIntercept) {
+          document.__csUploadIntercept = true
+          document.addEventListener('click', (e) => {
+            if (window.__csForwardCmd) return
+            const target = e.target
+            const btn = target && typeof target.closest === 'function' ? target.closest('.uV2eYG_add') : null
+            if (!btn || btn.classList.contains('cs-cmd-at-btn')) return
+            e.stopPropagation()
+            e.preventDefault()
+            window.parent.postMessage({ __crawshrimp: 'upload-attachment-pick' }, '*')
+          }, true)
+        }
+      } catch (error) {
+        // DOM 未就绪/结构变化:下一轮轮询再试
+      }
+    }
+
+    function mountAttachmentCapture() {
+      if (typeof document === 'undefined' || !document.documentElement || !document.dataset) return
+      if (document.dataset.csAttachCapture === '1') return
+      document.dataset.csAttachCapture = '1'
+      document.addEventListener('paste', handlePasteAttachments)
+      document.addEventListener('dragover', (e) => e.preventDefault())
+      document.addEventListener('drop', handleDropAttachments)
+    }
+
     // ---- 默认工作区:自动采用抓虾运行时目录,不需要用户指定 ----
     async function ensureDefaultWorkspace(ctx, root) {      if (!root || !ctx.workspaces) return
       try {
@@ -442,7 +583,13 @@ window.__ModuleLoader__.load({
         if (data && data.__crawshrimp === 'nav') renderNav(data.items, data.active)
         if (data && data.__crawshrimp === 'workspace') ensureDefaultWorkspace(ctx, data.root)
         if (data && data.__crawshrimp === 'artifact-show') renderArtifactShow(data)
+        if (data && data.__crawshrimp === 'attachment-added') insertAttachmentHint(data.name, data.attachmentId)
       })
+      // apply 时 DOM 可能尚未就绪:轮询挂载(幂等),保证附件入口一定出现
+      setInterval(() => {
+        mountAttachmentCapture()
+        mountUnifiedButtons()
+      }, 1000)
       // 页面/会话重载后向 shell 请求重放产物媒体(iframe 重载期间到达的事件会丢失)
       try {
         window.parent.postMessage({ __crawshrimp: 'artifact-replay' }, '*')
@@ -477,6 +624,7 @@ window.__ModuleLoader__.load({
           if (foot) rail.insertBefore(bottom, foot)
           else rail.appendChild(bottom)
         }
+        mountUnifiedButtons()
         pushRailMetrics()
       })
       observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] })

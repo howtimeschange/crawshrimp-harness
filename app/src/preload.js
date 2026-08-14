@@ -413,6 +413,7 @@ contextBridge.exposeInMainWorld('cs', {
   streamGlobalAgentEvents: (afterSeq, handlers) => streamGlobalAgentEvents(afterSeq, handlers),
   pickAgentAttachments: () => ipcRenderer.invoke('agent:pick-attachments'),
   saveAgentClipboardImage: (payload) => ipcRenderer.invoke('agent:save-clipboard-image', payload),
+  saveAgentAttachment: (payload) => ipcRenderer.invoke('agent:save-attachment', payload),
   readAgentImageDataUrl: (filePath) => ipcRenderer.invoke('agent:read-image-dataurl', filePath),
 
   getAdapters:     () => ipcRenderer.invoke('get-adapters'),
