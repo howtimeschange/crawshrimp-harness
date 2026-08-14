@@ -1,0 +1,8 @@
+{
+  "name": "crawshrimp-product-bridge",
+  "version": "0.1.0",
+  "description": "抓虾产品桥(方案 §12.7):把产品层审批接入 DSH 原生审批交互(ctx.approval + 原生审批卡),不再自造浮层",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT"
+}

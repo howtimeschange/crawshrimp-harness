@@ -820,20 +820,58 @@ class AgentService:
                 "risk": risk,
                 "run_id": run.get("run_id"),
             }
-            # 落库:全局事件流可回放(用户刷新/晚连也能看到审批卡)
             db.append_event(session_id, run.get("run_id"), "tool.approval_required", payload)
-            await self.broadcast(session_id, _seq(session_id), "tool.approval_required", payload)
-        loop = asyncio.get_event_loop()
-        future: asyncio.Future = loop.create_future()
-        self.approval_waits[approval_id] = future
-        try:
-            decision = await asyncio.wait_for(future, timeout=APPROVAL_WAIT_SECONDS)
-            return decision
-        except asyncio.TimeoutError:
-            db.decide_approval(approval_id, "expired", "timeout")
-            return "expired"
-        finally:
-            self.approval_waits.pop(approval_id, None)
+
+        # DSH 原生审批交互:crawshrimp-product-bridge → ctx.approval.request →
+        # 原生审批卡 → 用户决策回传。失败时安全失败(rejected)。
+        decision = await self._ds_native_approval(run, plan, summary, risk)
+        db.decide_approval(approval_id, decision, "dsh-native")
+        return decision
+
+    async def _ds_native_approval(self, run: dict, plan: dict, summary: dict, risk: str) -> str:
+        """经产品桥走 DSH 原生审批卡;不可达/异常时安全失败。"""
+        web_port = getattr(self, "web_port", 0) or int(os.environ.get("CRAWSHRIMP_WEB_PORT", "0") or 0)
+        if not web_port:
+            return "rejected"
+        session = db.get_session((run or {}).get("session_id") or "")
+        runtime_session_id = (session or {}).get("runtime_session_id") or ""
+        if not runtime_session_id:
+            return "rejected"
+        tool_name = str(summary.get("tool_name") or summary.get("title") or plan.get("task_id") or "敏感操作")
+        reason = str(summary.get("detail") or summary.get("description") or summary.get("action")
+                     or json.dumps(summary, ensure_ascii=False)[:800])
+        payload = {
+            "sessionId": runtime_session_id,
+            "toolName": tool_name,
+            "reason": reason,
+            "timeoutMs": (APPROVAL_WAIT_SECONDS - 30) * 1000,
+        }
+
+        def _post() -> str:
+            import urllib.request
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{web_port}/api/crawshrimp/approval/request",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=APPROVAL_WAIT_SECONDS) as resp:
+                    result = json.loads(resp.read().decode("utf-8"))
+                if result.get("ok"):
+                    outcome = str(result.get("outcome") or "rejected")
+                    # DSH 原生审批结果词汇:allowed-once(批准一次)/rejected/cancelled/unavailable
+                    if outcome == "allowed-once":
+                        return "approved"
+                    if outcome == "cancelled":
+                        return "expired"
+                    return "rejected"
+                return "rejected"
+            except Exception as exc:  # noqa: BLE001
+                print(f"[agent] DSH 原生审批桥不可用({exc}),安全失败", flush=True)
+                return "rejected"
+
+        return await asyncio.get_event_loop().run_in_executor(None, _post)
 
     def decide_approval(self, approval_id: str, decision: str) -> dict:
         approval = db.get_approval(approval_id)

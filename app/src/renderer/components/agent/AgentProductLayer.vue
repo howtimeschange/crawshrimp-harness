@@ -1,24 +1,8 @@
 <template>
   <div v-if="cards.length" class="agent-product-layer">
     <div v-for="card in cards" :key="card.uid" class="product-card" :class="card.kind">
-      <!-- 审批卡 -->
-      <template v-if="card.kind === 'approval'">
-        <div class="product-card-head">
-          <span class="product-card-icon">⚠️</span>
-          <span class="product-card-title">需要你的批准</span>
-          <button class="product-card-close" type="button" title="关闭" @click="dismiss(card)">×</button>
-        </div>
-        <div class="product-card-body">{{ approvalSummary(card) }}</div>
-        <div class="product-card-risk">风险等级:{{ card.risk || 'read_only' }}</div>
-        <div v-if="card.status === 'pending'" class="product-card-actions">
-          <button class="product-btn approve" type="button" @click="decide(card, 'approved')">批准执行</button>
-          <button class="product-btn reject" type="button" @click="decide(card, 'rejected')">拒绝</button>
-        </div>
-        <div v-else class="product-card-decided">已{{ card.status === 'approved' ? '批准' : '拒绝' }}</div>
-      </template>
-
       <!-- 任务卡 -->
-      <template v-else-if="card.kind === 'task'">
+      <template v-if="card.kind === 'task'">
         <div class="product-card-head">
           <span class="product-card-icon">📋</span>
           <span class="product-card-title">任务实例</span>
@@ -82,32 +66,11 @@ function dismiss(card) {
   cards.value = cards.value.filter((c) => c !== card)
 }
 
-function approvalSummary(card) {
-  const s = card.summary || {}
-  const parts = []
-  if (s.tool_name) parts.push(String(s.tool_name))
-  if (s.title) parts.push(String(s.title))
-  if (s.action) parts.push(String(s.action))
-  const extra = s.detail || s.description
-  if (extra) parts.push(String(extra).slice(0, 160))
-  return parts.join(' · ') || '一个敏感操作需要你的批准'
-}
-
 function formatSize(size) {
   const n = Number(size) || 0
   if (n < 1024) return `${n} B`
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
   return `${(n / 1024 / 1024).toFixed(1)} MB`
-}
-
-async function decide(card, decision) {
-  try {
-    await window.cs.agentApi('POST', `/agent/approvals/${card.approvalId}/decision`, { decision })
-    card.status = decision
-  } catch (error) {
-    card.status = 'error'
-    pushCard({ kind: 'notice', text: `审批操作失败:${error?.message || error}` })
-  }
 }
 
 function openTask(card) {
@@ -130,16 +93,6 @@ async function revealArtifact(card) {
 
 function handleEvent(eventType, data) {
   switch (eventType) {
-    case 'tool.approval_required': {
-      pushCard({
-        kind: 'approval',
-        approvalId: data?.approval_id || '',
-        summary: data?.summary || {},
-        risk: data?.risk || 'read_only',
-        status: 'pending',
-      })
-      break
-    }
     case 'task.linked': {
       pushCard({
         kind: 'task',
@@ -182,27 +135,6 @@ async function bindEvents() {
     })
   } catch (error) {
     console.warn('[agent] 全局事件流连接失败:', error)
-  }
-  await loadPendingApprovals()
-}
-
-// 恢复未决策审批卡(刷新/晚连接不丢失)
-async function loadPendingApprovals() {
-  try {
-    const result = await window.cs.agentApi('GET', '/agent/approvals?status=pending')
-    for (const item of result?.approvals || []) {
-      if (!cards.value.some((c) => c.kind === 'approval' && c.approvalId === item.approval_id)) {
-        pushCard({
-          kind: 'approval',
-          approvalId: item.approval_id,
-          summary: item.summary || {},
-          risk: item.risk || 'read_only',
-          status: 'pending',
-        })
-      }
-    }
-  } catch (error) {
-    console.warn('[agent] 拉取待审批列表失败:', error?.message)
   }
 }
 

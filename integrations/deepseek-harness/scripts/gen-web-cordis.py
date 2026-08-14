@@ -291,11 +291,14 @@ def main() -> int:
     # 抓虾 client 插件(方案 §12.7):主题 token 注入 + 跟随 shell 主题
     merged["crawshrimp-slots"] = {"id": "crawshrimp-slots", "name": "crawshrimp-slots",
                                   "disabled": None, "config_lines": []}
+    # 抓虾产品桥(方案 §12.7):产品层审批接入 DSH 原生审批交互
+    merged["crawshrimp-product-bridge"] = {"id": "crawshrimp-product-bridge", "name": "crawshrimp-product-bridge",
+                                           "disabled": None, "config_lines": []}
     launcher_args = "['--host', '127.0.0.1', '--port', String(process.env.CRAWSHRIMP_WEB_PORT || 3090)]"
     merged["launcher"] = {"id": "launcher", "name": "@crawshrimp/launcher",
                           "disabled": None,
                           "config_lines": _cfg_from_text(f"config:\n  args: !!js |\n    {launcher_args}\n")}
-    for new_id in ("launcher", "sdk-jsonrpc-server", "mcp-crawshrimp", "crawshrimp-slots"):
+    for new_id in ("launcher", "sdk-jsonrpc-server", "mcp-crawshrimp", "crawshrimp-slots", "crawshrimp-product-bridge"):
         if new_id in merged and new_id not in order:
             order.insert(0, new_id)
     # stdout 专供 SDK JSON-RPC 协议帧:web-runtime 不得打印 URL 行(worker 视非 JSON 行为协议错误)
