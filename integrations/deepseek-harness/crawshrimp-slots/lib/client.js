@@ -70,6 +70,9 @@ window.__ModuleLoader__.load({
       '}',
       // 2) 折叠态的 DSH 装饰鱼标
       '.hHd-Xa_railFish { display: none !important; }',
+      // 2b) 侧栏折叠/展开按钮放大(28px→32px,图标 16px,清晰可点)
+      '.hHd-Xa_toggle, .hHd-Xa_iconButton { width: 32px !important; height: 32px !important; font-size: 16px !important; }',
+      '.hHd-Xa_collapsed .hHd-Xa_toggle, .hHd-Xa_collapsed .hHd-Xa_iconButton { width: 32px !important; height: 32px !important; }',
       // 3) 隐藏 DSH 设置入口(模型/外观由抓虾原生 UI 负责)
       '.hHd-Xa_settingsArea { display: none !important; }',
       // 4) 运行中状态文案 "Deep diving..." → 「抓虾中...」(硬编码字符串,CSS 替换)
@@ -93,7 +96,7 @@ window.__ModuleLoader__.load({
       '.cs-nav-active { background: var(--dsw-alias-state-business-tertiary); color: var(--dsw-alias-state-business-primary); font-weight: 600; }',
       '.cs-nav-icon { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; flex: none; font-size: 15px; }',
       '.cs-nav-toggle { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary)); font-size: 12.5px; }',
-      '.cs-nav-toggle .cs-nav-icon { font-size: 14px; transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1); }',
+      '.cs-nav-toggle .cs-nav-icon { font-size: 16px; transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1); }',
       '.cs-nav-toggle[aria-expanded="true"] .cs-nav-icon { transform: rotate(180deg); }',
       '[data-crawshrimp-nav-main] .cs-nav-item { animation: cs-nav-in 160ms cubic-bezier(0.4, 0, 0.2, 1); }',
       '@keyframes cs-nav-in { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }',
