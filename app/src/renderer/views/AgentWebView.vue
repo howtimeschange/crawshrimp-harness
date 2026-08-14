@@ -13,11 +13,11 @@
           @load="onFrameLoad"
         />
         <div v-else class="web-placeholder">
-          <div class="placeholder-icon">{{ error ? '⚠️' : '🕐' }}</div>
-          <div class="placeholder-title">{{ error ? '智能体运行时暂不可用,正在自动恢复…' : '正在启动智能体运行时…' }}</div>
-          <div class="placeholder-text">{{ error || '首次会话启动后,智能体会话界面会在这里加载(与抓虾同主题)。' }}</div>
-          <div v-if="error" class="placeholder-actions">
-            <span class="recover-state">自动恢复中(第 {{ recoverAttempts }} 次)· 无需操作</span>
+          <div class="placeholder-icon">🕐</div>
+          <div class="placeholder-title">智能体启动中…</div>
+          <div class="placeholder-text">正在准备会话环境,请稍候片刻。</div>
+          <div class="placeholder-actions">
+            <span class="recover-state">自动就绪中,无需操作</span>
           </div>
         </div>
         <!-- 实时浏览器面板悬浮开关 -->
