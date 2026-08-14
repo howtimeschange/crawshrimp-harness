@@ -199,17 +199,21 @@ let rebindTimer = null
 // ---- 会话内媒体直接显示:SSE 事件 → iframe(DSH 消息流)直接注入 ----
 const sentSessionArtifacts = []
 
-function pushArtifactToSession(data) {
+async function pushArtifactToSession(data) {
   const path = String(data?.path || '').trim()
   if (!path) return
-  const urlFor = (entry) => {
+  const urlFor = async (entry) => {
     try {
-      return window.cs?.agentMediaUrl ? window.cs.agentMediaUrl(path, entry || null) : ''
+      return window.cs?.agentMediaUrl ? await window.cs.agentMediaUrl(path, entry || null) : ''
     } catch {
       return ''
     }
   }
   const zipImages = Array.isArray(data?.zip_images) ? data.zip_images : []
+  const [fileUrl, entryUrls] = await Promise.all([
+    urlFor(null),
+    Promise.all(zipImages.map((e) => urlFor(e))),
+  ])
   const msg = {
     __crawshrimp: 'artifact-show',
     artifact: {
@@ -220,12 +224,13 @@ function pushArtifactToSession(data) {
       zipImages,
     },
     urls: {
-      file: urlFor(null),
-      entries: zipImages.map((e) => urlFor(e)),
+      file: fileUrl,
+      entries: entryUrls,
     },
     ts: Date.now(),
   }
-  const target = document.querySelector('iframe')?.contentWindow
+  // 稳定定位智能体会话 iframe(AgentWebView 根容器内)
+  const target = (document.querySelector('.agent-web-view iframe') || document.querySelector('iframe'))?.contentWindow
   if (target) {
     target.postMessage(msg, '*')
   }
@@ -236,11 +241,13 @@ function pushArtifactToSession(data) {
 function onSessionMessage(event) {
   const data = event?.data
   if (!data || !data.__crawshrimp) return
+  // 仅接受智能体会话 iframe 的请求
+  const iframeEl = document.querySelector('.agent-web-view iframe') || document.querySelector('iframe')
+  if (event.source && iframeEl && event.source !== iframeEl.contentWindow) return
   if (data.__crawshrimp === 'artifact-replay') {
     // iframe(会话界面)重载后请求重放:把最近的产物媒体消息重发一遍
-    const target = document.querySelector('iframe')?.contentWindow
-    if (target && sentSessionArtifacts.length) {
-      for (const msg of sentSessionArtifacts) target.postMessage(msg, '*')
+    if (iframeEl?.contentWindow && sentSessionArtifacts.length) {
+      for (const msg of sentSessionArtifacts) iframeEl.contentWindow.postMessage(msg, '*')
     }
   }
 }

@@ -908,7 +908,8 @@ def tool_fs_exec(command: str, timeout_ms: int = 60000) -> dict:
     cmd = str(command or "").strip()
     if not cmd:
         return _failed("INVALID_PARAMETERS", "command 不能为空")
-    summary = {"kind": "fs_exec", "command": cmd[:300]}
+    # 审批内容即执行内容:完整命令进入审批卡与审计(展示截断由前端处理)
+    summary = {"kind": "fs_exec", "command": cmd}
     decision = _await_approval_blocking(
         {"plan_id": f"fs-exec-{uuid.uuid4().hex[:8]}", "params_json": "{}", "params_sha256": "",
          "risk": "external_write", "adapter_id": "", "task_id": ""}, summary)
@@ -916,9 +917,13 @@ def tool_fs_exec(command: str, timeout_ms: int = 60000) -> dict:
         return _rejected("rejected", "APPROVAL_REJECTED" if decision == "rejected" else "APPROVAL_EXPIRED",
                          "命令执行未获批准")
     import subprocess as _sp
-    limit = max(1000, min(int(timeout_ms or 60000), 300000))
     try:
-        proc = _sp.run(cmd, shell=True, capture_output=True, text=True, timeout=limit / 1000)
+        limit = max(1000, min(int(timeout_ms or 60000), 300000))
+    except (TypeError, ValueError):
+        return _failed("INVALID_PARAMETERS", f"timeout_ms 非法: {timeout_ms}")
+    try:
+        proc = _sp.run(cmd, shell=True, capture_output=True, text=True, timeout=limit / 1000,
+                       start_new_session=True)
     except _sp.TimeoutExpired:
         return _failed("TIMEOUT", f"命令超时({limit}ms)")
     except Exception as exc:  # noqa: BLE001

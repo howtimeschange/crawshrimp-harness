@@ -122,9 +122,13 @@ function createBackendController(options) {
         await acceptReadyBackend(ensureGeneration)
         return
       }
-      markNotReady('restarting')
-      await switchEndpoint()
-      assertActiveGeneration(ensureGeneration)
+      // 已就绪后端瞬时校验失败:不立即切换端口/杀进程,
+      // 落入下方 startup 循环由容忍重试(MAX_VALIDATE_TOLERANCE)处理
+      if (!(backendProcess && currentProcessWasReady)) {
+        markNotReady('restarting')
+        await switchEndpoint()
+        assertActiveGeneration(ensureGeneration)
+      }
     }
 
     assertActiveGeneration(ensureGeneration)

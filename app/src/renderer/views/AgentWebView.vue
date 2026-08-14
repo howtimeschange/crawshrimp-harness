@@ -167,6 +167,9 @@ function pushNav() {
 function onWindowMessage(event) {
   const data = event?.data
   if (!data || !data.__crawshrimp) return
+  // 仅接受智能体会话 iframe 的消息(防其他内嵌页面冒用特权通道)
+  const sessionWin = frameEl.value?.contentWindow
+  if (sessionWin && event.source && event.source !== sessionWin) return
   if (data.__crawshrimp === 'nav-click') {
     if (Number(data.railWidth) > 0) emit('rail-metrics', { width: data.railWidth, collapsed: false })
     // 菜单切换时最小化实时浏览器窗口,避免浮动窗口盖住界面拦截点击
@@ -191,12 +194,18 @@ function onWindowMessage(event) {
   }
 }
 
+const MAX_ATTACHMENT_BYTES = 200 * 1024 * 1024
+
 async function registerAttachmentFile(file) {
   if (!file || typeof window.cs?.saveAgentAttachment !== 'function') return
+  if (Number(file.size || 0) > MAX_ATTACHMENT_BYTES) {
+    console.warn('[agent] 附件过大(>200MB),已跳过:', file.name)
+    return
+  }
   try {
     const buffer = new Uint8Array(await file.arrayBuffer())
     const saved = await window.cs.saveAgentAttachment({
-      buffer: Array.from(buffer),
+      buffer,
       name: file.name || 'file',
       mime: file.type || '',
     })

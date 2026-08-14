@@ -214,3 +214,51 @@ GET  /settings/chrome-tabs
 - Multi-Chrome instance concurrency
 - Adapter version management / auto-update
 - Anti-bot library (adapters self-manage)
+
+---
+
+# crawshrimp SPEC v2 增补(2026-08-14,DSH 智能体落地)
+
+> 本节对齐 crawshrimp-harness 智能体(DSH 内核)的最新实现,与 §4/§5 适配器规范配套阅读。
+> 详细交付记录见 docs/crawshrimp-harness/02-delivery.md 与 03-media-in-chat-handover.md。
+
+## 11. 智能体(DSH Harness)架构
+
+- 内核:@deepseek-ai/dsh 全族锁版 0.1.0-rc.6,经 `dsh-sdk-jsonrpc-demo` 以 Electron-as-Node 运行。
+- 进程模型:Electron main 内嵌 FastAPI 后端(端口 18765,回退 +1..+100)→ AgentWorker(node)→ DSH harness(Electron RUN_AS_NODE);MCP 网关独立端口(API+200),DSH web host(API+300)。
+- 双真值:SQLite 产品真值(会话/run/消息/审批/修订投影)+ DSH harness 会话真值;web UI 原生会话经「影子投影」建立 run-web-* 影子 run。
+- 界面:智能体 DSH Web 会话界面为唯一主界面(iframe 常驻),抓虾菜单注入会话侧边栏,其他菜单覆盖右侧内容区;实时浏览器为可拖动/缩放/最小化/最大化浮动窗口,`browser_*` 工具调用时自动弹出。
+- 端口稳定性:孤儿后端/运行时清理、`_pick_free_port` 自愈、`_settle_web_port` 按 `__DSH_BOOT__` 特征探测真实端口、前端 HTTP 探活自恢复、SSE 自动重连。
+
+## 12. 智能体权限模型(2026-08-14 全面放开)
+
+| 能力 | 工具 | 授权 |
+| --- | --- | --- |
+| 任务/脚本/数据/技能 | tasks_*/script_*/data_*/skill_*/attachment_read | 现有风险审批模型 |
+| 读本机任意文件/目录 | fs_read / fs_list | 无需审批(用户授权全盘读) |
+| 写本机文件 | fs_write | 审批卡(DSH 原生,允许一次) |
+| 执行本机命令 | fs_exec | 审批卡 |
+| 浏览器导航 | browser_navigate | 任意 http(s) URL(不再限授权前缀) |
+| 仓库克隆 | repo_install 等 | URL SSRF 防护 |
+
+媒体展示专用 token(由 API token 派生,仅 `/agent/artifacts/*` 可用),master token 不进媒体 URL。
+
+## 13. 脚本创作与双闸门(强制规范)
+
+- **硬性规范**:所有脚本一律按抓虾适配器规范编写——`manifest.yaml` + 页面 JS 脚本(async IIFE,读取 `window.__CRAWSHRIMP_PARAMS__`,返回 `{ success, data: 扁平对象数组, meta: { has_more } }`);独立 Python/Node 脚本在草稿/测试/发布三关全部被拒。
+- 契约技能包:`crawshrimp-adapter-skill`(含 `references/script-contract.md` 最小契约)、`dont-stop`(实施-自测-修复-交付循环)等 11 个技能包。
+- 双闸门:script_publish → ① 审批卡(DSH 原生)→ ② 脚本审核页。审核页支持「安装到测试区并测试」(页内嵌正式任务执行界面 TaskRunner 真实运行),测试确认后批准发布(转正、我的脚本可见),拒绝则卸载测试安装并恢复同名生产适配器快照。
+- 修订状态机:draft → tested → pending_review → testing(已测试安装)→ published / rejected。
+
+## 14. 会话内媒体展示(图片多图/视频/附件)
+
+- 产物媒体经 `artifact.created` 事件(带 media_kind + zip 内图片清单)广播 → shell 直接 postMessage 到会话 iframe → 注入消息列表(`.Md3f7G_column` 末尾),像消息一样出现在信息流。
+- 图片:单图直显;ZIP 多图网格(`/agent/artifacts/entry` 流式解压,zip bomb 防护:解压前检查 file_size)。
+- 视频:页内 `<video controls>` 播放(`/agent/artifacts/file` 支持 Range,含后缀区间 `bytes=-N`)。
+- 附件上传:composer 原生「加号」按钮改造为上传(📎),旁开「@」命令按钮;支持拖入/粘贴;上传注册为会话附件,输入框插入 `[附件: name (attachment_id)]` 供模型 attachment_read。
+- iframe 重载/端口漂移后经 artifact-replay 双向重放,去重以 DOM 为准。
+
+## 15. 与 §4/§5 的关系
+
+- 智能体按 §4(manifest)与 §5(JS 协议)编写适配包;§4/§5 为唯一脚本规范。
+- 发布固化经 adapter_loader.install_from_dir 进入 adapters 运行时,与「我的脚本」/tasks_search 同一数据源。

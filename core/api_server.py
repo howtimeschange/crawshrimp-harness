@@ -141,6 +141,24 @@ def _backend_lock_path() -> Path:
     return _backend_lock_dir() / "backend.lock"
 
 
+def _get_media_token() -> str:
+    """媒体展示专用 token(由 API token 确定性派生,不暴露 master token)。
+
+    <img>/<video> 无法携带请求头,媒体 token 允许出现在 query 参数里;
+    它只对 /agent/artifacts/* 展示类端点生效,不能用于其他产品 API。
+    """
+    import hashlib as _hl
+    expected = _get_api_token()
+    if not expected:
+        return ""
+    return _hl.sha256((expected + ":media:v1").encode("utf-8")).hexdigest()
+
+
+def _media_token_ok(supplied: str) -> bool:
+    expected = _get_media_token()
+    return bool(expected) and hmac.compare_digest(supplied, expected)
+
+
 def _get_api_token() -> str:
     env_token = str(os.environ.get("CRAWSHRIMP_API_TOKEN") or "").strip()
     if env_token:
@@ -7476,10 +7494,13 @@ async def require_local_api_token(request: Request, call_next):
         return await call_next(request)
 
     supplied = str(request.headers.get(API_TOKEN_HEADER) or "").strip()
-    # 媒体端点(<img>/<video> 标签无法携带自定义头)允许等价 query token
-    if not supplied and str(request.url.path or "").startswith("/agent/artifacts/"):
+    is_media_path = str(request.url.path or "").startswith("/agent/artifacts/")
+    if not supplied and is_media_path:
         supplied = str(request.query_params.get("token") or "").strip()
     if not supplied or not hmac.compare_digest(supplied, expected):
+        # 媒体端点:接受专用媒体 token(master token 不进 URL),或 master token 直连
+        if is_media_path and supplied and _media_token_ok(supplied):
+            return await call_next(request)
         return _add_local_cors_headers(
             request,
             JSONResponse({"detail": "Unauthorized"}, status_code=401),

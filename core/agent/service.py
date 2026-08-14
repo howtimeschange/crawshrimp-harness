@@ -45,6 +45,16 @@ _VIDEO_MEDIA_EXT = {".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv"}
 _AUDIO_MEDIA_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg"}
 
 
+def _media_token() -> str:
+    """媒体展示 token:由 API token 确定性派生(master token 不进媒体 URL)。"""
+    import hashlib as _hl
+    from core.api_server import _get_api_token
+    expected = _get_api_token()
+    if not expected:
+        return ""
+    return _hl.sha256((expected + ":media:v1").encode("utf-8")).hexdigest()
+
+
 def _classify_artifact_media(filename: str, path: str):
     """按文件名分类产物媒体类型;zip 产物返回内部图片条目清单(轻量 namelist)。"""
     name = str(filename or "")
@@ -174,6 +184,7 @@ class AgentService:
         self.global_subscribers: set[asyncio.Queue] = set()
         # web UI 原生会话的影子投影:runtime_session_id → 影子 run
         self.shadow_runs: dict[str, dict] = {}
+        self._live_seq: dict = {}
 
         self._mcp_app = None
         self._mcp_uvicorn = None
@@ -312,7 +323,8 @@ class AgentService:
         self.global_subscribers.discard(queue)
 
     async def broadcast(self, session_id: str, seq: int, event_type: str, payload: Any) -> None:
-        message = {"seq": seq, "event_type": event_type, "payload": payload}
+        live_seq = self._next_live_seq(session_id)
+        message = {"seq": live_seq, "event_type": event_type, "payload": payload}
         for queue in list(self.subscribers.get(session_id, ())):
             try:
                 queue.put_nowait(message)
@@ -321,7 +333,7 @@ class AgentService:
         # 全局事件流(DSH Web 视图等无会话绑定消费方):payload 注入 session_id
         if isinstance(payload, dict) and "session_id" not in payload:
             payload = {**payload, "session_id": session_id}
-        gmessage = {"seq": seq, "event_type": event_type, "payload": payload}
+        gmessage = {"seq": live_seq, "event_type": event_type, "payload": payload}
         for queue in list(self.global_subscribers):
             try:
                 queue.put_nowait(gmessage)
@@ -718,6 +730,8 @@ class AgentService:
             # DSH web host(方案 §12.7):前端 iframe 嵌入的页面地址
             "web_port": web_port,
             "web_url": f"http://127.0.0.1:{web_port}/" if web_port else "",
+            # 媒体展示 token(由 master token 派生,仅 /agent/artifacts/* 可用)
+            "media_token": _media_token(),
             # 默认工作区(前端自动建立,不需要用户指定)
             "workspace_root": str(_data_root() / "agent" / "workspace"),
         }

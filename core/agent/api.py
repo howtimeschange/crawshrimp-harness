@@ -199,6 +199,12 @@ def create_inbox_attachment(req: AttachmentCreateRequest) -> dict:
     size = int(req.size) or _os.path.getsize(dest)
     row = db.create_attachment(attachment_id, session["session_id"], None, None,
                                safe_name, str(dest), str(req.mime or ""), size)
+    # 上传临时文件已复制进受控附件目录,清理 tmp 源避免 userData 无限增长
+    if "tmp-agent-attachments" in str(src):
+        try:
+            _os.unlink(str(src))
+        except OSError:
+            pass
     return {"attachment": row}
 
 
@@ -340,11 +346,15 @@ def artifact_zip_entry(path: str, entry: str) -> Response:
             names = zf.namelist()
             if entry_name not in names:
                 raise HTTPException(404, "zip 内条目不存在")
+            info = zf.getinfo(entry_name)
+            # zip bomb 防护:解压前检查未压缩大小,超大条目直接拒绝
+            if info.file_size > 64 * 1024 * 1024:
+                raise HTTPException(413, "条目过大")
             data = zf.read(entry_name)
+    except HTTPException:
+        raise
     except zipfile.BadZipFile as exc:
         raise HTTPException(400, "zip 文件损坏") from exc
-    if len(data) > 64 * 1024 * 1024:
-        raise HTTPException(413, "条目过大")
     return _Response(
         content=data,
         media_type=_guess_media_type(entry_name),
@@ -367,8 +377,17 @@ def artifact_file(path: str, request: Request):
         m = _re.match(r"bytes=(\d*)-(\d*)$", range_header)
         if m and (m.group(1) or m.group(2)):
             start_s, end_s = m.group(1), m.group(2)
-            start = int(start_s) if start_s else 0
-            end = int(end_s) if end_s else (size - 1)
+            if start_s == "" and end_s != "":
+                # 后缀区间 bytes=-N:最后 N 字节(RFC 7233)
+                n = int(end_s)
+                if n <= 0:
+                    from fastapi.responses import Response as _Response
+                    return _Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+                start = max(0, size - n)
+                end = size - 1
+            else:
+                start = int(start_s) if start_s else 0
+                end = int(end_s) if end_s else (size - 1)
             if start >= size or start > end:
                 from fastapi.responses import Response as _Response
                 return _Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
@@ -563,6 +582,60 @@ def _collect_revision_files(rev: dict):
     return files
 
 
+def _adapter_snapshot_dir(adapter_id: str):
+    from pathlib import Path as _P
+    from core.agent.service import _data_root
+    safe = _P(str(adapter_id or "")).name or "adapter"
+    return _data_root() / "adapters" / f".{safe}.review-backup"
+
+
+def _snapshot_existing_adapter(adapter_id: str) -> bool:
+    """测试安装前快照同名生产适配器;无同名适配器时返回 False。"""
+    if not adapter_id:
+        return False
+    import shutil as _sh
+    from pathlib import Path as _P
+    from core.agent.service import _data_root
+    dest = _data_root() / "adapters" / str(adapter_id)
+    if not (dest.exists() or dest.is_symlink()):
+        return False
+    backup = _adapter_snapshot_dir(adapter_id)
+    _sh.rmtree(str(backup), ignore_errors=True)
+    try:
+        _sh.copytree(str(dest), str(backup), symlinks=True)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _restore_snapshotted_adapter(adapter_id: str) -> None:
+    """拒绝时恢复快照的生产适配器,并重新加载运行时。"""
+    if not adapter_id:
+        return
+    import shutil as _sh
+    from core.agent.service import _data_root
+    backup = _adapter_snapshot_dir(adapter_id)
+    if not backup.exists():
+        return
+    dest = _data_root() / "adapters" / str(adapter_id)
+    try:
+        _sh.rmtree(str(dest), ignore_errors=True)
+        _sh.copytree(str(backup), str(dest), symlinks=True)
+        _sh.rmtree(str(backup), ignore_errors=True)
+        from core import adapter_loader as _al
+        _al.install_from_dir(str(dest), install_mode="copy")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _discard_adapter_snapshot(adapter_id: str) -> None:
+    if not adapter_id:
+        return
+    import shutil as _sh
+    backup = _adapter_snapshot_dir(adapter_id)
+    _sh.rmtree(str(backup), ignore_errors=True)
+
+
 def _install_revision_to_adapters(rev: dict):
     """把修订的适配包文件安装到抓虾 adapters 运行时(经 adapter_loader 加载)。
 
@@ -621,6 +694,8 @@ def test_install_script_revision(rev_id: str) -> dict:
         raise HTTPException(404, "修订不存在")
     if rev["status"] not in ("pending_review", "testing"):
         raise HTTPException(409, f"修订状态不允许测试安装: {rev['status']}")
+    # 测试安装可能覆盖同名生产适配器:先快照,拒绝时恢复
+    _snapshot_existing_adapter(str(rev.get("adapter_id") or ""))
     adapter_id, manifest_doc = _install_revision_to_adapters(rev)
     _db.update_script_revision(rev_id, status="testing", adapter_id=adapter_id)
     return {"ok": True, "status": "testing", "adapter_id": adapter_id,
@@ -651,13 +726,14 @@ def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
             return {"ok": True, "idempotent": True, "status": "published"}
         raise HTTPException(409, f"修订状态不允许复核: {rev['status']}")
     if req.decision == "reject":
-        # 测试安装过的修订:卸载运行时副本,避免残留半成品适配器
+        # 测试安装过的修订:卸载测试副本;若覆盖了同名生产适配器,恢复快照
         if rev["status"] == "testing" and rev.get("adapter_id"):
             try:
                 from core import adapter_loader as _al
                 _al.uninstall(str(rev["adapter_id"]))
             except Exception:  # noqa: BLE001
                 pass
+            _restore_snapshotted_adapter(str(rev["adapter_id"]))
         _db.update_script_revision(rev_id, status="rejected")
         return {"ok": True, "status": "rejected"}
 
@@ -716,6 +792,7 @@ def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
                 raise HTTPException(409, f"安装到运行时失败: {exc}") from exc
         published_files = [safe_name]
 
+    _discard_adapter_snapshot(safe_adapter)
     sha = _hashlib.sha256(content.encode("utf-8")).hexdigest()
     _db.update_script_revision(rev_id, status="published", adapter_id=safe_adapter, source_sha256=sha)
     return {"ok": True, "status": "published", "path": draft and str(draft),

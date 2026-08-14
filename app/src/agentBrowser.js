@@ -23,6 +23,7 @@ const FRAME_INTERVAL_MS = 800
 const SCREENSHOT_QUALITY = 55
 
 /** @type {{ ws: WebSocket, timer: NodeJS.Timeout | null, targetUrl: string, send: (method: string, params?: object) => Promise<any> } | null} */
+let starting = false
 let stream = null
 
 function fetchJson(port, path) {
@@ -72,6 +73,7 @@ function stopAgentBrowserStream() {
 
 async function startAgentBrowserStream(webContents) {
   if (stream) return { ok: true, resumed: true, url: stream.targetUrl }
+  if (starting) return { ok: true, resumed: false, url: '', pending: true }
   if (!webContents || webContents.isDestroyed()) return { ok: false, error: '渲染端不可用' }
 
   let target
@@ -82,6 +84,7 @@ async function startAgentBrowserStream(webContents) {
     return { ok: false, error: String(error.message || error) }
   }
 
+  starting = true
   const ws = new WebSocket(target.webSocketDebuggerUrl)
   const nextIdRef = { value: 1 }
   const pending = new Map()
@@ -106,6 +109,9 @@ async function startAgentBrowserStream(webContents) {
   ws.onerror = () => notify(webContents, 'error', { message: 'CDP websocket 错误' })
   ws.onclose = () => {
     const wasActive = stream && stream.ws === ws
+    starting = false
+    for (const [, entry] of pending) entry.reject(new Error('CDP websocket 已断开'))
+    pending.clear()
     if (wasActive) stopAgentBrowserStream()
     notify(webContents, 'disconnected')
   }
@@ -125,6 +131,7 @@ async function startAgentBrowserStream(webContents) {
   await send('Page.enable')
 
   stream = { ws, timer: null, targetUrl: target.url || '', send, frameCount: 0 }
+  starting = false
   stream.timer = setInterval(async () => {
     if (!stream) return
     if (stream.ws.readyState !== WebSocket.OPEN) return

@@ -116,12 +116,22 @@ async function agentApi(method, requestPath, body) {
 }
 
 /**
- * 产物媒体 URL:<img>/<video> 标签无法携带自定义头,后端 /agent/artifacts/*
- * 接受等价 query token;token 拼进 URL 供会话内直接显示。
+ * 产物媒体 URL:<img>/<video> 标签无法携带自定义头。
+ * 使用后端派生的专用媒体 token(仅 /agent/artifacts/* 可用),master token 不进 URL。
  */
-function agentMediaUrl(path, entry) {
+let cachedMediaToken = ''
+
+async function agentMediaUrl(path, entry) {
   const base = apiBase()
-  const token = apiToken()
+  let token = cachedMediaToken
+  if (!token) {
+    try {
+      const rt = await agentApi('GET', '/agent/runtime')
+      token = String(rt?.media_token || '')
+      if (token) cachedMediaToken = token
+    } catch { /* 回退 master token(兼容旧后端) */ }
+  }
+  if (!token) token = apiToken()
   const query = new URLSearchParams({ path: String(path || ''), token: String(token || '') })
   if (entry) {
     query.set('entry', String(entry))

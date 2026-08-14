@@ -419,3 +419,37 @@ P0 进展(2026-08-14,macOS arm64 本机):✅ 锁版安装可重复;✅ Electron-
 3. **事件投影基准**:产品 SSE 事件是否接受以 DSH 事件词汇(assistant/chunk、tool/call、turn/end)对齐投影(§12.5);
 4. **预算数值**:§11 的分级数字是否与实际业务(典型采集任务长度)相符;
 5. **P0 是否立即启动**:本机已具备 macOS 验证条件,可以先把 spike 跑起来。
+
+---
+
+## 18. 实现修订记录(2026-08-14,对最新实现的落账)
+
+> 提案主体各节已按当日实现落地;本节记录实现过程中相对提案的决策变化与新增约束。
+
+### 18.1 权限模型修订(§8 放开)
+
+用户决策:「之前限制了抓虾智能体的访问,这次放开权限,最多需要人审批」。落账:
+
+- 新增 `fs_read/fs_list`(全盘读,免审批)、`fs_write/fs_exec`(写文件/执行命令,DSH 原生审批卡,允许一次)、`browser_navigate` 放开任意 http(s) URL。
+- 媒体展示专用 token(master token 不进媒体 URL),`/agent/artifacts/*` 仅认媒体 token 或 header master token。
+- 安全底线保留:审批卡 + 工具调用审计(agent_tool_calls)。
+
+### 18.2 脚本创作规范(§7 强化为硬性约束)
+
+- 所有脚本必须是抓虾适配包(manifest.yaml + 页面 JS async IIFE);独立 Python/Node 脚本在 `script_create_draft/script_test/script_publish` 三关全部被拒。
+- 契约文档技能化:`crawshrimp-adapter-skill/references/script-contract.md`(智能体 fs 受限时经 skill_read 获取契约)。
+- 双闸门第二闸门升级为「先测试后审批」:审核页可安装到测试区、页内内嵌正式任务执行界面真实运行;批准=转正,拒绝=卸载并恢复同名生产适配器快照。
+
+### 18.3 前端交互修订(§12 补充)
+
+- 会话内媒体(图片多图/视频/附件)在消息流内展示(消息列表末尾),非输入框旁模块;上传入口为 composer 原生加号按钮改造(📎)+ 旁开「@」命令按钮。
+- 实时浏览器升级为可拖动/缩放/最小化/最大化的浮动窗口;菜单切换时自动最小化,防遮挡。
+
+### 18.4 稳定性修订(§14/§15 相关)
+
+- 后端孤儿进程启动自清理、端口自愈与 `_settle_web_port` 真实端口探测、SSE 自动重连、HTTP 级探活、backendController 对已就绪后端的瞬时校验容忍(不杀正在跑任务的实例)。
+- 已知竞态修复:restartBackend 与 controller respawn 双实例、`ctx.emit_event` 曾是 no-op、Vue props/watch 响应性异常(改用直接 postMessage 绕开)。
+
+### 18.5 仍待拍板/遗留(交接 Codex)
+
+见 `04-codex-handover.md`。

@@ -384,7 +384,11 @@ window.__ModuleLoader__.load({
       // 不能挂 scrollBody 末尾——那是输入框(composerSeat)之后,会挤压对话框。
       const column = document.querySelector('.Md3f7G_column')
       if (!column) {
-        setTimeout(() => renderArtifactShow(data), 2500)
+        // 有限重试:最多 6 次,避免定时器无限累积
+        const retries = Number(data.__retries || 0)
+        if (retries < 6) {
+          setTimeout(() => renderArtifactShow({ ...data, __retries: retries + 1 }), 2500)
+        }
         return
       }
       const block = makeArtifactBlock(artifact, data.urls || {})
@@ -441,7 +445,12 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function inComposer(target) {
+      return !!(target && typeof target.closest === 'function' && target.closest('.wSkVaW_composerSeat'))
+    }
+
     function handlePasteAttachments(event) {
+      if (!inComposer(event.target)) return
       const items = (event.clipboardData || {}).items || []
       for (const item of items) {
         if (item.kind !== 'file') continue
@@ -451,6 +460,7 @@ window.__ModuleLoader__.load({
     }
 
     function handleDropAttachments(event) {
+      if (!inComposer(event.target)) return
       const files = (event.dataTransfer || {}).files
       if (!files || !files.length) return
       event.preventDefault()

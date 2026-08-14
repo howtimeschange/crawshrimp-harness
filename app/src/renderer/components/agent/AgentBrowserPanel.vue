@@ -33,7 +33,7 @@
           :title="minimized ? '展开' : '最小化'"
           :aria-label="minimized ? '展开' : '最小化'"
           @mousedown.stop
-          @click="minimized = !minimized"
+          @click="toggleMinimized"
         >{{ minimized ? '▣' : '—' }}</button>
         <button
           class="win-btn win-btn-close"
@@ -215,6 +215,13 @@ function onResizeStart(event) {
 
 function toggleMaximize() {
   maximized.value = !maximized.value
+  if (maximized.value) minimized.value = false
+  savePrefs()
+}
+
+function toggleMinimized() {
+  minimized.value = !minimized.value
+  if (minimized.value) maximized.value = false
   savePrefs()
 }
 
@@ -282,6 +289,8 @@ onMounted(() => {
 onUnmounted(() => {
   offFrame?.()
   offStatus?.()
+  drag = null
+  resize = null
   if (typeof window.cs?.stopAgentBrowserStream === 'function') {
     window.cs.stopAgentBrowserStream()
   }
