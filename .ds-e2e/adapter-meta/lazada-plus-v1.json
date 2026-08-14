@@ -1,0 +1,6 @@
+{
+  "adapter_id": "lazada-plus-v1",
+  "install_mode": "copy",
+  "runtime_path": "/Users/xingyicheng/Documents/crawshrimp-harness/.ds-e2e/adapters/lazada-plus-v1",
+  "source_path": "/Users/xingyicheng/Documents/crawshrimp-harness/adapters/lazada-plus-v1"
+}

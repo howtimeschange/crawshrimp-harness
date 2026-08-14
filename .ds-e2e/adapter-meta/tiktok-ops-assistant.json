@@ -1,0 +1,6 @@
+{
+  "adapter_id": "tiktok-ops-assistant",
+  "install_mode": "copy",
+  "runtime_path": "/Users/xingyicheng/Documents/crawshrimp-harness/.ds-e2e/adapters/tiktok-ops-assistant",
+  "source_path": "/Users/xingyicheng/Documents/crawshrimp-harness/adapters/tiktok-ops-assistant"
+}

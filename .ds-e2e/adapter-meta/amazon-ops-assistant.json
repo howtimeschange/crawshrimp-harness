@@ -1,0 +1,6 @@
+{
+  "adapter_id": "amazon-ops-assistant",
+  "install_mode": "copy",
+  "runtime_path": "/Users/xingyicheng/Documents/crawshrimp-harness/.ds-e2e/adapters/amazon-ops-assistant",
+  "source_path": "/Users/xingyicheng/Documents/crawshrimp-harness/adapters/amazon-ops-assistant"
+}

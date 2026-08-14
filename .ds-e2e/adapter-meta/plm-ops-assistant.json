@@ -1,0 +1,6 @@
+{
+  "adapter_id": "plm-ops-assistant",
+  "install_mode": "copy",
+  "runtime_path": "/Users/xingyicheng/Documents/crawshrimp-harness/.ds-e2e/adapters/plm-ops-assistant",
+  "source_path": "/Users/xingyicheng/Documents/crawshrimp-harness/adapters/plm-ops-assistant"
+}

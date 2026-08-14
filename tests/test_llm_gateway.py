@@ -63,6 +63,36 @@ class LlmGatewayTests(unittest.TestCase):
         self.assertEqual(domestic.protocol, "openai")
         self.assertEqual(domestic.base_url, "https://domestic.example/v1")
 
+    def test_deepseek_official_routes_use_dedicated_key_and_real_model_names(self):
+        config = self.config()
+        config["ai"]["llm"]["deepseek_api_key"] = "sk-ds-official-unit"
+        config["ai"]["llm"]["deepseek_base_url"] = "https://api.deepseek.example"
+        flash = llm_gateway.route_for_model("deepseek-official-v4-flash", config)
+        pro = llm_gateway.route_for_model("deepseek-official-v4-pro", config)
+        self.assertEqual(flash.model_id, "deepseek-v4-flash")
+        self.assertEqual(flash.base_url, "https://api.deepseek.example")
+        self.assertEqual(flash.api_key, "sk-ds-official-unit")
+        self.assertEqual(flash.protocol, "openai")
+        self.assertEqual(pro.model_id, "deepseek-v4-pro")
+        # 默认官方 Base URL
+        config["ai"]["llm"].pop("deepseek_base_url")
+        defaulted = llm_gateway.route_for_model("deepseek-official-v4-pro", config)
+        self.assertEqual(defaulted.base_url, llm_gateway.DEEPSEEK_OFFICIAL_BASE_URL)
+
+    def test_deepseek_official_requires_dedicated_key(self):
+        config = self.config()
+        config["ai"]["llm"].pop("deepseek_api_key", None)
+        with self.assertRaises(llm_gateway.LlmConfigurationError):
+            llm_gateway.route_for_model("deepseek-official-v4-flash", config)
+
+    def test_deepseek_official_key_can_come_from_runtime_environment(self):
+        config = self.config()
+        config["ai"]["llm"].pop("deepseek_api_key", None)
+        config["ai"]["llm"]["api_key"] = ""  # 共享 key 缺省也不影响官方路由
+        with patch.dict(os.environ, {"CRAWSHRIMP_DEEPSEEK_API_KEY": "runtime-ds-key"}):
+            route = llm_gateway.route_for_model("deepseek-official-v4-flash", config)
+        self.assertEqual(route.api_key, "runtime-ds-key")
+
     def test_runtime_environment_key_can_be_used_without_persisting_it_in_config(self):
         config = self.config()
         config["ai"]["llm"]["api_key"] = ""

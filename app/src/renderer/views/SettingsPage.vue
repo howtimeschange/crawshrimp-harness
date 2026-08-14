@@ -513,47 +513,84 @@
 
           <div class="panel-layout">
             <div class="form-stack">
-              <div class="field">
-                <label>共享 API Key</label>
-                <input
-                  v-model="cfg[LLM_API_KEY_FIELD]"
-                  class="input"
-                  type="password"
-                  autocomplete="new-password"
-                  placeholder="输入网关 API Key"
-                  @focus="selectInputText"
-                />
-                <p class="field-hint">三个兼容网关共用同一个 Key；保存后只显示“已配置”，不会把密钥读回页面。</p>
-              </div>
-              <div class="field">
-                <label>海外 OpenAI 兼容 Base URL</label>
-                <input v-model="cfg['ai.llm.overseas_openai_base_url']" class="input" />
-                <p class="field-hint">GPT 与 Gemini 模型使用此地址。</p>
-              </div>
-              <div class="field">
-                <label>海外 Anthropic 兼容 Base URL</label>
-                <input v-model="cfg['ai.llm.overseas_anthropic_base_url']" class="input" />
-                <p class="field-hint">Claude 模型使用此地址。</p>
-              </div>
-              <div class="field">
-                <label>国内 OpenAI 兼容 Base URL</label>
-                <input v-model="cfg['ai.llm.domestic_base_url']" class="input" />
-                <p class="field-hint">Qwen、DeepSeek、GLM 与 Kimi 模型使用此地址。</p>
-              </div>
-              <div class="field">
-                <label>默认模型</label>
-                <select v-model="cfg['ai.llm.default_model']" class="select">
-                  <option v-for="model in LLM_MODELS" :key="model.value" :value="model.value">
-                    {{ model.label }}
-                  </option>
-                </select>
+              <!-- 两个配置源左右分栏:森马网关 / DeepSeek 官方 -->
+              <div class="llm-provider-grid">
+                <section class="llm-provider-card">
+                  <h4 class="llm-provider-title">森马网关</h4>
+                  <p class="llm-provider-sub">海外 OpenAI / 海外 Anthropic / 国内 OpenAI 三个兼容网关,共用同一个 Key。</p>
+                  <div class="field">
+                    <label>共享 API Key</label>
+                    <input
+                      v-model="cfg[LLM_API_KEY_FIELD]"
+                      class="input"
+                      type="password"
+                      autocomplete="new-password"
+                      placeholder="输入网关 API Key"
+                      @focus="selectInputText"
+                    />
+                    <p class="field-hint">保存后只显示“已配置”，不会把密钥读回页面。</p>
+                  </div>
+                  <div class="field">
+                    <label>海外 OpenAI 兼容 Base URL</label>
+                    <input v-model="cfg['ai.llm.overseas_openai_base_url']" class="input" />
+                    <p class="field-hint">GPT 与 Gemini 模型使用此地址。</p>
+                  </div>
+                  <div class="field">
+                    <label>海外 Anthropic 兼容 Base URL</label>
+                    <input v-model="cfg['ai.llm.overseas_anthropic_base_url']" class="input" />
+                    <p class="field-hint">Claude 模型使用此地址。</p>
+                  </div>
+                  <div class="field">
+                    <label>国内 OpenAI 兼容 Base URL</label>
+                    <input v-model="cfg['ai.llm.domestic_base_url']" class="input" />
+                    <p class="field-hint">Qwen、DeepSeek、GLM 与 Kimi 模型使用此地址。</p>
+                  </div>
+                  <div class="field">
+                    <label>默认模型</label>
+                    <select v-model="cfg['ai.llm.default_model']" class="select">
+                      <option v-for="model in LLM_MODELS" :key="model.value" :value="model.value">
+                        {{ model.label }}
+                      </option>
+                    </select>
+                    <p class="field-hint">森马网关的默认模型(适配器与智能体的默认选择)。</p>
+                  </div>
+                </section>
+                <section class="llm-provider-card ds">
+                  <h4 class="llm-provider-title">DeepSeek 官方 · 原生接入</h4>
+                  <p class="llm-provider-sub">直达 api.deepseek.com,不经过森马网关;模型 deepseek-v4-flash / deepseek-v4-pro。</p>
+                  <div class="field">
+                    <label>DeepSeek 官方 API Key</label>
+                    <input
+                      v-model="cfg[DEEPSEEK_API_KEY_FIELD]"
+                      class="input"
+                      type="password"
+                      autocomplete="new-password"
+                      placeholder="sk-..."
+                      @focus="selectInputText"
+                    />
+                    <p class="field-hint">只用于官方模型,与森马网关 Key 互不影响;留空则官方模型不可用。</p>
+                  </div>
+                  <div class="field">
+                    <label>DeepSeek 官方 Base URL</label>
+                    <input v-model="cfg['ai.llm.deepseek_base_url']" class="input" />
+                    <p class="field-hint">默认 https://api.deepseek.com(官方文档:api-docs.deepseek.com)。</p>
+                  </div>
+                  <div class="field">
+                    <label>官方模型</label>
+                    <div class="llm-model-chips">
+                      <span v-for="model in DEEPSEEK_OFFICIAL_MODELS_UI" :key="model.value" class="chip">{{ model.value }}</span>
+                    </div>
+                    <p class="field-hint">在智能体会话的模型切换中选择后即走官方接入。</p>
+                  </div>
+                </section>
               </div>
               <PanelActions panel-id="ai-llm" @save="savePanel('ai-llm')" />
             </div>
             <div class="side-note">
               <strong>运行时路由</strong>
               <div class="key-states">
-                <span :class="['key-pill', isLlmConfigured(cfg) ? 'on' : 'off']">KEY</span>
+                <span :class="['key-pill', isLlmConfigured(cfg) ? 'on' : 'off']">森马网关</span>
+                <span :class="['key-pill', isDeepSeekConfigured(cfg) ? 'on' : 'off']">DS 官方</span>
                 <span class="key-pill neutral">OPENAI</span>
                 <span class="key-pill neutral">ANTHROPIC</span>
               </div>
@@ -804,6 +841,8 @@ import {
 } from '../utils/aiVideoSettings.mjs'
 import {
   LLM_API_KEY_FIELD,
+  DEEPSEEK_API_KEY_FIELD,
+  DEEPSEEK_OFFICIAL_MODELS_UI,
   LLM_DEFAULTS,
   LLM_MASKED_CREDENTIAL_VALUE,
   LLM_MODELS,
@@ -812,6 +851,11 @@ import {
   clearWrittenLlmSettings,
   isLlmConfigured,
 } from '../utils/llmSettings.mjs'
+
+function isDeepSeekConfigured(localCfg = {}) {
+  const value = String(localCfg?.[DEEPSEEK_API_KEY_FIELD] ?? '').trim()
+  return Boolean(value && !value.includes(LLM_MASKED_CREDENTIAL_VALUE))
+}
 
 const OFFICIAL_RELEASE_URL = 'https://github.com/howtimeschange/crawshrimp/releases/latest'
 
@@ -869,7 +913,7 @@ const aiVideoKeyFields = [
   'ai.video.bailian_api_key',
   'ai.video.bailian_upload_api_key',
 ]
-const llmKeyFields = [LLM_API_KEY_FIELD]
+const llmKeyFields = [LLM_API_KEY_FIELD, DEEPSEEK_API_KEY_FIELD]
 const aiVideoConnectionHints = {
   'ai.video.seedance_base_url': `默认：${AI_VIDEO_CONNECTION_DEFAULTS['ai.video.seedance_base_url']}；森马网关可填 https://ai-aigw.semir.com/doubao-seedance/api/v3。`,
   'ai.video.bailian_region': `默认：${AI_VIDEO_CONNECTION_DEFAULTS['ai.video.bailian_region']}；输入新值才会覆盖。`,
@@ -1951,6 +1995,62 @@ watch(activePanelId, panelId => {
   flex-direction: column;
   gap: 14px;
   min-width: 0;
+}
+
+/* 文本大模型:两个配置源左右分栏 */
+.llm-provider-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.llm-provider-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg2);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.llm-provider-card.ds {
+  border-color: var(--orange-dim);
+  background: linear-gradient(180deg, rgba(255, 107, 43, 0.06), var(--bg2) 90px);
+}
+
+.llm-provider-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.llm-provider-card.ds .llm-provider-title { color: var(--orange-text); }
+
+.llm-provider-sub {
+  margin: -6px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text3);
+}
+
+.llm-model-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.llm-model-chips .chip {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--text2);
+  background: var(--bg3);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+@media (max-width: 1080px) {
+  .llm-provider-grid { grid-template-columns: 1fr; }
 }
 
 .field {

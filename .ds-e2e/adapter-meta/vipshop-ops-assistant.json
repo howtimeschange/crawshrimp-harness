@@ -1,0 +1,6 @@
+{
+  "adapter_id": "vipshop-ops-assistant",
+  "install_mode": "copy",
+  "runtime_path": "/Users/xingyicheng/Documents/crawshrimp-harness/.ds-e2e/adapters/vipshop-ops-assistant",
+  "source_path": "/Users/xingyicheng/Documents/crawshrimp-harness/adapters/vipshop-ops-assistant"
+}

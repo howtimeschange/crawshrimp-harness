@@ -1,0 +1,565 @@
+id: shein-helper
+name: Shein 运营助手
+version: 0.1.2
+author: crawshrimp
+description: "SHEIN 全球商家中心数据抓取与全量导出：商品评价、商品明细、商品质量"
+entry_url: https://sso.geiwohuo.com
+
+auth:
+  check_script: auth_check.js
+  login_url: https://sso.geiwohuo.com
+
+tasks:
+  - id: product_feedback
+    name: 商品评价
+    description: 抓取 SHEIN 全球商家中心商品评价列表，继承当前页面筛选并自动全量翻页导出
+    script: product-feedback.js
+    entry_url: https://sso.geiwohuo.com/#/mgs/store-management/product-feedback
+    params:
+      - id: mode
+        type: radio
+        label: 打开方式
+        default: current
+        options:
+          - value: current
+            label: 使用当前标签页（继承当前筛选）
+          - value: new
+            label: 新开标签页
+      - id: review_date_range
+        type: date_range
+        label: 评价时间
+        hint: 留空则继承当前页面评价时间；填写后会优先尝试按页面时间控件注入，失败时回退到请求体时间覆写
+      - id: filter_skc
+        type: textarea
+        label: 商品SKC
+        rows: 2
+        ui_span: compact
+        hint: SHEIN 商品评价接口每次仅支持 1 个 SKC；留空则继承当前页面筛选
+        placeholder: "例如：\nsk25021051271714212"
+      - id: filter_comment_id
+        type: textarea
+        label: 评价ID
+        rows: 2
+        ui_span: compact
+        hint: SHEIN 商品评价接口每次仅支持 1 个评价ID；留空则继承当前页面筛选
+        placeholder: "例如：\n18249209315"
+      - id: filter_star
+        type: select
+        label: 评价星级
+        default: ""
+        hint: 留空则继承当前页面筛选
+        options:
+          - value: ""
+            label: 不额外指定
+          - value: "1"
+            label: 1星
+          - value: "2"
+            label: 2星
+          - value: "3"
+            label: 3星
+          - value: "4"
+            label: 4星
+          - value: "5"
+            label: 5星
+    trigger:
+      type: manual
+    output:
+      - type: excel
+        filename: "{shop_name}_商品评价_{time_scope}_{date_range}_{timestamp}.xlsx"
+
+  - id: merchandise_details
+    name: 商品分析-商品明细
+    description: 抓取 SHEIN 全球商家中心商品分析-商品明细列表，继承当前页面筛选并自动全量翻页导出
+    script: merchandise-details.js
+    param_probe_script: merchandise-details-param-probe.js
+    entry_url: https://sso.geiwohuo.com/#/sbn/merchandise/details
+    params:
+      - id: mode
+        type: radio
+        label: 打开方式
+        default: current
+        hint: current 模式会继承当前页面已选站点、品类、活动标签与统计时间
+        options:
+          - value: current
+            label: 使用当前标签页（继承当前筛选）
+          - value: new
+            label: 新开标签页
+      - id: dimension_scope
+        type: radio
+        label: 导出维度
+        default: current
+        options:
+          - value: current
+            label: 当前列表
+          - value: skc
+            label: 仅 SKC 列表
+          - value: spu
+            label: 仅 SPU 列表
+          - value: both
+            label: SKC + SPU
+      - id: time_mode
+        type: select
+        label: 统计时间
+        default: current
+        hint: 默认继承当前页面统计时间；切换到昨天/近7天/近30天/自定义时，会在继承其余筛选项的前提下覆盖时间范围
+        options:
+          - value: current
+            label: 继承当前页面
+          - value: yesterday
+            label: 昨天
+          - value: last7
+            label: 近7天
+          - value: last30
+            label: 近30天
+          - value: custom
+            label: 自定义
+      - id: custom_date_range
+        type: date_range
+        label: 自定义统计时间
+        hint: 仅在选择“自定义”后生效，脚本会优先按页面时间控件注入，必要时回退到请求体时间覆写
+        visible_when:
+          field: time_mode
+          equals: custom
+      - id: country_site
+        type: select
+        label: 站点
+        default: ""
+        hint: 留空则使用页面默认站点；可选项会按当前页面实时探测
+        options:
+          - value: ""
+            label: 使用页面默认站点
+      - id: filter_skc
+        type: textarea
+        label: SKC
+        rows: 3
+        ui_span: compact
+        hint: 支持批量搜索，一行一个；留空则不额外指定
+        placeholder: "例如：\nsk25021051271714212\nsa260303103351937770319"
+      - id: filter_spu
+        type: textarea
+        label: SPU
+        rows: 3
+        ui_span: compact
+        hint: 支持批量搜索，一行一个；留空则不额外指定
+        placeholder: "例如：\nk250210512717\na2603031033519377"
+      - id: onsale_flag
+        type: select
+        label: 在售状态
+        default: ""
+        options:
+          - value: ""
+            label: 不额外指定
+          - value: "1"
+            label: 在售
+          - value: "0"
+            label: 非在售
+      - id: sale_flag
+        type: select
+        label: 在架状态
+        default: ""
+        options:
+          - value: ""
+            label: 不额外指定
+          - value: "1"
+            label: 上架
+          - value: "0"
+            label: 下架
+      - id: listing_date_range
+        type: date_range
+        label: 上架日期
+        hint: 留空则不额外指定
+      - id: new_goods_tag
+        type: checkbox
+        label: 新品标签
+        default: []
+        ui_span: compact
+        ui_variant: dropdown_multi
+        placeholder: 请选择，可多选
+        options:
+          - value: "1"
+            label: 新品爆款
+          - value: "2"
+            label: 新品畅销
+          - value: "3"
+            label: 潜力新品
+          - value: "4"
+            label: 新品
+      - id: layer_nm
+        type: checkbox
+        label: 商品层次
+        default: []
+        ui_span: compact
+        ui_variant: dropdown_multi
+        placeholder: 请选择，可多选
+        options:
+          - value: "QQK"
+            label: QQK
+          - value: "保证在售款"
+            label: 保证在售款
+          - value: "加码"
+            label: 加码
+          - value: "售完下架"
+            label: 售完下架
+          - value: "备货款A"
+            label: 备货款A
+          - value: "备货款B"
+            label: 备货款B
+          - value: "待处理议价"
+            label: 待处理议价
+          - value: "新款"
+            label: 新款
+          - value: "新款A"
+            label: 新款A
+          - value: "新款未上架"
+            label: 新款未上架
+          - value: "春夏款"
+            label: 春夏款
+          - value: "暂不下单"
+            label: 暂不下单
+          - value: "清仓款"
+            label: 清仓款
+          - value: "热销断码款"
+            label: 热销断码款
+          - value: "特殊-赠品"
+            label: 特殊-赠品
+          - value: "自主下架"
+            label: 自主下架
+          - value: "自主停产"
+            label: 自主停产
+          - value: "退供款"
+            label: 退供款
+          - value: "重复款"
+            label: 重复款
+          - value: "问题款"
+            label: 问题款
+      - id: total_quality_level
+        type: checkbox
+        label: 质量等级
+        default: []
+        ui_span: compact
+        ui_variant: dropdown_multi
+        placeholder: 请选择，可多选
+        options:
+          - value: "A1"
+            label: A1
+          - value: "A2"
+            label: A2
+          - value: "B1"
+            label: B1
+          - value: "B2"
+            label: B2
+          - value: "C1"
+            label: C1
+          - value: "C2"
+            label: C2
+          - value: "D1"
+            label: D1
+          - value: "D2"
+            label: D2
+          - value: "不合格-D"
+            label: 不合格-D
+          - value: "无判断"
+            label: 无判断
+    trigger:
+      type: manual
+    output:
+      - type: excel
+        filename: "{shop_name}_商品分析-商品明细_{time_scope}_{date_range}_{timestamp}.xlsx"
+        sheet_key: __sheet_name
+        sheets:
+          - name: SKC列表
+            columns:
+              - 商品字段/商品名称
+              - 商品字段/SKC
+              - 商品字段/SPU
+              - 商品字段/货号
+              - 商品字段/品类
+              - 商品字段/标签
+              - 商品基本信息/活动标签
+              - 商品基本信息/是否35天转备货
+              - 交易/销量
+              - 交易/支付订单数
+              - 流量/曝光人数
+              - 流量/商品访客数
+              - 流量/点击率
+              - 流量/加车访客
+              - 流量/加车次数
+              - 流量/加车率
+              - 流量/支付人数
+              - 流量/支付率
+              - 质量/质量等级
+              - 质量/评论数
+              - 质量/差评率
+              - 质量/评论数（支付口径）
+              - 质量/差评率（支付口径）
+              - 质量/客单退货单数
+              - 质量/客单退货件数
+              - 质量/质量扣款（CNY）
+              - 备货/备货订单数
+              - 备货/备货件数
+              - 筛选摘要
+            column_groups:
+              - label: 商品字段
+                columns:
+                  - 商品字段/商品名称
+                  - 商品字段/SKC
+                  - 商品字段/SPU
+                  - 商品字段/货号
+                  - 商品字段/品类
+                  - 商品字段/标签
+              - label: 商品基本信息
+                columns:
+                  - 商品基本信息/活动标签
+                  - 商品基本信息/是否35天转备货
+              - label: 交易
+                columns:
+                  - 交易/销量
+                  - 交易/支付订单数
+              - label: 流量
+                columns:
+                  - 流量/曝光人数
+                  - 流量/商品访客数
+                  - 流量/点击率
+                  - 流量/加车访客
+                  - 流量/加车次数
+                  - 流量/加车率
+                  - 流量/支付人数
+                  - 流量/支付率
+              - label: 质量
+                columns:
+                  - 质量/质量等级
+                  - 质量/评论数
+                  - 质量/差评率
+                  - 质量/评论数（支付口径）
+                  - 质量/差评率（支付口径）
+                  - 质量/客单退货单数
+                  - 质量/客单退货件数
+                  - 质量/质量扣款（CNY）
+              - label: 备货
+                columns:
+                  - 备货/备货订单数
+                  - 备货/备货件数
+          - name: SPU列表
+            columns:
+              - 商品字段/商品名称
+              - 商品字段/SPU
+              - 商品基本信息/活动标签
+              - 交易/销量
+              - 交易/支付订单数
+              - 流量/商详访客
+              - 流量/支付人数
+              - 筛选摘要
+            column_groups:
+              - label: 商品字段
+                columns:
+                  - 商品字段/商品名称
+                  - 商品字段/SPU
+              - label: 商品基本信息
+                columns:
+                  - 商品基本信息/活动标签
+              - label: 交易
+                columns:
+                  - 交易/销量
+                  - 交易/支付订单数
+              - label: 流量
+                columns:
+                  - 流量/商详访客
+                  - 流量/支付人数
+
+  - id: commodity_quality
+    name: 商品质量
+    description: 抓取 SHEIN 全球商家中心商品质量列表及客退详情明细，继承当前页面筛选并自动全量翻页导出
+    script: commodity-quality.js
+    entry_url: https://sso.geiwohuo.com/#/pqmp/commoditiesQuality/list
+    params:
+      - id: mode
+        type: radio
+        label: 打开方式
+        default: current
+        hint: current 模式会继承当前页面已选筛选项；填写 SKC/SPU 时会在继承其余筛选项的前提下覆盖商品搜索条件
+        options:
+          - value: current
+            label: 使用当前标签页（继承当前筛选）
+          - value: new
+            label: 新开标签页
+      - id: filter_skc
+        type: textarea
+        label: SKC
+        rows: 3
+        ui_span: compact
+        hint: 支持批量搜索，一行一个；留空则继承当前页面 SKC 筛选
+        placeholder: "例如：\nsk25050817072795161\nsk25050817072795162"
+      - id: filter_spu
+        type: textarea
+        label: SPU
+        rows: 3
+        ui_span: compact
+        hint: 支持批量搜索，一行一个；留空则继承当前页面 SPU 筛选；SKC 与 SPU 请分次运行
+        placeholder: "例如：\nk250508170727\nk250508170728"
+    trigger:
+      type: manual
+    output:
+      - type: excel
+        filename: "{shop_name}_商品质量_{time_scope}_{date_range}_{timestamp}.xlsx"
+        sheet_key: __sheet_name
+        sheets:
+          - name: 质量列表
+            columns:
+              - 商品名称
+              - SKC
+              - SPU
+              - SKC编码
+              - SPU编码
+              - 商品图片
+              - 分类
+              - 商品层级
+              - 在售状态
+              - 近7日销量
+              - 质量等级
+              - 质量等级类型
+              - 风险等级
+              - 质量变化
+              - 差评数/差评率
+              - 同品类差评率
+              - 差评率对比
+              - 差评问题
+              - 品退数/品退率
+              - 退货量
+              - 同品类品退率
+              - 品退率对比
+              - 售后服务量
+              - 售后表现分
+              - 是否可查看客退详情
+              - 筛选摘要
+          - name: 客退详情
+            columns:
+              - SKC
+              - SPU
+              - 商品名称
+              - 退货月份
+              - 品退数
+              - 退货量
+              - 品退率
+              - 同品类品退率
+              - 序号
+              - 退货时间
+              - 站点
+              - 是否品退
+              - SKU
+              - 客退原因
+
+  - id: store_search_products
+    name: 公网搜索结果商品导出
+    description: 抓取 SHEIN 公网站点搜索/店铺结果页商品，并逐个进入商详页获取 SKC 真实价格后导出
+    script: store-search-products.js
+    entry_url: https://us.shein.com/Store/dian-pu-xuan-pin-7859875567-sc-102146671.html?adp=&child_cat_id=2057&force_send_adp=1&fromPageType=store&recommend_context_params=%7B%22select_id%22%3A%22102146671%22%2C%22sc_url_id%22%3A%22102146671%22%2C%22service_type%22%3A6%7D&recommend_page_type=storeSelectListPageRec&src_identifier=si%3D7859875567%60fc%3DKids%60sc%3DKids%20Shoes%60tc%3DAll%20Items%60ps%3D1_4_1%60jc%3DitemPicking_2057&src_module=storeCat&src_tab_page_id=page_store1777019784211&st=7859875567&store_code=7859875567
+    tab_match_prefixes:
+      - https://us.shein.com/Store/
+      - https://us.shein.com/
+    skip_auth: true
+    params:
+      - id: mode
+        type: radio
+        label: 打开方式
+        default: current
+        options:
+          - value: current
+            label: 使用当前标签页
+          - value: new
+            label: 新开标签页
+      - id: search_url
+        type: textarea
+        label: 搜索结果页 URL
+        rows: 3
+        default: https://us.shein.com/Store/dian-pu-xuan-pin-7859875567-sc-102146671.html?adp=&child_cat_id=2057&force_send_adp=1&fromPageType=store&recommend_context_params=%7B%22select_id%22%3A%22102146671%22%2C%22sc_url_id%22%3A%22102146671%22%2C%22service_type%22%3A6%7D&recommend_page_type=storeSelectListPageRec&src_identifier=si%3D7859875567%60fc%3DKids%60sc%3DKids%20Shoes%60tc%3DAll%20Items%60ps%3D1_4_1%60jc%3DitemPicking_2057&src_module=storeCat&src_tab_page_id=page_store1777019784211&st=7859875567&store_code=7859875567
+        hint: current 模式下如果当前页已是 SHEIN 商品列表，会优先使用当前页；否则导航到这里配置的 URL
+      - id: max_products
+        type: number
+        label: 最多抓取商品数
+        default: 0
+        min: 0
+        max: 1000
+        step: 1
+        hint: 0 表示不按商品数截断，会按列表分页继续收集
+      - id: max_list_pages
+        type: number
+        label: 最多抓取列表页数
+        default: 4
+        min: 1
+        max: 80
+        step: 1
+      - id: max_scroll_rounds
+        type: number
+        label: 列表滚动轮数
+        default: 8
+        min: 0
+        max: 80
+        step: 1
+      - id: detail_delay_ms
+        type: number
+        label: 商详请求间隔（毫秒）
+        default: 2600
+        min: 800
+        max: 60000
+        step: 100
+        hint: 为降低风控概率，详情页抓取会按该间隔加随机抖动执行
+      - id: retry_cooldown_ms
+        type: number
+        label: 异常重试冷却（毫秒）
+        default: 12000
+        min: 3000
+        max: 180000
+        step: 1000
+      - id: max_detail_retries
+        type: number
+        label: 单商品自动重试次数
+        default: 2
+        min: 0
+        max: 5
+        step: 1
+      - id: captcha_wait_ms
+        type: number
+        label: 验证等待轮询间隔（毫秒）
+        default: 5000
+        min: 2000
+        max: 120000
+        step: 1000
+      - id: max_verification_wait_rounds
+        type: number
+        label: 验证最多等待轮数
+        default: 12
+        min: 1
+        max: 120
+        step: 1
+        hint: 超过后当前商品写入失败行并继续后续商品，避免整批卡住
+    trigger:
+      type: manual
+    output:
+      - type: excel
+        filename: "SHEIN公网商品_{timestamp}.xlsx"
+        columns:
+          - 序号
+          - 商品ID
+          - SPU
+          - SKC
+          - 商品名称
+          - 颜色
+          - 价格
+          - 价格数值
+          - 原价
+          - 展示价
+          - 折扣
+          - 币种
+          - 库存
+          - 店铺ID
+          - 店铺名称
+          - 类目ID
+          - 类目
+          - 图片
+          - 商品链接
+          - 来源列表URL
+          - 列表页价格
+          - 列表页原价
+          - 价格来源
+          - 商详抓取状态
+          - 尺码价格明细

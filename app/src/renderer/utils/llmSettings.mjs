@@ -2,13 +2,20 @@ export const LLM_MASKED_CREDENTIAL_VALUE = '••••••••••••
 
 export const LLM_API_KEY_FIELD = 'ai.llm.api_key'
 
+// DeepSeek 原生接入:独立 Key 与 Base URL(官方 API,不走公司网关)
+export const DEEPSEEK_API_KEY_FIELD = 'ai.llm.deepseek_api_key'
+export const DEEPSEEK_BASE_URL_FIELD = 'ai.llm.deepseek_base_url'
+export const DEEPSEEK_OFFICIAL_BASE_URL_DEFAULT = 'https://api.deepseek.com'
+
 export const LLM_DEFAULTS = Object.freeze({
   'ai.llm.overseas_openai_base_url': 'https://ai-aigw.semir.com/overseas-openai-vip/v1',
   'ai.llm.overseas_anthropic_base_url': 'https://ai-aigw.semir.com/overseas-anthropic-vip',
   'ai.llm.domestic_base_url': 'https://ai-aigw.semir.com/bailian-codingplan/v1',
+  'ai.llm.deepseek_base_url': DEEPSEEK_OFFICIAL_BASE_URL_DEFAULT,
   'ai.llm.default_model': 'gpt-5.6-terra',
 })
 
+// 默认模型下拉 = 森马网关模型(DeepSeek 官方模型在右侧官方卡片单独展示)
 export const LLM_MODELS = Object.freeze([
   { value: 'gpt-5.6-sol', label: '海外 · GPT-5.6 Sol' },
   { value: 'gpt-5.6-terra', label: '海外 · GPT-5.6 Terra' },
@@ -20,13 +27,20 @@ export const LLM_MODELS = Object.freeze([
   { value: 'gemini-3.5-flash', label: '海外 · Gemini 3.5 Flash' },
   { value: 'qwen3.8-max-preview', label: '国内 · Qwen 3.8 Max Preview' },
   { value: 'qwen3.7-plus', label: '国内 · Qwen 3.7 Plus' },
-  { value: 'deepseek-v4-pro', label: '国内 · DeepSeek V4 Pro' },
+  { value: 'deepseek-v4-pro', label: '国内 · DeepSeek V4 Pro(网关)' },
   { value: 'glm-5.2', label: '国内 · GLM 5.2' },
   { value: 'kimi-k2.7-code', label: '国内 · Kimi K2.7 Code' },
 ])
 
+// DeepSeek 官方模型(产品内 ID,独立于默认模型下拉)
+export const DEEPSEEK_OFFICIAL_MODELS_UI = Object.freeze([
+  { value: 'deepseek-official-v4-flash', label: 'DeepSeek 官方 · V4 Flash' },
+  { value: 'deepseek-official-v4-pro', label: 'DeepSeek 官方 · V4 Pro' },
+])
+
 export const LLM_PANEL_FIELDS = Object.freeze([
   LLM_API_KEY_FIELD,
+  DEEPSEEK_API_KEY_FIELD,
   ...Object.keys(LLM_DEFAULTS),
 ])
 
@@ -40,7 +54,7 @@ export function buildLlmSettingsPatch(cfg = {}) {
   return LLM_PANEL_FIELDS.reduce((patch, key) => {
     const value = String(cfg?.[key] ?? '').trim()
     if (!value) return patch
-    if (key === LLM_API_KEY_FIELD && value.includes(LLM_MASKED_CREDENTIAL_VALUE)) return patch
+    if ((key === LLM_API_KEY_FIELD || key === DEEPSEEK_API_KEY_FIELD) && value.includes(LLM_MASKED_CREDENTIAL_VALUE)) return patch
     patch[key] = value
     return patch
   }, {})
@@ -50,6 +64,9 @@ export function clearWrittenLlmSettings(cfg = {}, patch = {}) {
   if (Object.prototype.hasOwnProperty.call(patch, LLM_API_KEY_FIELD)) {
     cfg[LLM_API_KEY_FIELD] = LLM_MASKED_CREDENTIAL_VALUE
     cfg['ai.llm.configured'] = true
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, DEEPSEEK_API_KEY_FIELD)) {
+    cfg[DEEPSEEK_API_KEY_FIELD] = LLM_MASKED_CREDENTIAL_VALUE
   }
   return cfg
 }

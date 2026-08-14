@@ -10,12 +10,14 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from core.llm_gateway import (
+    DEEPSEEK_OFFICIAL_MODELS,
     DOMESTIC_OPENAI_BASE_URL,
     DOMESTIC_OPENAI_MODELS,
     OVERSEAS_ANTHROPIC_BASE_URL,
     OVERSEAS_ANTHROPIC_MODELS,
     OVERSEAS_OPENAI_BASE_URL,
     OVERSEAS_OPENAI_MODELS,
+    deepseek_official_real_model,
 )
 
 # 模型能力登记(服务端共享能力表,方案 §12.2)
@@ -31,6 +33,9 @@ MODEL_CAPABILITIES: dict[str, dict[str, Any]] = {
     "qwen3.8-max-preview": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
     "qwen3.7-plus": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
     "deepseek-v4-pro": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
+    # DeepSeek 原生接入(官方 API,产品内 ID 加 official 前缀与网关模型区分)
+    "deepseek-official-v4-flash": {"context_window": 128000, "max_output_tokens": 8192, "supports_tools": True},
+    "deepseek-official-v4-pro": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
     "glm-5.2": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
     "kimi-k2.7-code": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
 }
@@ -102,7 +107,8 @@ def build_cordis_yaml(cfg: dict, selected_model: Optional[str] = None) -> str:
                 if lines[j].startswith("      provider:"):
                     lines[j] = f"      provider: {provider_id}"
                 elif lines[j].startswith("      model:"):
-                    lines[j] = f"      model: {sel}"
+                    # 产品内 ID → runtime 真实模型名(DeepSeek 官方模型映射回官方 API 名)
+                    lines[j] = f"      model: {deepseek_official_real_model(sel)}"
                 j += 1
             break
     else:
@@ -225,4 +231,6 @@ def resolve_provider_for_model(model_id: str) -> str:
         return "crawshrimp-overseas-anthropic"
     if model_id in DOMESTIC_OPENAI_MODELS:
         return "crawshrimp-domestic-openai"
+    if model_id in DEEPSEEK_OFFICIAL_MODELS:
+        return "crawshrimp-deepseek-official"
     return "crawshrimp-overseas-openai"

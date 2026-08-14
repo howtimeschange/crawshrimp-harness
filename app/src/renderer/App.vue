@@ -81,15 +81,17 @@
       />
     </aside>
 
-    <!-- 主内容区:智能体会话常驻全幅(含侧边栏与菜单),其他视图以覆盖层嵌入右侧 -->
+    <!-- 主内容区:智能体会话常驻全幅;脚本详情为独立二级页面(隐藏会话界面) -->
     <main class="content">
-      <AgentWebView
-        :theme="effectiveTheme"
-        :nav-items="filteredNavItems"
-        :active-nav="currentView"
-        @nav-select="onAgentNavSelect"
-        @rail-metrics="onRailMetrics"
-      />
+      <div v-show="!activeScript" class="agent-persist">
+        <AgentWebView
+          :theme="effectiveTheme"
+          :nav-items="filteredNavItems"
+          :active-nav="currentView"
+          @nav-select="onAgentNavSelect"
+          @rail-metrics="onRailMetrics"
+        />
+      </div>
       <!-- 覆盖层:其他菜单视图(左偏移让出智能体会话侧边栏) -->
       <div
         v-if="currentView !== 'agent'"
@@ -315,7 +317,8 @@ function onRailMetrics(metrics) {
   const w = Number(metrics.width) || 0
   if (w > 40 && w < 800) railWidth.value = w
 }
-const embedLeft = computed(() => (activeScript.value ? 168 : railWidth.value))
+// 脚本详情:独立二级页面(隐藏会话界面,内容区从 0 开始)
+const embedLeft = computed(() => (activeScript.value ? 0 : railWidth.value))
 
 function openTaskInstanceFromAgent(instanceUid) {
   activeInstanceUid.value = instanceUid || ''
@@ -649,6 +652,13 @@ input, select, textarea { font-family: inherit; }
 
 .layout.has-script-sidebar.sidebar-collapsed {
   grid-template-columns: 56px 1fr;
+}
+
+/* 智能体会话常驻层(脚本详情时隐藏) */
+.agent-persist {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
 }
 
 .embed-overlay {

@@ -206,6 +206,18 @@ CRAWSHRIMP_LLM_CONFIG = """config:
         - id: kimi-k2.7-code
           contextWindow: 128000
           maxTokens: 16384
+    crawshrimp-deepseek-official:
+      displayName: DeepSeek 官方
+      apiKeyEnv: CRAWSHRIMP_DEEPSEEK_API_KEY
+      api: openai-completions
+      baseURL: !!js process.env.CRAWSHRIMP_DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com'
+      models:
+        - id: deepseek-v4-flash
+          contextWindow: 128000
+          maxTokens: 8192
+        - id: deepseek-v4-pro
+          contextWindow: 128000
+          maxTokens: 16384
 """
 
 PERSONA = """你是抓虾桌面应用中的操作智能体。

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   LLM_API_KEY_FIELD,
+  DEEPSEEK_API_KEY_FIELD,
   LLM_DEFAULTS,
   LLM_MASKED_CREDENTIAL_VALUE,
   LLM_MODELS,
@@ -13,6 +14,7 @@ import {
 
 test('LLM settings expose all configured gateway defaults and supported model ids', () => {
   assert.equal(LLM_DEFAULTS['ai.llm.default_model'], 'gpt-5.6-terra')
+  assert.equal(LLM_DEFAULTS['ai.llm.deepseek_base_url'], 'https://api.deepseek.com')
   assert.equal(LLM_MODELS.length, 13)
   assert.deepEqual(
     LLM_MODELS.map(item => item.value),
@@ -37,6 +39,7 @@ test('LLM settings expose all configured gateway defaults and supported model id
 test('masked or blank LLM credentials are never posted back to settings', () => {
   assert.deepEqual(buildLlmSettingsPatch({
     [LLM_API_KEY_FIELD]: LLM_MASKED_CREDENTIAL_VALUE,
+    [DEEPSEEK_API_KEY_FIELD]: LLM_MASKED_CREDENTIAL_VALUE,
     'ai.llm.overseas_openai_base_url': LLM_DEFAULTS['ai.llm.overseas_openai_base_url'],
     'ai.llm.overseas_anthropic_base_url': '',
     'ai.llm.default_model': 'claude-sonnet-5',
@@ -44,6 +47,21 @@ test('masked or blank LLM credentials are never posted back to settings', () => 
     'ai.llm.overseas_openai_base_url': LLM_DEFAULTS['ai.llm.overseas_openai_base_url'],
     'ai.llm.default_model': 'claude-sonnet-5',
   })
+})
+
+test('DeepSeek official key is posted as its own field and cleared after write', () => {
+  assert.deepEqual(buildLlmSettingsPatch({
+    [DEEPSEEK_API_KEY_FIELD]: 'sk-deepseek-unit',
+    'ai.llm.deepseek_base_url': 'https://api.deepseek.com',
+    'ai.llm.default_model': 'deepseek-official-v4-flash',
+  }), {
+    [DEEPSEEK_API_KEY_FIELD]: 'sk-deepseek-unit',
+    'ai.llm.deepseek_base_url': 'https://api.deepseek.com',
+    'ai.llm.default_model': 'deepseek-official-v4-flash',
+  })
+  const cfg = { [DEEPSEEK_API_KEY_FIELD]: 'sk-deepseek-unit' }
+  clearWrittenLlmSettings(cfg, { [DEEPSEEK_API_KEY_FIELD]: 'sk-deepseek-unit' })
+  assert.equal(cfg[DEEPSEEK_API_KEY_FIELD], LLM_MASKED_CREDENTIAL_VALUE)
 })
 
 test('successful LLM key writes are cleared from renderer memory', () => {

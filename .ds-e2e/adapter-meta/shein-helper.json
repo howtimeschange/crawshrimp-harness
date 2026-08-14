@@ -1,0 +1,6 @@
+{
+  "adapter_id": "shein-helper",
+  "install_mode": "copy",
+  "runtime_path": "/Users/xingyicheng/Documents/crawshrimp-harness/.ds-e2e/adapters/shein-helper",
+  "source_path": "/Users/xingyicheng/Documents/crawshrimp-harness/adapters/shein-helper"
+}

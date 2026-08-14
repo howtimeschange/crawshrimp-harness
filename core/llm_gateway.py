@@ -22,6 +22,24 @@ from core.config import load_config
 OVERSEAS_OPENAI_BASE_URL = "https://ai-aigw.semir.com/overseas-openai-vip/v1"
 OVERSEAS_ANTHROPIC_BASE_URL = "https://ai-aigw.semir.com/overseas-anthropic-vip"
 DOMESTIC_OPENAI_BASE_URL = "https://ai-aigw.semir.com/bailian-codingplan/v1"
+# DeepSeek 原生接入(官方 API,独立于公司网关)。
+# 产品内 ID 加 official 前缀,与国内网关的 deepseek-v4-pro 区分;
+# 调用官方 API 时映射回真实模型名。
+DEEPSEEK_OFFICIAL_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_OFFICIAL_MODELS = (
+    "deepseek-official-v4-flash",
+    "deepseek-official-v4-pro",
+)
+_DEEPSEEK_OFFICIAL_REAL_MODELS = {
+    "deepseek-official-v4-flash": "deepseek-v4-flash",
+    "deepseek-official-v4-pro": "deepseek-v4-pro",
+}
+
+
+def deepseek_official_real_model(model_id: str) -> str:
+    """产品内 ID → DeepSeek 官方 API 真实模型名。"""
+    return _DEEPSEEK_OFFICIAL_REAL_MODELS.get(model_id, model_id)
+
 
 OVERSEAS_OPENAI_MODELS = (
     "gpt-5.6-sol",
@@ -46,6 +64,7 @@ SUPPORTED_MODELS = (
     *OVERSEAS_OPENAI_MODELS,
     *OVERSEAS_ANTHROPIC_MODELS,
     *DOMESTIC_OPENAI_MODELS,
+    *DEEPSEEK_OFFICIAL_MODELS,
 )
 DEFAULT_MODEL = "gpt-5.6-terra"
 GUANG_TITLE_MIN_CHARS = 24
@@ -110,6 +129,18 @@ def route_for_model(model_id: str, config: dict | None = None) -> LlmRoute:
     selected = _compact(model_id) or _compact(llm.get("default_model")) or DEFAULT_MODEL
     if selected not in SUPPORTED_MODELS:
         raise LlmConfigurationError(f"不支持的文本模型：{selected}")
+
+    if selected in DEEPSEEK_OFFICIAL_MODELS:
+        # DeepSeek 原生接入:独立 Key 与 Base URL(官方 API,不走公司网关)
+        ds_key = _compact(os.environ.get("CRAWSHRIMP_DEEPSEEK_API_KEY")) or _compact(llm.get("deepseek_api_key"))
+        if not ds_key:
+            raise LlmConfigurationError("DeepSeek 原生模型需要独立 API Key,请在设置 → AI 能力 → 文本大模型中配置")
+        return LlmRoute(
+            model_id=deepseek_official_real_model(selected),
+            protocol="openai",
+            base_url=_compact(llm.get("deepseek_base_url")) or DEEPSEEK_OFFICIAL_BASE_URL,
+            api_key=ds_key,
+        )
 
     api_key = _compact(os.environ.get("CRAWSHRIMP_LLM_API_KEY")) or _compact(llm.get("api_key"))
     if not api_key:

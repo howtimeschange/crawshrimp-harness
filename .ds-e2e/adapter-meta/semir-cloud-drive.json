@@ -1,0 +1,6 @@
+{
+  "adapter_id": "semir-cloud-drive",
+  "install_mode": "copy",
+  "runtime_path": "/Users/xingyicheng/Documents/crawshrimp-harness/.ds-e2e/adapters/semir-cloud-drive",
+  "source_path": "/Users/xingyicheng/Documents/crawshrimp-harness/adapters/semir-cloud-drive"
+}

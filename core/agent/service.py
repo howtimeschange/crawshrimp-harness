@@ -444,10 +444,15 @@ class AgentService:
             ("CRAWSHRIMP_OVERSEAS_OPENAI_BASE_URL", "overseas_openai_base_url", None),
             ("CRAWSHRIMP_OVERSEAS_ANTHROPIC_BASE_URL", "overseas_anthropic_base_url", None),
             ("CRAWSHRIMP_DOMESTIC_OPENAI_BASE_URL", "domestic_base_url", None),
+            ("CRAWSHRIMP_DEEPSEEK_BASE_URL", "deepseek_base_url", None),
         ):
             value = str(base.get(cfg_key) or "").strip()
             if value:
                 os.environ[env_key] = value
+        # DeepSeek 原生接入:独立 Key 注入 runtime 环境(不落盘)
+        ds_key = os.environ.get("CRAWSHRIMP_DEEPSEEK_API_KEY", "").strip() or str(base.get("deepseek_api_key") or "").strip()
+        if ds_key:
+            os.environ["CRAWSHRIMP_DEEPSEEK_API_KEY"] = ds_key
 
         data_root = _data_root()
         agent_dir = data_root / "agent"
