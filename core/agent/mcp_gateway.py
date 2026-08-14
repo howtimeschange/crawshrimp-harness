@@ -1460,9 +1460,14 @@ def tool_script_create_draft(filename: str, content: str) -> dict:
     if not ctx.workspace_root:
         return _failed("ARTIFACT_NOT_ALLOWED", "workspace 不可用")
     safe = re.sub(r"[^A-Za-z0-9._\-]", "_", filename or "draft.py")
-    # 适配包需要 manifest.yaml 与各任务 .js:放开 yaml/json;仅秘密文件仍禁
+    # 抓虾脚本规范:适配包 = manifest.yaml + 页面 JS 脚本(async IIFE);禁止独立 Python/Node 脚本。
+    # 适配包可含辅助文件(yaml/json/md/txt/csv);秘密文件仍禁。
     if safe.endswith(".env"):
         return _rejected("rejected", "INVALID_PARAMETERS", "不允许创建该类型文件")
+    if safe.endswith(".py"):
+        return _rejected("rejected", "NOT_CRAWSHRIMP_SCRIPT",
+                         "抓虾脚本必须是页面 JS 脚本(async IIFE,返回 {success,data,meta})+ manifest.yaml 适配包,"
+                         "禁止独立 Python 脚本;请按 crawshrimp-adapter-skill/references/script-contract.md 规范编写")
     path = ctx.workspace_root / safe
     try:
         path.write_text(content, encoding="utf-8")
@@ -1489,6 +1494,24 @@ def tool_script_publish(rev_id: str, adapter_id: str = "") -> dict:
         return _ok({"rev_id": rev_id, "status": "published", "message": "已发布(幂等)"})
     if rev["status"] in ("pending_publish", "pending_review"):
         return _ok({"rev_id": rev_id, "status": rev["status"], "message": "发布请求已提交,等待审批/人工复核"})
+    # 抓虾脚本规范:只接受页面 JS 脚本与 manifest.yaml 适配包,拒绝独立 Python 脚本
+    draft_path = str(rev.get("draft_path") or "")
+    if draft_path.endswith(".py"):
+        db.update_script_revision(rev_id, status="rejected")
+        return _rejected("rejected", "NOT_CRAWSHRIMP_SCRIPT",
+                         "抓虾脚本必须是页面 JS 脚本(async IIFE,返回 {success,data,meta})+ manifest.yaml 适配包,"
+                         "禁止独立 Python 脚本;请按 crawshrimp-adapter-skill/references/script-contract.md 规范重写")
+    if draft_path.endswith(".js"):
+        try:
+            from pathlib import Path as _P
+            js_content = _P(draft_path).read_text(encoding="utf-8")
+            if "success" not in js_content or "data" not in js_content:
+                db.update_script_revision(rev_id, status="rejected")
+                return _rejected("rejected", "NOT_CRAWSHRIMP_SCRIPT",
+                                 "脚本不符合抓虾规范:必须返回 { success, data, meta };"
+                                 "请按 crawshrimp-adapter-skill/references/script-contract.md 重写")
+        except OSError:
+            pass
     # 适配包发布:adapter_id 未指定且草稿是 manifest.yaml 时,取 manifest 里的 id
     resolved_adapter = str(adapter_id or "").strip()
     if not resolved_adapter and str(rev.get("draft_path") or "").endswith("manifest.yaml"):
@@ -1528,8 +1551,24 @@ def tool_script_test(rev_id: str, params: dict) -> dict:
         return _failed("TASK_NOT_FOUND", f"修订不存在: {rev_id}")
     if rev["status"] not in ("draft", "tested"):
         return _failed("INVALID_PARAMETERS", f"修订状态不允许测试: {rev['status']}")
-    return _ok({"rev_id": rev_id, "status": "tested", "message": "测试执行待产品化(草稿可读校验通过)",
-                "note": "MVP 阶段 script_test 提供语法/内容校验,完整 dry-run 在 P2 接任务引擎"},
+    # 抓虾规范校验:JS 脚本必须为 async IIFE 并返回 { success, data, meta }
+    draft_path = str(rev.get("draft_path") or "")
+    if draft_path.endswith(".js"):
+        try:
+            from pathlib import Path as _P
+            js = _P(draft_path).read_text(encoding="utf-8")
+            if "success" not in js or "data" not in js:
+                return _failed("NOT_CRAWSHRIMP_SCRIPT",
+                               "脚本不符合抓虾规范:必须返回 { success, data, meta };"
+                               "请按 crawshrimp-adapter-skill/references/script-contract.md 重写")
+        except OSError as exc:
+            return _failed("TASK_FAILED", f"读取草稿失败: {exc}")
+    if draft_path.endswith(".py"):
+        return _failed("NOT_CRAWSHRIMP_SCRIPT",
+                       "抓虾脚本必须是页面 JS 脚本(async IIFE)+ manifest.yaml,禁止独立 Python 脚本")
+    db.update_script_revision(rev_id, status="tested")
+    return _ok({"rev_id": rev_id, "status": "tested", "message": "规范校验通过(async IIFE + {success,data,meta})",
+                "note": "MVP 阶段 script_test 提供规范/内容校验,完整 dry-run 在 P2 接任务引擎"},
                status="tested")
 
 

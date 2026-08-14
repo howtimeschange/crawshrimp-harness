@@ -33,6 +33,9 @@
             <span class="detail-name">{{ revName(selected) }}</span>
             <span class="rev-status" :class="selected.status">{{ statusLabel(selected.status) }}</span>
           </div>
+          <div v-if="selected.status === 'pending_review'" class="detail-spec-hint">
+            发布规范:抓虾适配器 = manifest.yaml + 页面 JS 脚本(async IIFE 返回 &#123; success, data, meta &#125;);独立 Python 脚本不符合规范,无法发布。
+          </div>
           <pre class="detail-content">{{ content || '(草稿内容为空)' }}</pre>
           <div v-if="selected.status === 'pending_review'" class="detail-actions">
             <button class="approve-btn" type="button" :disabled="busy" @click="decide('publish')">
@@ -255,6 +258,15 @@ onMounted(load)
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.detail-spec-hint {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text3);
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
 }
 .detail-name {
   font-size: 14px;
