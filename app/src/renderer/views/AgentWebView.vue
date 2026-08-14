@@ -125,7 +125,6 @@ function pushNav() {
 function onWindowMessage(event) {
   const data = event?.data
   if (!data || data.__crawshrimp !== 'nav-click') return
-  if (!frameEl.value?.contentWindow || event.source !== frameEl.value.contentWindow) return
   emit('nav-select', data.id)
 }
 

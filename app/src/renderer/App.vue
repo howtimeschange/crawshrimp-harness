@@ -4,7 +4,7 @@
     :class="{
       'layout-ai-image': currentView === 'ai_image' || currentView === 'ai_video' || currentView === 'ai_video_generation',
       'sidebar-collapsed': effectiveSidebarCollapsed,
-      'no-sidebar': !activeScript,
+      'no-sidebar': !activeScript && currentView === 'agent',
       'titlebar-macos': isMacTitlebar,
     }"
   >
@@ -13,7 +13,7 @@
       <div class="brand">
         <span class="logo">🦐 抓虾</span>
         <button
-          v-if="activeScript"
+          v-if="activeScript || currentView !== 'agent'"
           class="collapse-btn"
           type="button"
           :aria-label="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
@@ -33,9 +33,25 @@
       </div>
     </div>
 
-    <!-- 侧边栏:菜单已并入智能体会话界面的侧边栏,这里仅在进入脚本后显示二级菜单 -->
-    <aside v-if="activeScript" class="sidebar">
-      <div class="sub-nav">
+    <!-- 侧边栏:智能体视图下由会话界面侧边栏承载菜单;其余视图由 shell 显示同一套菜单
+         (任一时刻只有一个菜单栏) -->
+    <aside v-if="activeScript || currentView !== 'agent'" class="sidebar">
+      <!-- 一级菜单(与智能体会话侧边栏底部注入的菜单同源) -->
+      <nav v-if="!activeScript">
+        <button
+          v-for="item in filteredNavItems" :key="item.id"
+          :class="['nav-btn', { active: currentView === item.id }]"
+          :aria-label="item.label"
+          :data-tooltip="effectiveSidebarCollapsed ? item.label : null"
+          :title="effectiveSidebarCollapsed ? undefined : item.label"
+          @click="selectNav(item)"
+        >
+          <span class="icon">{{ item.icon }}</span>
+          <span>{{ item.label }}</span>
+        </button>
+      </nav>
+      <!-- 二级菜单:进入脚本后 -->
+      <div v-else class="sub-nav">
         <button class="back-btn" @click="exitScript">
           ← 我的脚本
         </button>
