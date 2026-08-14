@@ -1,0 +1,15 @@
+[submodule "skills/cli/vipshop-hot-strategy-agent"]
+	path = skills/cli/vipshop-hot-strategy-agent
+	url = https://github.com/howtimeschange/vipshop-hot-strategy-agent.git
+[submodule "skills/cli/tmall-cli"]
+	path = skills/cli/tmall-cli
+	url = https://github.com/howtimeschange/tmall-cli.git
+[submodule "skills/cli/semir-yunpan-cli"]
+	path = skills/cli/semir-yunpan-cli
+	url = https://github.com/howtimeschange/semir-yunpan-cli.git
+[submodule "skills/cli/DeepDrawCLI"]
+	path = skills/cli/DeepDrawCLI
+	url = https://github.com/howtimeschange/DeepDrawCLI.git
+[submodule "skills/cli/bmall-cli"]
+	path = skills/cli/bmall-cli
+	url = https://github.com/howtimeschange/bmall-cli.git

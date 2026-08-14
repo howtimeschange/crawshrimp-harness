@@ -965,6 +965,181 @@ def tool_video_assets(limit: int = 20) -> dict:
     return preview
 
 
+# ---------- 代码仓库安装/学习(类似插件化) ----------
+
+def _repos_root() -> Path:
+    """仓库安装根目录:data/agent/repos。"""
+    import os as _os
+    env = _os.environ.get("CRAWSHRIMP_REPOS_ROOT", "").strip()
+    if env:
+        return Path(env).expanduser()
+    if ctx.workspace_root:
+        return ctx.workspace_root.parent.parent / "repos"
+    data = _os.environ.get("CRAWSHRIMP_DATA", "").strip()
+    if data:
+        return Path(data).expanduser() / "agent" / "repos"
+    return Path.home() / ".crawshrimp" / "agent" / "repos"
+
+
+def _safe_repo_url(url: str) -> Optional[str]:
+    """校验仓库 URL:http(s) 且非本地回环/内网地址。"""
+    value = str(url or "").strip()
+    if not value:
+        return None
+    if not value.startswith(("https://", "http://")):
+        return None
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(value)
+        host = (parsed.hostname or "").lower()
+        if host in ("127.0.0.1", "localhost", "0.0.0.0", "::1", ""):
+            return None
+        if host.startswith(("10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.", "172.2", "172.30.", "172.31.")):
+            return None
+    except Exception:  # noqa: BLE001
+        return None
+    return value
+
+
+def _repo_name_from_url(url: str) -> str:
+    name = url.rstrip("/").split("/")[-1]
+    if name.endswith(".git"):
+        name = name[:-4]
+    return re.sub(r"[^A-Za-z0-9._-]", "-", name)[:60] or "repo"
+
+
+def _readme_summary(repo_path: Path, max_chars: int = 2400) -> str:
+    for candidate in ("README.md", "README.MD", "readme.md", "README"):
+        readme = repo_path / candidate
+        if readme.is_file():
+            try:
+                text = readme.read_text(encoding="utf-8", errors="replace")
+                return text[:max_chars]
+            except OSError:
+                pass
+    return ""
+
+
+def _run_git(args: list, cwd: Optional[Path] = None, timeout: int = 180) -> tuple[bool, str]:
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", *args], cwd=str(cwd) if cwd else None,
+            capture_output=True, text=True, timeout=timeout,
+        )
+        output = (result.stdout or "").strip() + ("\n" + (result.stderr or "").strip() if result.stderr else "")
+        return result.returncode == 0, output[:4000]
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+
+
+def tool_repo_install(url: str, name: str = "") -> dict:
+    """从 GitHub/其他 git 仓库克隆代码项目到本地安装目录(类似插件安装),返回路径与 README 摘要。"""
+    guard = _require_run()
+    if guard:
+        return guard
+    safe_url = _safe_repo_url(url)
+    if not safe_url:
+        return _failed("INVALID_PARAMETERS", f"仓库 URL 非法或不允许: {url}")
+    repo_name = str(name or "").strip() or _repo_name_from_url(safe_url)
+    target = _repos_root() / repo_name
+    if target.exists():
+        return _ok({"repo": repo_name, "path": str(target), "installed": False,
+                    "message": "该仓库已安装,用 repo_update 更新;readme 摘要如下",
+                    "readme": _readme_summary(target)})
+    decision = _await_approval_blocking(
+        {"plan_id": f"repo-install-{repo_name}", "params_json": "{}", "risk": "local_write"},
+        {"title": "安装代码仓库", "action": f"git clone {safe_url} → {target}",
+         "detail": "克隆第三方代码到本地(只下载不执行),供智能体学习与调用"},
+    )
+    if decision == "rejected":
+        return _rejected("rejected", "APPROVAL_REJECTED", "用户拒绝了仓库安装。")
+    if decision in ("expired", "canceled"):
+        return _rejected(decision, "APPROVAL_" + decision.upper(), "审批未通过,未安装。")
+    _repos_root().mkdir(parents=True, exist_ok=True)
+    ok, output = _run_git(["clone", "--depth", "1", safe_url, str(target)])
+    if not ok:
+        return _failed("INSTALL_FAILED", f"克隆失败: {output}")
+    return _ok({"repo": repo_name, "path": str(target), "installed": True,
+                "message": f"已安装到 {target},可用 repo_learn 生成技能包",
+                "readme": _readme_summary(target)})
+
+
+def tool_repo_update(name: str) -> dict:
+    """更新已安装的代码仓库(git pull,保持远端跟踪)。"""
+    guard = _require_run()
+    if guard:
+        return guard
+    safe = re.sub(r"[^A-Za-z0-9._-]", "-", str(name or "").strip())[:60]
+    if not safe:
+        return _failed("INVALID_PARAMETERS", "name 不能为空")
+    target = _repos_root() / safe
+    if not target.exists():
+        return _failed("TASK_NOT_FOUND", f"仓库未安装: {name}")
+    ok, output = _run_git(["pull", "--ff-only"], cwd=target)
+    if not ok:
+        return _failed("UPDATE_FAILED", f"更新失败: {output}")
+    return _ok({"repo": safe, "path": str(target), "updated": True, "message": "已更新到远端最新"})
+
+
+def tool_repo_list() -> dict:
+    """列出已安装的代码仓库(含远端地址)。"""
+    guard = _require_run()
+    if guard:
+        return guard
+    root = _repos_root()
+    items = []
+    if root.exists():
+        for entry in sorted(root.iterdir()):
+            if not entry.is_dir():
+                continue
+            ok, remote = _run_git(["remote", "get-url", "origin"], cwd=entry)
+            items.append({"repo": entry.name, "path": str(entry), "remote": remote.strip() if ok else ""})
+    return _ok({"repos": items, "count": len(items), "root": str(root)})
+
+
+def tool_repo_learn(name: str) -> dict:
+    """为已安装的代码仓库生成技能包(SKILL.md 写入智能体技能目录),使智能体可 skill_read 学习。"""
+    guard = _require_run()
+    if guard:
+        return guard
+    safe = re.sub(r"[^A-Za-z0-9._-]", "-", str(name or "").strip())[:60]
+    if not safe:
+        return _failed("INVALID_PARAMETERS", "name 不能为空")
+    target = _repos_root() / safe
+    if not target.exists():
+        return _failed("TASK_NOT_FOUND", f"仓库未安装: {name}")
+    readme = _readme_summary(target, 4000)
+    skill_name = f"repo-{safe.lower()}"
+    skill_body = f"""---
+name: {skill_name}
+description: Installed third-party repository "{safe}" cloned to {target}. Read its README below; use repo_update to refresh. Explore the repo files before calling any code.
+---
+
+# 仓库技能包:{safe}
+
+## 位置
+- 仓库路径:{target}
+- 更新:`repo_update {safe}`
+
+## README 摘要
+{readme or "(无 README;请用文件工具浏览仓库结构)"}
+
+## 使用注意
+- 这是外部仓库,调用其中的脚本/CLI 属于 local_write,需经审批;
+- 先理解再执行:优先运行只读/--dry-run 命令,写入操作需用户明确授权。
+"""
+    from core.agent.worker import resolve_harness_root
+    skills_dir = resolve_harness_root() / "skills" / skill_name
+    try:
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        (skills_dir / "SKILL.md").write_text(skill_body, encoding="utf-8")
+    except OSError as exc:
+        return _failed("WRITE_FAILED", f"写入技能包失败: {exc}")
+    return _ok({"skill": skill_name, "path": f"{skill_name}/SKILL.md",
+                "message": f"技能包已生成,可用 skill_read('{skill_name}/SKILL.md') 学习"})
+
+
 # ---------- 浏览器工具 ----------
 
 def _browser_tab() -> Optional[dict]:
@@ -1274,6 +1449,7 @@ EXPECTED_TOOLS = [
     "skill_list", "skill_read",
     "attachment_read",
     "image_generate", "image_assets", "video_generate", "video_assets",
+    "repo_install", "repo_update", "repo_list", "repo_learn",
 ]
 
 
@@ -1340,6 +1516,15 @@ def create_agent_mcp_server() -> MCPServer:
                  description="调用抓虾 AI 生视频:按提示词(可选首帧图路径)生成视频,等待完成后返回本地产物路径")
     mcp.add_tool(tool_video_assets, name="video_assets",
                  description="列出生成过的生视频产物(本地文件路径)")
+
+    mcp.add_tool(tool_repo_install, name="repo_install",
+                 description="从 GitHub/其他 git 仓库克隆代码项目到本地安装目录(类似插件安装),返回路径与 README 摘要")
+    mcp.add_tool(tool_repo_update, name="repo_update",
+                 description="更新已安装的代码仓库(git pull 保持远端跟踪)")
+    mcp.add_tool(tool_repo_list, name="repo_list",
+                 description="列出已安装的代码仓库与远端地址")
+    mcp.add_tool(tool_repo_learn, name="repo_learn",
+                 description="为已安装仓库生成技能包(SKILL.md),使智能体可学习调用")
 
     # 注册表快照断言(方案 §6.2):模型可见工具集合必须与清单完全一致
     actual = set(_registered)
