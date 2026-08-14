@@ -339,8 +339,9 @@ function onSessionNav() {
   if (item) selectNav(item)
 }
 
-// 会话侧边栏宽度/折叠状态(覆盖层左偏移跟随)
-const railWidth = ref(260)
+// 会话侧边栏宽度/折叠状态(覆盖层左偏移跟随;默认与 DSH 侧栏默认宽一致,
+// 即使消息全部丢失也不会压到菜单)
+const railWidth = ref(280)
 function onRailMetrics(metrics) {
   if (!metrics) return
   const w = Number(metrics.width) || 0

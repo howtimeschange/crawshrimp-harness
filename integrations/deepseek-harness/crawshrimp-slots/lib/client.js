@@ -121,11 +121,15 @@ window.__ModuleLoader__.load({
     const BOTTOM_NAV_IDS = ['cloud_approval', 'settings']
     const MAIN_VISIBLE_DEFAULT = 3
 
+    let lastMaxRailWidth = 0
+
     function currentRailWidth() {
       const rail = document.querySelector('.hHd-Xa_root')
       if (!rail) return 0
       const sidebarCol = rail.closest('[class*="sidebarCol"]') || rail.parentElement
-      return Math.round((sidebarCol || rail).getBoundingClientRect().width)
+      const width = Math.round((sidebarCol || rail).getBoundingClientRect().width)
+      if (width > lastMaxRailWidth) lastMaxRailWidth = width
+      return width
     }
 
     function makeNavButton(item, activeId) {
@@ -142,8 +146,9 @@ window.__ModuleLoader__.load({
       btn.appendChild(icon)
       btn.appendChild(label)
       btn.addEventListener('click', () => {
-        // 携带点击瞬间的侧栏实际宽度,shell 覆盖层即时对齐(避免任何时序错位)
-        window.parent.postMessage({ __crawshrimp: 'nav-click', id: item.id, railWidth: currentRailWidth() }, '*')
+        // 携带 max(当前宽, 历史最大宽):折叠动画中点菜单也不会压到菜单栏
+        const width = Math.max(currentRailWidth(), lastMaxRailWidth)
+        window.parent.postMessage({ __crawshrimp: 'nav-click', id: item.id, railWidth: width }, '*')
       })
       return btn
     }
@@ -304,8 +309,8 @@ window.__ModuleLoader__.load({
       setTimeout(pushRailMetrics, 0)
       setTimeout(pushRailMetrics, 800)
       // 周期同步兜底:侧栏拖拽宽度只改 AppFrame 的 grid 列宽,不触发 mutation,
-      // 定时推送保证 shell 覆盖层左偏移始终对齐侧栏实际宽度
-      setInterval(pushRailMetrics, 1500)
+      // 高频推送保证 shell 覆盖层左偏移始终对齐侧栏实际宽度(折叠动画 200ms 内)
+      setInterval(pushRailMetrics, 800)
     }
 
     exports.apply = apply
