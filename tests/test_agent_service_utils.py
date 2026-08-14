@@ -71,3 +71,27 @@ def test_analyze_rows_operations():
     flt = _analyze_rows(header, rows, {"op": "filter", "column": "price",
                                        "condition": {"column": "price", "op": ">", "value": 15}})
     assert flt["matched"] == 2
+
+
+def test_risk_heuristic_keywords():
+    from core.agent.mcp_gateway import _heuristic_risk
+    assert _heuristic_risk("下载图片", "") == "local_write"
+    assert _heuristic_risk("查询订单", "") == "read_only"
+    assert _heuristic_risk("批量删除商品", "") == "destructive"
+    assert _heuristic_risk("上传商品", "") == "external_write"
+    assert _heuristic_risk("神秘任务", "") == "local_write"
+
+
+def test_catalog_includes_all_tasks_and_excludes_destructive(monkeypatch):
+    from core import runtime_paths
+    import os
+    # 隔离环境变量污染(test_agent_db 会改写 CRAWSHRIMP_DATA)
+    monkeypatch.delenv("CRAWSHRIMP_DATA", raising=False)
+    runtime_paths.reset_runtime_data_root_cache()
+    from core.agent.mcp_gateway import _agent_task_catalog
+    catalog = _agent_task_catalog()
+    assert len(catalog) > 50
+    assert all(t["risk"] != "destructive" for t in catalog)
+    assert not any(t["hidden"] for t in catalog)
+    # 森马云盘助手可见(用户诉求)
+    assert any(t["adapter_id"] == "semir-cloud-drive" for t in catalog)

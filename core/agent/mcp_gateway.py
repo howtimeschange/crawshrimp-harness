@@ -89,23 +89,47 @@ def _tool_call_prefix() -> tuple[Optional[str], Optional[str]]:
 
 # ---------- 任务目录 ----------
 
+RISK_KEYWORDS = {
+    "destructive": ("删除", "覆盖", "清空", "移除", "解绑", "注销", "批量下架", "不可逆"),
+    "external_write": ("上传", "发布", "提交", "修改", "更新", "设置", "同步", "上架", "下架",
+                       "回复", "发送", "写入", "安装", "搬运", "移动"),
+    "local_write": ("导出", "下载", "抓取", "采集", "生成", "截图", "保存", "打印"),
+    "read_only": ("查询", "查看", "列表", "搜索", "状态", "预览", "读取", "统计", "分析", "对比", "检查"),
+}
+
+
+def _heuristic_risk(task_name: str, description: str) -> str:
+    """未声明 agent.risk 时的风险启发式(方案 §14.2 词表)。"""
+    text = f"{task_name or ''} {description or ''}"
+    for risk, keywords in RISK_KEYWORDS.items():
+        if any(k in text for k in keywords):
+            return risk
+    return "local_write"  # 未知默认:本地写入,每次审批(fail-safe)
+
+
 def _agent_task_catalog() -> list[dict]:
-    """扫描 adapter manifest,返回 agent.enabled 任务目录。"""
+    """扫描抓虾全部已安装适配器,返回所有非 hidden 任务目录(用户指令:全量开放)。
+
+    安全模型不变:风险分级审批(destructive 不暴露,写入类需审批)。
+    """
     from core import adapter_loader
     try:
         manifests = adapter_loader.scan_all()
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         return []
-    allowlist = {s.strip() for s in (os_env_allowlist().split(",")) if s.strip()}
+    excludes = {s.strip() for s in (os_env_excludes().split(",")) if s.strip()}
     catalog: list[dict] = []
     for manifest in manifests:
         raw = _read_raw_manifest_yaml(manifest.id)
         agent_block = (raw or {}).get("agent") or {}
         for task in manifest.tasks:
-            enabled = bool(agent_block.get("enabled")) or f"{manifest.id}:{task.id}" in allowlist or task.id in allowlist
-            if not enabled:
+            if getattr(task, "hidden", False):
                 continue
-            risk = agent_block.get("risk") or "read_only"
+            task_key = f"{manifest.id}:{task.id}"
+            if task_key in excludes or task.id in excludes:
+                continue
+            declared = str(agent_block.get("risk") or "").strip()
+            risk = declared or _heuristic_risk(task.name, task.description)
             if risk == "destructive":
                 continue
             catalog.append({
@@ -115,14 +139,14 @@ def _agent_task_catalog() -> list[dict]:
                 "task_name": task.name,
                 "summary": agent_block.get("summary") or task.description or "",
                 "risk": risk,
-                "hidden": bool(getattr(task, "hidden", False)),
+                "hidden": False,
             })
     return catalog
 
 
-def os_env_allowlist() -> str:
+def os_env_excludes() -> str:
     import os
-    return os.environ.get("CRAWSHRIMP_AGENT_TASK_ALLOWLIST", "")
+    return os.environ.get("CRAWSHRIMP_AGENT_TASK_EXCLUDES", "")
 
 
 def _read_raw_manifest_yaml(adapter_id: str) -> dict:
@@ -1006,7 +1030,7 @@ def create_agent_mcp_server() -> MCPServer:
     mcp.add_tool = _track_add
 
     mcp.add_tool(tool_tasks_search, name="tasks_search",
-                 description="搜索当前启用且允许智能体使用的抓虾任务(query 可留空)")
+                 description="搜索抓虾现有的全部任务/脚本(query 可留空;破坏性任务不出现,写入类执行需审批)")
     mcp.add_tool(tool_task_describe, name="task_describe",
                  description="返回任务说明、参数 schema、风险等级与上下文要求")
     mcp.add_tool(tool_task_prepare, name="task_prepare",
@@ -1032,7 +1056,7 @@ def create_agent_mcp_server() -> MCPServer:
     mcp.add_tool(tool_browser_navigate, name="browser_navigate", description="跳转(仅授权 URL 前缀内)")
     mcp.add_tool(tool_browser_capture_requests, name="browser_capture_requests",
                  description="短时捕获网络请求(URL/method/body 摘要,限量)")
-    mcp.add_tool(tool_script_list, name="script_list", description="列出智能体可用的抓虾脚本")
+    mcp.add_tool(tool_script_list, name="script_list", description="列出抓虾现有的全部脚本(与 tasks_search 同目录)")
     mcp.add_tool(tool_script_describe, name="script_describe", description="脚本参数与说明")
     mcp.add_tool(tool_script_run, name="script_run", description="以 Task Instance 执行脚本(风险审批)")
     mcp.add_tool(tool_script_create_draft, name="script_create_draft",

@@ -75,7 +75,7 @@
 | §6.1 允许清单(llm-pi-ai 三路由/spine/persistence/MCP) | ✅ 落地(spike + 生成 cordis) |
 | §6.2 禁止清单 + 构建校验 | ✅ 生产闭包禁止包校验(stage-runtime)+ 23 工具注册表快照断言 |
 | §7.1 浏览器族 6 工具 | ✅ |
-| §7.2 任务族 9 工具 | ✅ |
+| §7.2 任务族 9 工具 | ✅ **目录全量开放(2026-08-14 用户指令)**:全部已安装适配器的非 hidden 任务可见(80 个),风险按 manifest agent.risk 或关键词启发式分级,写入类执行仍需审批,destructive 不暴露 |
 | §7.3 脚本族 6 工具 | ✅ |
 | §7.4 数据族(data_preview/analyze/export) | ✅ 本轮补齐 analyze/export(受限纯 Python 分析 + 审批导出) |
 | §7.6 脚本发布双闸门 | ✅ 完整闭环(审批卡 → 脚本审核页人工复核 → 落盘 published-scripts + sha) |
