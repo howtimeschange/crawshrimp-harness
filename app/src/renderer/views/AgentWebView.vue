@@ -36,8 +36,12 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import AgentBrowserPanel from '../components/agent/AgentBrowserPanel.vue'
 
 const props = defineProps({
-  theme: { type: String, default: '' },   // effectiveTheme(light|dark)
+  theme: { type: String, default: '' },        // effectiveTheme(light|dark)
+  navItems: { type: Array, default: () => [] }, // 抓虾一级菜单(并入 DSH 侧边栏底部)
+  activeNav: { type: String, default: '' },     // 当前激活菜单 id
 })
+
+const emit = defineEmits(['nav-select'])
 
 const webUrl = ref('')
 const error = ref('')
@@ -98,8 +102,9 @@ function retryLoad() {
 }
 
 function onFrameLoad() {
-  // 主题同步:iframe 加载后按当前主题再推一次
+  // iframe 加载后同步主题与抓虾菜单
   pushTheme()
+  pushNav()
 }
 
 function pushTheme() {
@@ -107,8 +112,26 @@ function pushTheme() {
   frameEl.value.contentWindow.postMessage({ __crawshrimp: 'theme', theme: props.theme }, '*')
 }
 
+function pushNav() {
+  if (!frameEl.value?.contentWindow) return
+  frameEl.value.contentWindow.postMessage({
+    __crawshrimp: 'nav',
+    items: (props.navItems || []).map((item) => ({ id: item.id, icon: item.icon, label: item.label })),
+    active: props.activeNav,
+  }, '*')
+}
+
+// iframe 内抓虾菜单点击 → 切换 shell 视图
+function onWindowMessage(event) {
+  const data = event?.data
+  if (!data || data.__crawshrimp !== 'nav-click') return
+  if (!frameEl.value?.contentWindow || event.source !== frameEl.value.contentWindow) return
+  emit('nav-select', data.id)
+}
+
 onMounted(() => {
   loadRuntime()
+  window.addEventListener('message', onWindowMessage)
   pollTimer = setInterval(() => {
     if (!webUrl.value && !error.value) loadRuntime()
   }, 3000)
@@ -116,11 +139,16 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
+  window.removeEventListener('message', onWindowMessage)
 })
 
 watch(() => props.theme, (t) => {
   if (t) pushTheme()
 })
+
+watch(() => [props.navItems, props.activeNav], () => {
+  pushNav()
+}, { deep: false })
 </script>
 
 <style scoped>

@@ -4,6 +4,7 @@
     :class="{
       'layout-ai-image': currentView === 'ai_image' || currentView === 'ai_video' || currentView === 'ai_video_generation',
       'sidebar-collapsed': effectiveSidebarCollapsed,
+      'no-sidebar': !activeScript,
       'titlebar-macos': isMacTitlebar,
     }"
   >
@@ -12,7 +13,7 @@
       <div class="brand">
         <span class="logo">🦐 抓虾</span>
         <button
-          v-if="!activeScript"
+          v-if="activeScript"
           class="collapse-btn"
           type="button"
           :aria-label="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
@@ -32,31 +33,9 @@
       </div>
     </div>
 
-    <!-- 侧边栏 -->
-    <aside class="sidebar">
-      <!-- 智能体会话栏:常驻侧边栏顶部(智能体会话界面自带会话侧边栏时隐藏) -->
-      <AgentSessionBar
-        v-if="!activeScript && currentView !== 'agent'"
-        :collapsed="effectiveSidebarCollapsed"
-        @select-session="onAgentSessionSelected"
-      />
-      <!-- 一级菜单 -->
-      <nav v-if="!activeScript">
-        <button
-          v-for="item in filteredNavItems" :key="item.id"
-          :class="['nav-btn', { active: currentView === item.id }]"
-          :aria-label="item.label"
-          :data-tooltip="effectiveSidebarCollapsed ? item.label : null"
-          :title="effectiveSidebarCollapsed ? undefined : item.label"
-          @click="selectNav(item)"
-        >
-          <span class="icon">{{ item.icon }}</span>
-          <span>{{ item.label }}</span>
-        </button>
-      </nav>
-
-      <!-- 二级菜单：进入脚本后 -->
-      <div v-else class="sub-nav">
+    <!-- 侧边栏:菜单已并入智能体会话界面的侧边栏,这里仅在进入脚本后显示二级菜单 -->
+    <aside v-if="activeScript" class="sidebar">
+      <div class="sub-nav">
         <button class="back-btn" @click="exitScript">
           ← 我的脚本
         </button>
@@ -112,88 +91,94 @@
       />
     </aside>
 
-    <!-- 主内容区 -->
+    <!-- 主内容区:智能体会话常驻(v-show 保活),其余视图为统一内容区 -->
     <main class="content">
-      <!-- 我的脚本：脚本列表 -->
-      <ScriptList
-        v-if="currentView === 'scripts' && !activeScript"
-        @open-script="openScript"
-        @reload="loadScriptGroups"
-      />
-      <!-- 脚本任务执行页 -->
-      <TaskRunner
-        :key="`${activeScript?.adapter_id || ''}:${activeTaskId || ''}:${taskRunnerHandoffKey}`"
-        v-else-if="activeScript && activeTaskId"
-        :adapter-id="activeScript.adapter_id"
-        :task="activeScript.tasks.find(t => t.task_id === activeTaskId)"
-        :initial-params="taskRunnerHandoffParams"
-        @status-change="onTaskStatusChange"
-        @open-task="openTaskFromRunner"
-      />
-      <!-- 任务中心 -->
-      <TaskCenter
-        v-else-if="currentView === 'task_center' && !activeInstanceUid"
-        @open-instance="openTaskInstance"
-      />
-      <TaskInstanceRunner
-        v-else-if="currentView === 'task_center' && activeInstanceUid"
-        :instance-uid="activeInstanceUid"
-        @back="activeInstanceUid = ''"
-      />
-      <!-- AI 生图 -->
-      <KeepAlive>
-        <AiImageWorkbench
-          v-if="currentView === 'ai_image'"
-          @open-settings="openSettingsPanel('ai-1xm')"
+      <!-- 智能体会话:常驻容器,菜单并入其侧边栏底部 -->
+      <div v-show="currentView === 'agent'" class="agent-persist">
+        <AgentWebView
+          :theme="effectiveTheme"
+          :nav-items="filteredNavItems"
+          :active-nav="currentView"
+          @nav-select="onAgentNavSelect"
         />
-      </KeepAlive>
-      <!-- AI 生视频 -->
-      <KeepAlive>
-        <AiVideoGenerationWorkbench
-          v-if="currentView === 'ai_video_generation'"
-          @open-settings="openSettingsPanel('ai-video')"
+      </div>
+      <!-- 统一内容区:其他菜单视图 -->
+      <template v-if="currentView !== 'agent'">
+        <!-- 我的脚本：脚本列表 -->
+        <ScriptList
+          v-if="currentView === 'scripts' && !activeScript"
+          @open-script="openScript"
+          @reload="loadScriptGroups"
         />
-      </KeepAlive>
-      <!-- AI 视频工作流 -->
-      <KeepAlive>
-        <AiVideoWorkflow
-          v-if="currentView === 'ai_video'"
-          @open-settings="openSettingsPanel"
+        <!-- 脚本任务执行页 -->
+        <TaskRunner
+          :key="`${activeScript?.adapter_id || ''}:${activeTaskId || ''}:${taskRunnerHandoffKey}`"
+          v-else-if="activeScript && activeTaskId"
+          :adapter-id="activeScript.adapter_id"
+          :task="activeScript.tasks.find(t => t.task_id === activeTaskId)"
+          :initial-params="taskRunnerHandoffParams"
+          @status-change="onTaskStatusChange"
+          @open-task="openTaskFromRunner"
         />
-      </KeepAlive>
-      <!-- 提示词库 -->
-      <LocalPromptLibrary
-        v-if="currentView === 'local_prompt_library'"
-        @open-cloud-approval="currentView = 'cloud_approval'"
-      />
-      <!-- 数据文件 -->
-      <DataFiles v-if="currentView === 'files'" />
-      <!-- 云端审批 -->
-      <CloudApprovalFrame v-if="currentView === 'cloud_approval'" />
-      <!-- 智能体界面:智能体会话(抓虾主题的完整会话体验) -->
-      <AgentWebView
-        v-if="currentView === 'agent'"
-        :theme="effectiveTheme"
-      />
-      <!-- 脚本审核(双闸门第二闸门) -->
-      <AgentScriptReview v-if="currentView === 'agent_script_review'" />
-      <!-- 全局产品事件浮层(审批/任务/产物卡,DSH Web 视图下由 shell 渲染) -->
+        <!-- 任务中心 -->
+        <TaskCenter
+          v-else-if="currentView === 'task_center' && !activeInstanceUid"
+          @open-instance="openTaskInstance"
+        />
+        <TaskInstanceRunner
+          v-else-if="currentView === 'task_center' && activeInstanceUid"
+          :instance-uid="activeInstanceUid"
+          @back="activeInstanceUid = ''"
+        />
+        <!-- AI 生图 -->
+        <KeepAlive>
+          <AiImageWorkbench
+            v-if="currentView === 'ai_image'"
+            @open-settings="openSettingsPanel('ai-1xm')"
+          />
+        </KeepAlive>
+        <!-- AI 生视频 -->
+        <KeepAlive>
+          <AiVideoGenerationWorkbench
+            v-if="currentView === 'ai_video_generation'"
+            @open-settings="openSettingsPanel('ai-video')"
+          />
+        </KeepAlive>
+        <!-- AI 视频工作流 -->
+        <KeepAlive>
+          <AiVideoWorkflow
+            v-if="currentView === 'ai_video'"
+            @open-settings="openSettingsPanel"
+          />
+        </KeepAlive>
+        <!-- 提示词库 -->
+        <LocalPromptLibrary
+          v-if="currentView === 'local_prompt_library'"
+          @open-cloud-approval="currentView = 'cloud_approval'"
+        />
+        <!-- 数据文件 -->
+        <DataFiles v-if="currentView === 'files'" />
+        <!-- 云端审批 -->
+        <CloudApprovalFrame v-if="currentView === 'cloud_approval'" />
+        <!-- 脚本审核(双闸门第二闸门) -->
+        <AgentScriptReview v-if="currentView === 'agent_script_review'" />
+        <!-- 设置 -->
+        <SettingsPage
+          v-if="currentView === 'settings'"
+          :status="status"
+          :focus-panel-id="focusSettingsPanelId"
+          :update-status="updateStatus"
+          :update-action-busy="updateActionBusy"
+          :theme-preference="themePreference"
+          :effective-theme="effectiveTheme"
+          @runtime-refresh="refreshRuntimeStatus"
+          @check-update="retryUpdateCheck"
+          @theme-change="setThemePreference"
+        />
+      </template>
+      <!-- 全局产品事件浮层(审批/任务/产物卡,由 shell 渲染) -->
       <AgentProductLayer
-        v-if="currentView === 'agent' || currentView === 'agent_script_review'"
         @open-task-instance="openTaskInstanceFromAgent"
-      />
-      <!-- 设置 -->
-      <SettingsPage
-        v-if="currentView === 'settings'"
-        :status="status"
-        :focus-panel-id="focusSettingsPanelId"
-        :update-status="updateStatus"
-        :update-action-busy="updateActionBusy"
-        :theme-preference="themePreference"
-        :effective-theme="effectiveTheme"
-        @runtime-refresh="refreshRuntimeStatus"
-        @check-update="retryUpdateCheck"
-        @theme-change="setThemePreference"
       />
     </main>
   </div>
@@ -214,7 +199,6 @@ import SettingsPage from './views/SettingsPage.vue'
 import CloudApprovalFrame from './views/CloudApprovalFrame.vue'
 import AgentWebView from './views/AgentWebView.vue'
 import AgentScriptReview from './views/AgentScriptReview.vue'
-import AgentSessionBar from './components/agent/AgentSessionBar.vue'
 import AgentProductLayer from './components/agent/AgentProductLayer.vue'
 import SidebarUpdateFooter from './components/SidebarUpdateFooter.vue'
 import { buildScriptGroups } from './utils/scriptGroups'
@@ -324,11 +308,10 @@ function shouldClearActiveScriptForNav(item) {
   return Boolean(activeScript.value) && item.id !== currentView.value
 }
 
-const agentSessionId = ref('')
-
-function onAgentSessionSelected(sessionId) {
-  agentSessionId.value = sessionId || ''
-  currentView.value = 'agent'
+// 智能体界面内嵌菜单点击(来自 DSH 侧边栏底部的抓虾菜单)
+function onAgentNavSelect(navId) {
+  const item = navItems.find((it) => it.id === navId)
+  if (item) selectNav(item)
 }
 
 function openTaskInstanceFromAgent(instanceUid) {
@@ -654,6 +637,18 @@ input, select, textarea { font-family: inherit; }
   grid-template-columns: 168px 1fr;
   grid-template-rows: 40px 1fr;
   height: 100vh;
+}
+
+/* 无脚本侧边栏时(智能体会话/其他菜单视图):内容区全宽,菜单在会话界面侧边栏内 */
+.layout.no-sidebar {
+  grid-template-columns: 1fr;
+}
+
+.layout.no-sidebar .sidebar { display: none; }
+
+.agent-persist {
+  height: 100%;
+  min-height: 0;
 }
 
 .layout.sidebar-collapsed {

@@ -81,7 +81,15 @@ window.__ModuleLoader__.load({
       '.pXSMma_headlineText { font-size: 0 !important; }',
       '.pXSMma_headlineText::before { content: "🦐 抓虾智能体"; font-size: 22px; font-weight: 700; color: var(--dsw-alias-label-primary); }',
       '.pXSMma_previewBadge { display: none !important; }',
-      // 6) 选中/强调色随抓虾橙
+      // 6) 抓虾菜单注入侧边栏底部(单一侧边栏:shell 菜单并入这里)
+      '[data-crawshrimp-nav] { border-top: 1px solid var(--dsw-alias-border-l2); padding: 8px 4px; margin: 4px 2px 0; display: flex; flex-direction: column; gap: 2px; }',
+      '.cs-nav-item { display: flex; align-items: center; gap: 8px; width: 100%; border: none; background: transparent; color: var(--dsw-alias-label-secondary); padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; text-align: left; font-family: inherit; }',
+      '.cs-nav-item:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }',
+      '.cs-nav-active { background: var(--dsw-alias-state-business-tertiary); color: var(--dsw-alias-state-business-primary); font-weight: 600; }',
+      '.cs-nav-icon { width: 18px; text-align: center; flex: none; }',
+      '.hHd-Xa_collapsed [data-crawshrimp-nav] .cs-nav-label { display: none; }',
+      '.hHd-Xa_collapsed .cs-nav-item { justify-content: center; padding: 6px 0; }',
+      // 7) 选中/强调色随抓虾橙
       '::selection { background: rgba(255, 107, 43, 0.25); }',
     ].join('\n')
 
@@ -93,6 +101,37 @@ window.__ModuleLoader__.load({
         tag.dataset.pluginCss = tagId
         tag.textContent = BRAND_CSS
         document.head.appendChild(tag)
+      }
+    }
+
+    // ---- 抓虾菜单注入 DSH 侧边栏底部(单一侧边栏) ----
+    function renderNav(items, activeId) {
+      const rail = document.querySelector('.hHd-Xa_root')
+      if (!rail) return
+      let host = rail.querySelector('[data-crawshrimp-nav]')
+      if (!host) {
+        host = document.createElement('div')
+        host.dataset.crawshrimpNav = '1'
+        rail.appendChild(host)
+      }
+      host.replaceChildren()
+      for (const item of items || []) {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'cs-nav-item' + (item.id === activeId ? ' cs-nav-active' : '')
+        btn.title = item.label || ''
+        const icon = document.createElement('span')
+        icon.className = 'cs-nav-icon'
+        icon.textContent = item.icon || ''
+        const label = document.createElement('span')
+        label.className = 'cs-nav-label'
+        label.textContent = item.label || item.id
+        btn.appendChild(icon)
+        btn.appendChild(label)
+        btn.addEventListener('click', () => {
+          window.parent.postMessage({ __crawshrimp: 'nav-click', id: item.id }, '*')
+        })
+        host.appendChild(btn)
       }
     }
 
@@ -122,7 +161,16 @@ window.__ModuleLoader__.load({
       window.addEventListener('message', (event) => {
         const data = event && event.data
         if (data && data.__crawshrimp === 'theme') adopt(data.theme)
+        if (data && data.__crawshrimp === 'nav') renderNav(data.items, data.active)
       })
+      // 侧边栏重渲染后兜底重插(React 可能移除未识别节点)
+      new MutationObserver(() => {
+        const rail = document.querySelector('.hHd-Xa_root')
+        const host = document.querySelector('[data-crawshrimp-nav]')
+        if (rail && host && !rail.contains(host)) {
+          rail.appendChild(host)
+        }
+      }).observe(document.documentElement, { childList: true, subtree: true })
     }
 
     exports.apply = apply
