@@ -41,11 +41,13 @@ def resolve_node_executable() -> str:
 
 
 def resolve_harness_root(is_packaged: bool = False) -> Path:
+    # 发布态由 Electron main 注入(Resources/deepseek-harness);开发态用仓库目录
+    env_root = os.environ.get("CRAWSHRIMP_HARNESS_ROOT", "").strip()
+    if env_root:
+        return Path(env_root)
     if not is_packaged:
         return _repo_root() / "integrations" / "deepseek-harness"
-    import sys
-    resources = Path(getattr(sys, "_MEIPASS", "")) if False else None
-    return Path(os.environ.get("CRAWSHRIMP_RESOURCES_PATH", "")) / "deepseek-harness" if resources is None else resources
+    return Path(os.environ.get("CRAWSHRIMP_RESOURCES_PATH", "")) / "deepseek-harness"
 
 
 class WorkerProtocolError(Exception):

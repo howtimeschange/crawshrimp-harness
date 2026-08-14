@@ -1194,6 +1194,9 @@ function spawnBackendProcess() {
       CRAWSHRIMP_APP_ENV: CLOUD_APPROVAL_APP_ENV,
       CRAWSHRIMP_NODE_EXECUTABLE: process.execPath,
       CRAWSHRIMP_NODE_MODULES_DIR: path.join(__dirname, '..', 'node_modules'),
+      CRAWSHRIMP_HARNESS_ROOT: IS_DEV
+        ? path.resolve(__dirname, '..', '..', 'integrations', 'deepseek-harness')
+        : path.join(process.resourcesPath, 'deepseek-harness'),
       ELECTRON_RUN_AS_NODE: '',
       PYTHONPATH: scriptsDir,
     },

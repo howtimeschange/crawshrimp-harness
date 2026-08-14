@@ -31,6 +31,7 @@ const REQUIRED_BACKEND_IMPORTS = [
   'PIL',
   'fitz',
   'cryptography',
+  'mcp',
 ]
 
 const REQUIRED_VIDEO_INTEGRATION_FILES = [
