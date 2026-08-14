@@ -40,6 +40,41 @@ def _auto_approve_task(task_id: str, risk: str) -> bool:
     return any(k in tid for k in ("download", "找图", "找款", "云盘"))
 
 
+_IMAGE_MEDIA_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+_VIDEO_MEDIA_EXT = {".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv"}
+_AUDIO_MEDIA_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg"}
+
+
+def _classify_artifact_media(filename: str, path: str):
+    """按文件名分类产物媒体类型;zip 产物返回内部图片条目清单(轻量 namelist)。"""
+    name = str(filename or "")
+    lower = name.lower()
+    ext = "." + lower.rsplit(".", 1)[-1] if "." in lower else ""
+    if ext in _IMAGE_MEDIA_EXT:
+        return "image", []
+    if ext in _VIDEO_MEDIA_EXT:
+        return "video", []
+    if ext in _AUDIO_MEDIA_EXT:
+        return "audio", []
+    if ext == ".zip" and path:
+        images: list[str] = []
+        try:
+            import zipfile as _zipfile
+            with _zipfile.ZipFile(path) as zf:
+                for member in zf.namelist():
+                    if not member or member.endswith("/"):
+                        continue
+                    m_ext = "." + member.rsplit(".", 1)[-1].lower() if "." in member else ""
+                    if m_ext in _IMAGE_MEDIA_EXT:
+                        images.append(member)
+                        if len(images) >= 20:
+                            break
+        except Exception:  # noqa: BLE001
+            images = []
+        return "zip", images
+    return "file", []
+
+
 def _pick_free_port(start_port: int, max_steps: int = 8) -> int:
     """端口自愈:起始端口被占用时自动 +1 递增,避免残留进程卡死 runtime。"""
     import socket as _socket
@@ -162,7 +197,31 @@ class AgentService:
         mcp_gateway.ctx.read_artifact_bytes = callbacks.get("read_artifact_bytes")
         mcp_gateway.ctx.write_artifact = callbacks.get("write_artifact")
         mcp_gateway.ctx.request_approval = self.request_approval
-        mcp_gateway.ctx.emit_event = lambda event_type, payload: None
+        mcp_gateway.ctx.emit_event = self._emit_tool_event_sync
+
+    def _emit_tool_event_sync(self, event_type: str, payload: dict) -> None:
+        """工具执行中同步广播产品事件(线程安全:投递到主事件循环)。"""
+        run = mcp_gateway.ctx.active_run
+        if not run:
+            return
+        session_id = run.get("session_id")
+        if not session_id:
+            return
+        loop = getattr(self, "main_loop", None)
+        if loop is None or loop.is_closed():
+            return
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self.broadcast(session_id, _seq(session_id), event_type, payload or {}), loop)
+
+            def _done(f):
+                try:
+                    f.result()
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[agent] emit broadcast 异常: {exc}", flush=True)
+            future.add_done_callback(_done)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[agent] emit 投递失败: {exc}", flush=True)
 
     async def start(self) -> None:
         self.main_loop = asyncio.get_event_loop()
@@ -701,13 +760,18 @@ class AgentService:
                         size = _os.path.getsize(path)
                     except OSError:
                         size = 0
+                filename = artifact.get("label") or (path.split("/")[-1] if path else "")
+                media_kind, zip_images = _classify_artifact_media(filename, path)
                 await self.broadcast(session_id, _seq(session_id), "artifact.created", {
                     "artifact_id": artifact.get("id"),
-                    "filename": artifact.get("label") or (path.split("/")[-1] if path else ""),
+                    "filename": filename,
                     "kind": artifact.get("kind") or "",
                     "path": path,
                     "size": size,
                     "task_instance_uid": uid,
+                    # 会话内直接显示:媒体类型 + zip 内图片条目清单(最多 20 张,不解压字节)
+                    "media_kind": media_kind,
+                    "zip_images": zip_images,
                 })
 
     # ---------- Worker 事件投影 ----------

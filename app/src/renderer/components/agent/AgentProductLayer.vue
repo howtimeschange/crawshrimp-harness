@@ -47,7 +47,7 @@
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
 
-const emit = defineEmits(['open-task-instance', 'browser-auto-open'])
+const emit = defineEmits(['open-task-instance', 'browser-auto-open', 'artifact-show'])
 
 const cards = ref([])
 let stopEvents = null
@@ -157,6 +157,17 @@ function handleEvent(eventType, data) {
         size: data?.size || 0,
         taskInstanceUid: data?.task_instance_uid || '',
       })
+      // 会话内直接显示:图片多图/视频可播放/附件可点击。
+      // 直接 postMessage 到智能体会话 iframe(不经 App/props 中转,链路最短最稳);
+      // 同时保留 emit 供其他消费方。
+      emit('artifact-show', {
+        filename: data?.filename || '',
+        path: data?.path || '',
+        size: data?.size || 0,
+        mediaKind: data?.media_kind || 'file',
+        zipImages: Array.isArray(data?.zip_images) ? data.zip_images : [],
+      })
+      pushArtifactToSession(data)
       break
     }
     case 'run.failed': {
@@ -183,24 +194,95 @@ function handleEvent(eventType, data) {
   }
 }
 
+let rebindTimer = null
+
+// ---- 会话内媒体直接显示:SSE 事件 → iframe(DSH 消息流)直接注入 ----
+const sentSessionArtifacts = []
+
+function pushArtifactToSession(data) {
+  const path = String(data?.path || '').trim()
+  if (!path) return
+  const urlFor = (entry) => {
+    try {
+      return window.cs?.agentMediaUrl ? window.cs.agentMediaUrl(path, entry || null) : ''
+    } catch {
+      return ''
+    }
+  }
+  const zipImages = Array.isArray(data?.zip_images) ? data.zip_images : []
+  const msg = {
+    __crawshrimp: 'artifact-show',
+    artifact: {
+      filename: data?.filename || '',
+      path,
+      size: data?.size || 0,
+      mediaKind: data?.media_kind || 'file',
+      zipImages,
+    },
+    urls: {
+      file: urlFor(null),
+      entries: zipImages.map((e) => urlFor(e)),
+    },
+    ts: Date.now(),
+  }
+  const target = document.querySelector('iframe')?.contentWindow
+  if (target) {
+    target.postMessage(msg, '*')
+  }
+  sentSessionArtifacts.push(msg)
+  if (sentSessionArtifacts.length > 12) sentSessionArtifacts.shift()
+}
+
+function onSessionMessage(event) {
+  const data = event?.data
+  if (!data || !data.__crawshrimp) return
+  if (data.__crawshrimp === 'artifact-replay') {
+    // iframe(会话界面)重载后请求重放:把最近的产物媒体消息重发一遍
+    const target = document.querySelector('iframe')?.contentWindow
+    if (target && sentSessionArtifacts.length) {
+      for (const msg of sentSessionArtifacts) target.postMessage(msg, '*')
+    }
+  }
+}
+
 async function bindEvents() {
   stopEvents?.()
   try {
     stopEvents = window.cs.streamGlobalAgentEvents(0, {
       onEvent: ({ event: eventType, data }) => handleEvent(eventType, data),
-      onError: (error) => console.warn('[agent] 全局事件流连接失败:', error?.message),
+      onError: (error) => {
+        console.warn('[agent] 全局事件流连接失败,4s 后重连:', error?.message)
+        scheduleRebind()
+      },
+      onDone: () => scheduleRebind(),
     })
   } catch (error) {
     console.warn('[agent] 全局事件流连接失败:', error)
+    scheduleRebind()
   }
+}
+
+// 后端重启会断开 SSE,自动重连保证事件链不断(审批/任务/产物/会话内媒体)
+function scheduleRebind() {
+  if (rebindTimer) return
+  rebindTimer = setTimeout(() => {
+    rebindTimer = null
+    bindEvents()
+  }, 4000)
 }
 
 onMounted(() => {
   bindEvents()
   taskPollTimer = setInterval(pollTaskStatuses, 5000)
+  window.addEventListener('message', onSessionMessage)
 })
 onUnmounted(() => {
   stopEvents?.()
+  window.removeEventListener('message', onSessionMessage)
+  if (rebindTimer) {
+    clearTimeout(rebindTimer)
+    rebindTimer = null
+  }
   if (taskPollTimer) clearInterval(taskPollTimer)
 })
 </script>

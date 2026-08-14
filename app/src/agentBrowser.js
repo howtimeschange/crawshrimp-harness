@@ -94,6 +94,13 @@ async function startAgentBrowserStream(webContents) {
       pending.delete(msg.id)
       if (msg.error) reject(new Error(msg.error.message || 'CDP 命令失败'))
       else resolve(msg.result)
+    } else if (msg && msg.method === 'Page.frameNavigated') {
+      // 实时跟进页面导航:只取主 frame(parentId 为空)的 URL,窗口地址栏即时刷新
+      const frame = msg.params?.frame
+      const url = frame?.url
+      if (url && url !== 'about:blank' && !frame.parentId && stream) {
+        stream.targetUrl = url
+      }
     }
   }
   ws.onerror = () => notify(webContents, 'error', { message: 'CDP websocket 错误' })
@@ -117,7 +124,7 @@ async function startAgentBrowserStream(webContents) {
 
   await send('Page.enable')
 
-  stream = { ws, timer: null, targetUrl: target.url || '', send }
+  stream = { ws, timer: null, targetUrl: target.url || '', send, frameCount: 0 }
   stream.timer = setInterval(async () => {
     if (!stream) return
     if (stream.ws.readyState !== WebSocket.OPEN) return
@@ -127,10 +134,23 @@ async function startAgentBrowserStream(webContents) {
         quality: SCREENSHOT_QUALITY,
         fromSurface: true,
       })
+      // SPA 内部路由(hash/history)不触发 frameNavigated,定期回读 location.href 兜底
+      stream.frameCount = (stream.frameCount || 0) + 1
+      if (stream.frameCount % 5 === 0) {
+        try {
+          const loc = await send('Runtime.evaluate', {
+            expression: 'location.href',
+            returnByValue: true,
+            awaitPromise: false,
+          })
+          const href = loc?.result?.value
+          if (typeof href === 'string' && href && href !== 'about:blank') stream.targetUrl = href
+        } catch { /* 忽略单次 URL 回读失败 */ }
+      }
       if (stream && webContents && !webContents.isDestroyed()) {
         webContents.send('agent:browser:frame', {
           dataUrl: `data:image/jpeg;base64,${shot.data}`,
-          url: target.url || '',
+          url: stream.targetUrl || target.url || '',
           ts: Date.now(),
         })
       }

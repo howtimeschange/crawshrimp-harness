@@ -72,6 +72,37 @@ class ToolContext:
 ctx = ToolContext()
 
 
+def _broadcast_media_artifacts(paths, media_kind: str) -> None:
+    """AI 生图/生视频产物直接进会话消息流展示(不再只是路径文本)。
+
+    经 ctx.emit_event 广播 artifact.created,shell 转发给 DSH 会话界面注入
+    图片网格/视频播放器;路径不存在的文件跳过。
+    """
+    if not ctx.emit_event:
+        return
+    import os as _os
+    for raw in paths or []:
+        path = str(raw or "").strip()
+        if not path:
+            continue
+        try:
+            if not _os.path.isfile(path):
+                continue
+            size = _os.path.getsize(path)
+        except OSError:
+            continue
+        ctx.emit_event("artifact.created", {
+            "artifact_id": "",
+            "filename": path.rsplit("/", 1)[-1],
+            "kind": "file",
+            "path": path,
+            "size": size,
+            "task_instance_uid": "",
+            "media_kind": media_kind,
+            "zip_images": [],
+        })
+
+
 def _run_ok() -> bool:
     return ctx.active_run is not None
 
@@ -876,6 +907,7 @@ def tool_image_generate(prompt: str, count: int = 1, size: str = "1024x1024") ->
         detail = "; ".join(result.get("failures") or []) or result.get("error") or "生成失败"
         return _failed("GENERATION_FAILED", detail)
     paths = [item.get("path") for item in result.get("assets") or [] if item.get("path")]
+    _broadcast_media_artifacts(paths, "image")
     return _ok({
         "assets": result.get("assets"),
         "paths": paths,
@@ -935,11 +967,17 @@ def tool_video_generate(prompt: str, first_frame_image: str = "", duration: str 
     waited = video_service.wait_video_job(job_id, poll_timeout_seconds=1800)
     if not waited.get("ok"):
         return _failed("GENERATION_FAILED", waited.get("error") or f"生视频失败({waited.get('status')})")
+    video_path = waited.get("video_path")
+    poster_path = waited.get("poster_path")
+    if video_path:
+        _broadcast_media_artifacts([video_path], "video")
+    if poster_path and poster_path != video_path:
+        _broadcast_media_artifacts([poster_path], "image")
     return _ok({
         "job_id": job_id,
-        "video_path": waited.get("video_path"),
-        "poster_path": waited.get("poster_path"),
-        "message": f"已生成视频: {waited.get('video_path')}",
+        "video_path": video_path,
+        "poster_path": poster_path,
+        "message": f"已生成视频: {video_path}",
     }, evidence={"artifact_ids": []})
 
 

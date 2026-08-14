@@ -7476,6 +7476,9 @@ async def require_local_api_token(request: Request, call_next):
         return await call_next(request)
 
     supplied = str(request.headers.get(API_TOKEN_HEADER) or "").strip()
+    # 媒体端点(<img>/<video> 标签无法携带自定义头)允许等价 query token
+    if not supplied and str(request.url.path or "").startswith("/agent/artifacts/"):
+        supplied = str(request.query_params.get("token") or "").strip()
     if not supplied or not hmac.compare_digest(supplied, expected):
         return _add_local_cors_headers(
             request,
@@ -12155,11 +12158,51 @@ def chrome_tabs():
         raise HTTPException(503, str(e))
 
 
+def _cleanup_orphan_backends(data_dir: str) -> None:
+    """启动自清理:杀掉同 data 目录的孤儿后端进程。
+
+    后端是 Electron main 的子进程,壳被强杀后后端会孤儿化并继续占用
+    API 端口,导致新后端端口漂移(渲染端连不上、web host 错位)。
+    按进程环境里的 CRAWSHRIMP_DATA(或命令行 data 目录)匹配,只杀
+    同目录的 core.api_server,不碰其他 data 目录(发布态/多实例隔离)。
+    """
+    if os.name != "posix":
+        return
+    import subprocess
+    me = os.getpid()
+    try:
+        out = subprocess.run(["ps", "eww", "-A"], capture_output=True, text=True, timeout=15).stdout
+    except Exception:  # noqa: BLE001
+        return
+    for line in out.splitlines():
+        if "core.api_server" not in line or "grep" in line.split(" ", 1)[0]:
+            continue
+        if str(data_dir) not in line:
+            continue
+        fields = line.strip().split()
+        if not fields:
+            continue
+        try:
+            pid = int(fields[0])
+        except ValueError:
+            continue
+        if pid == me:
+            continue
+        try:
+            os.kill(pid, 9)
+            print(f"[api] 启动自清理:终止同数据目录孤儿后端 pid={pid}", flush=True)
+        except OSError:
+            pass
+
+
 if __name__ == "__main__":
     import uvicorn
+    import pathlib as _pl
     port = int(os.environ.get("CRAWSHRIMP_PORT", 18765))
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     )
+    _data_dir = os.environ.get("CRAWSHRIMP_DATA", "").strip() or str(_pl.Path.home() / ".crawshrimp")
+    _cleanup_orphan_backends(_data_dir)
     uvicorn.run(app, host="127.0.0.1", port=port, access_log=False)

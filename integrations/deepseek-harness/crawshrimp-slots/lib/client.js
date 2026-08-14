@@ -235,9 +235,162 @@ window.__ModuleLoader__.load({
       window.parent.postMessage({ __crawshrimp: 'rail-metrics', width, collapsed }, '*')
     }
 
+    // ---- 产物媒体注入:会话消息流内直接显示图片(多图)/视频(可播放)/附件(可点击) ----
+    const ARTIFACT_CSS = [
+      '.cs-artifact-block { margin: 6px 0; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-bg-layer-1); padding: 10px 12px; max-width: 560px; }',
+      '.cs-artifact-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }',
+      '.cs-artifact-icon { width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex: none; background: var(--dsw-alias-state-business-tertiary); }',
+      '.cs-artifact-name { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+      '.cs-artifact-size { font-size: 12px; color: var(--dsw-alias-label-secondary); flex: none; }',
+      '.cs-artifact-open { flex: none; border: 1px solid var(--dsw-alias-border-l1); background: transparent; color: var(--dsw-alias-label-primary); border-radius: 7px; padding: 5px 12px; font-size: 12.5px; cursor: pointer; transition: background-color 120ms cubic-bezier(0.4, 0, 0.2, 1); }',
+      '.cs-artifact-open:hover { background: var(--dsw-alias-interactive-bg-hover); }',
+      '.cs-artifact-open:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }',
+      '.cs-artifact-img { display: block; max-width: 100%; max-height: 320px; border-radius: 8px; cursor: pointer; margin-top: 8px; border: 1px solid var(--dsw-alias-border-l1); }',
+      '.cs-artifact-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 8px; }',
+      '.cs-artifact-grid img { width: 100%; height: 150px; object-fit: cover; border-radius: 8px; cursor: pointer; border: 1px solid var(--dsw-alias-border-l1); transition: transform 120ms cubic-bezier(0.4, 0, 0.2, 1), border-color 120ms cubic-bezier(0.4, 0, 0.2, 1); }',
+      '.cs-artifact-grid img:hover { border-color: var(--dsw-alias-state-business-primary); transform: scale(1.01); }',
+      '.cs-artifact-video { display: block; width: 100%; max-width: 480px; max-height: 340px; border-radius: 8px; margin-top: 8px; background: #000; }',
+      '.cs-artifact-audio { display: block; width: 100%; margin-top: 8px; }',
+      '.cs-artifact-zip-hint { margin-top: 8px; font-size: 12px; color: var(--dsw-alias-label-secondary); }',
+      '@media (prefers-reduced-motion: reduce) { .cs-artifact-grid img { transition: none; } }',
+    ].join('\n')
+
+    function injectArtifactCss() {
+      const tagId = 'crawshrimp-slots/artifacts'
+      if (typeof document !== 'undefined' && document.querySelector('style[data-plugin-css=' + JSON.stringify(tagId) + ']') === null) {
+        const tag = document.createElement('style')
+        tag.dataset.plugin = 'crawshrimp-slots'
+        tag.dataset.pluginCss = tagId
+        tag.textContent = ARTIFACT_CSS
+        document.head.appendChild(tag)
+      }
+    }
+
+    function artifactSizeText(size) {
+      const n = Number(size) || 0
+      if (!n) return ''
+      if (n < 1024) return `${n} B`
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+      return `${(n / 1024 / 1024).toFixed(1)} MB`
+    }
+
+    function artifactIconFor(mediaKind, filename) {
+      if (mediaKind === 'image') return '🖼️'
+      if (mediaKind === 'video') return '🎬'
+      if (mediaKind === 'audio') return '🎧'
+      if (mediaKind === 'zip') return '📦'
+      const lower = String(filename || '').toLowerCase()
+      if (lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.csv')) return '📊'
+      return '📄'
+    }
+
+    function makeArtifactBlock(artifact, urls) {
+      const block = document.createElement('div')
+      block.className = 'cs-artifact-block'
+      block.dataset.artifactPath = String(artifact.path || '')
+      const open = () => {
+        if (artifact.path) window.parent.postMessage({ __crawshrimp: 'open-file', path: artifact.path }, '*')
+      }
+
+      const head = document.createElement('div')
+      head.className = 'cs-artifact-head'
+      head.title = '点击打开文件'
+      const icon = document.createElement('span')
+      icon.className = 'cs-artifact-icon'
+      icon.textContent = artifactIconFor(artifact.mediaKind, artifact.filename)
+      const name = document.createElement('span')
+      name.className = 'cs-artifact-name'
+      name.textContent = artifact.filename || '产物文件'
+      const size = document.createElement('span')
+      size.className = 'cs-artifact-size'
+      size.textContent = artifactSizeText(artifact.size)
+      const openBtn = document.createElement('button')
+      openBtn.type = 'button'
+      openBtn.className = 'cs-artifact-open'
+      openBtn.textContent = '打开'
+      openBtn.addEventListener('click', (event) => {
+        event.stopPropagation()
+        open()
+      })
+      head.appendChild(icon)
+      head.appendChild(name)
+      head.appendChild(size)
+      head.appendChild(openBtn)
+      head.addEventListener('click', open)
+      block.appendChild(head)
+
+      const fileUrl = urls.file || ''
+      if (artifact.mediaKind === 'image' && fileUrl) {
+        const img = document.createElement('img')
+        img.className = 'cs-artifact-img'
+        img.src = fileUrl
+        img.alt = artifact.filename || ''
+        img.decoding = 'async'
+        img.addEventListener('click', open)
+        block.appendChild(img)
+      } else if (artifact.mediaKind === 'video' && fileUrl) {
+        const video = document.createElement('video')
+        video.className = 'cs-artifact-video'
+        video.controls = true
+        video.preload = 'metadata'
+        video.src = fileUrl
+        block.appendChild(video)
+      } else if (artifact.mediaKind === 'audio' && fileUrl) {
+        const audio = document.createElement('audio')
+        audio.className = 'cs-artifact-audio'
+        audio.controls = true
+        audio.preload = 'metadata'
+        audio.src = fileUrl
+        block.appendChild(audio)
+      } else if (artifact.mediaKind === 'zip' && Array.isArray(urls.entries) && urls.entries.length) {
+        const grid = document.createElement('div')
+        grid.className = 'cs-artifact-grid'
+        const entries = artifact.zipImages || []
+        urls.entries.slice(0, 20).forEach((entryUrl, index) => {
+          const img = document.createElement('img')
+          img.src = entryUrl
+          img.alt = entries[index] || ''
+          img.title = entries[index] || ''
+          img.decoding = 'async'
+          img.addEventListener('click', open)
+          grid.appendChild(img)
+        })
+        block.appendChild(grid)
+        const hint = document.createElement('div')
+        hint.className = 'cs-artifact-zip-hint'
+        hint.textContent = `${Math.min(entries.length, 20)} 张预览图 · 点击图片或「打开」查看完整压缩包`
+        block.appendChild(hint)
+      } else if (fileUrl && artifact.mediaKind !== 'file') {
+        const link = document.createElement('a')
+        link.className = 'cs-artifact-zip-hint'
+        link.href = fileUrl
+        link.target = '_blank'
+        link.rel = 'noopener'
+        link.textContent = '在新标签页打开'
+        block.appendChild(link)
+      }
+      return block
+    }
+
+    function renderArtifactShow(data) {
+      const artifact = data && data.artifact
+      if (!artifact || !artifact.path) return
+      injectArtifactCss()
+      // 去重以 DOM 为准(页面重载后内存 set 失效会造成「有记忆无块」)
+      const existing = [...document.querySelectorAll('.cs-artifact-block')]
+        .some((b) => b.dataset.artifactPath === String(artifact.path))
+      if (existing) return
+      const host = document.querySelector('.wSkVaW_scrollBody')
+      if (!host) {
+        // 消息区尚未渲染(会话切换/重载中):几秒后重试一次,避免事件丢失
+        setTimeout(() => renderArtifactShow(data), 2500)
+        return
+      }
+      host.appendChild(makeArtifactBlock(artifact, data.urls || {}))
+    }
+
     // ---- 默认工作区:自动采用抓虾运行时目录,不需要用户指定 ----
-    async function ensureDefaultWorkspace(ctx, root) {
-      if (!root || !ctx.workspaces) return
+    async function ensureDefaultWorkspace(ctx, root) {      if (!root || !ctx.workspaces) return
       try {
         const snap = ctx.workspaces.list?.getSnapshot?.() || {}
         const existing = snap.items || []
@@ -277,7 +430,14 @@ window.__ModuleLoader__.load({
         if (data && data.__crawshrimp === 'theme') adopt(data.theme)
         if (data && data.__crawshrimp === 'nav') renderNav(data.items, data.active)
         if (data && data.__crawshrimp === 'workspace') ensureDefaultWorkspace(ctx, data.root)
+        if (data && data.__crawshrimp === 'artifact-show') renderArtifactShow(data)
       })
+      // 页面/会话重载后向 shell 请求重放产物媒体(iframe 重载期间到达的事件会丢失)
+      try {
+        window.parent.postMessage({ __crawshrimp: 'artifact-replay' }, '*')
+      } catch (error) {
+        // 忽略
+      }
       // 会话导航:点击「新会话」或会话列表项 → shell 切回会话主界面
       document.addEventListener('click', (event) => {
         const target = event.target

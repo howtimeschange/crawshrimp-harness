@@ -116,6 +116,21 @@ async function agentApi(method, requestPath, body) {
 }
 
 /**
+ * 产物媒体 URL:<img>/<video> 标签无法携带自定义头,后端 /agent/artifacts/*
+ * 接受等价 query token;token 拼进 URL 供会话内直接显示。
+ */
+function agentMediaUrl(path, entry) {
+  const base = apiBase()
+  const token = apiToken()
+  const query = new URLSearchParams({ path: String(path || ''), token: String(token || '') })
+  if (entry) {
+    query.set('entry', String(entry))
+    return `${base}/agent/artifacts/entry?${query.toString()}`
+  }
+  return `${base}/agent/artifacts/file?${query.toString()}`
+}
+
+/**
  * SSE 订阅:抓虾智能体事件流(带产品 token,SSE 不支持自定义头,用 fetch 流解析)。
  * 返回 abort 函数。
  */
@@ -393,6 +408,7 @@ contextBridge.exposeInMainWorld('cs', {
   },
 
   agentApi: (method, path, body) => agentApi(method, path, body),
+  agentMediaUrl: (path, entry) => agentMediaUrl(path, entry),
   streamAgentEvents: (sessionId, afterSeq, handlers) => streamAgentEvents(sessionId, afterSeq, handlers),
   streamGlobalAgentEvents: (afterSeq, handlers) => streamGlobalAgentEvents(afterSeq, handlers),
   pickAgentAttachments: () => ipcRenderer.invoke('agent:pick-attachments'),

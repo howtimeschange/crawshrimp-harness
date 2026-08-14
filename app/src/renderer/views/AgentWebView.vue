@@ -173,6 +173,12 @@ function onWindowMessage(event) {
     emit('rail-metrics', { width: data.width, collapsed: data.collapsed })
   } else if (data.__crawshrimp === 'session-nav') {
     emit('session-nav', data.kind || 'session')
+  } else if (data.__crawshrimp === 'open-file') {
+    // 会话内附件点击 → 系统默认应用打开
+    const p = String(data.path || '').trim()
+    if (p && typeof window.cs?.openFile === 'function') {
+      window.cs.openFile(p).catch(() => {})
+    }
   }
 }
 
@@ -239,6 +245,7 @@ watch(() => props.browserAutoOpen, (count) => {
     browserOpen.value = true
   }
 })
+
 </script>
 
 <style scoped>

@@ -236,6 +236,119 @@ def get_task_instance_status(instance_uid: str) -> dict:
     }
 
 
+# ---------- 产物媒体访问(会话内多图直接显示/视频可点击播放/附件可点击) ----------
+
+_MEDIA_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+_MEDIA_VIDEO_EXT = {".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv"}
+_MEDIA_AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg"}
+
+
+def _media_kind_for(name: str) -> str:
+    lower = str(name or "").lower()
+    ext = "." + lower.rsplit(".", 1)[-1] if "." in lower else ""
+    if ext in _MEDIA_IMAGE_EXT:
+        return "image"
+    if ext in _MEDIA_VIDEO_EXT:
+        return "video"
+    if ext in _MEDIA_AUDIO_EXT:
+        return "audio"
+    return "file"
+
+
+def _artifact_path_safe(path_value: str):
+    """会话内媒体显示专用:按用户要求全面开放本地路径(仅校验文件存在)。
+
+    本端点为本地回环 + token 鉴权的展示通道(图片/视频/附件预览),
+    产物可能落在 Downloads/抓虾导出 等任意用户目录,不再限制必须位于数据目录内。
+    """
+    from pathlib import Path as _Path
+    raw = str(path_value or "").strip()
+    if not raw:
+        raise HTTPException(400, "缺少 path 参数")
+    p = _Path(raw).expanduser().resolve()
+    if not p.is_file():
+        raise HTTPException(404, "文件不存在")
+    return p
+
+
+def _guess_media_type(name: str) -> str:
+    import mimetypes
+    guessed = mimetypes.guess_type(str(name or ""))[0]
+    if guessed:
+        return guessed
+    kind = _media_kind_for(name)
+    return {"image": "application/octet-stream", "video": "video/mp4", "audio": "audio/mpeg"}.get(kind, "application/octet-stream")
+
+
+@router.get("/artifacts/entry")
+def artifact_zip_entry(path: str, entry: str) -> Response:
+    """ZIP 产物内单条目字节流(会话内多图直接显示用;仅解压目标条目)。"""
+    import zipfile
+    from fastapi.responses import Response as _Response
+    p = _artifact_path_safe(path)
+    if not str(p.name).lower().endswith(".zip"):
+        raise HTTPException(400, "仅支持 zip 产物")
+    entry_name = str(entry or "").strip()
+    if not entry_name:
+        raise HTTPException(400, "缺少 entry 参数")
+    try:
+        with zipfile.ZipFile(str(p)) as zf:
+            names = zf.namelist()
+            if entry_name not in names:
+                raise HTTPException(404, "zip 内条目不存在")
+            data = zf.read(entry_name)
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(400, "zip 文件损坏") from exc
+    if len(data) > 64 * 1024 * 1024:
+        raise HTTPException(413, "条目过大")
+    return _Response(
+        content=data,
+        media_type=_guess_media_type(entry_name),
+        headers={"Cache-Control": "no-store", "Content-Disposition": "inline"},
+    )
+
+
+@router.get("/artifacts/file")
+def artifact_file(path: str, request: Request):
+    """产物文件字节流,支持 Range(视频拖动进度条/音频 seek)。"""
+    import os as _os
+    from fastapi.responses import FileResponse as _FileResponse
+    p = _artifact_path_safe(path)
+    size = _os.path.getsize(p)
+    media_type = _guess_media_type(str(p.name))
+    common = {"Accept-Ranges": "bytes", "Cache-Control": "no-store", "Content-Disposition": "inline"}
+    range_header = str(request.headers.get("range") or "").strip()
+    if range_header:
+        import re as _re
+        m = _re.match(r"bytes=(\d*)-(\d*)$", range_header)
+        if m and (m.group(1) or m.group(2)):
+            start_s, end_s = m.group(1), m.group(2)
+            start = int(start_s) if start_s else 0
+            end = int(end_s) if end_s else (size - 1)
+            if start >= size or start > end:
+                from fastapi.responses import Response as _Response
+                return _Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+            end = min(end, size - 1)
+            length = end - start + 1
+
+            def _chunks():
+                remaining = length
+                with open(p, "rb") as f:
+                    f.seek(start)
+                    while remaining > 0:
+                        chunk = f.read(min(65536, remaining))
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
+                        yield chunk
+
+            return StreamingResponse(
+                _chunks(), status_code=206, media_type=media_type,
+                headers={**common, "Content-Range": f"bytes {start}-{end}/{size}", "Content-Length": str(length)},
+            )
+    return _FileResponse(p, media_type=media_type, headers=common)
+
+
 @router.get("/sessions/{session_id}/events")
 async def session_events(session_id: str, request: Request, after_seq: int = 0) -> StreamingResponse:
     service = get_agent_service()

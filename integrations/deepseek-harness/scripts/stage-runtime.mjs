@@ -36,6 +36,8 @@ const REQUIRED_STAGE_FILES = [
   'node_modules/crawshrimp-slots/package.json',
   'node_modules/crawshrimp-slots/lib/index.js',
   'node_modules/crawshrimp-slots/lib/client.js',
+  'node_modules/crawshrimp-product-bridge/package.json',
+  'node_modules/crawshrimp-product-bridge/lib/index.js',
   'node_modules/@deepseek-ai/dsh-cmdline/package.json',
   'node_modules/@deepseek-ai/dsh-web-app/package.json',
   'node_modules/@deepseek-ai/dsh-web-app/lib/startup.js',
@@ -76,7 +78,7 @@ function hashTree(dir) {
   return h.digest('hex')
 }
 
-const sourceAssetsHash = ['crawshrimp-launcher', 'crawshrimp-slots', 'worker', 'skills', 'web-cordis.yml']
+const sourceAssetsHash = ['crawshrimp-launcher', 'crawshrimp-slots', 'crawshrimp-product-bridge', 'worker', 'skills', 'web-cordis.yml']
   .map((p) => hashTree(join(sourceRoot, p)))
   .join(':')
 const lockHash = hashOf(join(sourceRoot, 'package-lock.json')) + '|' + sourceAssetsHash
@@ -102,7 +104,7 @@ if (!upToDate) {
   }
   // Worker 入口、技能包、本地 launcher/slots 插件随 staging 一起进安装包
   // (file: 依赖从这些目录打包)
-  for (const dir of ['worker', 'skills', 'crawshrimp-launcher', 'crawshrimp-slots']) {
+  for (const dir of ['worker', 'skills', 'crawshrimp-launcher', 'crawshrimp-slots', 'crawshrimp-product-bridge']) {
     const src = join(sourceRoot, dir)
     if (existsSync(src)) {
       spawnSync(process.platform === 'win32' ? 'xcopy' : 'cp', ['-R', src, stageRoot], { stdio: 'inherit', shell: true })
