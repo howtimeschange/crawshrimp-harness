@@ -95,7 +95,7 @@ const CDP_PORT = 9222
 const IS_DEV   = !app.isPackaged
 const CLOUD_APPROVAL_APP_ENV = IS_DEV ? 'development' : 'production'
 const BACKEND_STARTUP_ATTEMPTS = process.platform === 'win32' ? 60 : 20
-const BACKEND_LAUNCH_RETRIES = process.platform === 'win32' ? 2 : 1
+const BACKEND_LAUNCH_RETRIES = process.platform === 'win32' ? 3 : 2
 const BACKEND_INSTANCE_ID = crypto.randomUUID()
 const AI_VIDEO_CAPABILITY_SECRET = crypto.randomBytes(32).toString('hex')
 const LEGACY_RUNTIME_MARKERS = [

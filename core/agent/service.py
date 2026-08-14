@@ -22,6 +22,71 @@ from core.config import load_config
 
 APPROVAL_WAIT_SECONDS = 15 * 60
 
+# 免审批任务:简单下载/找图类(用户指令明确请求执行时自动放行,审计保留)
+AUTO_APPROVE_TASK_IDS = frozenset({"batch_image_download", "cloud_folder_download"})
+
+
+def _auto_approve_task(task_id: str, risk: str) -> bool:
+    """简单下载/找图类任务自动批准;上传/发布/删除类即使名字相近也不放行。"""
+    if risk not in ("read_only", "local_write"):
+        return False
+    tid = str(task_id or "").strip().lower()
+    if not tid:
+        return False
+    if tid in AUTO_APPROVE_TASK_IDS:
+        return True
+    if any(k in tid for k in ("upload", "publish", "delete", "remove", "update", "modify")):
+        return False
+    return any(k in tid for k in ("download", "找图", "找款", "云盘"))
+
+
+def _pick_free_port(start_port: int, max_steps: int = 8) -> int:
+    """端口自愈:起始端口被占用时自动 +1 递增,避免残留进程卡死 runtime。"""
+    import socket as _socket
+    port = max(1, int(start_port or 0))
+    for _ in range(max(1, int(max_steps))):
+        try:
+            with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as sock:
+                sock.bind(("127.0.0.1", port))
+            return port
+        except OSError:
+            port += 1
+    return port
+
+
+def _cleanup_orphan_runtimes(data_root: str) -> None:
+    """清理本 data 目录的孤儿 worker/harness 进程(后端被强杀后的残留)。
+
+    匹配依据:进程环境含本 data 目录的 harness 会话根路径。
+    """
+    if os.name != "posix":
+        return
+    import subprocess
+    session_root = str(Path(data_root) / "agent" / "harness-sessions")
+    try:
+        out = subprocess.run(
+            ["ps", "eww", "-A"], capture_output=True, text=True, timeout=15
+        ).stdout
+    except Exception:  # noqa: BLE001
+        return
+    for line in out.splitlines():
+        if session_root not in line:
+            continue
+        if "dsh-sdk-jsonrpc-demo" not in line and "worker/worker.mjs" not in line:
+            continue
+        fields = line.strip().split()
+        if not fields:
+            continue
+        try:
+            pid = int(fields[0])
+        except ValueError:
+            continue
+        try:
+            os.kill(pid, 9)
+            print(f"[agent] 清理孤儿 runtime 进程 pid={pid}", flush=True)
+        except (OSError, ValueError):
+            pass
+
 # 不写入产品事件表的 Harness 事件(窄 spec §7.1)
 FILTERED_EVENT_TYPES = {"request/header", "request/context"}
 
@@ -123,8 +188,10 @@ class AgentService:
         from core.agent import api as agent_api
         base_port = int(_os.environ.get("CRAWSHRIMP_PORT", "18765"))
         # API 端口有 +1..+100 的回退区间(main.js findAvailableApiPort),
-        # MCP 端口取 API 端口 + 200,保证永不落入回退区间且实例间唯一。
+        # MCP 端口取 API 端口 + 200,保证永不落入回退区间且实例间唯一;
+        # 端口自愈:被残留进程占用时自动递增,不再卡死。
         port = int(_os.environ.get("CRAWSHRIMP_AGENT_MCP_PORT", str(base_port + 200)))
+        port = _pick_free_port(port, 8)
         self.mcp_port = port
         self.mcp_url = f"http://127.0.0.1:{port}/mcp"
         app = agent_api.build_agent_mcp_asgi(lambda: self.runtime_token)
@@ -458,8 +525,13 @@ class AgentService:
         if ds_key:
             os.environ["CRAWSHRIMP_DEEPSEEK_API_KEY"] = ds_key
 
+        # Web host 端口自愈:残留 harness 占用时自动 +1 递增,不再因端口冲突起不来
+        os.environ["CRAWSHRIMP_WEB_PORT"] = str(_pick_free_port(self.web_port, 8))
+
         data_root = _data_root()
         agent_dir = data_root / "agent"
+        # 启动 worker 前清理本 data 目录的孤儿 runtime(上次后端被强杀的残留)
+        _cleanup_orphan_runtimes(str(data_root))
         # runtime cordis 必须写在 harness root(node_modules 旁):
         # dsh-app-boot 以 config 所在目录为模块解析基准(ctx.baseUrl),
         # 写进 data 目录会导致 client 插件包(bare import)解析失败,web BOOT entries 为空。
@@ -821,6 +893,11 @@ class AgentService:
                 "run_id": run.get("run_id"),
             }
             db.append_event(session_id, run.get("run_id"), "tool.approval_required", payload)
+
+        # 简单下载/找图类任务:用户指令明确请求执行时免审批,自动放行
+        if _auto_approve_task(str(plan.get("task_id") or ""), risk):
+            db.decide_approval(approval_id, "approved", "auto-approved")
+            return "approved"
 
         # DSH 原生审批交互:crawshrimp-product-bridge → ctx.approval.request →
         # 原生审批卡 → 用户决策回传。失败时安全失败(rejected)。
