@@ -248,6 +248,19 @@ def create_session(session_id: str, runtime_session_id: str, title: str = "新�
             conn.close()
 
 
+def get_session_by_runtime(runtime_session_id: str) -> Optional[dict]:
+    """按 runtime 会话 id 查产品会话(web UI 原生会话的影子投影用)。"""
+    with _lock:
+        conn = _conn()
+        try:
+            return _row(conn.execute(
+                "SELECT * FROM agent_sessions WHERE runtime_session_id = ?",
+                (runtime_session_id,),
+            ).fetchone())
+        finally:
+            conn.close()
+
+
 def list_sessions(include_archived: bool = False) -> list[dict]:
     sql = "SELECT * FROM agent_sessions"
     if not include_archived:

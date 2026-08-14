@@ -72,6 +72,8 @@ class AgentService:
         self.approval_waits: dict[str, asyncio.Future] = {}
         self.subscribers: dict[str, set[asyncio.Queue]] = {}
         self.global_subscribers: set[asyncio.Queue] = set()
+        # web UI 原生会话的影子投影:runtime_session_id → 影子 run
+        self.shadow_runs: dict[str, dict] = {}
 
         self._mcp_app = None
         self._mcp_uvicorn = None
@@ -79,6 +81,7 @@ class AgentService:
         self.mcp_port = 0
         self.mcp_url = "http://127.0.0.1:18965/mcp"
         self.generation_model: Optional[str] = None
+        self.generation_model_provider: Optional[str] = None
         self._callbacks: dict[str, Any] = {}
 
     # ---------- 初始化 / 恢复 ----------
@@ -501,6 +504,7 @@ class AgentService:
             self.worker = worker
             self.runtime_state = "ready"
             self.generation_model = model_id
+            self.generation_model_provider = provider_id
             return True
         except Exception as exc:  # noqa: BLE001
             self.runtime_error = str(exc)
@@ -616,10 +620,86 @@ class AgentService:
             return
         run_id = params.get("runId")
         event = params.get("event") or {}
-        run = db.get_run(run_id) if run_id else None
+        if not run_id:
+            # web UI 原生会话:影子投影(建立 active run,任务准备/审批/产物可用)
+            shadow_session = params.get("sessionId")
+            if shadow_session:
+                await self._project_shadow_event(str(shadow_session), event)
+            return
+        run = db.get_run(run_id)
         if not run:
             return
         session_id = run["session_id"]
+        await self._project_event(session_id, run, event)
+
+    # ---------- web UI 原生会话影子投影 ----------
+
+    async def _project_shadow_event(self, runtime_session_id: str, event: dict) -> None:
+        event_type = event.get("type") or "unknown"
+        data = event.get("data") or {}
+
+        session = db.get_session_by_runtime(runtime_session_id)
+        if session is None:
+            session_id = f"cs-web-{uuid.uuid4().hex[:12]}"
+            try:
+                session = db.create_session(session_id, runtime_session_id, title="智能体会话")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[agent] 影子会话创建失败: {exc}", flush=True)
+                return
+
+        run = self.shadow_runs.get(runtime_session_id)
+
+        if event_type == "turn/start" and run is None:
+            session_id = session["session_id"]
+            turn_id = f"turn-web-{uuid.uuid4().hex[:12]}"
+            run_id = f"run-web-{uuid.uuid4().hex[:12]}"
+            db.create_turn(turn_id, session_id, db.next_turn_ordinal(session_id) + 1, f"{run_id}:user")
+            run = db.create_run(run_id, session_id, turn_id,
+                                self.generation_model_provider or "crawshrimp-overseas-openai",
+                                self.generation_model or "gpt-5.6-terra")
+            db.update_run(run_id, status="running", started_at=_now_iso())
+            self.shadow_runs[runtime_session_id] = run
+            mcp_gateway.ctx.active_run = run
+            db.update_session(session_id, status="running")
+            await self.broadcast(session_id, 0, "run.started", {"run_id": run_id, "turn_id": turn_id})
+            await self._project_event(session_id, run, event)
+            return
+
+        if run is None:
+            return
+
+        session_id = run["session_id"]
+
+        if event_type == "user/message":
+            text = _extract_text(data)
+            if text:
+                db.create_message(f"{run['run_id']}:user", session_id, run.get("turn_id"), run["run_id"],
+                                  "user", "text", {"text": text})
+        elif event_type == "session/title":
+            title = str(data.get("title") or "").strip()[:80]
+            if title:
+                db.update_session(session_id, title=title)
+        elif event_type == "turn/end":
+            reason = data.get("reason") or {}
+            kind = reason.get("kind") or "completed"
+            if kind == "completed":
+                db.update_run(run["run_id"], status="completed", finished_at=_now_iso())
+                db.update_turn(run.get("turn_id") or "", status="completed", completed_at=_now_iso())
+                await self.broadcast(session_id, 0, "run.completed", {"run_id": run["run_id"]})
+                await self._broadcast_run_artifacts(run["run_id"], session_id)
+            else:
+                error_code = None
+                if isinstance(reason.get("error"), dict):
+                    error_code = reason["error"].get("code")
+                db.update_run(run["run_id"], status="failed", error_code=error_code, finished_at=_now_iso())
+                await self.broadcast(session_id, 0, "run.failed",
+                                     {"run_id": run["run_id"], "kind": kind, "error_code": error_code})
+            db.update_session(session_id, status="idle")
+            self.shadow_runs.pop(runtime_session_id, None)
+            if mcp_gateway.ctx.active_run and mcp_gateway.ctx.active_run.get("run_id") == run["run_id"]:
+                mcp_gateway.ctx.active_run = None
+            return
+
         await self._project_event(session_id, run, event)
 
     async def _project_event(self, session_id: str, run: dict, event: dict) -> None:

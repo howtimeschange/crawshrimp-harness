@@ -17,6 +17,12 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 
 const PROTOCOL_VERSION = 1
+
+// 影子投影转发的事件类型(web UI 原生会话 → FastAPI)
+const SHADOW_EVENT_TYPES = [
+  'turn/start', 'turn/end', 'user/message', 'assistant/message', 'assistant/chunk',
+  'tool/call', 'tool/result', 'session/title', 'session/status',
+]
 const MAX_FRAME_BYTES = 4 * 1024 * 1024
 const MCP_SETTLE_MS = Number(process.env.CRAWSHRIMP_AGENT_MCP_SETTLE_MS || 3000)
 const RUN_ABSOLUTE_TIMEOUT_MS = Number(process.env.CRAWSHRIMP_AGENT_RUN_TIMEOUT_MS || 30 * 60 * 1000)
@@ -67,6 +73,15 @@ function notifyHarness(runId, event) {
   })
 }
 
+/** web UI 原生会话(非 FastAPI run)的事件:转发给 FastAPI 做影子投影。 */
+function notifyHarnessShadow(sessionId, event) {
+  send({
+    jsonrpc: '2.0',
+    method: 'harness.notification',
+    params: { protocol_version: PROTOCOL_VERSION, runId: null, sessionId, event },
+  })
+}
+
 // ---------- DSH runtime 生命周期 ----------
 function resolveNodeExecutable() {
   // 发布态:FastAPI 通过 env 传入抓虾打包的 Electron 可执行文件
@@ -108,6 +123,16 @@ function spawnRuntime() {
   })
 
   const sdk = createSdkClient(child)
+  // 全局影子转发:web UI 原生会话(非 FastAPI run)的 turn 事件 → FastAPI 投影,
+  // 使其拥有 active run 语义(任务准备/审批/产物全链路可用)。
+  sdk.onEvent((method, params) => {
+    if (method !== 'session.event') return
+    const sessionId = params.sessionId
+    if (!sessionId) return
+    if (state.activeRun && sessionId === state.activeRun.sessionId) return // run 处理器已转发
+    const event = params.event || {}
+    if (SHADOW_EVENT_TYPES.includes(event.type)) notifyHarnessShadow(sessionId, event)
+  })
   child.stderr.on('data', (chunk) => {
     console.error(`[worker][harness] ${String(chunk).trimEnd()}`)
   })
