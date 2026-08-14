@@ -47,7 +47,7 @@
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
 
-const emit = defineEmits(['open-task-instance'])
+const emit = defineEmits(['open-task-instance', 'browser-auto-open'])
 
 const cards = ref([])
 let stopEvents = null
@@ -165,6 +165,17 @@ function handleEvent(eventType, data) {
     }
     case 'run.canceled': {
       pushCard({ kind: 'notice', text: '已停止回答(已启动的业务任务不受影响)' })
+      break
+    }
+    case 'browser.activity': {
+      // 智能体正在调用浏览器工具 → 自动弹出实时浏览器窗口展示操作画面
+      emit('browser-auto-open')
+      break
+    }
+    case 'tool.requested': {
+      // 浏览器类工具调用(browser_observe/act/navigate 等)→ 自动弹出实时浏览器
+      const name = String(data?.tool_name || '')
+      if (name.startsWith('browser_')) emit('browser-auto-open')
       break
     }
     default:

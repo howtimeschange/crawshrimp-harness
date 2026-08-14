@@ -28,7 +28,7 @@
           @click="browserOpen = !browserOpen"
         >🖥️</button>
       </div>
-      <AgentBrowserPanel v-if="browserOpen" class="web-browser-panel" @collapse="browserOpen = false" />
+      <AgentBrowserPanel v-if="browserOpen" @collapse="browserOpen = false" />
     </div>
   </div>
 </template>
@@ -41,6 +41,7 @@ const props = defineProps({
   theme: { type: String, default: '' },        // effectiveTheme(light|dark)
   navItems: { type: Array, default: () => [] }, // 抓虾一级菜单(注入会话侧边栏底部)
   activeNav: { type: String, default: '' },     // 当前激活菜单 id
+  browserAutoOpen: { type: Number, default: 0 }, // 智能体调用浏览器工具时递增,自动弹出实时浏览器窗口
 })
 
 const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav', 'repair-core'])
@@ -231,6 +232,13 @@ watch(() => props.theme, (t) => {
 watch(() => [props.navItems, props.activeNav], () => {
   pushNav()
 }, { deep: false })
+
+// 智能体调用浏览器工具(浏览器操作画面)时自动弹出实时浏览器窗口
+watch(() => props.browserAutoOpen, (count) => {
+  if (Number(count) > 0) {
+    browserOpen.value = true
+  }
+})
 </script>
 
 <style scoped>

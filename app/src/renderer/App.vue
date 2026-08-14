@@ -99,6 +99,7 @@
           :theme="effectiveTheme"
           :nav-items="filteredNavItems"
           :active-nav="currentView"
+          :browser-auto-open="browserAutoOpenCount"
           @nav-select="onAgentNavSelect"
           @rail-metrics="onRailMetrics"
           @session-nav="onSessionNav"
@@ -188,6 +189,7 @@
       <!-- 全局产品事件浮层(审批/任务/产物卡,由 shell 渲染) -->
       <AgentProductLayer
         @open-task-instance="openTaskInstanceFromAgent"
+        @browser-auto-open="browserAutoOpenCount += 1"
       />
     </main>
     <!-- 更新日志弹窗:更新前查看版本内容并确认「去更新」 -->
@@ -347,6 +349,8 @@ function onRailMetrics(metrics) {
   const w = Number(metrics.width) || 0
   if (w > 40 && w < 800) railWidth.value = w
 }
+// 智能体调用浏览器工具时递增 → AgentWebView 自动弹出实时浏览器窗口
+const browserAutoOpenCount = ref(0)
 // 脚本详情:独立二级页面(隐藏会话界面,内容区从 0 开始)
 const embedLeft = computed(() => (activeScript.value ? 0 : railWidth.value))
 

@@ -1,50 +1,89 @@
 <template>
-  <div class="agent-browser-panel">
-    <div class="browser-panel-head">
-      <span class="browser-panel-title">实时浏览器</span>
-      <span class="browser-status" :class="statusClass" :title="statusText">
-        <i></i>{{ statusLabel }}
-      </span>
-      <button
-        class="panel-collapse-btn"
-        type="button"
-        title="收起浏览器面板"
-        aria-label="收起浏览器面板"
-        @click="$emit('collapse')"
+  <Teleport to="body">
+    <div
+      class="agent-browser-window"
+      :class="{ minimized, maximized }"
+      :style="windowStyle"
+      role="dialog"
+      aria-label="实时浏览器窗口"
+    >
+      <div
+        class="browser-window-head"
+        @mousedown.left="onDragStart"
+        @dblclick="toggleMaximize"
       >
-        ›
-      </button>
-    </div>
-    <div class="browser-frame">
-      <img
-        v-if="frame"
-        class="browser-frame-img"
-        :src="frame.dataUrl"
-        alt="浏览器实时画面"
-      />
-      <div v-else class="browser-frame-placeholder">
-        <template v-if="statusState === 'error'">
-          <div class="placeholder-icon">⚠️</div>
-          <div class="placeholder-text">{{ statusMessage || '无法连接 9222 CDP 浏览器' }}</div>
-          <button class="placeholder-btn" type="button" @click="restart">重试</button>
-        </template>
-        <template v-else>
-          <div class="placeholder-icon">🌐</div>
-          <div class="placeholder-text">连接 9222 CDP 浏览器中…</div>
-        </template>
+        <span class="browser-window-title">🖥️ 实时浏览器</span>
+        <span class="browser-status" :class="statusClass" :title="statusText">
+          <i></i>{{ statusLabel }}
+        </span>
+        <span v-if="frameUrl && !minimized" class="browser-window-url" :title="frameUrl">{{ frameUrl }}</span>
+        <span class="browser-window-spacer"></span>
+        <button
+          v-if="!minimized"
+          class="win-btn"
+          type="button"
+          :title="maximized ? '还原' : '最大化'"
+          :aria-label="maximized ? '还原' : '最大化'"
+          @mousedown.stop
+          @click="toggleMaximize"
+        >{{ maximized ? '❐' : '□' }}</button>
+        <button
+          class="win-btn"
+          type="button"
+          :title="minimized ? '展开' : '最小化'"
+          :aria-label="minimized ? '展开' : '最小化'"
+          @mousedown.stop
+          @click="minimized = !minimized"
+        >{{ minimized ? '▣' : '—' }}</button>
+        <button
+          class="win-btn win-btn-close"
+          type="button"
+          title="关闭浏览器窗口"
+          aria-label="关闭浏览器窗口"
+          @mousedown.stop
+          @click="$emit('collapse')"
+        >×</button>
       </div>
+
+      <div v-show="!minimized" class="browser-window-body">
+        <div class="browser-frame">
+          <img
+            v-if="frame"
+            class="browser-frame-img"
+            :src="frame.dataUrl"
+            alt="浏览器实时画面"
+          />
+          <div v-else class="browser-frame-placeholder">
+            <template v-if="statusState === 'error'">
+              <div class="placeholder-icon">⚠️</div>
+              <div class="placeholder-text">{{ statusMessage || '无法连接 9222 CDP 浏览器' }}</div>
+              <button class="placeholder-btn" type="button" @click="restart">重试</button>
+            </template>
+            <template v-else>
+              <div class="placeholder-icon">🌐</div>
+              <div class="placeholder-text">连接 9222 CDP 浏览器中…</div>
+            </template>
+          </div>
+        </div>
+        <div class="browser-window-foot">
+          <span class="url" :title="frameUrl">{{ frameUrl || '—' }}</span>
+          <span v-if="frame" class="frame-meta">{{ frame.width }}×{{ frame.height }}</span>
+          <button class="refresh-btn" type="button" title="刷新画面" aria-label="刷新画面" @click="restart">↻</button>
+        </div>
+      </div>
+
+      <div
+        v-if="!minimized && !maximized"
+        class="browser-window-resize"
+        title="拖动调整大小"
+        @mousedown.left.prevent="onResizeStart"
+      ></div>
     </div>
-    <div class="browser-panel-foot" :title="frameUrl">
-      <span class="url">{{ frameUrl || '—' }}</span>
-      <button class="refresh-btn" type="button" title="刷新画面" aria-label="刷新画面" @click="restart">
-        ↻
-      </button>
-    </div>
-  </div>
+  </Teleport>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 
 const emit = defineEmits(['collapse'])
 
@@ -52,10 +91,119 @@ const frame = ref(null)
 const frameUrl = ref('')
 const statusState = ref('connecting') // connecting | connected | error | disconnected
 const statusMessage = ref('')
+const minimized = ref(false)
+const maximized = ref(false)
+
+const MIN_W = 360
+const MIN_H = 260
+
+const win = reactive({
+  x: 0,
+  y: 0,
+  w: 760,
+  h: 520,
+})
+const saved = reactive({ x: 0, y: 0, w: 760, h: 520, minimized: false, maximized: false })
 
 let offFrame = null
 let offStatus = null
 let started = false
+let drag = null
+let resize = null
+
+function clamp(v, min, max) {
+  return Math.min(Math.max(v, min), Math.max(min, max))
+}
+
+function loadPrefs() {
+  try {
+    const raw = localStorage.getItem('crawshrimp.browserWindow')
+    if (!raw) return
+    const p = JSON.parse(raw)
+    if (Number.isFinite(p.w) && Number.isFinite(p.h)) {
+      saved.w = clamp(p.w, MIN_W, window.innerWidth)
+      saved.h = clamp(p.h, MIN_H, window.innerHeight)
+      saved.x = Number.isFinite(p.x) ? p.x : 0
+      saved.y = Number.isFinite(p.y) ? p.y : 0
+      saved.minimized = Boolean(p.minimized)
+      saved.maximized = Boolean(p.maximized)
+    }
+  } catch { /* ignore */ }
+}
+
+function savePrefs() {
+  try {
+    localStorage.setItem('crawshrimp.browserWindow', JSON.stringify({
+      x: saved.x, y: saved.y, w: saved.w, h: saved.h,
+      minimized: minimized.value, maximized: maximized.value,
+    }))
+  } catch { /* ignore */ }
+}
+
+function placeDefault() {
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  win.w = saved.w
+  win.h = saved.h
+  // 默认贴右下,避开产品卡(bottom 14 + 卡高),留 16px 边距
+  win.x = clamp(saved.x || (vw - win.w - 16), 8, Math.max(8, vw - win.w - 8))
+  win.y = clamp(saved.y || (vh - win.h - 16), 8, Math.max(8, vh - win.h - 8))
+  minimized.value = saved.minimized
+  maximized.value = saved.maximized
+}
+
+const windowStyle = computed(() => {
+  if (maximized.value) {
+    return { left: '0px', top: '0px', width: '100vw', height: '100vh' }
+  }
+  return { left: `${win.x}px`, top: `${win.y}px`, width: `${win.w}px`, height: minimized.value ? 'auto' : `${win.h}px` }
+})
+
+function onDragStart(event) {
+  if (event.button !== 0) return
+  if (maximized.value) return
+  drag = { startX: event.clientX, startY: event.clientY, origX: win.x, origY: win.y }
+  const onMove = (e) => {
+    if (!drag) return
+    win.x = clamp(drag.origX + (e.clientX - drag.startX), 8, Math.max(8, window.innerWidth - win.w - 8))
+    win.y = clamp(drag.origY + (e.clientY - drag.startY), 0, Math.max(0, window.innerHeight - 46))
+    saved.x = win.x
+    saved.y = win.y
+  }
+  const onUp = () => {
+    drag = null
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    savePrefs()
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
+
+function onResizeStart(event) {
+  if (event.button !== 0) return
+  resize = { startX: event.clientX, startY: event.clientY, origW: win.w, origH: win.h }
+  const onMove = (e) => {
+    if (!resize) return
+    win.w = clamp(resize.origW + (e.clientX - resize.startX), MIN_W, window.innerWidth - 8)
+    win.h = clamp(resize.origH + (e.clientY - resize.startY), MIN_H, window.innerHeight - 8)
+    saved.w = win.w
+    saved.h = win.h
+  }
+  const onUp = () => {
+    resize = null
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    savePrefs()
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
+
+function toggleMaximize() {
+  maximized.value = !maximized.value
+  savePrefs()
+}
 
 const statusClass = computed(() => ({
   connecting: 'connecting',
@@ -99,6 +247,8 @@ async function restart() {
 }
 
 onMounted(() => {
+  loadPrefs()
+  placeDefault()
   if (window.cs?.onAgentBrowserFrame) {
     offFrame = window.cs.onAgentBrowserFrame((payload) => {
       frame.value = payload
@@ -126,27 +276,39 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.agent-browser-panel {
+.agent-browser-window {
+  position: fixed;
+  z-index: 1300;
   display: flex;
   flex-direction: column;
-  width: 420px;
-  height: 100%;
   background: var(--bg);
-  border-left: 1px solid var(--border);
-  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+  user-select: none;
 }
-.browser-panel-head {
+.agent-browser-window.maximized {
+  border-radius: 0;
+}
+.browser-window-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg2);
+  cursor: grab;
+  flex: none;
 }
-.browser-panel-title {
+.browser-window-head:active {
+  cursor: grabbing;
+}
+.browser-window-title {
   font-size: 13px;
   font-weight: 700;
   color: var(--text);
+  white-space: nowrap;
 }
 .browser-status {
   display: flex;
@@ -154,13 +316,15 @@ onUnmounted(() => {
   gap: 5px;
   font-size: 11px;
   color: var(--text3);
-  margin-left: auto;
+  white-space: nowrap;
+  flex: none;
 }
 .browser-status i {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--text3);
+  flex: none;
 }
 .browser-status.connected i {
   background: var(--green);
@@ -177,19 +341,46 @@ onUnmounted(() => {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
 }
-.panel-collapse-btn {
-  width: 22px;
-  height: 22px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+.browser-window-url {
+  min-width: 0;
+  flex: 1;
+  font-size: 11.5px;
+  color: var(--text3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browser-window-spacer {
+  flex: 1;
+}
+.win-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 7px;
   background: transparent;
   color: var(--text2);
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1;
   cursor: pointer;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.panel-collapse-btn:hover {
+.win-btn:hover {
+  background: var(--soft-fill-hover);
   color: var(--text);
-  background: var(--bg3);
+}
+.win-btn-close:hover {
+  background: var(--red);
+  color: #fff;
+}
+.browser-window-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .browser-frame {
   flex: 1;
@@ -199,6 +390,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   background: #0b0b0e;
+  overflow: hidden;
 }
 .browser-frame-img {
   max-width: 100%;
@@ -220,7 +412,7 @@ onUnmounted(() => {
 }
 .placeholder-text {
   font-size: 12.5px;
-  max-width: 260px;
+  max-width: 300px;
   line-height: 1.5;
 }
 .placeholder-btn {
@@ -236,13 +428,14 @@ onUnmounted(() => {
   border-color: var(--orange);
   color: var(--orange);
 }
-.browser-panel-foot {
+.browser-window-foot {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px;
+  padding: 6px 10px;
   border-top: 1px solid var(--border);
   background: var(--bg2);
+  flex: none;
 }
 .url {
   flex: 1;
@@ -253,18 +446,45 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.frame-meta {
+  font-size: 11px;
+  color: var(--text3);
+  white-space: nowrap;
+  flex: none;
+}
 .refresh-btn {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border: none;
   border-radius: 6px;
   background: transparent;
   color: var(--text2);
   font-size: 14px;
   cursor: pointer;
+  flex: none;
 }
 .refresh-btn:hover {
   color: var(--text);
   background: var(--bg3);
+}
+.browser-window-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 22px;
+  height: 22px;
+  cursor: nwse-resize;
+  background:
+    linear-gradient(135deg, transparent 0 55%, var(--text3) 55% 62%, transparent 62% 74%, var(--text3) 74% 82%, transparent 82%);
+  opacity: 0.75;
+}
+.browser-window-resize:hover {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-status.connecting i {
+    animation: none;
+  }
 }
 </style>
