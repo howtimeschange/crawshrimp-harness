@@ -13,3 +13,6 @@
 [submodule "skills/cli/bmall-cli"]
 	path = skills/cli/bmall-cli
 	url = https://github.com/howtimeschange/bmall-cli.git
+[submodule "integrations/deepseek-harness/skills/dont-stop"]
+	path = integrations/deepseek-harness/skills/dont-stop
+	url = https://github.com/howtimeschange/dont-stop

@@ -502,6 +502,94 @@ class ScriptReviewRequest(BaseModel):
     decision: str  # publish | reject
 
 
+def _collect_revision_files(rev: dict):
+    """收集某修订所属 run 的适配包文件(manifest.yaml + 各任务脚本/附属文件)。"""
+    from pathlib import Path as _P
+    from core.agent import db as _db
+    files: list[tuple[str, _P]] = []
+    seen: set[str] = set()
+    for wf in (_db.list_workspace_files(rev.get("created_run_id")) or []):
+        src = _P(wf.get("path") or "")
+        if not src.is_file():
+            continue
+        if src.name in seen or not src.name.endswith((".js", ".py", ".yaml", ".yml", ".json", ".md", ".txt", ".csv")):
+            continue
+        seen.add(src.name)
+        files.append((src.name, src))
+    return files
+
+
+def _install_revision_to_adapters(rev: dict):
+    """把修订的适配包文件安装到抓虾 adapters 运行时(经 adapter_loader 加载)。
+
+    返回 (adapter_id, manifest_doc)。manifest 声明缺失脚本时报 409。
+    """
+    from pathlib import Path as _P
+    import tempfile as _tf
+    import shutil as _sh
+    import yaml as _y
+    from core import adapter_loader as _al
+    files = _collect_revision_files(rev)
+    manifest_src = next((src for name, src in files if name == "manifest.yaml"), None)
+    if manifest_src is None:
+        draft = _P(rev["draft_path"])
+        if draft.is_file() and draft.name == "manifest.yaml":
+            manifest_src = draft
+    if manifest_src is None:
+        raise HTTPException(409, "适配包缺少 manifest.yaml,无法安装测试")
+    manifest_doc = {}
+    try:
+        manifest_doc = _y.safe_load(manifest_src.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(409, f"manifest.yaml 解析失败: {exc}") from exc
+    adapter_id = str(manifest_doc.get("id") or "").strip()
+    if not adapter_id:
+        raise HTTPException(409, "manifest.yaml 缺少 id")
+    with _tf.TemporaryDirectory(prefix="crawshrimp-rev-") as tmp:
+        tmpdir = _P(tmp)
+        for name, src in files:
+            if name == "manifest.yaml":
+                continue
+            _sh.copy2(str(src), str(tmpdir / name))
+        _sh.copy2(str(manifest_src), str(tmpdir / "manifest.yaml"))
+        missing = []
+        for t in manifest_doc.get("tasks") or []:
+            if isinstance(t, dict) and t.get("script") and not (tmpdir / str(t["script"])).exists():
+                missing.append(str(t["script"]))
+        if missing:
+            raise HTTPException(409, f"manifest 声明的脚本文件缺失: {', '.join(missing)}")
+        try:
+            _al.install_from_dir(str(tmpdir), install_mode="copy")
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(409, f"安装到运行时失败: {exc}") from exc
+    return adapter_id, manifest_doc
+
+
+@router.post("/script-revisions/{rev_id}/test-install")
+def test_install_script_revision(rev_id: str) -> dict:
+    """把待复核适配包安装到运行时测试区(与正式脚本界面同一运行环境)。
+
+    用户在审核页即可真实运行测试;批准=转正,拒绝=卸载测试安装。
+    """
+    from core.agent import db as _db
+    rev = db.get_script_revision(rev_id)
+    if not rev:
+        raise HTTPException(404, "修订不存在")
+    if rev["status"] not in ("pending_review", "testing"):
+        raise HTTPException(409, f"修订状态不允许测试安装: {rev['status']}")
+    adapter_id, manifest_doc = _install_revision_to_adapters(rev)
+    _db.update_script_revision(rev_id, status="testing", adapter_id=adapter_id)
+    return {"ok": True, "status": "testing", "adapter_id": adapter_id,
+            "adapter": {
+                "id": adapter_id,
+                "name": manifest_doc.get("name") or adapter_id,
+                "version": str(manifest_doc.get("version") or ""),
+                "description": manifest_doc.get("description") or "",
+                "task_count": len([t for t in manifest_doc.get("tasks") or [] if isinstance(t, dict)]),
+            },
+            "message": "已安装到测试区,可在下方任务列表运行测试;确认无误后批准发布,否则拒绝(将卸载测试安装)"}
+
+
 @router.post("/script-revisions/{rev_id}/review")
 def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
     """人工复核闸门:把草稿发布到已发布脚本库,或拒绝。"""
@@ -514,11 +602,18 @@ def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
     rev = db.get_script_revision(rev_id)
     if not rev:
         raise HTTPException(404, "修订不存在")
-    if rev["status"] != "pending_review":
+    if rev["status"] not in ("pending_review", "testing"):
         if rev["status"] == "published" and req.decision == "publish":
             return {"ok": True, "idempotent": True, "status": "published"}
         raise HTTPException(409, f"修订状态不允许复核: {rev['status']}")
     if req.decision == "reject":
+        # 测试安装过的修订:卸载运行时副本,避免残留半成品适配器
+        if rev["status"] == "testing" and rev.get("adapter_id"):
+            try:
+                from core import adapter_loader as _al
+                _al.uninstall(str(rev["adapter_id"]))
+            except Exception:  # noqa: BLE001
+                pass
         _db.update_script_revision(rev_id, status="rejected")
         return {"ok": True, "status": "rejected"}
 
@@ -532,80 +627,54 @@ def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
     safe_adapter = _re.sub(r"[^A-Za-z0-9._-]", "_", str(adapter_id)) or "general-agent"
     import yaml as _yaml
 
-    # 固化到抓虾 adapters 目录:注册为可复用任务(tasks_search/task_run 可见)
-    from core.agent.service import _data_root
-    adapter_dir = _data_root() / "adapters" / safe_adapter
-    adapter_dir.mkdir(parents=True, exist_ok=True)
-
     published_files: list[str] = []
-    # 抓虾适配包发布:草稿是 manifest.yaml 时,把本次 run 的整个适配包目录
-    # (manifest.yaml + 各任务 .js)一并固化,保留智能体按 ADAPTER_GUIDE 写的真实结构;
-    # 旧式单脚本草稿(.js/.py)走兼容路径:单文件 + 自动补 manifest。
     is_manifest_draft = draft.name == "manifest.yaml"
     if is_manifest_draft:
-        files = _db.list_workspace_files(rev.get("created_run_id")) or []
-        for wf in files:
-            src = Path(wf.get("path") or "")
-            if not src.is_file() or src == draft or not src.name.endswith((".js", ".py", ".yaml", ".yml")):
-                continue
-            (adapter_dir / src.name).write_text(src.read_text(encoding="utf-8"))
-            published_files.append(src.name)
-        # 校验 manifest 里声明的脚本文件都已落盘
+        # 抓虾适配包发布:整个适配包目录经 adapter_loader 安装(「我的脚本」/tasks_search 可见)
         try:
-            manifest_doc = _yaml.safe_load(content) or {}
-            missing = []
-            for t in manifest_doc.get("tasks") or []:
-                if isinstance(t, dict) and t.get("script") and not (adapter_dir / str(t["script"])).exists():
-                    missing.append(str(t["script"]))
-            if missing:
-                raise HTTPException(409, f"manifest 声明的脚本文件缺失: {', '.join(missing)}")
+            safe_adapter, manifest_doc = _install_revision_to_adapters(rev)
+            published_files = [name for name, _src in _collect_revision_files(rev) if name != "manifest.yaml"]
+            task_id = next(
+                (str(t.get("id")) for t in manifest_doc.get("tasks") or []
+                 if isinstance(t, dict) and t.get("id")),
+                draft.stem,
+            )
         except HTTPException:
             raise
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(409, f"manifest.yaml 解析失败: {exc}") from exc
-
-    scripts_dir = adapter_dir
-    safe_name = _re.sub(r"[^A-Za-z0-9._-]", "_", draft.name)
-    if not is_manifest_draft and not safe_name.endswith((".js", ".py")):
-        safe_name += ".js"
-    dest = scripts_dir / safe_name
-    dest.write_text(content, encoding="utf-8")
-
-    manifest_path = adapter_dir / "manifest.yaml"
-    manifest: dict = {}
-    if manifest_path.exists() and not is_manifest_draft:
-        try:
-            manifest = _yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-        except Exception:  # noqa: BLE001
-            manifest = {}
-    if not is_manifest_draft:
-        manifest.setdefault("id", safe_adapter)
-        manifest.setdefault("name", f"{safe_adapter} 智能体脚本")
-        manifest.setdefault("version", "0.1.0")
-        manifest.setdefault("author", "crawshrimp-agent")
-        manifest.setdefault("description", "智能体固化脚本(双闸门审批)")
-        manifest.setdefault("entry_url", "")
-        tasks = manifest.get("tasks") or []
-        task_id = safe_name.rsplit(".", 1)[0]
-        entry = next((t for t in tasks if isinstance(t, dict) and t.get("id") == task_id), None)
-        if entry is None:
-            entry = {"id": task_id, "name": task_id, "script": safe_name,
-                     "description": "智能体固化的网页自动化脚本(经用户双闸门审批)"}
-            tasks.append(entry)
-        else:
-            entry.update({"script": safe_name})
-        manifest["tasks"] = tasks
-        manifest_path.write_text(_yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False), encoding="utf-8")
     else:
-        task_id = next(
-            (str(t.get("id")) for t in ((_yaml.safe_load(content) or {}).get("tasks") or [])
-             if isinstance(t, dict) and t.get("id")),
-            safe_name.rsplit(".", 1)[0],
-        )
+        # 旧式单脚本兼容路径:自动补 manifest,经临时目录安装入运行时
+        import tempfile as _tf
+        import shutil as _sh
+        from core import adapter_loader as _al
+        safe_name = _re.sub(r"[^A-Za-z0-9._-]", "_", draft.name)
+        if not safe_name.endswith((".js", ".py")):
+            safe_name += ".js"
+        task_id = safe_name.rsplit(".", 1)[0]
+        manifest = {
+            "id": safe_adapter,
+            "name": f"{safe_adapter} 智能体脚本",
+            "version": "0.1.0",
+            "author": "crawshrimp-agent",
+            "description": "智能体固化脚本(双闸门审批)",
+            "entry_url": "",
+            "tasks": [{
+                "id": task_id, "name": task_id, "script": safe_name,
+                "description": "智能体固化的网页自动化脚本(经用户双闸门审批)",
+            }],
+        }
+        with _tf.TemporaryDirectory(prefix="crawshrimp-pub-") as tmp:
+            tmpdir = Path(tmp)
+            (tmpdir / safe_name).write_text(content, encoding="utf-8")
+            (tmpdir / "manifest.yaml").write_text(_yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False), encoding="utf-8")
+            try:
+                _al.install_from_dir(str(tmpdir), install_mode="copy")
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(409, f"安装到运行时失败: {exc}") from exc
+        published_files = [safe_name]
 
     sha = _hashlib.sha256(content.encode("utf-8")).hexdigest()
     _db.update_script_revision(rev_id, status="published", adapter_id=safe_adapter, source_sha256=sha)
-    return {"ok": True, "status": "published", "path": str(dest),
+    return {"ok": True, "status": "published", "path": draft and str(draft),
             "adapter_id": safe_adapter, "task_id": task_id,
             "files": published_files,
             "source_sha256": sha,
