@@ -1,6 +1,0 @@
-{
-  "adapter_id": "scm-ops-assistant",
-  "install_mode": "copy",
-  "runtime_path": "/Users/xingyicheng/Documents/crawshrimp-harness/.ds-e2e/adapters/scm-ops-assistant",
-  "source_path": "/Users/xingyicheng/Documents/crawshrimp-harness/adapters/scm-ops-assistant"
-}

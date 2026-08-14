@@ -44,3 +44,4 @@ build-staging/
 .storages/
 .test-data-reg*
 .crawshrimp-dev-web/
+.ds-e2e/
