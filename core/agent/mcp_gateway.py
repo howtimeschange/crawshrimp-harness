@@ -348,6 +348,20 @@ def _execute_plan(plan: dict, params: dict) -> dict:
     except Exception as exc:  # noqa: BLE001
         db.update_plan(plan["plan_id"], status="failed")
         return _failed("TASK_CONFLICT", f"创建 Task Instance 失败: {exc}")
+    # 真正启动实例(创建只是草稿;不启动会停在 draft/config)
+    if ctx.run_task_instance:
+        import asyncio as _asyncio
+        main_loop = getattr(ctx, "main_loop", None)
+        try:
+            if main_loop is not None and main_loop.is_running():
+                future = _asyncio.run_coroutine_threadsafe(
+                    ctx.run_task_instance(uid, {}, None), main_loop)
+                future.result(timeout=60)
+            else:
+                _asyncio.run(ctx.run_task_instance(uid, {}, None))
+        except Exception as exc:  # noqa: BLE001
+            db.update_plan(plan["plan_id"], status="failed")
+            return _failed("TASK_START_FAILED", f"启动 Task Instance 失败: {exc}")
     db.update_plan(plan["plan_id"], status="consumed", consumed_at=db._now_iso())
     if ctx.emit_event:
         ctx.emit_event("task.linked", {"plan_id": plan["plan_id"], "task_instance_uid": uid})
