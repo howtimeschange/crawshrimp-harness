@@ -19,7 +19,7 @@
 
 1. DSH Web 会话 iframe 是唯一主界面；抓虾菜单注入会话侧栏；其他菜单是右侧 overlay；脚本详情是独立二级页。
 2. DSH 会话权限是审批真值：`never` 时抓虾审批自动通过并审计，`ask` 时使用 DSH 原生审批卡。
-3. `fs_read/fs_list` 全盘读免审批；`fs_write/fs_exec` 允许但服从 DSH；`browser_navigate` 每 run 最多审批一次。
+3. `fs_read/fs_list` 全盘读免审批；`browser_navigate` 自动执行不审批；`fs_write/fs_exec` 允许但服从 DSH。
 4. 简单下载/找图/找款自动批准，上传/发布/删除/修改类不自动放行。
 5. 智能体脚本必须是抓虾 Adapter 包：`manifest.yaml + 页面 JS async IIFE`，外层返回 `{success,data,meta}`；草稿/测试/发布均强校验。
 6. 审批卡必须是 DSH 原生卡，内容是中文人话。
@@ -51,7 +51,7 @@ git diff --check
 - 媒体 HMAC 的有效、篡改、过期和 route/entry 混淆；
 - 附件 runtime session 绑定、SSE cursor、review Adapter 隔离和测试后篡改拒绝；
 - DSH iframe 常驻、菜单、`📎`/`@`、图片 image block、媒体消息流和跨会话隔离；
-- DSH `never` 自动批准，`ask` 的首次 navigate 原生审批且同 run、跨 MCP lease 不重复；
+- `browser_navigate` 自动执行不审批；DSH `never` 自动批准其他抓虾审批，`ask` 的风险操作使用原生审批；
 - 当前会话多 grant tab 窗口、活跃层/级联和精确 tab 关闭清理；
 - 后端重启或 SSE 断开后，pending 审批提示能按 SQLite 真值恢复/清理。
 

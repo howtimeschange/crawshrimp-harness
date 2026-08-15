@@ -40,8 +40,8 @@
 ## 3. 本轮继续发现并关闭
 
 - DSH `never` 权限现在是抓虾审批真值：所有抓虾审批自动批准但保留审计；`ask` 才出现原生卡。
-- `browser_navigate` 授权写入当前 run 的 grant，同一 run 后续导航不重复审批。
-- MCP context lease 释放前把更新后的 grant 写回 `grants_by_run`；跨 lease 的第二次 navigate 继续复用批准结果。
+- `browser_navigate` 自动执行，不再写入 `navigate` grant toolset，也不触发导航审批卡。
+- MCP context lease 释放前把更新后的 grant 写回 `grants_by_run`；`act` 等仍需授权的能力跨 lease 继续复用批准结果。
 - iframe client 用独立 `lastPublishedRuntimeSessionId` 跟踪会话上报；附件重放不再提前吞掉首次 `active-runtime-session`，浏览器事件能正确识别当前会话。
 - 审批数据、执行计划、工具参数/结果、URL、POST body、Git remote 输出统一脱敏；含秘密计划明文只驻留内存并限制为 512 条。
 - `fs_write` 在审批前不创建父目录；拒绝操作无文件系统副作用。

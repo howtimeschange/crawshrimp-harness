@@ -53,8 +53,25 @@
               <span class="rev-status" :class="selected.status">{{ statusLabel(selected.status) }}</span>
             </div>
 
-            <div v-if="isReviewable" class="detail-spec-hint">
-              发布规范:抓虾适配器 = manifest.yaml + 页面 JS 脚本(async IIFE 返回 &#123; success, data, meta &#125;)。先安装到测试区真实运行,确认没问题再批准发布。
+            <section class="review-gate" :class="gateTone">
+              <div class="review-gate-main">
+                <span class="review-gate-kicker">{{ gateKicker }}</span>
+                <strong>{{ gateTitle }}</strong>
+                <span>{{ gateDetail }}</span>
+              </div>
+              <div class="review-gate-badges">
+                <span>{{ isManifestDraft ? '适配包入口' : '源文件草稿' }}</span>
+                <span v-if="selected.test_adapter_id">测试区 {{ selected.test_adapter_id }}</span>
+                <span v-if="sourceFileCount">{{ sourceFileCount }} 个文件</span>
+              </div>
+            </section>
+
+            <div v-if="isReviewable && isManifestDraft" class="detail-spec-hint">
+              先安装到隔离测试区，运行正式任务界面后再批准发布。
+            </div>
+
+            <div v-else-if="isReviewable && !isManifestDraft" class="detail-spec-hint warn">
+              该修订不是 manifest.yaml 入口，不能进入测试安装和发布审批。
             </div>
 
             <!-- 适配器信息与测试入口 -->
@@ -86,13 +103,19 @@
               </template>
             </div>
 
-            <div class="package-files">
-              <section v-for="file in packageFiles" :key="file.name" class="package-file">
-                <div class="package-file-name">{{ file.name }}</div>
-                <pre class="detail-content">{{ file.content || '(文件内容为空)' }}</pre>
-              </section>
-              <pre v-if="!packageFiles.length" class="detail-content">{{ content || '(草稿内容为空)' }}</pre>
-            </div>
+            <section class="source-panel">
+              <button class="source-toggle" type="button" @click="showSource = !showSource">
+                <span>{{ showSource ? '收起源文件' : `查看源文件(${sourceFileCount || 1})` }}</span>
+                <span aria-hidden="true">{{ showSource ? '↑' : '↓' }}</span>
+              </button>
+              <div v-if="showSource" class="package-files">
+                <section v-for="file in packageFiles" :key="file.name" class="package-file">
+                  <div class="package-file-name">{{ file.name }}</div>
+                  <pre class="detail-content">{{ file.content || '(文件内容为空)' }}</pre>
+                </section>
+                <pre v-if="!packageFiles.length" class="detail-content">{{ content || '(草稿内容为空)' }}</pre>
+              </div>
+            </section>
 
             <div v-if="isReviewable" class="detail-actions">
               <button class="approve-btn" type="button" :disabled="busy || !canPublish" @click="decide('publish')">
@@ -129,12 +152,50 @@ const testAdapter = ref(null)
 const testTasks = ref([])
 const testingTask = ref(null)
 const testAdapterId = ref('')
+const showSource = ref(false)
 
 const isReviewable = computed(() => ['pending_review', 'testing'].includes(selected.value?.status))
 const canPublish = computed(() => selected.value?.status === 'testing' && Boolean(selected.value?.test_adapter_id))
 const isManifestDraft = computed(() => {
   const path = String(selected.value?.draft_path || '')
   return path.split('/').pop() === 'manifest.yaml'
+})
+const sourceFileCount = computed(() => packageFiles.value.length || (content.value ? 1 : 0))
+const gateTone = computed(() => {
+  const status = selected.value?.status
+  if (status === 'pending_review') return 'pending'
+  if (status === 'testing') return 'testing'
+  if (status === 'published') return 'published'
+  if (status === 'rejected') return 'rejected'
+  return 'draft'
+})
+const gateKicker = computed(() => {
+  const status = selected.value?.status
+  if (status === 'pending_review') return '待测试'
+  if (status === 'testing') return '测试区'
+  if (status === 'published') return '已完成'
+  if (status === 'rejected') return '已结束'
+  return '未提交'
+})
+const gateTitle = computed(() => {
+  const status = selected.value?.status
+  if (status === 'pending_review') return isManifestDraft.value ? '等待安装测试区' : '入口文件不符合发布条件'
+  if (status === 'testing') return '可以运行任务界面复核'
+  if (status === 'published') return '已发布到脚本库'
+  if (status === 'rejected') return '该修订已拒绝'
+  if (status === 'tested') return '仅完成规范校验'
+  return '草稿还没有进入复核'
+})
+const gateDetail = computed(() => {
+  const status = selected.value?.status
+  if (status === 'pending_review') return isManifestDraft.value
+    ? '安装后会出现正式任务运行入口。'
+    : '需要以 manifest.yaml 作为适配包入口。'
+  if (status === 'testing') return '运行测试任务确认页面行为，再决定批准或拒绝。'
+  if (status === 'published') return '后续可在我的脚本和任务目录中使用。'
+  if (status === 'rejected') return '测试安装已清理，不会进入正式脚本库。'
+  if (status === 'tested') return '还需要提交发布审批，才会进入人工复核。'
+  return '需要智能体提交 script_publish 并通过审批卡后，才会进入测试和审核。'
 })
 
 function statusLabel(status) {
@@ -180,6 +241,7 @@ async function select(rev) {
   testingTask.value = null
   testAdapter.value = null
   testTasks.value = []
+  showSource.value = false
   try {
     const result = await window.cs.agentApi('GET', `/agent/script-revisions/${rev.rev_id}`)
     content.value = result?.content || ''
@@ -446,6 +508,73 @@ onMounted(load)
   border-radius: 8px;
   padding: 8px 12px;
 }
+.detail-spec-hint.warn {
+  border-color: rgba(255, 59, 48, 0.25);
+  color: var(--red);
+  background: rgba(255, 59, 48, 0.08);
+}
+.review-gate {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg2);
+}
+.review-gate.pending {
+  border-color: rgba(255, 149, 0, 0.42);
+  background: var(--orange-bg);
+}
+.review-gate.testing {
+  border-color: rgba(96, 165, 250, 0.38);
+  background: rgba(96, 165, 250, 0.1);
+}
+.review-gate.published {
+  border-color: rgba(52, 199, 89, 0.34);
+  background: rgba(52, 199, 89, 0.08);
+}
+.review-gate.rejected {
+  border-color: rgba(255, 59, 48, 0.3);
+  background: rgba(255, 59, 48, 0.08);
+}
+.review-gate-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.review-gate-kicker {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text3);
+}
+.review-gate-main strong {
+  font-size: 14px;
+  color: var(--text);
+}
+.review-gate-main span:last-child {
+  font-size: 12px;
+  color: var(--text2);
+}
+.review-gate-badges {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 44%;
+}
+.review-gate-badges span {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text2);
+  font-size: 11px;
+  line-height: 1.2;
+}
 .test-area {
   display: flex;
   flex-direction: column;
@@ -558,6 +687,30 @@ onMounted(load)
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
+}
+.source-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.source-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg2);
+  color: var(--text2);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.source-toggle:hover {
+  color: var(--text);
+  background: var(--bg3);
 }
 .task-runner-wrap {
   flex: 1;

@@ -40,8 +40,24 @@ def test_browser_observe_never_returns_password_values():
     from core.agent.cdp import ACT_TYPE_JS, OBSERVE_JS
     assert "credentialHints" in OBSERVE_JS
     assert "sensitive ? ''" in OBSERVE_JS
+    assert "allowCredentialInput" in ACT_TYPE_JS
     assert "credentialBlocked" in ACT_TYPE_JS
     assert "HTMLInputElement.prototype" in ACT_TYPE_JS
+
+
+def test_browser_act_credential_text_is_redacted_for_audit():
+    from core.agent.redaction import REDACTED
+    from core.agent.service import _safe_tool_arguments
+
+    safe = _safe_tool_arguments("browser_act", {
+        "action": "type",
+        "selector": "#password",
+        "text": "plain-secret-value",
+        "credential_authorized": True,
+    })
+
+    assert safe["text"] == REDACTED
+    assert safe["selector"] == "#password"
 
 
 def test_browser_request_capture_redacts_query_and_body_secrets():
@@ -155,8 +171,11 @@ def test_generated_media_events_have_stable_nonempty_ids(tmp_path):
     assert ids[0] == ids[1]
 
 
-def test_navigate_approves_only_once_per_run(monkeypatch):
+def test_navigate_auto_executes_without_approval(monkeypatch):
     class Client:
+        def __init__(self):
+            self.navigated = []
+
         async def __aenter__(self):
             return self
 
@@ -164,28 +183,32 @@ def test_navigate_approves_only_once_per_run(monkeypatch):
             return None
 
         async def navigate(self, url):
+            self.navigated.append(url)
             return {"url": url}
 
     async def scenario():
-        decisions = []
+        client = Client()
 
-        async def approve(*_args):
-            decisions.append(True)
-            return "approved"
+        async def fail_approval(*_args):
+            raise AssertionError("browser_navigate should not request approval")
 
         previous = (mcp_gateway.ctx.active_run, mcp_gateway.ctx.grant, mcp_gateway.ctx.request_approval)
         mcp_gateway.ctx.active_run = {"run_id": "run", "session_id": "session"}
         mcp_gateway.ctx.grant = {"grant_id": "grant", "toolset_json": "[]"}
-        mcp_gateway.ctx.request_approval = approve
-        monkeypatch.setattr(mcp_gateway, "_browser_client", lambda: (Client(), {"url": "https://from"}, None))
-        monkeypatch.setattr(mcp_gateway.db, "update_grant_toolset", lambda *_args: None)
+        mcp_gateway.ctx.request_approval = fail_approval
+        monkeypatch.setattr(mcp_gateway, "_browser_client", lambda: (client, {"url": "https://from"}, None))
+        monkeypatch.setattr(
+            mcp_gateway.db,
+            "update_grant_toolset",
+            lambda *_args: (_ for _ in ()).throw(AssertionError("navigate should not update grant toolset")),
+        )
         try:
             first = await mcp_gateway.tool_browser_navigate("https://example.com/one")
             second = await mcp_gateway.tool_browser_navigate("https://example.com/two")
         finally:
             mcp_gateway.ctx.active_run, mcp_gateway.ctx.grant, mcp_gateway.ctx.request_approval = previous
         assert first["ok"] and second["ok"]
-        assert len(decisions) == 1
+        assert client.navigated == ["https://example.com/one", "https://example.com/two"]
 
     asyncio.run(scenario())
 
@@ -367,11 +390,11 @@ def test_mcp_context_release_persists_approved_toolset_across_leases():
         service.register_run_context("runtime-approved", run, grant)
 
         first = await service.acquire_mcp_context("runtime-approved", "call-one")
-        mcp_gateway.ctx.grant["toolset_json"] = json.dumps(["navigate"])
+        mcp_gateway.ctx.grant["toolset_json"] = json.dumps(["act"])
         assert service.release_mcp_context(first["lease_id"])
 
         second = await service.acquire_mcp_context("runtime-approved", "call-two")
-        assert json.loads(mcp_gateway.ctx.grant["toolset_json"]) == ["navigate"]
+        assert json.loads(mcp_gateway.ctx.grant["toolset_json"]) == ["act"]
         assert service.release_mcp_context(second["lease_id"])
 
     asyncio.run(scenario())
@@ -797,9 +820,10 @@ def test_media_signature_is_path_entry_and_expiry_bound(monkeypatch):
     )
 
 
-def test_browser_navigate_requires_async_native_approval(monkeypatch):
+def test_browser_navigate_does_not_request_native_approval(monkeypatch):
     class FakeClient:
-        navigated = False
+        def __init__(self):
+            self.navigated = False
 
         async def __aenter__(self):
             return self
@@ -814,10 +838,10 @@ def test_browser_navigate_requires_async_native_approval(monkeypatch):
         client = FakeClient()
         previous = mcp_gateway.ctx.request_approval
 
-        async def reject(*_args):
-            return "rejected"
+        async def fail_approval(*_args):
+            raise AssertionError("browser_navigate should not request approval")
 
-        mcp_gateway.ctx.request_approval = reject
+        mcp_gateway.ctx.request_approval = fail_approval
         monkeypatch.setattr(
             mcp_gateway, "_browser_client",
             lambda: (client, {"url": "https://before.example"}, None),
@@ -826,8 +850,8 @@ def test_browser_navigate_requires_async_native_approval(monkeypatch):
             result = await mcp_gateway.tool_browser_navigate("https://after.example")
         finally:
             mcp_gateway.ctx.request_approval = previous
-        assert result["status"] == "rejected"
-        assert client.navigated is False
+        assert result["ok"] is True
+        assert client.navigated is True
 
     asyncio.run(scenario())
 
@@ -866,9 +890,56 @@ def test_task_control_uses_async_approval_without_blocking_event_loop(monkeypatc
     asyncio.run(scenario())
 
 
-def test_browser_navigate_approval_is_reused_within_current_run(monkeypatch):
+def test_browser_act_credential_fields_require_explicit_authorization(monkeypatch):
     class FakeClient:
-        navigated = []
+        def __init__(self):
+            self.actions = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def act(self, action, payload):
+            self.actions.append((action, payload))
+            return {"typed": True}
+
+    async def scenario():
+        client = FakeClient()
+        previous_grant = mcp_gateway.ctx.grant
+        mcp_gateway.ctx.grant = {"toolset_json": json.dumps(["act"])}
+        monkeypatch.setattr(
+            mcp_gateway, "_browser_client",
+            lambda: (client, {"url": "https://before.example"}, None),
+        )
+        try:
+            blocked = await mcp_gateway.tool_browser_act("type", selector="#api_key", text="value")
+            allowed = await mcp_gateway.tool_browser_act(
+                "type",
+                selector="#api_key",
+                text="value",
+                credential_authorized=True,
+            )
+        finally:
+            mcp_gateway.ctx.grant = previous_grant
+        assert blocked["status"] == "rejected"
+        assert allowed["ok"] is True
+        assert client.actions == [("type", {
+            "selector": "#api_key",
+            "text": "value",
+            "delta_y": 0,
+            "ms": 0,
+            "credential_authorized": True,
+        })]
+
+    asyncio.run(scenario())
+
+
+def test_browser_navigate_does_not_mutate_grant_toolset(monkeypatch):
+    class FakeClient:
+        def __init__(self):
+            self.navigated = []
 
         async def __aenter__(self):
             return self
@@ -883,13 +954,11 @@ def test_browser_navigate_approval_is_reused_within_current_run(monkeypatch):
         client = FakeClient()
         previous_approval = mcp_gateway.ctx.request_approval
         previous_grant = mcp_gateway.ctx.grant
-        decisions = []
 
-        async def approve(*_args):
-            decisions.append("asked")
-            return "approved"
+        async def fail_approval(*_args):
+            raise AssertionError("browser_navigate should not request approval")
 
-        mcp_gateway.ctx.request_approval = approve
+        mcp_gateway.ctx.request_approval = fail_approval
         mcp_gateway.ctx.grant = {
             "grant_id": "grant-nav",
             "toolset_json": "[]",
@@ -898,17 +967,22 @@ def test_browser_navigate_approval_is_reused_within_current_run(monkeypatch):
             mcp_gateway, "_browser_client",
             lambda: (client, {"url": "https://before.example"}, None),
         )
-        monkeypatch.setattr(mcp_gateway.db, "update_grant_toolset", lambda *_args: None)
+        monkeypatch.setattr(
+            mcp_gateway.db,
+            "update_grant_toolset",
+            lambda *_args: (_ for _ in ()).throw(AssertionError("navigate should not update grant toolset")),
+        )
         try:
             first = await mcp_gateway.tool_browser_navigate("https://one.example")
             second = await mcp_gateway.tool_browser_navigate("https://two.example")
+            grant_toolset = json.loads(mcp_gateway.ctx.grant["toolset_json"])
         finally:
             mcp_gateway.ctx.request_approval = previous_approval
             mcp_gateway.ctx.grant = previous_grant
         assert first["ok"] is True
         assert second["ok"] is True
-        assert decisions == ["asked"]
         assert client.navigated == ["https://one.example", "https://two.example"]
+        assert grant_toolset == []
 
     asyncio.run(scenario())
 
@@ -952,3 +1026,15 @@ def test_dsh_model_catalog_declares_vision_without_widening_text_only_models():
     deepseek_block = profile.split("- id: deepseek-v4-pro", 1)[1].split("- id:", 1)[0]
     assert "input: [text, image]" in gpt_block
     assert "input: [text]" in deepseek_block
+
+
+def test_dsh_native_deepseek_route_is_hidden_in_favor_of_crawshrimp_route():
+    from core.agent.cordis_config import build_cordis_yaml
+
+    profile = build_cordis_yaml({"ai": {"llm": {"default_model": "deepseek-official-v4-flash"}}})
+    default_block = profile.split("- id: agent-default-model", 1)[1].split("- id:", 1)[0]
+    native_block = profile.split("- id: llm-deepseek", 1)[1].split("- id:", 1)[0]
+
+    assert "provider: crawshrimp-deepseek-official" in default_block
+    assert "provider: deepseek-official" not in default_block
+    assert "disabled: true" in native_block

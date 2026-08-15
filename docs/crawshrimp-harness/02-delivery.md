@@ -41,7 +41,7 @@ MCP transport 本身不携带 DSH session。`crawshrimp-product-bridge` 在每�
 - DSH 会话策略为 `never`：抓虾所有审批自动 `allowed-once`，SQLite 保留审批记录和决定来源。
 - DSH 会话策略为 `ask`：抓虾调用 DSH 原生 `ctx.approval.request`，卡片标题和原因使用中文人话。
 - 审批 HTTP 等待在专用有界 executor；不会占满 asyncio 默认线程池。
-- `browser_navigate` 每个 run 首次申请后把 `navigate` 写入 grant toolset，后续导航不重复审批。
+- `browser_navigate` 自动执行，不再通过 grant toolset 申请导航审批。
 - 简单下载/找图/找款仅在 read-only/local-write 风险内自动批准；名称包含 upload/publish/delete/update/modify 的任务不放行。
 - 审批记录持久化 run/session/runtime 归属；跨会话提示通过全局 SSE 出现，并每 5 秒以 SQLite pending 列表恢复或清理。resolved/run 终态、后端重启和 SSE 中断都不会留下幽灵提示。
 
@@ -107,11 +107,11 @@ git diff --check
 
 - curl：health/runtime、媒体签名有效/篡改/过期/route 混淆、附件 session、SSE cursor、脚本隔离与哈希篡改、repo transport。
 - CDP 9223：DSH iframe 常驻、菜单注入、`📎`/`@`、图片 block、媒体消息列、多会话隔离、审批提示、tab 窗口绑定和关闭清理。
-- 权限：`never` 自动通过；`ask` 的首次 navigate 出现原生卡，同 run 后续 navigate 不重复。
+- 权限：`browser_navigate` 自动执行不审批；`never` 自动通过其他抓虾审批；`ask` 的风险操作仍出现原生卡。
 
 本轮最终源码实测：Python `962 passed, 1 skipped, 42 subtests passed`；Electron/app `448 passed`；根目录 Node `1247 passed`；Vite production build complete；DSH production closure staging complete，Electron-as-Node boot check `OK`；`git diff --check` passed. 这些是 2026-08-15 当前工作区的重跑结果，不使用历史 877 项基线冒充当前证据。
 
-2026-08-15 Electron CDP 实测：Workspace Write 首次导航出现中文原生卡，批准一次后同 run 两次 navigate 均完成且 SQLite 仅 1 条 approval；Full access 全程未出现卡，但留下 approved 审计。iframe 重启后原会话、2 个图片原图节点、菜单、`📎` 和 `@` 都恢复。当前会话两个 grant tab 生成两个实时窗口，活跃窗口位于最后绘制层并按 36px 级联；关闭精确 tab 后 2 秒内对应窗口和截图流同时消失。
+2026-08-15 Electron CDP 实测：`browser_navigate` 已改为自动执行，不再生成导航审批卡或写入 `navigate` grant toolset；其他风险操作仍按 DSH 原生权限策略处理。iframe 重启后原会话、2 个图片原图节点、菜单、`📎` 和 `@` 都恢复。当前会话两个 grant tab 生成两个实时窗口，活跃窗口位于最后绘制层并按 36px 级联；关闭精确 tab 后 2 秒内对应窗口和截图流同时消失。
 
 ## 8. 构建边界
 

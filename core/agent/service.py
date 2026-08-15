@@ -17,7 +17,7 @@ from typing import Any, Optional
 from core import data_sink
 from core.agent import db
 from core.agent import mcp_gateway
-from core.agent.redaction import redact_text as _redact_secret_text, redact_value
+from core.agent.redaction import REDACTED, redact_text as _redact_secret_text, redact_value
 from core.agent.cordis_config import build_cordis_yaml, resolve_provider_for_model, model_capabilities
 from core.llm_gateway import deepseek_official_real_model
 from core.agent.worker import AgentWorker, resolve_harness_root, resolve_node_executable
@@ -1301,7 +1301,10 @@ class AgentService:
             return
 
         if event_type == "tool/call":
-            safe_arguments = redact_value(_parse_args(data.get("arguments")))
+            safe_arguments = _safe_tool_arguments(
+                data.get("name") or "unknown",
+                _parse_args(data.get("arguments")),
+            )
             call = db.upsert_tool_call(run_id, data.get("callId") or str(uuid.uuid4()),
                                        data.get("name") or "unknown",
                                        safe_arguments)
@@ -1619,6 +1622,33 @@ def _parse_args(arguments: Any) -> Any:
         except json.JSONDecodeError:
             return {"raw": arguments}
     return arguments or {}
+
+
+_BROWSER_CREDENTIAL_HINTS = _re.compile(
+    r"(?:password|passwd|pwd|token|cookie|authorization|api[_-]?key|apikey|"
+    r"access[_-]?key|accesskey|private[_-]?key|privatekey|client[_-]?secret|"
+    r"clientsecret|session[_-]?key|sessionkey|secret|current-password|new-password)",
+    _re.IGNORECASE,
+)
+
+
+def _safe_tool_arguments(tool_name: Any, arguments: Any) -> Any:
+    safe_arguments = redact_value(arguments)
+    if (
+        str(tool_name or "") != "browser_act"
+        or not isinstance(arguments, dict)
+        or not isinstance(safe_arguments, dict)
+    ):
+        return safe_arguments
+    if str(arguments.get("action") or "") != "type":
+        return safe_arguments
+    selector_hint = " ".join(str(arguments.get(key) or "") for key in (
+        "selector", "name", "id", "autocomplete", "field", "field_name",
+    ))
+    authorized = bool(arguments.get("credential_authorized") or arguments.get("allow_credential_input"))
+    if authorized or _BROWSER_CREDENTIAL_HINTS.search(selector_hint):
+        safe_arguments["text"] = REDACTED
+    return safe_arguments
 
 
 def _get_message_by_id(message_id: str) -> Optional[dict]:

@@ -255,7 +255,7 @@ PERSONA = """你是抓虾桌面应用中的操作智能体。
 DISABLE_IDS = [
     "tool-subagent", "tool-subagent-fork", "tool-subagent-control",
     "tool-subagent-list-agents", "tool-subagent-report",
-    "session-telemetry-otel", "web-search-deepseek", "web", "agent-presets",
+    "session-telemetry-otel", "llm-deepseek", "web-search-deepseek", "web", "agent-presets",
     # goal 命令族恢复(goal/tool-goal/command-goal);goal-round-driver 保持禁用
     # (自动跨轮续跑,不受 worker 轮次预算约束,风险面大)
     "goal-round-driver",

@@ -1714,22 +1714,27 @@ async def tool_browser_eval(expression: str) -> dict:
 
 
 SENSITIVE_ACT_TEXTS = ("发布", "提交", "确认", "支付", "上传", "下单", "立即购买", "删除", "解绑", "注销")
-CREDENTIAL_SELECTOR_HINTS = ("password", "passwd", "pwd", "token", "cookie", "api_key", "apikey", "secret")
+CREDENTIAL_SELECTOR_HINTS = (
+    "password", "passwd", "pwd", "token", "cookie", "authorization", "api_key", "apikey",
+    "access_key", "accesskey", "private_key", "privatekey", "client_secret", "clientsecret",
+    "session_key", "sessionkey", "secret",
+)
 
 
 async def tool_browser_act(action: str, selector: str = "", text: str = "",
-                           delta_y: float = 0, ms: int = 0) -> dict:
+                           delta_y: float = 0, ms: int = 0,
+                           credential_authorized: bool = False) -> dict:
     client, tab, guard = _browser_client()
     if guard:
         return guard
     if action not in ("click", "type", "scroll", "wait"):
         return _failed("INVALID_PARAMETERS", f"不支持的 action: {action}")
 
-    # 凭证字段:直接阻断,提示人工操作(方案 §8.2)
+    # 凭证字段默认阻断；仅在用户当前对话明确授权并给出要填写内容时放行。
     haystack = f"{selector or ''} {text or ''}".lower()
-    if action == "type" and any(h in haystack for h in CREDENTIAL_SELECTOR_HINTS):
+    if action == "type" and not credential_authorized and any(h in haystack for h in CREDENTIAL_SELECTOR_HINTS):
         return _rejected("rejected", "INVALID_PARAMETERS",
-                         "检测到凭证类输入框,智能体不代填密钥/密码/Cookie,请人工在浏览器中操作")
+                         "检测到凭证类输入框;仅在用户明确授权并设置 credential_authorized=true 后才可由智能体填写")
 
     grant = ctx.grant or {}
     toolset = json.loads(grant.get("toolset_json") or "[]") if grant.get("toolset_json") else []
@@ -1766,10 +1771,11 @@ async def tool_browser_act(action: str, selector: str = "", text: str = "",
     try:
         async with client:
             result = await client.act(action, {"selector": selector, "text": text,
-                                               "delta_y": delta_y, "ms": ms})
+                                               "delta_y": delta_y, "ms": ms,
+                                               "credential_authorized": credential_authorized})
         if isinstance(result, dict) and result.get("credentialBlocked"):
             return _rejected("rejected", "INVALID_PARAMETERS",
-                             "检测到凭证类输入框,智能体不代填密钥/密码/Cookie,请人工在浏览器中操作")
+                             "检测到凭证类输入框;仅在用户明确授权并设置 credential_authorized=true 后才可由智能体填写")
         return _ok({"action": action, "result": result, "tab_url": (tab or {}).get("url", "")},
                    evidence={"task_instance_uid": None, "artifact_ids": []})
     except Exception as exc:  # noqa: BLE001
@@ -1792,38 +1798,10 @@ async def tool_browser_navigate(url: str) -> dict:
     client, tab, guard = _browser_client()
     if guard:
         return guard
-    # 访问权限已全面放开:任意 http(s) URL 可导航(敏感操作最多经审批卡)
+    # 访问权限已全面放开:任意 http(s) URL 可导航；导航本身不再触发额外审批。
     target = str(url or "").strip()
     if not target.startswith(("http://", "https://")):
         return _rejected("rejected", "INVALID_PARAMETERS", "仅支持 http/https URL")
-    grant = ctx.grant or {}
-    toolset = json.loads(grant.get("toolset_json") or "[]") if grant.get("toolset_json") else []
-    if "navigate" not in toolset:
-        plan = {
-            "plan_id": f"browser-navigate-{_run_id_or_none()}-{uuid.uuid4().hex[:8]}",
-            "params_json": "{}",
-            "params_sha256": "",
-            "risk": "external_write",
-            "adapter_id": "",
-            "task_id": "",
-        }
-        summary = {
-            "kind": "browser_navigate",
-            "from_url": (tab or {}).get("url", ""),
-            "url": target,
-            "risk": "external_write",
-        }
-        decision = await _await_approval_async(plan, summary)
-        if decision != "approved":
-            return _rejected(
-                "rejected" if decision == "rejected" else "expired",
-                "APPROVAL_REJECTED" if decision == "rejected" else "APPROVAL_EXPIRED",
-                "页面跳转未获批准,未执行",
-            )
-        toolset = [*toolset, "navigate"]
-        if grant.get("grant_id"):
-            db.update_grant_toolset(grant["grant_id"], toolset)
-        ctx.grant = dict(ctx.grant or {}, toolset_json=json.dumps(toolset))
     try:
         async with client:
             await client.navigate(target)
@@ -2060,10 +2038,10 @@ def create_agent_mcp_server() -> MCPServer:
                  description="当前授权页面结构化摘要(标题/正文/链接/按钮/输入框),非原始 HTML")
     mcp.add_tool(tool_browser_eval, name="browser_eval", description="在当前页面执行 JS 表达式并返回 JSON 值")
     mcp.add_tool(tool_browser_act, name="browser_act",
-                 description="页面操作:click(selector 或 text)/type/scroll/wait;需本次运行授权")
+                 description="页面操作:click(selector 或 text)/type/scroll/wait;需本次运行授权。type 凭证字段默认阻断;仅当用户明确授权并给出内容时传 credential_authorized=true")
     mcp.add_tool(tool_browser_verify, name="browser_verify", description="断言页面 JS 表达式布尔结果")
     mcp.add_tool(tool_browser_navigate, name="browser_navigate",
-                 description="跳转任意 http(s) URL；本次 run 首次导航按 DSH 权限策略授权，之后不重复审批")
+                 description="跳转任意 http(s) URL；不触发额外审批，仍绑定当前 run 的浏览器 tab")
     mcp.add_tool(tool_browser_capture_requests, name="browser_capture_requests",
                  description="短时捕获网络请求(URL/method/body 摘要,限量)")
     mcp.add_tool(tool_script_list, name="script_list", description="列出抓虾现有的全部脚本(与 tasks_search 同目录)")

@@ -154,7 +154,7 @@ Crawshrimp Electron
 | `browser_act` | 有 | click/type/scroll/wait 等;受 §8.2 授权卡约束 |
 | `browser_verify` | 无 | 断言页面状态,供模型确认 |
 | `browser_capture_requests` | 无 | 捕获网络请求,敏感头掩码,限量 |
-| `browser_navigate` | 有 | 仅允许授权 URL 前缀内跳转 |
+| `browser_navigate` | 有 | 任意 HTTP(S) 自动跳转，不触发额外审批 |
 
 移植自 `observe_page` / `verify_page` / `_operator_act` / `capture_requests`;新增:每 Run 的**重复动作防抖状态机**(crawshrimp-agent 已有"限制重复 observe/导出"逻辑,移植并泛化)。
 
@@ -437,7 +437,7 @@ P0 进展(2026-08-14,macOS arm64 本机):✅ 锁版安装可重复;✅ Electron-
 
 - `fs_read/fs_list` 全盘读免审批；`fs_write/fs_exec` 允许执行，但服从当前 DSH 会话权限。
 - DSH `never` 表示用户整体放开：抓虾审批自动通过并保留审计；DSH `ask` 才展示原生审批卡。
-- `browser_navigate` 放开任意 HTTP(S)，每个 run 首次审批后写入 grant，同 run 不重复询问。
+- `browser_navigate` 放开任意 HTTP(S)，自动执行且不触发额外审批。
 - 简单下载/找图/找款在有限风险内自动批准；上传、发布、删除、更新、修改类不自动放行。
 - 审批等待使用专用有界 executor；审批后 grant 在 context lease 释放前写回 run 级缓存。跨会话提示同时消费 SSE 和 SQLite pending 真值，重启/断流可恢复或清理。
 

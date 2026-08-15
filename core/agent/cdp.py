@@ -29,7 +29,7 @@ OBSERVE_JS = r"""
     buttons: q('button, input[type=button], input[type=submit], [role=button]').slice(0, 60).map(b => ({ text: cap(b.innerText || b.textContent || b.value || b.getAttribute('aria-label'), 60) })),
     inputs: q('input, textarea, select').slice(0, 60).map(i => {
       const credentialHints = `${i.type || ''} ${i.name || ''} ${i.id || ''} ${i.autocomplete || ''}`.toLowerCase();
-      const sensitive = /(?:password|passwd|pwd|token|secret|api[_-]?key|current-password|new-password)/.test(credentialHints);
+      const sensitive = /(?:password|passwd|pwd|token|secret|cookie|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|session[_-]?key|current-password|new-password)/.test(credentialHints);
       return { tag: i.tagName.toLowerCase(), type: i.type || '', name: cap(i.name, 40), id: cap(i.id, 40), placeholder: cap(i.placeholder, 40), value: sensitive ? '' : cap(i.value, 40) };
     }),
   };
@@ -65,12 +65,13 @@ ACT_TYPE_JS = r"""
 (() => {
   const selector = %s;
   const text = %s;
+  const allowCredentialInput = %s;
   const el = selector ? document.querySelector(selector) : document.activeElement;
   if (!el || !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
     return { typed: false, error: '目标不是可输入元素,请先提供 selector 或先聚焦输入框' };
   }
   const credentialHints = `${el.type || ''} ${el.name || ''} ${el.id || ''} ${el.autocomplete || ''}`.toLowerCase();
-  if (/(?:password|passwd|pwd|token|secret|api[_-]?key|current-password|new-password)/.test(credentialHints)) {
+  if (!allowCredentialInput && /(?:password|passwd|pwd|token|secret|cookie|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|session[_-]?key|current-password|new-password)/.test(credentialHints)) {
     return { typed: false, credentialBlocked: true, error: '检测到凭证类输入框' };
   }
   el.focus();
@@ -208,7 +209,12 @@ class CdpClient:
             expr = ACT_CLICK_JS % (_js_literal(payload.get("selector")), _js_literal(payload.get("text")))
             return await self.evaluate(expr)
         if action == "type":
-            expr = ACT_TYPE_JS % (_js_literal(payload.get("selector")), _js_literal(payload.get("text", "")))
+            allow_credentials = "true" if payload.get("credential_authorized") else "false"
+            expr = ACT_TYPE_JS % (
+                _js_literal(payload.get("selector")),
+                _js_literal(payload.get("text", "")),
+                allow_credentials,
+            )
             return await self.evaluate(expr)
         if action == "scroll":
             return {"result": await self.evaluate(ACT_SCROLL_JS % (float(payload.get("delta_y") or 0),))}
