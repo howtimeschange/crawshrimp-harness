@@ -1,0 +1,4 @@
+interface:
+  display_name: "Banner 生成"
+  short_description: "用 1xm 生成底图并本地合成清晰 Banner。"
+  default_prompt: "Use $banner-generation to create a polished promotional banner with a generated visual base and crisp local text overlays."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bilibili Video Transcript"
+  short_description: "Bilibili subtitles, chapters, ASR capture"
+  default_prompt: "Use $bilibili-video-transcript to capture a Bilibili video transcript package from this URL."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "XHS Video Capture"
+  short_description: "Download RedNote videos with transcript summaries"
+  default_prompt: "Use $xhs-video-capture to download a Xiaohongshu video link, extract subtitles, and summarize the transcript."
