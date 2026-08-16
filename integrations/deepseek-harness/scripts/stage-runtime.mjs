@@ -12,7 +12,7 @@
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -54,6 +54,10 @@ const skipBootCheck = args.includes('--skip-boot-check')
 function fail(message) {
   console.error(`[stage-runtime] FAILED: ${message}`)
   process.exit(1)
+}
+
+function copyDir(src, dest) {
+  cpSync(src, dest, { recursive: true, force: true, errorOnExist: false })
 }
 
 function hashOf(file) {
@@ -107,7 +111,7 @@ if (!upToDate) {
   for (const dir of ['worker', 'skills', 'crawshrimp-launcher', 'crawshrimp-slots', 'crawshrimp-product-bridge']) {
     const src = join(sourceRoot, dir)
     if (existsSync(src)) {
-      spawnSync(process.platform === 'win32' ? 'xcopy' : 'cp', ['-R', src, stageRoot], { stdio: 'inherit', shell: true })
+      copyDir(src, join(stageRoot, dir))
     }
   }
   // CLI 技能包本体(项目根 skills/cli 的 submodule 内容)随安装包分发:
@@ -115,7 +119,8 @@ if (!upToDate) {
   const cliSource = join(repoRoot, 'skills', 'cli')
   const cliDest = join(stageRoot, 'skills', 'cli')
   if (existsSync(cliSource)) {
-    spawnSync(process.platform === 'win32' ? 'xcopy' : 'cp', ['-R', cliSource, join(stageRoot, 'skills')], { stdio: 'inherit', shell: true })
+    mkdirSync(join(stageRoot, 'skills'), { recursive: true })
+    copyDir(cliSource, cliDest)
     if (!existsSync(join(cliDest, 'tmall-cli'))) fail('CLI 技能包本体拷贝不完整')
   }
   writeFileSync(markerFile, `${lockHash}\n`)

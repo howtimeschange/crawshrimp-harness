@@ -213,6 +213,7 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
           CSC_NAME: "yicheng xing (62AR7GLNK3)"
         run: |
+          ulimit -n 8192 || ulimit -n 4096 || ulimit -n 2048 || true
           set +e
           npm run ${{ matrix.build_script }} -- -c.electronDist=electron-dist 2>&1 | tee ../mac-build.log
           build_status=${PIPESTATUS[0]}
