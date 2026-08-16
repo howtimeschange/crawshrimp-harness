@@ -904,7 +904,7 @@ function isDeepSeekConfigured(localCfg = {}) {
   return Boolean(value && !value.includes(LLM_MASKED_CREDENTIAL_VALUE))
 }
 
-const OFFICIAL_RELEASE_URL = 'https://github.com/howtimeschange/crawshrimp/releases/latest'
+const OFFICIAL_RELEASE_URL = 'https://github.com/howtimeschange/crawshrimp-harness/releases/latest'
 
 const props = defineProps([
   'status',

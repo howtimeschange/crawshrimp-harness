@@ -10,18 +10,19 @@ const METADATA_BY_PLATFORM = new Map([
 ])
 
 const RELEASE_ASSET_EXTENSIONS = new Set(['.dmg', '.zip', '.blockmap', '.yml', '.exe'])
+const RELEASE_ASSET_PREFIX = 'crawshrimp-harness'
 
 function expectedFormalReleaseAssets(version) {
   return [
-    `macos/crawshrimp-v${version}-mac-arm64.dmg`,
-    `macos/crawshrimp-v${version}-mac-x64.dmg`,
-    `macos/crawshrimp-v${version}-mac-arm64.zip`,
-    `macos/crawshrimp-v${version}-mac-x64.zip`,
-    `macos/crawshrimp-v${version}-mac-arm64.zip.blockmap`,
-    `macos/crawshrimp-v${version}-mac-x64.zip.blockmap`,
+    `macos/${RELEASE_ASSET_PREFIX}-v${version}-mac-arm64.dmg`,
+    `macos/${RELEASE_ASSET_PREFIX}-v${version}-mac-x64.dmg`,
+    `macos/${RELEASE_ASSET_PREFIX}-v${version}-mac-arm64.zip`,
+    `macos/${RELEASE_ASSET_PREFIX}-v${version}-mac-x64.zip`,
+    `macos/${RELEASE_ASSET_PREFIX}-v${version}-mac-arm64.zip.blockmap`,
+    `macos/${RELEASE_ASSET_PREFIX}-v${version}-mac-x64.zip.blockmap`,
     'macos/latest-mac.yml',
-    `windows/crawshrimp-v${version}-win-x64.exe`,
-    `windows/crawshrimp-v${version}-win-x64.exe.blockmap`,
+    `windows/${RELEASE_ASSET_PREFIX}-v${version}-win-x64.exe`,
+    `windows/${RELEASE_ASSET_PREFIX}-v${version}-win-x64.exe.blockmap`,
     'windows/latest.yml',
   ]
 }
@@ -31,14 +32,14 @@ function expectedFormalMetadataReferences(version) {
     [
       'macos/latest-mac.yml',
       new Set([
-        `crawshrimp-v${version}-mac-arm64.zip`,
-        `crawshrimp-v${version}-mac-x64.zip`,
+        `${RELEASE_ASSET_PREFIX}-v${version}-mac-arm64.zip`,
+        `${RELEASE_ASSET_PREFIX}-v${version}-mac-x64.zip`,
       ]),
     ],
     [
       'windows/latest.yml',
       new Set([
-        `crawshrimp-v${version}-win-x64.exe`,
+        `${RELEASE_ASSET_PREFIX}-v${version}-win-x64.exe`,
       ]),
     ],
   ])

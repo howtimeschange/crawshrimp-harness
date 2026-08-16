@@ -19,7 +19,7 @@
 
 - **主仓 + 移植源**:本仓为产品主仓(由抓虾 2.4.12 fork);crawshrimp-agent 转为移植源,其内核(Codex sidecar)相关代码不再演进。
 - 上游:本仓添加 `upstream` remote 指向本地 `/Users/xingyicheng/Documents/crawshrimp`,用于后续拉取抓虾主线的修复。
-- 应用包名改为 `crawshrimp-harness`,版本 `2.4.12-harness.0`;dev 模式 userData 与抓虾原版隔离。appId(`com.crawshrimp.app`)与 productName(抓虾)暂未改动,发布前需在 P3 决策是否独立。
+- 应用包名改为 `crawshrimp-harness`,首个独立发布版本为 `0.1.0`;dev 模式 userData 与抓虾原版隔离。正式打包使用独立 appId(`com.crawshrimp.harness`)与 productName(`抓虾 Harness`)。
 
 ## 3. 界面布局(已确认)
 

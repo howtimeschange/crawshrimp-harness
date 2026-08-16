@@ -1,10 +1,10 @@
 {
   "name": "crawshrimp-harness",
-  "version": "2.4.12-harness.0",
+  "version": "0.1.0",
   "description": "Crawshrimp Harness: DeepSeek Harness powered browser-automation agent desktop app",
   "author": "howtimeschange",
   "license": "Apache-2.0",
-  "crawshrimpUpdateFeedUrl": "https://updates.crawshrimp.com/",
+  "crawshrimpUpdateFeedUrl": "",
   "main": "src/main.js",
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",

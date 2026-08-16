@@ -76,7 +76,7 @@ test('desktop workflow signs with electron-builder and notarizes apps before DMG
   assert.match(workflow, /TeamIdentifier=62AR7GLNK3/)
   assert.match(workflow, /spctl --assess --type execute --verbose=2 "\$\{app_path\}"/)
   assert.match(workflow, /xcrun stapler validate "\$\{app_path\}"/)
-  assert.match(workflow, /publish-release:[\s\S]*?if: startsWith\(github\.ref, 'refs\/tags\/v'\)/)
+  assert.match(workflow, /publish-version-release:[\s\S]*?if: startsWith\(github\.ref, 'refs\/tags\/v'\)/)
   assert.doesNotMatch(workflow, /if: github\.ref == 'refs\/heads\/main'/)
 
   assert.match(appBridge, /context\.electronPlatformName !== 'darwin'/)

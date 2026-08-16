@@ -1,10 +1,10 @@
 'use strict'
 
-const LATEST_RELEASE_URL = 'https://github.com/howtimeschange/crawshrimp/releases/latest'
+const LATEST_RELEASE_URL = 'https://github.com/howtimeschange/crawshrimp-harness/releases/latest'
 const GITHUB_FALLBACK_FEED = Object.freeze({
   provider: 'github',
   owner: 'howtimeschange',
-  repo: 'crawshrimp',
+  repo: 'crawshrimp-harness',
 })
 
 function createUpdateService({
@@ -213,10 +213,10 @@ function createUpdateService({
   }
 }
 
-const GITHUB_RELEASE_API = 'https://api.github.com/repos/howtimeschange/crawshrimp/releases/latest'
+const GITHUB_RELEASE_API = 'https://api.github.com/repos/howtimeschange/crawshrimp-harness/releases/latest'
 // GitHub 镜像(网络受限环境回退;可按部署替换为 Cloudflare 镜像站)
 const GITHUB_RELEASE_API_MIRROR = String(process.env.CRAWSHRIMP_UPDATE_NOTES_MIRROR || '').trim()
-const GITHUB_RELEASE_PAGE = 'https://github.com/howtimeschange/crawshrimp/releases/latest'
+const GITHUB_RELEASE_PAGE = 'https://github.com/howtimeschange/crawshrimp-harness/releases/latest'
 
 /** 抓取最新 release 的更新日志(GitHub API → 镜像回退)。 */
 async function fetchLatestReleaseNotes() {
@@ -318,4 +318,3 @@ function formatBytes(value) {
   }
   return `${Math.round(amount * 10) / 10} ${units[index]}`
 }
-

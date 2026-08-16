@@ -1,6 +1,6 @@
 # 发布版本号规则
 
-本规则适用于抓虾的正式桌面 Release。每次升版本、打 tag、更新 Release Notes 或发布 GitHub Release 前，必须先按本规则确定版本等级，并在[桌面更新发布验收清单](desktop-update-release-checklist.md)中记录结论和依据。
+本规则适用于抓虾 Harness 的正式桌面 Release。每次升版本、打 tag、更新 Release Notes 或发布 GitHub Release 前，必须先按本规则确定版本等级，并在[桌面更新发布验收清单](desktop-update-release-checklist.md)中记录结论和依据。
 
 ## 版本格式与唯一来源
 
@@ -26,4 +26,4 @@
 
 ## 发布执行
 
-使用 `ship-github-cloudflare` 处理版本号更新、README / Release Notes、`main` 与匹配 `vX.Y.Z` tag 推送、CI 跟踪及正式 Release / `desktop-latest` 回读。该 skill 负责发布动作；本文件负责本仓库的版本等级决策。
+Harness 独立仓库的发布动作由 `.github/workflows/build-desktop.yml` 完成：推送 `main` 后运行测试与桌面构建，推送匹配的 `vX.Y.Z` tag 后发布版本化 GitHub Release，并上传 macOS DMG/ZIP、Windows 安装包和 `latest*.yml` 更新元数据。本仓库不发布 Cloudflare R2 镜像，也不刷新主项目 `desktop-latest`。

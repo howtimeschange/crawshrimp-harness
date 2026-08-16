@@ -34,18 +34,16 @@ test('desktop build release jobs request write permissions explicitly', () => {
 
   assert.match(
     workflow,
-    /publish-release:[\s\S]*?permissions:\n      contents: write[\s\S]*?steps:/m,
-  )
-  assert.match(
-    workflow,
     /publish-version-release:[\s\S]*?permissions:\n      contents: write[\s\S]*?steps:/m,
   )
+  assert.doesNotMatch(workflow, /publish-release:/)
 })
 
-test('desktop build workflow keeps rolling release out of GitHub latest', () => {
+test('desktop build workflow has no rolling desktop-latest release path', () => {
   const workflow = fs.readFileSync(path.join(repoRoot, '.github/workflows/build-desktop.yml'), 'utf8')
 
-  assert.match(workflow, /gh release create desktop-latest[\s\S]*--latest=false/)
+  assert.doesNotMatch(workflow, /desktop-latest/)
+  assert.doesNotMatch(workflow, /refs\/tags\/desktop-latest/)
 })
 
 test('desktop build workflow marks the validated version release as GitHub latest', () => {
@@ -87,10 +85,11 @@ test('desktop version release fails published asset mismatch before mutation', (
   assert.ok(uploadIndex === -1 || mismatchIndex < uploadIndex, 'published mismatch fails before release upload')
 })
 
-test('rolling desktop-latest publication waits for validated version release completion', () => {
+test('independent desktop publication uses only the validated version release', () => {
   const workflow = fs.readFileSync(path.join(repoRoot, '.github/workflows/build-desktop.yml'), 'utf8')
 
   assert.match(workflow, /publish-version-release:[\s\S]*gh release edit "\$\{GITHUB_REF_NAME\}"[\s\S]*--draft=false[\s\S]*--latest/)
-  assert.match(workflow, /publish-release:[\s\S]*needs:\s*publish-version-release/)
-  assert.doesNotMatch(workflow, /publish-version-release:[\s\S]*needs:\s*publish-release/)
+  assert.match(workflow, /publish-version-release:[\s\S]*needs:\s*build/)
+  assert.doesNotMatch(workflow, /publish-cloudflare-r2:/)
+  assert.doesNotMatch(workflow, /publish-release:/)
 })

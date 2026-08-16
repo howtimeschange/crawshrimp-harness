@@ -54,7 +54,7 @@ const {
   writeAuthorizedBalaWorkspaceManifest,
 } = require('./balaWorkspaceFiles')
 const APP_METADATA = require('../package.json')
-const APP_ID = 'com.crawshrimp.app'
+const APP_ID = 'com.crawshrimp.harness'
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_ID)

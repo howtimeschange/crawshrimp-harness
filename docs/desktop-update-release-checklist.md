@@ -1,20 +1,21 @@
 # Desktop Update Release Checklist
 
-This checklist is the required evidence record before claiming desktop updater release readiness. Keep blank values as `PENDING`; do not fill them from assumptions or DMG-only manual installs.
+This checklist is the required evidence record before claiming Crawshrimp Harness desktop release readiness. Keep blank values as `PENDING`; do not fill them from assumptions or DMG-only manual installs.
 
 ## Release Identity
 
 - Release scope (`PATCH` / `MINOR` / `MAJOR`): `MINOR`
-- Version selection rationale: `v2.2.2` 之后新增短视频文案与批量上传、SHEIN 图包下载、鞋品深绘上传包、按风格参考图和桌面主题等独立用户能力；组合变更按最高等级归类为功能级。
-- Target version selected under the [release versioning policy](release-versioning.md): `v2.3.0`
+- Version selection rationale: Harness 首个独立桌面发行版本，建立独立 app identity、GitHub Release 更新源和 macOS 公证链路。
+- Target version selected under the [release versioning policy](release-versioning.md): `v0.1.0`
 - Source commit: `PENDING`
-- Old version under test: `v2.2.2`
-- New version under test: `v2.3.0`
+- Old version under test: `PENDING`
+- New version under test: `v0.1.0`
 - GitHub main build run ID: `PENDING`
 - GitHub tag build run ID: `PENDING`
 - Formal release URL: `PENDING`
-- Rolling `desktop-latest` release URL: `PENDING`
-- Cloudflare R2 update source (`https://updates.crawshrimp.com/`): `PENDING`
+- GitHub versioned release update source: `PENDING`
+- Cloudflare R2 update source: `NOT USED`
+- Rolling `desktop-latest` release URL: `NOT USED`
 - Formal build marked with `crawshrimpUpdateTestBuild`: `NO`
 
 ## Test Build Feed
@@ -65,28 +66,29 @@ shasum -a 512 /path/to/update-artifacts/<asset>
 | macOS ARM | `latest-mac.yml` | `PENDING` | `PENDING` | `PENDING` | `PENDING` |
 | macOS Intel | `latest-mac.yml` | `PENDING` | `PENDING` | `PENDING` | `PENDING` |
 
-Cloudflare readback (must match the formal-release metadata byte-for-byte before GitHub publication):
+GitHub release readback (must include both installer assets and update metadata; this independent repository does not publish to Cloudflare R2):
 
 ```bash
-curl -fsS https://updates.crawshrimp.com/latest-mac.yml -o /tmp/latest-mac.yml
-curl -fsS https://updates.crawshrimp.com/latest.yml -o /tmp/latest.yml
+gh release view vX.Y.Z --repo howtimeschange/crawshrimp-harness --json tagName,isDraft,isPrerelease,targetCommitish,url,assets
+gh release download vX.Y.Z --repo howtimeschange/crawshrimp-harness --pattern 'latest*.yml' --dir /tmp/crawshrimp-harness-release
+grep -E 'version:|path:|url:|sha512:' /tmp/crawshrimp-harness-release/latest*.yml
 ```
 
 ## Signing And Notarization Evidence
 
 macOS ARM:
 
-- `codesign --verify --deep --strict --verbose=2 /Applications/抓虾.app`: `PENDING`
+- `codesign --verify --deep --strict --verbose=2 /Applications/抓虾 Harness.app`: `PENDING`
 - Team ID readback: `PENDING`
-- `spctl --assess --type execute --verbose=4 /Applications/抓虾.app`: `PENDING`
-- `stapler validate /Applications/抓虾.app`: `PENDING`
+- `spctl --assess --type execute --verbose=4 /Applications/抓虾 Harness.app`: `PENDING`
+- `stapler validate /Applications/抓虾 Harness.app`: `PENDING`
 
 macOS Intel:
 
-- `codesign --verify --deep --strict --verbose=2 /Applications/抓虾.app`: `PENDING`
+- `codesign --verify --deep --strict --verbose=2 /Applications/抓虾 Harness.app`: `PENDING`
 - Team ID readback: `PENDING`
-- `spctl --assess --type execute --verbose=4 /Applications/抓虾.app`: `PENDING`
-- `stapler validate /Applications/抓虾.app`: `PENDING`
+- `spctl --assess --type execute --verbose=4 /Applications/抓虾 Harness.app`: `PENDING`
+- `stapler validate /Applications/抓虾 Harness.app`: `PENDING`
 
 Windows x64:
 
@@ -97,15 +99,15 @@ Windows x64:
 Suggested readback commands:
 
 ```bash
-codesign -dv --verbose=4 /Applications/抓虾.app 2>&1 | grep -E 'Authority|TeamIdentifier'
-spctl --assess --type execute --verbose=4 /Applications/抓虾.app
-stapler validate /Applications/抓虾.app
+codesign -dv --verbose=4 /Applications/抓虾\ Harness.app 2>&1 | grep -E 'Authority|TeamIdentifier'
+spctl --assess --type execute --verbose=4 /Applications/抓虾\ Harness.app
+stapler validate /Applications/抓虾\ Harness.app
 curl -fsS http://127.0.0.1:18765/health
 ```
 
 ```powershell
-Get-Item "$env:LOCALAPPDATA\Programs\crawshrimp\抓虾.exe" | Select-Object FullName,Length,LastWriteTime
-Get-FileHash "$env:LOCALAPPDATA\crawshrimp\update-sentinel.txt" -Algorithm SHA256
+Get-Item "$env:LOCALAPPDATA\Programs\crawshrimp-harness\抓虾 Harness.exe" | Select-Object FullName,Length,LastWriteTime
+Get-FileHash "$env:LOCALAPPDATA\crawshrimp-harness\update-sentinel.txt" -Algorithm SHA256
 Invoke-RestMethod http://127.0.0.1:18765/health
 ```
 
@@ -157,9 +159,6 @@ Use only after deciding the release must be withdrawn:
 
 ```bash
 gh release edit vX.Y.Z --draft=true
-gh release delete desktop-latest --cleanup-tag --yes
-git push origin :refs/tags/desktop-latest
-git tag -d desktop-latest || true
 git fetch origin --tags
 ```
 

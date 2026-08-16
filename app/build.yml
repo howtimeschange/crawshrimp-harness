@@ -1,5 +1,5 @@
-appId: com.crawshrimp.app
-productName: 抓虾
+appId: com.crawshrimp.harness
+productName: 抓虾 Harness
 copyright: "Copyright © 2025"
 electronVersion: "43.1.0"
 
@@ -10,13 +10,13 @@ directories:
 publish:
   provider: github
   owner: howtimeschange
-  repo: crawshrimp
+  repo: crawshrimp-harness
 generateUpdatesFilesForAllChannels: false
 
 mac:
   category: public.app-category.business
   icon: assets/icon.icns
-  artifactName: crawshrimp-v${version}-mac-${arch}.${ext}
+  artifactName: crawshrimp-harness-v${version}-mac-${arch}.${ext}
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: assets/entitlements.mac.plist
@@ -36,7 +36,7 @@ mac:
 
 win:
   icon: assets/icon.ico
-  artifactName: crawshrimp-v${version}-win-${arch}.${ext}
+  artifactName: crawshrimp-harness-v${version}-win-${arch}.${ext}
   target:
     - target: nsis
       arch:
@@ -49,10 +49,10 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: 抓虾
+  shortcutName: 抓虾 Harness
 
 dmg:
-  title: 抓虾
+  title: 抓虾 Harness
   backgroundColor: "#ffffff"
   window:
     width: 540

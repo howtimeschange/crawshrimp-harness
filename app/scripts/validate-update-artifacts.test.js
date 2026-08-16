@@ -34,16 +34,16 @@ function writeMetadata(root, relativePath, assets) {
 
 function writeFormalReleaseManifest(root, version = '2.0.0') {
   const macAssets = [
-    writeAsset(root, `release-assets/macos/crawshrimp-v${version}-mac-arm64.dmg`, Buffer.from('mac-arm64-dmg')),
-    writeAsset(root, `release-assets/macos/crawshrimp-v${version}-mac-x64.dmg`, Buffer.from('mac-x64-dmg')),
-    writeAsset(root, `release-assets/macos/crawshrimp-v${version}-mac-arm64.zip`, Buffer.from('mac-arm64-zip')),
-    writeAsset(root, `release-assets/macos/crawshrimp-v${version}-mac-x64.zip`, Buffer.from('mac-x64-zip')),
-    writeAsset(root, `release-assets/macos/crawshrimp-v${version}-mac-arm64.zip.blockmap`, Buffer.from('mac-arm64-blockmap')),
-    writeAsset(root, `release-assets/macos/crawshrimp-v${version}-mac-x64.zip.blockmap`, Buffer.from('mac-x64-blockmap')),
+    writeAsset(root, `release-assets/macos/crawshrimp-harness-v${version}-mac-arm64.dmg`, Buffer.from('mac-arm64-dmg')),
+    writeAsset(root, `release-assets/macos/crawshrimp-harness-v${version}-mac-x64.dmg`, Buffer.from('mac-x64-dmg')),
+    writeAsset(root, `release-assets/macos/crawshrimp-harness-v${version}-mac-arm64.zip`, Buffer.from('mac-arm64-zip')),
+    writeAsset(root, `release-assets/macos/crawshrimp-harness-v${version}-mac-x64.zip`, Buffer.from('mac-x64-zip')),
+    writeAsset(root, `release-assets/macos/crawshrimp-harness-v${version}-mac-arm64.zip.blockmap`, Buffer.from('mac-arm64-blockmap')),
+    writeAsset(root, `release-assets/macos/crawshrimp-harness-v${version}-mac-x64.zip.blockmap`, Buffer.from('mac-x64-blockmap')),
   ]
   const winAssets = [
-    writeAsset(root, `release-assets/windows/crawshrimp-v${version}-win-x64.exe`, Buffer.from('win-exe')),
-    writeAsset(root, `release-assets/windows/crawshrimp-v${version}-win-x64.exe.blockmap`, Buffer.from('win-blockmap')),
+    writeAsset(root, `release-assets/windows/crawshrimp-harness-v${version}-win-x64.exe`, Buffer.from('win-exe')),
+    writeAsset(root, `release-assets/windows/crawshrimp-harness-v${version}-win-x64.exe.blockmap`, Buffer.from('win-blockmap')),
   ]
   writeMetadata(root, 'release-assets/macos/latest-mac.yml', macAssets.filter(asset => asset.name.endsWith('.zip')))
   writeMetadata(root, 'release-assets/windows/latest.yml', winAssets.filter(asset => asset.name.endsWith('.exe')))
@@ -51,7 +51,7 @@ function writeFormalReleaseManifest(root, version = '2.0.0') {
 
 test('validates Windows metadata that references an existing EXE with matching sha512', () => {
   const root = fixtureDir()
-  const exe = writeAsset(root, 'latest/win/crawshrimp-v2.0.0-win-x64.exe', Buffer.from('windows-installer'))
+  const exe = writeAsset(root, 'latest/win/crawshrimp-harness-v2.0.0-win-x64.exe', Buffer.from('windows-installer'))
   writeMetadata(root, 'latest/win/latest.yml', [exe])
 
   const result = validateUpdateArtifacts(root)
@@ -62,8 +62,8 @@ test('validates Windows metadata that references an existing EXE with matching s
 
 test('validates macOS metadata that references both ZIP architectures with matching sha512', () => {
   const root = fixtureDir()
-  const arm64 = writeAsset(root, 'macos/crawshrimp-v2.0.0-mac-arm64.zip', Buffer.from('mac-arm64'))
-  const x64 = writeAsset(root, 'macos/crawshrimp-v2.0.0-mac-x64.zip', Buffer.from('mac-x64'))
+  const arm64 = writeAsset(root, 'macos/crawshrimp-harness-v2.0.0-mac-arm64.zip', Buffer.from('mac-arm64'))
+  const x64 = writeAsset(root, 'macos/crawshrimp-harness-v2.0.0-mac-x64.zip', Buffer.from('mac-x64'))
   writeMetadata(root, 'macos/latest-mac.yml', [arm64, x64])
 
   const result = validateUpdateArtifacts(root)
@@ -85,20 +85,20 @@ test('fails when metadata references a missing file', () => {
 
 test('fails when a referenced file sha512 does not match metadata', () => {
   const root = fixtureDir()
-  const exe = writeAsset(root, 'windows/crawshrimp-v2.0.0-win-x64.exe', Buffer.from('actual-bytes'))
+  const exe = writeAsset(root, 'windows/crawshrimp-harness-v2.0.0-win-x64.exe', Buffer.from('actual-bytes'))
   writeMetadata(root, 'windows/latest.yml', [{ name: exe.name, sha512: crypto.createHash('sha512').update('other-bytes').digest('base64') }])
 
   const result = validateUpdateArtifacts(root)
 
   assert.equal(result.ok, false)
   assert.match(result.errors.join('\n'), /sha512 mismatch/)
-  assert.match(result.errors.join('\n'), /crawshrimp-v2\.0\.0-win-x64\.exe/)
+  assert.match(result.errors.join('\n'), /crawshrimp-harness-v2\.0\.0-win-x64\.exe/)
 })
 
 test('fails when both platform directories exist but one platform metadata file is missing', () => {
   const root = fixtureDir()
   fs.mkdirSync(path.join(root, 'macos'), { recursive: true })
-  const exe = writeAsset(root, 'windows/crawshrimp-v2.0.0-win-x64.exe', Buffer.from('windows-installer'))
+  const exe = writeAsset(root, 'windows/crawshrimp-harness-v2.0.0-win-x64.exe', Buffer.from('windows-installer'))
   writeMetadata(root, 'windows/latest.yml', [exe])
 
   const result = validateUpdateArtifacts(root)
@@ -110,8 +110,8 @@ test('fails when both platform directories exist but one platform metadata file 
 
 test('validates nested release-assets macos and windows roots', () => {
   const root = fixtureDir()
-  const mac = writeAsset(root, 'release-assets/macos/crawshrimp-v2.0.0-mac-arm64.zip', Buffer.from('mac'))
-  const win = writeAsset(root, 'release-assets/windows/crawshrimp-v2.0.0-win-x64.exe', Buffer.from('win'))
+  const mac = writeAsset(root, 'release-assets/macos/crawshrimp-harness-v2.0.0-mac-arm64.zip', Buffer.from('mac'))
+  const win = writeAsset(root, 'release-assets/windows/crawshrimp-harness-v2.0.0-win-x64.exe', Buffer.from('win'))
   writeMetadata(root, 'release-assets/macos/latest-mac.yml', [mac])
   writeMetadata(root, 'release-assets/windows/latest.yml', [win])
 
@@ -167,8 +167,8 @@ test('fails when metadata references a Windows-style backslash path', () => {
 
 test('fails when basename-only metadata matches duplicate candidate files', () => {
   const root = fixtureDir()
-  const first = writeAsset(root, 'windows/a/crawshrimp-v2.0.0-win-x64.exe', Buffer.from('first'))
-  writeAsset(root, 'windows/b/crawshrimp-v2.0.0-win-x64.exe', Buffer.from('second'))
+  const first = writeAsset(root, 'windows/a/crawshrimp-harness-v2.0.0-win-x64.exe', Buffer.from('first'))
+  writeAsset(root, 'windows/b/crawshrimp-harness-v2.0.0-win-x64.exe', Buffer.from('second'))
   writeMetadata(root, 'windows/latest.yml', [first])
 
   const result = validateUpdateArtifacts(root)
@@ -179,7 +179,7 @@ test('fails when basename-only metadata matches duplicate candidate files', () =
 
 test('fails explicitly for unsupported inline YAML asset shape', () => {
   const root = fixtureDir()
-  const exe = writeAsset(root, 'windows/crawshrimp-v2.0.0-win-x64.exe', Buffer.from('inline'))
+  const exe = writeAsset(root, 'windows/crawshrimp-harness-v2.0.0-win-x64.exe', Buffer.from('inline'))
   fs.writeFileSync(
     path.join(root, 'windows/latest.yml'),
     `version: 2.0.0\nfiles: [{ url: ${exe.name}, sha512: ${exe.sha512} }]\n`,
@@ -193,7 +193,7 @@ test('fails explicitly for unsupported inline YAML asset shape', () => {
 
 test('deduplicates repeated metadata references to the same file and hash', () => {
   const root = fixtureDir()
-  const exe = writeAsset(root, 'windows/crawshrimp-v2.0.0-win-x64.exe', Buffer.from('same-file'))
+  const exe = writeAsset(root, 'windows/crawshrimp-harness-v2.0.0-win-x64.exe', Buffer.from('same-file'))
   writeMetadata(root, 'windows/latest.yml', [exe, exe])
 
   const result = validateUpdateArtifacts(root)
@@ -209,24 +209,24 @@ test('formal release validation requires the exact complete versioned asset mani
   const valid = validateUpdateArtifacts(root, { version: '2.0.0', formalRelease: true })
   assert.deepEqual(valid.errors, [])
 
-  fs.unlinkSync(path.join(root, 'release-assets/macos/crawshrimp-v2.0.0-mac-x64.zip.blockmap'))
+  fs.unlinkSync(path.join(root, 'release-assets/macos/crawshrimp-harness-v2.0.0-mac-x64.zip.blockmap'))
   const missing = validateUpdateArtifacts(root, { version: '2.0.0', formalRelease: true })
   assert.equal(missing.ok, false)
   assert.match(missing.errors.join('\n'), /missing required release asset/)
-  assert.match(missing.errors.join('\n'), /crawshrimp-v2\.0\.0-mac-x64\.zip\.blockmap/)
+  assert.match(missing.errors.join('\n'), /crawshrimp-harness-v2\.0\.0-mac-x64\.zip\.blockmap/)
 
-  writeAsset(root, 'release-assets/windows/crawshrimp-v2.0.0-win-arm64.exe', Buffer.from('extra-win'))
+  writeAsset(root, 'release-assets/windows/crawshrimp-harness-v2.0.0-win-arm64.exe', Buffer.from('extra-win'))
   const extra = validateUpdateArtifacts(root, { version: '2.0.0', formalRelease: true })
   assert.equal(extra.ok, false)
   assert.match(extra.errors.join('\n'), /unexpected release asset/)
-  assert.match(extra.errors.join('\n'), /crawshrimp-v2\.0\.0-win-arm64\.exe/)
+  assert.match(extra.errors.join('\n'), /crawshrimp-harness-v2\.0\.0-win-arm64\.exe/)
 })
 
 test('formal release validation rejects macOS metadata missing required updater ZIP references', () => {
   const root = fixtureDir()
   writeFormalReleaseManifest(root, '2.0.0')
   const arm64 = {
-    name: 'crawshrimp-v2.0.0-mac-arm64.zip',
+    name: 'crawshrimp-harness-v2.0.0-mac-arm64.zip',
     sha512: crypto.createHash('sha512').update(Buffer.from('mac-arm64-zip')).digest('base64'),
   }
   writeMetadata(root, 'release-assets/macos/latest-mac.yml', [arm64])
@@ -236,18 +236,18 @@ test('formal release validation rejects macOS metadata missing required updater 
   assert.equal(result.ok, false)
   assert.match(result.errors.join('\n'), /missing updater reference/)
   assert.match(result.errors.join('\n'), /macos\/latest-mac\.yml/)
-  assert.match(result.errors.join('\n'), /crawshrimp-v2\.0\.0-mac-x64\.zip/)
+  assert.match(result.errors.join('\n'), /crawshrimp-harness-v2\.0\.0-mac-x64\.zip/)
 })
 
 test('formal release validation rejects macOS metadata that references DMG instead of required updater ZIP', () => {
   const root = fixtureDir()
   writeFormalReleaseManifest(root, '2.0.0')
   const dmg = {
-    name: 'crawshrimp-v2.0.0-mac-arm64.dmg',
+    name: 'crawshrimp-harness-v2.0.0-mac-arm64.dmg',
     sha512: crypto.createHash('sha512').update(Buffer.from('mac-arm64-dmg')).digest('base64'),
   }
   const x64 = {
-    name: 'crawshrimp-v2.0.0-mac-x64.zip',
+    name: 'crawshrimp-harness-v2.0.0-mac-x64.zip',
     sha512: crypto.createHash('sha512').update(Buffer.from('mac-x64-zip')).digest('base64'),
   }
   writeMetadata(root, 'release-assets/macos/latest-mac.yml', [dmg, x64])
@@ -257,18 +257,18 @@ test('formal release validation rejects macOS metadata that references DMG inste
   assert.equal(result.ok, false)
   assert.match(result.errors.join('\n'), /missing updater reference/)
   assert.match(result.errors.join('\n'), /unexpected updater reference/)
-  assert.match(result.errors.join('\n'), /crawshrimp-v2\.0\.0-mac-arm64\.zip/)
-  assert.match(result.errors.join('\n'), /crawshrimp-v2\.0\.0-mac-arm64\.dmg/)
+  assert.match(result.errors.join('\n'), /crawshrimp-harness-v2\.0\.0-mac-arm64\.zip/)
+  assert.match(result.errors.join('\n'), /crawshrimp-harness-v2\.0\.0-mac-arm64\.dmg/)
 })
 
 test('formal release validation rejects Windows metadata that references an unexpected updater asset', () => {
   const root = fixtureDir()
   writeFormalReleaseManifest(root, '2.0.0')
   const exe = {
-    name: 'crawshrimp-v2.0.0-win-x64.exe',
+    name: 'crawshrimp-harness-v2.0.0-win-x64.exe',
     sha512: crypto.createHash('sha512').update(Buffer.from('win-exe')).digest('base64'),
   }
-  const unexpected = writeAsset(root, 'release-assets/windows/crawshrimp-v2.0.0-win-x64.delta', Buffer.from('win-delta'))
+  const unexpected = writeAsset(root, 'release-assets/windows/crawshrimp-harness-v2.0.0-win-x64.delta', Buffer.from('win-delta'))
   writeMetadata(root, 'release-assets/windows/latest.yml', [exe, unexpected])
 
   const result = validateUpdateArtifacts(root, { version: '2.0.0', formalRelease: true })
@@ -276,7 +276,7 @@ test('formal release validation rejects Windows metadata that references an unex
   assert.equal(result.ok, false)
   assert.match(result.errors.join('\n'), /unexpected updater reference/)
   assert.match(result.errors.join('\n'), /windows\/latest\.yml/)
-  assert.match(result.errors.join('\n'), /crawshrimp-v2\.0\.0-win-x64\.delta/)
+  assert.match(result.errors.join('\n'), /crawshrimp-harness-v2\.0\.0-win-x64\.delta/)
 })
 
 test('formal release validation rejects Windows metadata with a missing or mismatched top-level version', () => {

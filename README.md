@@ -199,12 +199,12 @@ npm --prefix app run build:win
 
 ## 桌面自动更新
 
-正式客户端优先读取 `https://updates.crawshrimp.com/` 的 Cloudflare R2 元数据，失败时自动回退 GitHub。GitHub 的 `desktop-latest` 用于手动 QA/bridge 安装包；bridge 版本仍保留兼容更新资产。
+独立仓库 `howtimeschange/crawshrimp-harness` 的正式客户端使用 GitHub Release 元数据用于应用内更新。本仓构建不发布到 `https://updates.crawshrimp.com/`，也不刷新主项目的 `desktop-latest`。
 
 升级不需要卸载旧版：
 
 - Windows 使用 NSIS 在原安装路径就地更新；未签名构建可能显示 `Unknown Publisher`。
-- macOS 的应用内更新使用 ZIP/ShipIt；DMG 只用于首次安装、bridge 覆盖或应用内更新失败后的手动 fallback。
+- macOS 的应用内更新使用 ZIP/ShipIt；DMG 只用于首次安装、覆盖安装或应用内更新失败后的手动 fallback。
 - 运行数据、Chrome profile、任务缓存和配置保存在系统用户数据目录，应用替换不会删除这些内容。
 - 普通退出不会偷偷安装；下载完成后由用户点击 `重启安装` 才进入安装流程。
 

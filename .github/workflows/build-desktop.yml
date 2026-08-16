@@ -224,12 +224,12 @@ jobs:
 
           APP_VERSION=$(python3 -c "import json; print(json.load(open('package.json'))['version'])")
           expected_files=(
-            "dist/crawshrimp-v${APP_VERSION}-mac-arm64.dmg"
-            "dist/crawshrimp-v${APP_VERSION}-mac-x64.dmg"
-            "dist/crawshrimp-v${APP_VERSION}-mac-arm64.zip"
-            "dist/crawshrimp-v${APP_VERSION}-mac-x64.zip"
-            "dist/crawshrimp-v${APP_VERSION}-mac-arm64.zip.blockmap"
-            "dist/crawshrimp-v${APP_VERSION}-mac-x64.zip.blockmap"
+            "dist/crawshrimp-harness-v${APP_VERSION}-mac-arm64.dmg"
+            "dist/crawshrimp-harness-v${APP_VERSION}-mac-x64.dmg"
+            "dist/crawshrimp-harness-v${APP_VERSION}-mac-arm64.zip"
+            "dist/crawshrimp-harness-v${APP_VERSION}-mac-x64.zip"
+            "dist/crawshrimp-harness-v${APP_VERSION}-mac-arm64.zip.blockmap"
+            "dist/crawshrimp-harness-v${APP_VERSION}-mac-x64.zip.blockmap"
             "dist/latest-mac.yml"
           )
 
@@ -265,7 +265,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          zips=(dist/crawshrimp-v*-mac-arm64.zip dist/crawshrimp-v*-mac-x64.zip)
+          zips=(dist/crawshrimp-harness-v*-mac-arm64.zip dist/crawshrimp-harness-v*-mac-x64.zip)
           if [ "${#zips[@]}" -ne 2 ]; then
             echo "::error::Expected exactly two macOS ZIP artifacts, found ${#zips[@]}"
             printf '%s\n' "${zips[@]}"
@@ -326,285 +326,14 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: crawshrimp-${{ matrix.artifact_suffix }}
+          name: crawshrimp-harness-${{ matrix.artifact_suffix }}
           path: ${{ matrix.artifact_glob }}
           if-no-files-found: error
-
-  publish-release:
-    name: Publish GitHub Release
-    runs-on: ubuntu-latest
-    needs: publish-version-release
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: crawshrimp-mac
-          path: release-assets/macos
-
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: crawshrimp-win-x64
-          path: release-assets/windows
-
-      - name: Validate release tag and package version
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Only exact stable vX.Y.Z tags can publish desktop-latest: ${GITHUB_REF_NAME}"
-            exit 1
-          fi
-          APP_VERSION=$(python3 -c "import json; print(json.load(open('app/package.json'))['version'])")
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          if [ "${APP_VERSION}" != "${TAG_VERSION}" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} does not match app/package.json version ${APP_VERSION}"
-            exit 1
-          fi
-          echo "APP_VERSION=${APP_VERSION}" >> "${GITHUB_ENV}"
-
-      - name: Validate release update artifacts
-        run: node app/scripts/validate-update-artifacts.js release-assets --formal-release --version "${APP_VERSION}"
-
-      - name: Prepare release metadata
-        run: |
-          NOTES_FILE="release-notes/v${APP_VERSION}.md"
-          if [ -f "${NOTES_FILE}" ]; then
-            cp "${NOTES_FILE}" release-notes.md
-          else
-            printf '## v%s\n\n- 自动桌面构建\n' "${APP_VERSION}" > release-notes.md
-          fi
-          printf '\n---\n\n构建信息：\n- Commit: %s\n- Workflow: %s/%s/actions/runs/%s\n- 产物：macOS DMG（Apple Silicon / Intel）、Windows 安装包\n- 说明：desktop-latest 仅用于手动安装；自动更新元数据发布在版本化 Release\n' \
-            "${GITHUB_SHA}" \
-            "${GITHUB_SERVER_URL}" \
-            "${GITHUB_REPOSITORY}" \
-            "${GITHUB_RUN_ID}" >> release-notes.md
-
-      - name: Validate GitHub updater bridge assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          bridge_assets=(
-            release-assets/macos/*.dmg
-            release-assets/macos/*.zip
-            release-assets/macos/*.zip.blockmap
-            release-assets/macos/latest-mac.yml
-            release-assets/windows/*.exe
-            release-assets/windows/*.exe.blockmap
-            release-assets/windows/latest.yml
-          )
-          printf '%s\n' \
-            "crawshrimp-v${APP_VERSION}-mac-arm64.dmg" \
-            "crawshrimp-v${APP_VERSION}-mac-x64.dmg" \
-            "crawshrimp-v${APP_VERSION}-mac-arm64.zip" \
-            "crawshrimp-v${APP_VERSION}-mac-x64.zip" \
-            "crawshrimp-v${APP_VERSION}-mac-arm64.zip.blockmap" \
-            "crawshrimp-v${APP_VERSION}-mac-x64.zip.blockmap" \
-            "latest-mac.yml" \
-            "crawshrimp-v${APP_VERSION}-win-x64.exe" \
-            "crawshrimp-v${APP_VERSION}-win-x64.exe.blockmap" \
-            "latest.yml" \
-            | sort > expected-bridge-assets.txt
-          printf '%s\n' "${bridge_assets[@]##*/}" | sort > actual-bridge-assets.txt
-          if ! diff -u expected-bridge-assets.txt actual-bridge-assets.txt; then
-            echo "::error::Unexpected GitHub updater bridge asset set for desktop-latest"
-            exit 1
-          fi
-
-      - name: Publish rolling release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          bridge_assets=(
-            release-assets/macos/*.dmg
-            release-assets/macos/*.zip
-            release-assets/macos/*.zip.blockmap
-            release-assets/macos/latest-mac.yml
-            release-assets/windows/*.exe
-            release-assets/windows/*.exe.blockmap
-            release-assets/windows/latest.yml
-          )
-          if [ "${#bridge_assets[@]}" -eq 0 ]; then
-            echo "::error::No GitHub updater bridge assets found for desktop-latest"
-            exit 1
-          fi
-          if gh release view desktop-latest >/dev/null 2>&1; then
-            gh release view desktop-latest --json assets --jq '.assets[].name' | sort > existing-desktop-latest-assets.txt
-            comm -23 existing-desktop-latest-assets.txt expected-bridge-assets.txt | while IFS= read -r asset_name; do
-              if [ -n "${asset_name}" ]; then
-                gh release delete-asset desktop-latest "${asset_name}" --yes
-              fi
-            done
-            gh release edit desktop-latest \
-              --title "抓虾 Desktop Latest v${APP_VERSION}" \
-              --notes-file release-notes.md \
-              --latest=false
-            gh release upload desktop-latest \
-              "${bridge_assets[@]}" \
-              --clobber
-          else
-            gh release create desktop-latest \
-              --target "${GITHUB_SHA}" \
-              "${bridge_assets[@]}" \
-              --title "抓虾 Desktop Latest v${APP_VERSION}" \
-              --notes-file release-notes.md \
-              --latest=false
-          fi
-
-          gh release view desktop-latest --json assets --jq '.assets[].name' | sort > actual-desktop-latest-assets.txt
-          if ! diff -u expected-bridge-assets.txt actual-desktop-latest-assets.txt; then
-            echo "::error::Unexpected desktop-latest GitHub updater bridge asset set"
-            exit 1
-          fi
-
-          git push --force origin "${GITHUB_SHA}:refs/tags/desktop-latest"
-          REMOTE_DESKTOP_LATEST_SHA=$(git ls-remote --refs origin refs/tags/desktop-latest | awk 'NR == 1 { print $1 }')
-          if [ "${REMOTE_DESKTOP_LATEST_SHA}" != "${GITHUB_SHA}" ]; then
-            echo "::error::Remote desktop-latest tag did not resolve to ${GITHUB_SHA}; got ${REMOTE_DESKTOP_LATEST_SHA:-missing}"
-            exit 1
-          fi
-
-  publish-cloudflare-r2:
-    name: Publish Cloudflare R2 Update Mirror
-    runs-on: ubuntu-latest
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: read
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: auto
-      AWS_EC2_METADATA_DISABLED: "true"
-      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
-      CLOUDFLARE_R2_S3_ENDPOINT: ${{ secrets.CLOUDFLARE_R2_S3_ENDPOINT }}
-      CLOUDFLARE_R2_BUCKET: ${{ secrets.CLOUDFLARE_R2_BUCKET }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22.12.0
-
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: crawshrimp-mac
-          path: release-assets/macos
-
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: crawshrimp-win-x64
-          path: release-assets/windows
-
-      - name: Validate release tag and package version
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Only exact stable vX.Y.Z tags can publish the Cloudflare update mirror: ${GITHUB_REF_NAME}"
-            exit 1
-          fi
-          APP_VERSION=$(python3 -c "import json; print(json.load(open('app/package.json'))['version'])")
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          if [ "${APP_VERSION}" != "${TAG_VERSION}" ]; then
-            echo "::error::Package version ${APP_VERSION} does not match release tag ${GITHUB_REF_NAME}"
-            exit 1
-          fi
-
-      - name: Validate release update artifacts
-        run: node app/scripts/validate-update-artifacts.js release-assets --formal-release --version "${GITHUB_REF_NAME#v}"
-
-      - name: Ensure AWS CLI
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! command -v aws >/dev/null 2>&1; then
-            python3 -m pip install --user awscli
-            echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
-            "${HOME}/.local/bin/aws" --version
-          else
-            aws --version
-          fi
-
-      - name: Upload update assets to Cloudflare R2
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ] || [ -z "${CLOUDFLARE_R2_S3_ENDPOINT:-}" ] || [ -z "${CLOUDFLARE_R2_BUCKET:-}" ]; then
-            echo "::error::CLOUDFLARE_R2_ACCESS_KEY_ID, CLOUDFLARE_R2_SECRET_ACCESS_KEY, CLOUDFLARE_R2_S3_ENDPOINT, and CLOUDFLARE_R2_BUCKET secrets are required"
-            exit 1
-          fi
-          aws --version
-
-          upload_object() {
-            local file="$1"
-            local cache_control="$2"
-            local name="${file##*/}"
-            local content_type="application/octet-stream"
-            case "${name}" in
-              *.yml) content_type="application/x-yaml" ;;
-              *.zip) content_type="application/zip" ;;
-              *.exe) content_type="application/vnd.microsoft.portable-executable" ;;
-            esac
-            aws s3 cp "${file}" "s3://${CLOUDFLARE_R2_BUCKET}/${name}" \
-              --endpoint-url "${CLOUDFLARE_R2_S3_ENDPOINT}" \
-              --content-type "${content_type}" \
-              --cache-control "${cache_control}" \
-              --only-show-errors
-          }
-
-          while IFS= read -r file; do
-            upload_object "${file}" 'public, max-age=31536000, immutable'
-          done < <(
-            {
-              find release-assets/macos -type f \( -name '*.zip' -o -name '*.zip.blockmap' \)
-              find release-assets/windows -type f \( -name '*.exe' -o -name '*.exe.blockmap' \)
-            } | sort
-          )
-
-          upload_object release-assets/macos/latest-mac.yml 'no-cache, max-age=0, must-revalidate'
-          upload_object release-assets/windows/latest.yml 'no-cache, max-age=0, must-revalidate'
-
-      - name: Verify Cloudflare R2 update metadata
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ] || [ -z "${CLOUDFLARE_R2_S3_ENDPOINT:-}" ] || [ -z "${CLOUDFLARE_R2_BUCKET:-}" ]; then
-            echo "::error::CLOUDFLARE_R2_ACCESS_KEY_ID, CLOUDFLARE_R2_SECRET_ACCESS_KEY, CLOUDFLARE_R2_S3_ENDPOINT, and CLOUDFLARE_R2_BUCKET secrets are required"
-            exit 1
-          fi
-          for metadata in latest-mac.yml latest.yml; do
-            expected=$(find release-assets -name "${metadata}" -print -quit)
-            actual="$(mktemp)"
-            aws s3 cp "s3://${CLOUDFLARE_R2_BUCKET}/${metadata}" "${actual}" \
-              --endpoint-url "${CLOUDFLARE_R2_S3_ENDPOINT}" \
-              --only-show-errors
-            cmp --silent "${expected}" "${actual}"
-          done
 
   publish-version-release:
     name: Publish Versioned GitHub Release
     runs-on: ubuntu-latest
-    needs: [build, publish-cloudflare-r2]
+    needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
@@ -618,13 +347,13 @@ jobs:
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
-          name: crawshrimp-mac
+          name: crawshrimp-harness-mac
           path: release-assets/macos
 
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
-          name: crawshrimp-win-x64
+          name: crawshrimp-harness-win-x64
           path: release-assets/windows
 
       - name: Validate release tag and package version
@@ -656,7 +385,7 @@ jobs:
           else
             printf '## v%s\n\n- 自动桌面构建\n' "${APP_VERSION}" > release-notes.md
           fi
-          printf '\n---\n\n构建信息：\n- Commit: %s\n- Workflow: %s/%s/actions/runs/%s\n- 产物：macOS DMG/ZIP（Apple Silicon / Intel）、Windows 安装包\n- 自动更新：GitHub 更新元数据已启用\n' \
+          printf '\n---\n\n构建信息：\n- Commit: %s\n- Workflow: %s/%s/actions/runs/%s\n- 产物：macOS DMG/ZIP（Apple Silicon / Intel）、Windows 安装包\n- 自动更新：GitHub Release 元数据已启用；未发布 Cloudflare R2 镜像\n' \
             "${GITHUB_SHA}" \
             "${GITHUB_SERVER_URL}" \
             "${GITHUB_REPOSITORY}" \
@@ -692,7 +421,7 @@ jobs:
               fi
             done
             gh release edit "${GITHUB_REF_NAME}" \
-              --title "抓虾 Desktop v${APP_VERSION}" \
+              --title "抓虾 Harness Desktop v${APP_VERSION}" \
               --notes-file release-notes.md \
               --latest=false
             gh release upload "${GITHUB_REF_NAME}" \
@@ -700,7 +429,7 @@ jobs:
               --clobber
           else
             gh release create "${GITHUB_REF_NAME}" \
-              --title "抓虾 Desktop v${APP_VERSION}" \
+              --title "抓虾 Harness Desktop v${APP_VERSION}" \
               --notes-file release-notes.md \
               --draft \
               --latest=false \
@@ -717,7 +446,7 @@ jobs:
           fi
 
           gh release edit "${GITHUB_REF_NAME}" \
-            --title "抓虾 Desktop v${APP_VERSION}" \
+            --title "抓虾 Harness Desktop v${APP_VERSION}" \
             --notes-file release-notes.md \
             --draft=false \
             --latest

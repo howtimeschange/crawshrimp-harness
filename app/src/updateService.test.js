@@ -253,6 +253,6 @@ test('Cloudflare update check falls back to GitHub when the primary feed is unav
   assert.equal(service.getStatus().status, 'available')
   assert.deepEqual(feeds, [
     { provider: 'generic', url: 'https://updates.crawshrimp.com/' },
-    { provider: 'github', owner: 'howtimeschange', repo: 'crawshrimp' },
+    { provider: 'github', owner: 'howtimeschange', repo: 'crawshrimp-harness' },
   ])
 })
