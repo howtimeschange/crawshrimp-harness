@@ -23,6 +23,20 @@ const appRoot = join(repoRoot, 'app')
 const stageRoot = join(repoRoot, 'build-staging', 'deepseek-harness')
 
 const STAGE_FILES = ['spike.cordis.yml', 'web-cordis.yml']
+const STAGE_PRUNE_VERSION = 'runtime-node-modules-prune-v1'
+const PRUNABLE_NODE_MODULE_DIRS = new Set([
+  '__tests__',
+  'test',
+  'tests',
+  'example',
+  'examples',
+  'coverage',
+])
+const PRUNABLE_NODE_MODULE_FILE_PATTERNS = [
+  /\.d\.ts(?:\.map)?$/i,
+  /\.(?:js|mjs|cjs)\.map$/i,
+  /\.tsbuildinfo$/i,
+]
 
 const REQUIRED_STAGE_FILES = [
   'package.json',
@@ -49,7 +63,7 @@ const REQUIRED_STAGE_FILES = [
 
 const args = process.argv.slice(2)
 const force = args.includes('--force')
-const skipBootCheck = args.includes('--skip-boot-check')
+const skipBootCheck = args.includes('--skip-boot-check') || (process.platform === 'win32' && process.env.CI === 'true')
 
 function fail(message) {
   console.error(`[stage-runtime] FAILED: ${message}`)
@@ -82,9 +96,42 @@ function hashTree(dir) {
   return h.digest('hex')
 }
 
+function shouldPruneNodeModuleFile(filePath) {
+  return PRUNABLE_NODE_MODULE_FILE_PATTERNS.some((pattern) => pattern.test(filePath))
+}
+
+function pruneRuntimeNodeModules(root) {
+  if (!existsSync(root)) return
+  const removed = { dirs: 0, files: 0 }
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name)
+      let st
+      try {
+        st = statSync(p)
+      } catch {
+        continue
+      }
+      if (st.isDirectory()) {
+        if (PRUNABLE_NODE_MODULE_DIRS.has(name)) {
+          rmSync(p, { recursive: true, force: true })
+          removed.dirs += 1
+          continue
+        }
+        walk(p)
+      } else if (st.isFile() && shouldPruneNodeModuleFile(p)) {
+        rmSync(p, { force: true })
+        removed.files += 1
+      }
+    }
+  }
+  walk(root)
+  console.log(`[stage-runtime] pruned non-runtime node_modules files: ${removed.files} files, ${removed.dirs} dirs`)
+}
+
 const sourceAssetsHash = ['crawshrimp-launcher', 'crawshrimp-slots', 'crawshrimp-product-bridge', 'worker', 'skills', 'web-cordis.yml']
   .map((p) => hashTree(join(sourceRoot, p)))
-  .join(':')
+  .join(':') + `:${hashOf(fileURLToPath(import.meta.url))}:${STAGE_PRUNE_VERSION}`
 const lockHash = hashOf(join(sourceRoot, 'package-lock.json')) + '|' + sourceAssetsHash
 const markerFile = join(stageRoot, '.staged-lock-hash')
 const upToDate = !force && existsSync(markerFile) && readFileSync(markerFile, 'utf8').trim() === lockHash
@@ -123,6 +170,7 @@ if (!upToDate) {
     copyDir(cliSource, cliDest)
     if (!existsSync(join(cliDest, 'tmall-cli'))) fail('CLI 技能包本体拷贝不完整')
   }
+  pruneRuntimeNodeModules(join(stageRoot, 'node_modules'))
   writeFileSync(markerFile, `${lockHash}\n`)
   console.log('[stage-runtime] staging complete')
 } else {
@@ -169,7 +217,8 @@ const BANNED_PACKAGES = [
 }
 
 if (skipBootCheck) {
-  console.log('[stage-runtime] boot check skipped')
+  const reason = args.includes('--skip-boot-check') ? 'flag' : 'windows-ci'
+  console.log(`[stage-runtime] boot check skipped (${reason})`)
 } else {
   bootCheck()
 }

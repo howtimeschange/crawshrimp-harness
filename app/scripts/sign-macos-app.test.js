@@ -8,7 +8,7 @@ test('custom mac signer skips non-native resources while preserving Mach-O runti
   const signerPath = path.join(__dirname, 'sign-macos-app.js')
   assert.equal(fs.existsSync(signerPath), true, 'custom mac signer exists')
 
-  const { createPythonDataIgnore } = require('./sign-macos-app')
+  const { createPythonDataIgnore, hasNonNativeResourceExtension } = require('./sign-macos-app')
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-mac-sign-'))
   const pythonRoot = path.join(root, '抓虾.app', 'Contents', 'Resources', 'python')
   const executable = path.join(pythonRoot, 'bin', 'python3.12')
@@ -34,6 +34,9 @@ test('custom mac signer skips non-native resources while preserving Mach-O runti
     assert.equal(ignore(ignoredByExistingRule), true)
     assert.equal(ignore(outsidePython), true)
     assert.equal(ignore(electronLocale), true)
+    assert.equal(hasNonNativeResourceExtension('/tmp/app/Contents/Resources/deepseek-harness/node_modules/pkg/index.js.map'), true)
+    assert.equal(hasNonNativeResourceExtension('/tmp/app/Contents/Resources/deepseek-harness/node_modules/pkg/index.d.ts'), true)
+    assert.equal(hasNonNativeResourceExtension('/tmp/app/Contents/Resources/deepseek-harness/node_modules/pkg/native.node'), false)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
