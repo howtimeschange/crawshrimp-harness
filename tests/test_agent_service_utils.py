@@ -1,6 +1,7 @@
 """事件投影提取函数回归(assistant/chunk、tool/result 形态)。"""
 import os
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "core"))
 
@@ -82,12 +83,18 @@ def test_risk_heuristic_keywords():
     assert _heuristic_risk("神秘任务", "") == "local_write"
 
 
-def test_catalog_includes_all_tasks_and_excludes_destructive(monkeypatch):
-    from core import runtime_paths
-    import os
-    # 隔离环境变量污染(test_agent_db 会改写 CRAWSHRIMP_DATA)
-    monkeypatch.delenv("CRAWSHRIMP_DATA", raising=False)
+def test_catalog_includes_all_tasks_and_excludes_destructive(monkeypatch, tmp_path):
+    from core import adapter_loader, runtime_paths
+    data_root = tmp_path / "data"
+    monkeypatch.setenv("CRAWSHRIMP_DATA", str(data_root))
     runtime_paths.reset_runtime_data_root_cache()
+    adapter_loader._adapters.clear()
+    adapter_loader._adapter_dirs.clear()
+    adapter_loader._enabled.clear()
+    adapter_loader._install_meta.clear()
+    built_in = Path(__file__).resolve().parents[1] / "adapters"
+    for adapter_dir in adapter_loader.iter_manifest_dirs(built_in):
+        adapter_loader.install_from_dir(str(adapter_dir), install_mode="link")
     from core.agent.mcp_gateway import _agent_task_catalog
     catalog = _agent_task_catalog()
     assert len(catalog) > 50

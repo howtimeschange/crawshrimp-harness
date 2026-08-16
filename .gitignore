@@ -27,6 +27,8 @@ logs/
 !adapters/mop-ops-assistant/templates/kol-material-img2video-template.xlsx
 !adapters/mop-ops-assistant/templates/search-recommend-material-template.xlsx
 !adapters/bala-ai-video-assistant/templates/tmall-video-copy-template.xlsx
+!adapters/shopee-plus-v2/Shopee优惠券批量设置模板（26.4.1）.xlsx
+!adapters/shopee-plus-v2/Shopee直播优惠券批量设置模板（26.4.8）.xlsx
 !adapters/vipshop-ops-assistant/templates/vipshop-package-main-image-replace-template.xlsx
 *.log
 .env
