@@ -24,6 +24,7 @@ data/
 logs/
 *.xlsx
 !adapters/dasen-ops-assistant/templates/showcase-batch-template.xlsx
+!adapters/mop-ops-assistant/templates/kol-material-img2video-template.xlsx
 !adapters/mop-ops-assistant/templates/search-recommend-material-template.xlsx
 !adapters/bala-ai-video-assistant/templates/tmall-video-copy-template.xlsx
 !adapters/vipshop-ops-assistant/templates/vipshop-package-main-image-replace-template.xlsx
