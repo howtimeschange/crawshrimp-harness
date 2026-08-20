@@ -277,13 +277,15 @@ test('desktop build workflow collects generated update metadata artifacts', () =
 test('desktop workflow validates update metadata before upload and formal publication', () => {
   const workflow = readRepoFile('.github/workflows/build-desktop.yml')
   const buildValidateIndex = workflow.indexOf('name: Validate update artifacts')
-  const uploadIndex = workflow.indexOf('name: Upload build artifacts')
+  const uploadIndex = workflow.indexOf('name: Upload release build artifacts')
   const releaseValidateIndex = workflow.indexOf('name: Validate release update artifacts')
   const prepareMetadataIndex = workflow.indexOf('name: Prepare release metadata', workflow.indexOf('publish-version-release:'))
   const publishVersionIndex = workflow.indexOf('name: Publish versioned release')
 
   assert.ok(buildValidateIndex !== -1, 'build validation step is present')
+  assert.ok(uploadIndex !== -1, 'release artifact upload step is present')
   assert.ok(buildValidateIndex < uploadIndex, 'build validation runs before artifact upload')
+  assert.match(workflow, /name: Upload release build artifacts\n\s+if: startsWith\(github\.ref, 'refs\/tags\/v'\)[\s\S]*retention-days: 1/)
   assert.match(workflow, /node scripts\/validate-update-artifacts\.js dist/)
   assert.ok(releaseValidateIndex !== -1, 'release validation step is present')
   assert.ok(releaseValidateIndex < prepareMetadataIndex, 'release validation runs before metadata preparation')
