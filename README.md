@@ -15,6 +15,13 @@ Crawshrimp Harness 把抓虾桌面应用与 DeepSeek Harness（DSH）组合成�
 
 ## 版本记录
 
+### v0.1.3
+
+- 修复智能体 DSH Web 端口漂移时的白屏问题：后端只暴露已验证的会话页面地址，并可从预期端口扫描修正到真实端口。
+- 降低智能体启动过程中的误重启：前端在会话页面仍在就绪时等待，不再把暂未验证的 `ready` 状态当作故障恢复。
+- 修复桌面更新误提示：同版本、缺少发布元数据、`v0.1.3` 与 `0.1.3` 等价版本不再显示可重试更新。
+- 补强 Windows 桌面包验证：确认 NSIS 安装器、Windows Python bundle、DeepSeek Harness runtime 与更新 metadata 都能生成并通过校验。
+
 ### v0.1.2
 
 - 修复 DSH composer 的 `📎` 附件与 `@` 命令 hover 标签：附件标签在深色主题中保持可读，命令标签只在 hover/focus 时显示，不再常驻或错位到附件按钮。
