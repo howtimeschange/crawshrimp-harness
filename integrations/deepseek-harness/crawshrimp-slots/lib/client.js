@@ -168,12 +168,10 @@ window.__ModuleLoader__.load({
       '.cs-nav-toggle { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary)); font-size: 12.5px; }',
       '.cs-nav-toggle .cs-nav-icon { font-size: 16px; transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1); }',
       '.cs-nav-toggle[aria-expanded="true"] .cs-nav-icon { transform: rotate(180deg); }',
-      '[data-crawshrimp-nav-main] .cs-nav-item { animation: cs-nav-in 160ms cubic-bezier(0.4, 0, 0.2, 1); }',
-      '@keyframes cs-nav-in { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }',
       '.hHd-Xa_collapsed [data-crawshrimp-nav-main] .cs-nav-label, .hHd-Xa_collapsed [data-crawshrimp-nav-bottom] .cs-nav-label { display: none; }',
       '.hHd-Xa_collapsed .cs-nav-item { justify-content: center; padding: 7px 0; }',
       '.hHd-Xa_collapsed .cs-nav-icon { font-size: 17px; }',
-      '@media (prefers-reduced-motion: reduce) { .cs-nav-item, .cs-nav-toggle .cs-nav-icon { transition: none; animation: none; } }',
+      '@media (prefers-reduced-motion: reduce) { .cs-nav-item, .cs-nav-toggle .cs-nav-icon { transition: none; } }',
       // 7) 选中/强调色随抓虾橙
       '::selection { background: rgba(255, 107, 43, 0.25); }',
     ].join('\n')
@@ -223,68 +221,94 @@ window.__ModuleLoader__.load({
       return width
     }
 
+    function updateNavButton(btn, item, activeId) {
+      if (!btn || !item) return
+      if (btn.dataset.csNavItemId !== item.id) btn.dataset.csNavItemId = item.id
+      btn.classList.toggle('cs-nav-active', item.id === activeId)
+      if (btn.title !== (item.label || '')) btn.title = item.label || ''
+      let icon = btn.querySelector(':scope > .cs-nav-icon')
+      if (!icon) {
+        icon = document.createElement('span')
+        icon.className = 'cs-nav-icon'
+        btn.prepend(icon)
+      }
+      if (icon.textContent !== (item.icon || '')) icon.textContent = item.icon || ''
+      let label = btn.querySelector(':scope > .cs-nav-label')
+      if (!label) {
+        label = document.createElement('span')
+        label.className = 'cs-nav-label'
+        btn.appendChild(label)
+      }
+      const labelText = item.label || item.id
+      if (label.textContent !== labelText) label.textContent = labelText
+    }
+
     function makeNavButton(item, activeId) {
       const btn = document.createElement('button')
       btn.type = 'button'
-      btn.className = 'cs-nav-item' + (item.id === activeId ? ' cs-nav-active' : '')
-      btn.title = item.label || ''
-      const icon = document.createElement('span')
-      icon.className = 'cs-nav-icon'
-      icon.textContent = item.icon || ''
-      const label = document.createElement('span')
-      label.className = 'cs-nav-label'
-      label.textContent = item.label || item.id
-      btn.appendChild(icon)
-      btn.appendChild(label)
+      btn.className = 'cs-nav-item'
+      updateNavButton(btn, item, activeId)
       btn.addEventListener('click', () => {
         // 携带 max(当前宽, 历史最大宽):折叠动画中点菜单也不会压到菜单栏
         const width = Math.max(currentRailWidth(), lastMaxRailWidth)
-        postToShell({ __crawshrimp: 'nav-click', id: item.id, railWidth: width })
+        postToShell({ __crawshrimp: 'nav-click', id: btn.dataset.csNavItemId, railWidth: width })
       })
       return btn
     }
 
-    function renderGroup(host, items, activeId, collapsible) {
-      const visibleCount = collapsible && host.dataset.expanded !== '1'
-        ? Math.min(items.length, MAIN_VISIBLE_DEFAULT)
-        : items.length
-      const signature = items.slice(0, visibleCount).map((i) => i.id).join(',') + '|' + (collapsible ? host.dataset.expanded || '0' : '')
-      // 增量更新:菜单集合未变时仅切换 active 类,避免重建+入场动画造成的闪烁
-      if (host.dataset.signature === signature) {
-        const buttons = [...host.querySelectorAll(':scope > .cs-nav-item:not(.cs-nav-toggle)')]
-        buttons.forEach((btn, index) => {
-          const item = items[index]
-          if (!item) return
-          btn.classList.toggle('cs-nav-active', item.id === activeId)
-        })
-        return
+    function findNavButton(host, id) {
+      return [...host.querySelectorAll(':scope > .cs-nav-item:not(.cs-nav-toggle)')]
+        .find((btn) => btn.dataset.csNavItemId === id)
+    }
+
+    function updateNavToggle(toggle, host, items, activeId, collapsible) {
+      const expanded = host.dataset.expanded === '1'
+      toggle.type = 'button'
+      toggle.className = 'cs-nav-item cs-nav-toggle'
+      toggle.setAttribute('aria-expanded', String(expanded))
+      toggle.title = expanded ? '收起菜单' : '展开全部菜单'
+      let icon = toggle.querySelector(':scope > .cs-nav-icon')
+      if (!icon) {
+        icon = document.createElement('span')
+        icon.className = 'cs-nav-icon'
+        toggle.appendChild(icon)
       }
-      host.dataset.signature = signature
-      host.replaceChildren()
+      if (icon.textContent !== '▾') icon.textContent = '▾'
+      let label = toggle.querySelector(':scope > .cs-nav-label')
+      if (!label) {
+        label = document.createElement('span')
+        label.className = 'cs-nav-label'
+        toggle.appendChild(label)
+      }
+      const labelText = expanded ? '收起' : `展开全部(${items.length - MAIN_VISIBLE_DEFAULT})`
+      if (label.textContent !== labelText) label.textContent = labelText
+      toggle.onclick = () => {
+        host.dataset.expanded = host.dataset.expanded === '1' ? '0' : '1'
+        renderGroup(host, items, activeId, collapsible)
+      }
+    }
+
+    function renderGroup(host, items, activeId, collapsible) {
       const expanded = host.dataset.expanded === '1'
       const visible = collapsible && !expanded ? items.slice(0, MAIN_VISIBLE_DEFAULT) : items
-      for (const item of visible) host.appendChild(makeNavButton(item, activeId))
-      if (collapsible && items.length > MAIN_VISIBLE_DEFAULT) {
-        const toggle = document.createElement('button')
-        toggle.type = 'button'
-        toggle.className = 'cs-nav-item cs-nav-toggle'
-        toggle.setAttribute('aria-expanded', String(expanded))
-        toggle.title = expanded ? '收起菜单' : '展开全部菜单'
-        const icon = document.createElement('span')
-        icon.className = 'cs-nav-icon'
-        icon.textContent = '▾'
-        const label = document.createElement('span')
-        label.className = 'cs-nav-label'
-        label.textContent = expanded ? '收起' : `展开全部(${items.length - MAIN_VISIBLE_DEFAULT})`
-        toggle.appendChild(icon)
-        toggle.appendChild(label)
-        toggle.addEventListener('click', () => {
-          host.dataset.expanded = expanded ? '0' : '1'
-          host.dataset.signature = ''
-          renderGroup(host, items, activeId, collapsible)
-        })
-        host.appendChild(toggle)
+      const visibleIds = new Set(visible.map((item) => item.id))
+      let toggle = host.querySelector(':scope > .cs-nav-toggle')
+      for (const item of visible) {
+        const btn = findNavButton(host, item.id) || makeNavButton(item, activeId)
+        updateNavButton(btn, item, activeId)
+        host.insertBefore(btn, toggle || null)
       }
+      for (const btn of [...host.querySelectorAll(':scope > .cs-nav-item:not(.cs-nav-toggle)')]) {
+        if (!visibleIds.has(btn.dataset.csNavItemId)) btn.remove()
+      }
+      if (collapsible && items.length > MAIN_VISIBLE_DEFAULT) {
+        if (!toggle) toggle = document.createElement('button')
+        updateNavToggle(toggle, host, items, activeId, collapsible)
+        host.appendChild(toggle)
+      } else if (toggle) {
+        toggle.remove()
+      }
+      host.dataset.signature = visible.map((item) => item.id).join(',') + '|' + (collapsible ? host.dataset.expanded || '0' : '')
     }
 
     function renderNav(items, activeId) {
@@ -528,9 +552,10 @@ window.__ModuleLoader__.load({
       '.cs-attach-btn:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }',
       '.cs-attach-btn:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }',
       '.uV2eYG_add[data-cs-tooltip] { position: relative; overflow: visible; }',
-      '.uV2eYG_add[data-cs-tooltip]::after { content: attr(data-cs-tooltip); z-index: 80; position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translate(-50%, 2px); opacity: 0; pointer-events: none; white-space: nowrap; border-radius: 8px; padding: 5px 9px; background: var(--dsw-alias-tooltip-bg, #2c2c2e); color: var(--dsw-alias-label-primary-inverted, #fff); font-size: 12px; font-weight: 500; line-height: 18px; box-shadow: var(--dsw-shadow-lv2, 0 4px 14px rgba(0,0,0,.22)); transition: opacity 120ms ease, transform 120ms ease; }',
+      '.uV2eYG_add[data-cs-tooltip]::after { content: attr(data-cs-tooltip); z-index: 80; position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translate(-50%, 2px); opacity: 0; pointer-events: none; white-space: nowrap; border-radius: 8px; padding: 5px 9px; background: var(--dsw-alias-tooltip-bg, #2c2c2e); color: #f7f7fa; font-size: 12px; font-weight: 500; line-height: 18px; box-shadow: var(--dsw-shadow-lv2, 0 4px 14px rgba(0,0,0,.22)); transition: opacity 120ms ease, transform 120ms ease; }',
       '.uV2eYG_add[data-cs-tooltip]:hover::after, .uV2eYG_add[data-cs-tooltip]:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }',
-      '[data-cs-upload-hover="1"] [role="tooltip"] { display: none !important; }',
+      '[data-cs-composer-tooltip-shield="1"] [role="tooltip"] { display: none !important; }',
+      '[role="tooltip"][data-cs-suppressed-tooltip="1"] { display: none !important; }',
       '@media (prefers-reduced-motion: reduce) { .cs-attach-btn { transition: none; } }',
       '@media (prefers-reduced-motion: reduce) { .uV2eYG_add[data-cs-tooltip]::after { transition: none; } }',
     ].join('\n')
@@ -653,41 +678,69 @@ window.__ModuleLoader__.load({
     function setComposerButtonTooltip(button, tooltip, ariaLabel) {
       if (!button) return
       if (button.hasAttribute('title')) button.removeAttribute('title')
-      if (button.dataset.csTooltip !== tooltip) button.dataset.csTooltip = tooltip
+      if (tooltip) {
+        if (button.dataset.csTooltip !== tooltip) button.dataset.csTooltip = tooltip
+      } else if (button.dataset.csTooltip !== undefined) {
+        delete button.dataset.csTooltip
+      }
       const label = ariaLabel || tooltip
-      if (button.getAttribute('aria-label') !== label) button.setAttribute('aria-label', label)
+      if (label && button.getAttribute('aria-label') !== label) button.setAttribute('aria-label', label)
     }
 
-    function isUploadButtonEvent(event) {
+    function composerTooltipButtonFromEvent(event) {
       const target = event && event.target
-      const btn = target && typeof target.closest === 'function' ? target.closest('.uV2eYG_add') : null
-      if (!btn || btn.classList.contains('cs-cmd-at-btn')) return null
-      return btn.dataset.csUploadButton === '1' ? btn : null
+      const btn = target && typeof target.closest === 'function'
+        ? target.closest('.uV2eYG_add[data-cs-upload-button="1"], .uV2eYG_add.cs-cmd-at-btn')
+        : null
+      if (!btn) return null
+      if (btn.dataset.csUploadButton === '1') return btn
+      return btn.dataset.csCommandButton === '1' || btn.classList.contains('cs-cmd-at-btn') ? btn : null
+    }
+
+    function isComposerTooltipButton(target) {
+      return !!(target && typeof target.closest === 'function'
+        && target.closest('.uV2eYG_add[data-cs-upload-button="1"], .uV2eYG_add.cs-cmd-at-btn'))
     }
 
     function installComposerTooltipShield() {
       if (document.__csComposerTooltipShield) return
       document.__csComposerTooltipShield = true
-      const showUploadHover = (event) => {
-        const btn = isUploadButtonEvent(event)
+      const showComposerTooltip = (event) => {
+        const btn = composerTooltipButtonFromEvent(event)
         if (!btn) return
-        document.documentElement.dataset.csUploadHover = '1'
+        document.documentElement.dataset.csComposerTooltipShield = '1'
         event.stopPropagation()
       }
-      const clearUploadHover = (event) => {
-        const btn = isUploadButtonEvent(event)
+      const clearComposerTooltip = (event) => {
+        const btn = composerTooltipButtonFromEvent(event)
         if (!btn) return
         const next = event.relatedTarget
-        if (next && btn.contains(next)) return
-        delete document.documentElement.dataset.csUploadHover
+        if (next && (btn.contains(next) || isComposerTooltipButton(next))) return
+        delete document.documentElement.dataset.csComposerTooltipShield
         event.stopPropagation()
       }
       for (const type of ['mouseover', 'pointerover', 'focusin']) {
-        document.addEventListener(type, showUploadHover, true)
+        document.addEventListener(type, showComposerTooltip, true)
       }
       for (const type of ['mouseout', 'pointerout', 'focusout']) {
-        document.addEventListener(type, clearUploadHover, true)
+        document.addEventListener(type, clearComposerTooltip, true)
       }
+    }
+
+    function suppressNativeCommandTooltips() {
+      for (const tooltip of document.querySelectorAll('[role="tooltip"]')) {
+        if (String(tooltip.textContent || '').trim() !== COMMAND_BUTTON_LABEL) continue
+        if (tooltip.dataset.csSuppressedTooltip !== '1') tooltip.dataset.csSuppressedTooltip = '1'
+        if (tooltip.getAttribute('aria-hidden') !== 'true') tooltip.setAttribute('aria-hidden', 'true')
+      }
+    }
+
+    function installNativeCommandTooltipSuppressor() {
+      if (document.__csNativeCommandTooltipSuppressor) return
+      document.__csNativeCommandTooltipSuppressor = true
+      suppressNativeCommandTooltips()
+      const observer = new MutationObserver(suppressNativeCommandTooltips)
+      observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true })
     }
 
     function syncUploadButton(addBtn) {
@@ -791,6 +844,7 @@ window.__ModuleLoader__.load({
         if (!addBtn) return
         injectAttachCss()
         installComposerTooltipShield()
+        installNativeCommandTooltipSuppressor()
         syncUploadButton(addBtn)
         // 旁边单开 @ 命令按钮(克隆原生加号按钮的结构与样式)
         let at = document.querySelector('.cs-cmd-at-btn')
