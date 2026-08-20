@@ -22,7 +22,7 @@
   name: '@crawshrimp/launcher'
   config:
       args: !!js |
-        ['--host', '127.0.0.1', '--port', String(process.env.CRAWSHRIMP_WEB_PORT || 3090)]
+        ['--host', '127.0.0.1', '--port', String(process.env.CRAWSHRIMP_WEB_PORT || 3090), '--no-open']
 
 - id: timer
   name: '@deepseek-ai/cordis-plugin-timer'
@@ -520,6 +520,12 @@
       writeEveryEvents: 200
       writeIntervalMs: 5000
 
+- id: session-reference
+  name: '@deepseek-ai/dsh-session-reference'
+
+- id: file-reference-local
+  name: '@deepseek-ai/dsh-file-reference-local'
+
 - id: session-stats
   name: '@deepseek-ai/dsh-session-stats'
 
@@ -550,6 +556,7 @@
   inject: ['webStartup']
   config:
       printUrl: false
+      openBrowser: !!js ctx.webStartup.openBrowser
       surfaceContext: true
       trustedHosts: !!js ctx.webStartup.trustedHosts
 
@@ -583,6 +590,9 @@
 - id: ui-layout
   name: '@deepseek-ai/dsh-client-ui-layout'
 
+- id: ui-renderer
+  name: '@deepseek-ai/dsh-client-ui-renderer'
+
 - id: ui-sidebar
   name: '@deepseek-ai/dsh-client-ui-sidebar'
 
@@ -600,6 +610,13 @@
 
 - id: ui-conversation
   name: '@deepseek-ai/dsh-client-ui-conversation'
+
+- id: ui-brand-official
+  name: '@deepseek-ai/dsh-client-ui-brand-official'
+  disabled: true
+
+- id: ui-attachment
+  name: '@deepseek-ai/dsh-client-ui-attachment'
 
 - id: ui-tool
   name: '@deepseek-ai/dsh-client-ui-tool'
@@ -627,6 +644,9 @@
 
 - id: ui-subagent
   name: '@deepseek-ai/dsh-client-ui-subagent'
+
+- id: ui-reference
+  name: '@deepseek-ai/dsh-client-ui-reference'
 
 - id: ui-jobs
   name: '@deepseek-ai/dsh-client-ui-jobs'

@@ -82,6 +82,97 @@ test('DSH attachment bridge sends image content blocks through session prompt', 
   assert.match(worker, /MODEL_IMAGE_MEDIA_TYPES\.has\(mediaType\)/)
 })
 
+test('DSH Crawshrimp brand slots replace the official DeepSeek Harness wordmark', () => {
+  const slots = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-slots/lib/client.js'), 'utf8')
+  const slotsPackage = JSON.parse(readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-slots/package.json'), 'utf8'))
+  const webCordis = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/web-cordis.yml'), 'utf8')
+  const brandOfficialBlock = webCordis.split('- id: ui-brand-official', 2)[1]?.split('\n- id:', 1)[0] || ''
+
+  assert.ok(slotsPackage.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-sidebar'))
+  assert.ok(slotsPackage.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-conversation'))
+  assert.match(slots, /exports\.inject\s*=\s*\[[^\]]*['"]slots['"]/)
+  assert.match(slots, /CrawshrimpBrandMark/)
+  assert.match(slots, /CrawshrimpBrandName/)
+  assert.match(slots, /normalizeDocumentTitle/)
+  assert.match(slots, /setInterval\(normalizeDocumentTitle,\s*1000\)/)
+  assert.match(slots, /ctx\.slots\.inject\(['"]sidebar\.brand\.mark['"]/)
+  assert.match(slots, /ctx\.slots\.inject\(['"]sidebar\.brand\.name['"]/)
+  assert.match(slots, /ctx\.slots\.inject\(['"]conversation\.hero\.brand\.mark['"]/)
+  assert.match(slots, /ctx\.slots\.register\(\{\s*name:\s*['"]sidebar\.brand\.mark['"]/)
+  assert.match(slots, /ctx\.slots\.register\(\{\s*name:\s*['"]sidebar\.brand\.name['"]/)
+  assert.match(slots, /ctx\.slots\.register\(\{\s*name:\s*['"]conversation\.hero\.brand\.mark['"]/)
+  assert.match(slots, /抓虾智能体/)
+  assert.doesNotMatch(slots, /hHd-Xa_brand::after/)
+  assert.doesNotMatch(slots, /抓虾 Harness 智能体/)
+  assert.match(brandOfficialBlock, /name:\s*'@deepseek-ai\/dsh-client-ui-brand-official'/)
+  assert.match(brandOfficialBlock, /disabled:\s*true/)
+})
+
+test('DSH rc.8 dependency graph keeps launcher and runtime on one cmdline version', () => {
+  const harnessPackage = JSON.parse(readFileSync(resolve(appRoot, '../integrations/deepseek-harness/package.json'), 'utf8'))
+  const launcherPackage = JSON.parse(readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-launcher/package.json'), 'utf8'))
+  const lock = JSON.parse(readFileSync(resolve(appRoot, '../integrations/deepseek-harness/package-lock.json'), 'utf8'))
+  const expected = '0.1.0-rc.8'
+  const requiredWebPackages = [
+    '@deepseek-ai/dsh-client-ui-attachment',
+    '@deepseek-ai/dsh-client-ui-brand-official',
+    '@deepseek-ai/dsh-client-ui-reference',
+    '@deepseek-ai/dsh-client-ui-renderer',
+    '@deepseek-ai/dsh-file-reference-local',
+    '@deepseek-ai/dsh-session-reference',
+  ]
+
+  for (const [name, version] of Object.entries(harnessPackage.dependencies)) {
+    if (name.startsWith('@deepseek-ai/')) assert.equal(version, expected, `${name} must stay on ${expected}`)
+  }
+  for (const name of requiredWebPackages) {
+    assert.equal(harnessPackage.dependencies[name], expected, `${name} must be a direct runtime dependency`)
+    assert.equal(lock.packages[''].dependencies[name], expected, `${name} must be pinned in package-lock root`)
+  }
+  assert.equal(launcherPackage.dependencies['@deepseek-ai/dsh-cmdline'], expected)
+  assert.equal(lock.packages['crawshrimp-launcher'].dependencies['@deepseek-ai/dsh-cmdline'], expected)
+
+  const cmdlineEntries = Object.entries(lock.packages)
+    .filter(([key]) => key.includes('@deepseek-ai/dsh-cmdline'))
+    .map(([key, value]) => [key, value.version])
+  assert.deepEqual(cmdlineEntries, [['node_modules/@deepseek-ai/dsh-cmdline', expected]])
+})
+
+test('DSH web cordis registers Crawshrimp DeepSeek provider without exposing the native route', () => {
+  const webCordis = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/web-cordis.yml'), 'utf8')
+  const launcherBlock = webCordis.split('- id: launcher', 2)[1].split('\n- id:', 1)[0]
+  const webRuntimeBlock = webCordis.split('- id: web-runtime', 2)[1].split('\n- id:', 1)[0]
+  const defaultBlock = webCordis.split('- id: agent-default-model', 2)[1].split('\n- id:', 1)[0]
+  const piAiBlock = webCordis.split('- id: llm-pi-ai', 2)[1].split('\n- id:', 1)[0]
+  const nativeBlock = webCordis.split('- id: llm-deepseek', 2)[1].split('\n- id:', 1)[0]
+  const activeWebRows = [
+    ['session-reference', '@deepseek-ai/dsh-session-reference'],
+    ['file-reference-local', '@deepseek-ai/dsh-file-reference-local'],
+    ['ui-renderer', '@deepseek-ai/dsh-client-ui-renderer'],
+    ['ui-attachment', '@deepseek-ai/dsh-client-ui-attachment'],
+    ['ui-reference', '@deepseek-ai/dsh-client-ui-reference'],
+  ]
+  const brandOfficialBlock = webCordis.split('- id: ui-brand-official', 2)[1]?.split('\n- id:', 1)[0] || ''
+
+  assert.match(launcherBlock, /--no-open/)
+  assert.match(webRuntimeBlock, /openBrowser:\s*!!js ctx\.webStartup\.openBrowser/)
+  assert.match(defaultBlock, /provider:\s*crawshrimp-overseas-openai/)
+  assert.match(defaultBlock, /model:\s*gpt-5\.6-terra/)
+  assert.match(piAiBlock, /crawshrimp-deepseek-official:/)
+  assert.match(piAiBlock, /apiKeyEnv:\s*CRAWSHRIMP_DEEPSEEK_API_KEY/)
+  assert.match(piAiBlock, /baseURL:[\s\S]*CRAWSHRIMP_DEEPSEEK_BASE_URL[\s\S]*https:\/\/api\.deepseek\.com/)
+  assert.match(piAiBlock, /id:\s*deepseek-v4-flash/)
+  assert.match(nativeBlock, /disabled:\s*true/)
+
+  for (const [id, packageName] of activeWebRows) {
+    const block = webCordis.split(`- id: ${id}`, 2)[1]?.split('\n- id:', 1)[0] || ''
+    assert.match(block, new RegExp(`name:\\s*'${packageName.replaceAll('/', '\\/')}'`))
+    assert.doesNotMatch(block, /disabled:\s*true/)
+  }
+  assert.match(brandOfficialBlock, /name:\s*'@deepseek-ai\/dsh-client-ui-brand-official'/)
+  assert.match(brandOfficialBlock, /disabled:\s*true/)
+})
+
 test('development bridge never accepts API credentials from URL query', () => {
   const bridge = readFileSync(resolve(appRoot, 'src/renderer/utils/devCsBridge.js'), 'utf8')
   const preload = readFileSync(resolve(appRoot, 'src/preload.js'), 'utf8')

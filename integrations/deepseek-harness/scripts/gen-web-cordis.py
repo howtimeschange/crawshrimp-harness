@@ -256,6 +256,7 @@ DISABLE_IDS = [
     "tool-subagent", "tool-subagent-fork", "tool-subagent-control",
     "tool-subagent-list-agents", "tool-subagent-report",
     "session-telemetry-otel", "llm-deepseek", "web-search-deepseek", "web", "agent-presets",
+    "ui-brand-official",
     # goal 命令族恢复(goal/tool-goal/command-goal);goal-round-driver 保持禁用
     # (自动跨轮续跑,不受 worker 轮次预算约束,风险面大)
     "goal-round-driver",
@@ -313,7 +314,7 @@ def main() -> int:
     # 抓虾产品桥(方案 §12.7):产品层审批接入 DSH 原生审批交互
     merged["crawshrimp-product-bridge"] = {"id": "crawshrimp-product-bridge", "name": "crawshrimp-product-bridge",
                                            "disabled": None, "config_lines": []}
-    launcher_args = "['--host', '127.0.0.1', '--port', String(process.env.CRAWSHRIMP_WEB_PORT || 3090)]"
+    launcher_args = "['--host', '127.0.0.1', '--port', String(process.env.CRAWSHRIMP_WEB_PORT || 3090), '--no-open']"
     merged["launcher"] = {"id": "launcher", "name": "@crawshrimp/launcher",
                           "disabled": None,
                           "config_lines": _cfg_from_text(f"config:\n  args: !!js |\n    {launcher_args}\n")}
@@ -326,6 +327,7 @@ def main() -> int:
                              "inject": ["webStartup"],
                              "config_lines": _cfg_from_text("""config:
   printUrl: false
+  openBrowser: !!js ctx.webStartup.openBrowser
   surfaceContext: true
   trustedHosts: !!js ctx.webStartup.trustedHosts
 """)}

@@ -9,6 +9,7 @@ import {
   LLM_MODELS,
   buildLlmSettingsPatch,
   clearWrittenLlmSettings,
+  isDeepSeekConfigured,
   isLlmConfigured,
 } from './llmSettings.mjs'
 
@@ -62,6 +63,15 @@ test('DeepSeek official key is posted as its own field and cleared after write',
   const cfg = { [DEEPSEEK_API_KEY_FIELD]: 'sk-deepseek-unit' }
   clearWrittenLlmSettings(cfg, { [DEEPSEEK_API_KEY_FIELD]: 'sk-deepseek-unit' })
   assert.equal(cfg[DEEPSEEK_API_KEY_FIELD], LLM_MASKED_CREDENTIAL_VALUE)
+  assert.equal(cfg['ai.llm.deepseek_configured'], true)
+  assert.equal(isDeepSeekConfigured(cfg), true)
+})
+
+test('DeepSeek official configured badge uses backend boolean without receiving the key', () => {
+  assert.equal(isDeepSeekConfigured({ 'ai.llm.deepseek_configured': true }), true)
+  assert.equal(isDeepSeekConfigured({ 'ai.llm.deepseek_configured': false }), false)
+  assert.equal(isDeepSeekConfigured({ [DEEPSEEK_API_KEY_FIELD]: 'sk-deepseek-unit' }), true)
+  assert.equal(isDeepSeekConfigured({ [DEEPSEEK_API_KEY_FIELD]: LLM_MASKED_CREDENTIAL_VALUE }), false)
 })
 
 test('successful LLM key writes are cleared from renderer memory', () => {

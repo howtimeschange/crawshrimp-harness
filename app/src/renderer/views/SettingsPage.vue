@@ -896,13 +896,9 @@ import {
   LLM_PANEL_FIELDS,
   buildLlmSettingsPatch,
   clearWrittenLlmSettings,
+  isDeepSeekConfigured,
   isLlmConfigured,
 } from '../utils/llmSettings.mjs'
-
-function isDeepSeekConfigured(localCfg = {}) {
-  const value = String(localCfg?.[DEEPSEEK_API_KEY_FIELD] ?? '').trim()
-  return Boolean(value && !value.includes(LLM_MASKED_CREDENTIAL_VALUE))
-}
 
 const OFFICIAL_RELEASE_URL = 'https://github.com/howtimeschange/crawshrimp-harness/releases/latest'
 
@@ -1225,6 +1221,7 @@ function normalizedSettings(raw) {
     if (!flat[key]) flat[key] = value
   }
   flat[LLM_API_KEY_FIELD] = isLlmConfigured(flat) ? LLM_MASKED_CREDENTIAL_VALUE : ''
+  flat[DEEPSEEK_API_KEY_FIELD] = isDeepSeekConfigured(flat) ? LLM_MASKED_CREDENTIAL_VALUE : ''
   // Provider connection fields are write-only. Never retain a value returned
   // by an older backend, and never synthesize defaults that could overwrite it.
   for (const key of AI_VIDEO_WRITE_ONLY_FIELDS) flat[key] = ''
@@ -1273,6 +1270,7 @@ function selectInputText(event) {
 function isFieldConfigured(key) {
   if (aiVideoKeyFields.includes(key)) return isAiVideoCredentialConfigured(cfg.value, key)
   if (key === LLM_API_KEY_FIELD) return isLlmConfigured(cfg.value)
+  if (key === DEEPSEEK_API_KEY_FIELD) return isDeepSeekConfigured(cfg.value)
   return String(cfg.value[key] || '').trim().length > 0
 }
 

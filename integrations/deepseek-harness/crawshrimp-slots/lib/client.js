@@ -2,15 +2,16 @@
 // 职责(方案 §12.7 的 crawshrimp-slots + 去 DeepSeek 品牌化):
 // 1. 用抓虾品牌 token 覆盖 DSH 的 alias 主题层(亮/暗双套),DSH UI 与抓虾 App 同色;
 // 2. 跟随 shell 主题:读取 URL ?theme= 并监听 postMessage({__crawshrimp:'theme'});
-// 3. 去 DeepSeek 品牌:替换 wordmark 为「🦐 抓虾智能体」、隐藏 DSH 侧边栏设置入口
+// 3. 去 DeepSeek 品牌:注册抓虾 brand slots、隐藏 DSH 侧边栏设置入口
 //    (模型/外观由抓虾原生 UI 负责),浏览器标题改为抓虾。
-// 注:下面的类名 hash(hHd-Xa_*)由锁版 @deepseek-ai/*@0.1.0-rc.6 构建产物固定;
+// 注:下面的类名 hash(hHd-Xa_*)由锁版 @deepseek-ai/*@0.1.0-rc.8 构建产物固定;
 // 升级 DSH 版本时需同步核对。
 window.__ModuleLoader__.load({
   id: 'crawshrimp-slots',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports
+    let react = require('react')
 
     // 抓虾主题色(app/src/renderer/App.vue 的 :root 变量)→ DSH alias tokens
     const CRAWSHRIMP_TOKENS = {
@@ -92,15 +93,49 @@ window.__ModuleLoader__.load({
     // deepseek-700 已废弃(700-delete),也覆盖,防引用
     CRAWSHRIMP_TOKENS['--dsw-static-deepseek-700-delete'] = { light: '#D94300', dark: '#F05615' }
 
+    const CRAWSHRIMP_BRAND_NAME = '抓虾智能体'
+
+    function CrawshrimpBrandMark({ size = 24, className } = {}) {
+      const px = Number(size) || 24
+      return react.createElement('span', {
+        className: ['cs-brand-mark', className].filter(Boolean).join(' '),
+        'aria-hidden': 'true',
+        style: {
+          width: `${px}px`,
+          height: `${px}px`,
+          fontSize: `${Math.max(16, Math.round(px * 0.76))}px`,
+          lineHeight: `${px}px`,
+        },
+      }, '🦐')
+    }
+
+    function CrawshrimpBrandName() {
+      return react.createElement('span', { className: 'cs-brand-name' }, CRAWSHRIMP_BRAND_NAME)
+    }
+
+    function registerCrawshrimpBrandSlots(ctx) {
+      if (!ctx.slots?.inject || !ctx.slots?.register) return
+      ctx.slots.inject('sidebar.brand.mark', () => ctx.slots.inject('sidebar.brand.name', () => ctx.slots.inject('conversation.hero.brand.mark', function* () {
+        yield ctx.slots.register({ name: 'sidebar.brand.mark' }, CrawshrimpBrandMark)
+        yield ctx.slots.register({ name: 'sidebar.brand.name' }, CrawshrimpBrandName)
+        yield ctx.slots.register({ name: 'conversation.hero.brand.mark' }, CrawshrimpBrandMark)
+      })))
+    }
+
     // 去品牌 + 抓虾化样式
     const BRAND_CSS = [
-      // 1) 替换 DeepSeek wordmark(182:24 的 "DeepSeek" 文字 svg)为抓虾品牌
+      // 1) 抓虾 brand slots:左上角只保留抓虾 logo +「抓虾智能体」
       'svg[viewBox="0 0 182 24"] { display: none !important; }',
-      '.hHd-Xa_brand::after {',
-      '  content: "🦐 抓虾智能体";',
+      '.cs-brand-mark {',
+      '  display: inline-flex;',
+      '  align-items: center;',
+      '  justify-content: center;',
+      '  flex: none;',
+      '}',
+      '.cs-brand-name {',
       '  font-size: 17px;',
       '  font-weight: 750;',
-      '  letter-spacing: 0.01em;',
+      '  letter-spacing: 0;',
       '  color: var(--dsw-alias-label-primary);',
       '  white-space: nowrap;',
       '  overflow: hidden;',
@@ -119,7 +154,7 @@ window.__ModuleLoader__.load({
       // 5) 新会话空状态 hero:去 DeepSeek 鱼 logo 与文案,替换为抓虾
       'svg[viewBox="0 0 23.16 17.04"] { display: none !important; }',
       '.pXSMma_headlineText { font-size: 0 !important; }',
-      '.pXSMma_headlineText::before { content: "🦐 抓虾 Harness 智能体"; font-size: 24px; font-weight: 750; color: var(--dsw-alias-label-primary); }',
+      '.pXSMma_headlineText::before { content: "抓虾智能体"; font-size: 24px; font-weight: 750; color: var(--dsw-alias-label-primary); }',
       '.pXSMma_previewBadge { display: none !important; }',
       // 6) 抓虾菜单注入侧边栏(主菜单:新会话下/工作区上;底部菜单:云端审批/设置)
       //    按 DESIGN.md 规范:13.5px 字号、4px 网格间距、完整 hover/active/focus 状态
@@ -153,6 +188,14 @@ window.__ModuleLoader__.load({
         tag.dataset.pluginCss = tagId
         tag.textContent = BRAND_CSS
         document.head.appendChild(tag)
+      }
+    }
+
+    function normalizeDocumentTitle() {
+      try {
+        if (document.title !== CRAWSHRIMP_BRAND_NAME) document.title = CRAWSHRIMP_BRAND_NAME
+      } catch (error) {
+        // 忽略
       }
     }
 
@@ -667,14 +710,12 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
+      registerCrawshrimpBrandSlots(ctx)
       ctx.theme.overrideTokens('crawshrimp', CRAWSHRIMP_TOKENS)
       injectBrandCss()
-      // 浏览器标题:去 DeepSeek(DocumentTitle 组件以 title 原文为后缀拼接)
-      try {
-        document.title = '抓虾智能体'
-      } catch (error) {
-        // 忽略
-      }
+      // 浏览器标题:去 DeepSeek(DocumentTitle 组件会在会话切换后重新拼后缀,需持续兜底)
+      normalizeDocumentTitle()
+      setInterval(normalizeDocumentTitle, 1000)
       const adopt = (theme) => {
         if (theme !== 'light' && theme !== 'dark') return
         try {
@@ -777,8 +818,8 @@ window.__ModuleLoader__.load({
     }
 
     exports.apply = apply
-    // kernel 服务依赖声明:apply 内访问 ctx.theme/ctx.workspaces/ctx.sessions 必须显式 inject
-    exports.inject = ['theme', 'workspaces', 'sessions']
+    // kernel 服务依赖声明:apply 内访问 ctx.theme/ctx.workspaces/ctx.sessions/ctx.slots 必须显式 inject
+    exports.inject = ['theme', 'workspaces', 'sessions', 'slots']
     return module.exports
   },
 })

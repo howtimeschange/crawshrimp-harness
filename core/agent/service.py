@@ -1075,12 +1075,16 @@ class AgentService:
         llm = (cfg.get("ai") or {}).get("llm") or {}
         import os as _os
         web_port = getattr(self, "web_port", 0) or int(_os.environ.get("CRAWSHRIMP_WEB_PORT", "0") or 0)
+        gateway_key_configured = bool(os.environ.get("CRAWSHRIMP_LLM_API_KEY") or llm.get("api_key"))
+        deepseek_key_configured = bool(os.environ.get("CRAWSHRIMP_DEEPSEEK_API_KEY") or llm.get("deepseek_api_key"))
         return {
             "enabled": _os.environ.get("CRAWSHRIMP_AGENT_ENABLED", "1") not in ("0", "false", "no"),
             "state": self.runtime_state,
             "generation": self.generation,
             "model": llm.get("default_model") or "gpt-5.6-terra",
-            "api_key_configured": bool(os.environ.get("CRAWSHRIMP_LLM_API_KEY") or llm.get("api_key")),
+            "api_key_configured": gateway_key_configured or deepseek_key_configured,
+            "gateway_api_key_configured": gateway_key_configured,
+            "deepseek_api_key_configured": deepseek_key_configured,
             "active_run": ((self.active_run or next(iter(self.active_runs_by_runtime.values()), {}))
                            or {}).get("run_id"),
             "queue_depth": self.queue.qsize(),

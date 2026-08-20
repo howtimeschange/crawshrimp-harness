@@ -50,6 +50,12 @@ export function isLlmConfigured(cfg = {}) {
   return Boolean(value && !value.includes(LLM_MASKED_CREDENTIAL_VALUE))
 }
 
+export function isDeepSeekConfigured(cfg = {}) {
+  if (typeof cfg?.['ai.llm.deepseek_configured'] === 'boolean') return cfg['ai.llm.deepseek_configured']
+  const value = String(cfg?.[DEEPSEEK_API_KEY_FIELD] ?? '').trim()
+  return Boolean(value && !value.includes(LLM_MASKED_CREDENTIAL_VALUE))
+}
+
 export function buildLlmSettingsPatch(cfg = {}) {
   return LLM_PANEL_FIELDS.reduce((patch, key) => {
     const value = String(cfg?.[key] ?? '').trim()
@@ -67,6 +73,7 @@ export function clearWrittenLlmSettings(cfg = {}, patch = {}) {
   }
   if (Object.prototype.hasOwnProperty.call(patch, DEEPSEEK_API_KEY_FIELD)) {
     cfg[DEEPSEEK_API_KEY_FIELD] = LLM_MASKED_CREDENTIAL_VALUE
+    cfg['ai.llm.deepseek_configured'] = true
   }
   return cfg
 }
