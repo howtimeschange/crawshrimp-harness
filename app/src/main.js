@@ -26,6 +26,7 @@ const {
   signAiVideoCapability,
 } = require('./backendApi')
 const { collectCrawshrimpDataDirCandidates } = require('./dataDirRecovery')
+const { getBrowserExecutableCandidates } = require('./browserExecutablePaths')
 const {
   readSavedAiVideoInputDirectory,
   rememberAiVideoInputDirectory,
@@ -1276,25 +1277,11 @@ async function waitForManagedBackendStop(proc, timeoutMs = BACKEND_STOP_GRACE_MS
 
 // ── Chrome / CDP ──────────────────────────────────────────────────────────────
 
-const CHROME_PATHS_WIN = [
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe` : '',
-  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-].filter(Boolean)
-
-const CHROME_PATHS_MAC = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  '/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
-]
-
 let managedChromeProcess = null
 let lastChromeDiagnostic = { ok: false, kind: 'unknown', message: '尚未检测 Chrome CDP' }
 
 function getChromeCandidates() {
-  if (process.platform === 'win32') return CHROME_PATHS_WIN
-  return CHROME_PATHS_MAC
+  return getBrowserExecutableCandidates()
 }
 
 function getManagedChromeProfileDir() {

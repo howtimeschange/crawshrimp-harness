@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
+import os
 import threading
 import time
 import uuid
@@ -15,7 +16,28 @@ import pytest
 
 from core.agent import mcp_gateway
 from core.agent.service import AgentService, _cleanup_orphan_runtimes, _pick_free_port, _reserve_free_port
-from core.agent.worker import AgentWorker, WorkerProtocolError
+from core.agent.worker import AgentWorker, WorkerProtocolError, resolve_node_executable
+
+
+def test_development_node_runtime_prefers_real_electron_executable(tmp_path, monkeypatch):
+    app_root = tmp_path / "app"
+    electron_root = app_root / "node_modules" / "electron"
+    electron_dist = electron_root / "dist"
+    electron_dist.mkdir(parents=True)
+    packaged_executable = electron_dist / ("electron.exe" if os.name == "nt" else "electron")
+    packaged_executable.write_text("", encoding="utf-8")
+    (electron_root / "path.txt").write_text(packaged_executable.name + "\n", encoding="utf-8")
+
+    shim_dir = app_root / "node_modules" / ".bin"
+    shim_dir.mkdir(parents=True)
+    (shim_dir / ("electron.cmd" if os.name == "nt" else "electron")).write_text("", encoding="utf-8")
+
+    monkeypatch.delenv("CRAWSHRIMP_NODE_EXECUTABLE", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_ELECTRON_NODE", raising=False)
+    monkeypatch.setattr("core.agent.worker._app_root", lambda: app_root)
+    monkeypatch.setattr("core.agent.worker.shutil.which", lambda _name: None)
+
+    assert resolve_node_executable() == str(packaged_executable)
 
 
 def test_native_approval_is_agent_service_method():

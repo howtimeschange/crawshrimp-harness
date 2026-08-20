@@ -11,6 +11,7 @@ APP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ROOT_DIR="$(cd "${APP_DIR}/.." && pwd)"
 OUT_DIR="${APP_DIR}/python-dist"
 REQUIREMENTS_FILE="${ROOT_DIR}/core/requirements.txt"
+WINDOWS_REQUIREMENTS_FILE="${ROOT_DIR}/core/requirements-win.txt"
 PY_MAJOR="${PY_VERSION%%.*}"
 PY_MINOR_REST="${PY_VERSION#*.}"
 PY_MINOR="${PY_MINOR_REST%%.*}"
@@ -128,7 +129,62 @@ has_core_requirements() {
     [ -d "${site_packages}/tzdata" ] &&
     [ -d "${site_packages}/PIL" ] &&
     [ -d "${site_packages}/fitz" ] &&
-    [ -d "${site_packages}/cryptography" ]
+    [ -d "${site_packages}/cryptography" ] &&
+    [ -d "${site_packages}/mcp" ] || return 1
+
+  if [ "$key" = "win-x64" ]; then
+    [ -d "${site_packages}/colorama" ] &&
+      [ -f "${site_packages}/win32/lib/pywintypes.py" ] &&
+      [ -f "${site_packages}/pywin32_system32/pywintypes${PY_MAJOR}${PY_MINOR}.dll" ] &&
+      [ -f "${site_packages}/pywin32.pth" ]
+  fi
+}
+
+requirements_cache_matches() {
+  local key="$1"
+  local dest="$2"
+
+  [ -f "${dest}/.crawshrimp-requirements.txt" ] &&
+    cmp -s "$REQUIREMENTS_FILE" "${dest}/.crawshrimp-requirements.txt" || return 1
+
+  if [ "$key" = "win-x64" ]; then
+    [ -f "${dest}/.crawshrimp-requirements-win.txt" ] &&
+      cmp -s "$WINDOWS_REQUIREMENTS_FILE" "${dest}/.crawshrimp-requirements-win.txt"
+  fi
+}
+
+record_requirements_cache() {
+  local key="$1"
+  local dest="$2"
+
+  cp "$REQUIREMENTS_FILE" "${dest}/.crawshrimp-requirements.txt"
+  if [ "$key" = "win-x64" ]; then
+    cp "$WINDOWS_REQUIREMENTS_FILE" "${dest}/.crawshrimp-requirements-win.txt"
+  fi
+}
+
+verify_target_imports() {
+  local key="$1"
+  local dest="$2"
+  local py_bin
+
+  if [ "$key" != "win-x64" ]; then
+    return 0
+  fi
+
+  py_bin="$(target_python "$key" "$dest")" || return 1
+  if ! "$py_bin" -V >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "[verify] Importing Windows backend dependencies in $key ..."
+  (
+    cd "$ROOT_DIR"
+    PYTHONNOUSERSITE=1 "$py_bin" -c \
+      'import os, tempfile; os.environ["CRAWSHRIMP_DATA"] = tempfile.mkdtemp(prefix="crawshrimp-build-import-"); import pywintypes; from mcp.server.mcpserver import MCPServer; import core.api_server'
+    PYTHONNOUSERSITE=1 "$py_bin" -m pip check
+  )
+  echo "[ok] $key backend imports verified"
 }
 
 target_pip_platform() {
@@ -154,6 +210,11 @@ install_requirements_cross() {
   local host_py
   local pip_platform
   local site_packages
+  local requirements_args=(-r "$REQUIREMENTS_FILE")
+
+  if [ "$key" = "win-x64" ]; then
+    requirements_args+=(-r "$WINDOWS_REQUIREMENTS_FILE")
+  fi
 
   host_py="$(host_python)" || {
     echo "[error] Host Python with pip not found; cannot cross-install $key dependencies"
@@ -177,14 +238,14 @@ install_requirements_cross() {
     --implementation cp \
     --abi "$PY_ABI" \
     --only-binary=:all: \
-    -r "$REQUIREMENTS_FILE"
+    "${requirements_args[@]}"
 }
 
 install_requirements() {
   local key="$1"
   local dest="$2"
   local py_bin
-  local marker
+  local requirements_args=(-r "$REQUIREMENTS_FILE")
 
   py_bin="$(target_python "$key" "$dest")" || {
     echo "[error] Unsupported Python target for deps: $key"
@@ -196,15 +257,26 @@ install_requirements() {
     exit 1
   fi
 
-  marker="${dest}/.crawshrimp-requirements.txt"
-  if [ -f "$marker" ] && cmp -s "$REQUIREMENTS_FILE" "$marker" && has_core_requirements "$key" "$dest"; then
-    echo "[skip] $key requirements already installed"
-    return
+  if [ "$key" = "win-x64" ]; then
+    if [ ! -f "$WINDOWS_REQUIREMENTS_FILE" ]; then
+      echo "[error] Windows requirements not found: $WINDOWS_REQUIREMENTS_FILE"
+      exit 1
+    fi
+    requirements_args+=(-r "$WINDOWS_REQUIREMENTS_FILE")
+  fi
+
+  if requirements_cache_matches "$key" "$dest" && has_core_requirements "$key" "$dest"; then
+    if verify_target_imports "$key" "$dest"; then
+      echo "[skip] $key requirements already installed"
+      return
+    fi
+    echo "[warn] $key cached dependency import failed; reinstalling" >&2
   fi
 
   if ! "$py_bin" -V >/dev/null 2>&1; then
     install_requirements_cross "$key" "$dest"
-    cp "$REQUIREMENTS_FILE" "$marker"
+    verify_target_imports "$key" "$dest"
+    record_requirements_cache "$key" "$dest"
     echo "[ok] $key requirements installed"
     return
   fi
@@ -216,9 +288,10 @@ install_requirements() {
   PYTHONNOUSERSITE=1 "$py_bin" -m pip install \
     --disable-pip-version-check \
     --no-warn-script-location \
-    -r "$REQUIREMENTS_FILE"
+    "${requirements_args[@]}"
 
-  cp "$REQUIREMENTS_FILE" "$marker"
+  verify_target_imports "$key" "$dest"
+  record_requirements_cache "$key" "$dest"
   echo "[ok] $key requirements installed"
 }
 

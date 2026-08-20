@@ -1,0 +1,3 @@
+# Windows-only runtime dependencies that must also work during cross-installation.
+pywin32>=311
+colorama>=0.4.6

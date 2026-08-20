@@ -15,12 +15,22 @@ import { createHash } from 'node:crypto'
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  getRequiredNativeRuntimePackages,
+  resolveElectronExecutable,
+  shouldSkipBootCheck,
+  stageTargetKey,
+} from './stage-runtime-platform.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const sourceRoot = resolve(here, '..')
 const repoRoot = resolve(sourceRoot, '../..')
 const appRoot = join(repoRoot, 'app')
 const stageRoot = join(repoRoot, 'build-staging', 'deepseek-harness')
+const stageTarget = { platform: process.platform, arch: process.arch }
+const stageTargetId = stageTargetKey(stageTarget)
+const runtimeTargetMarkerName = '.crawshrimp-runtime-target.json'
+const runtimeTargetMarkerFile = join(stageRoot, runtimeTargetMarkerName)
 
 const STAGE_FILES = ['spike.cordis.yml', 'web-cordis.yml']
 const STAGE_PRUNE_VERSION = 'runtime-node-modules-prune-v1'
@@ -39,6 +49,7 @@ const PRUNABLE_NODE_MODULE_FILE_PATTERNS = [
 ]
 
 const REQUIRED_STAGE_FILES = [
+  runtimeTargetMarkerName,
   'package.json',
   'node_modules/@deepseek-ai/dsh-sdk-jsonrpc-demo/lib/bin.js',
   'node_modules/@deepseek-ai/dsh-agent-spine-demo/package.json',
@@ -63,7 +74,7 @@ const REQUIRED_STAGE_FILES = [
 
 const args = process.argv.slice(2)
 const force = args.includes('--force')
-const skipBootCheck = args.includes('--skip-boot-check') || (process.platform === 'win32' && process.env.CI === 'true')
+const skipBootCheck = shouldSkipBootCheck({ args })
 
 function fail(message) {
   console.error(`[stage-runtime] FAILED: ${message}`)
@@ -129,10 +140,37 @@ function pruneRuntimeNodeModules(root) {
   console.log(`[stage-runtime] pruned non-runtime node_modules files: ${removed.files} files, ${removed.dirs} dirs`)
 }
 
+function hasNativeArtifact(packageRoot, spec) {
+  if (!existsSync(packageRoot)) return false
+  const pending = [packageRoot]
+  while (pending.length) {
+    const current = pending.pop()
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const target = join(current, entry.name)
+      if (entry.isDirectory()) {
+        pending.push(target)
+      } else if (entry.isFile()) {
+        if (spec.artifactName && entry.name === spec.artifactName) return true
+        if (spec.artifactExtension && entry.name.endsWith(spec.artifactExtension)) return true
+      }
+    }
+  }
+  return false
+}
+
+function assertNativeRuntimePackages() {
+  for (const spec of getRequiredNativeRuntimePackages(stageTarget)) {
+    const packageRoot = join(stageRoot, 'node_modules', ...spec.packagePath.split('/'))
+    if (!hasNativeArtifact(packageRoot, spec)) {
+      fail(`staging ${stageTargetId} missing native runtime package/artifact: ${spec.packagePath}`)
+    }
+  }
+}
+
 const sourceAssetsHash = ['crawshrimp-launcher', 'crawshrimp-slots', 'crawshrimp-product-bridge', 'worker', 'skills', 'web-cordis.yml']
   .map((p) => hashTree(join(sourceRoot, p)))
-  .join(':') + `:${hashOf(fileURLToPath(import.meta.url))}:${STAGE_PRUNE_VERSION}`
-const lockHash = hashOf(join(sourceRoot, 'package-lock.json')) + '|' + sourceAssetsHash
+  .join(':') + `:${hashOf(fileURLToPath(import.meta.url))}:${hashOf(join(here, 'stage-runtime-platform.mjs'))}:${STAGE_PRUNE_VERSION}`
+const lockHash = hashOf(join(sourceRoot, 'package-lock.json')) + '|' + sourceAssetsHash + '|target:' + stageTargetId
 const markerFile = join(stageRoot, '.staged-lock-hash')
 const upToDate = !force && existsSync(markerFile) && readFileSync(markerFile, 'utf8').trim() === lockHash
 
@@ -171,6 +209,7 @@ if (!upToDate) {
     if (!existsSync(join(cliDest, 'tmall-cli'))) fail('CLI 技能包本体拷贝不完整')
   }
   pruneRuntimeNodeModules(join(stageRoot, 'node_modules'))
+  writeFileSync(runtimeTargetMarkerFile, JSON.stringify(stageTarget, null, 2) + '\n')
   writeFileSync(markerFile, `${lockHash}\n`)
   console.log('[stage-runtime] staging complete')
 } else {
@@ -180,6 +219,7 @@ if (!upToDate) {
 for (const rel of REQUIRED_STAGE_FILES) {
   if (!existsSync(join(stageRoot, rel))) fail(`staging missing required file: ${rel}`)
 }
+assertNativeRuntimePackages()
 
 // 禁止能力族校验(方案 §6.2):npm 传递依赖会把禁用包装进闭包,
 // 安全保证由 web-cordis.yml 的 disabled 行提供(loader 不 import 禁用行代码)。
@@ -217,18 +257,14 @@ const BANNED_PACKAGES = [
 }
 
 if (skipBootCheck) {
-  const reason = args.includes('--skip-boot-check') ? 'flag' : 'windows-ci'
-  console.log(`[stage-runtime] boot check skipped (${reason})`)
+  console.log('[stage-runtime] boot check skipped (flag)')
 } else {
   bootCheck()
 }
 
 function bootCheck() {
-  const electronBin = join(appRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'electron.cmd' : 'electron')
-  if (!existsSync(electronBin)) {
-    console.warn('[stage-runtime] WARN: app electron 未安装,跳过 boot check(打包机请先 npm install)')
-    return
-  }
+  const electronBin = resolveElectronExecutable(appRoot)
+  if (!electronBin) fail('app Electron 可执行文件不存在(打包机请先 npm install)')
   const demoBin = join(stageRoot, 'node_modules/@deepseek-ai/dsh-sdk-jsonrpc-demo/lib/bin.js')
   const env = {
     ...process.env,
@@ -244,9 +280,21 @@ function bootCheck() {
       '-e',
       `
 import { spawn } from 'node:child_process'
-const child = spawn(${JSON.stringify(electronBin)}, [${JSON.stringify(demoBin)}], { env: ${JSON.stringify(env)}, stdio: ['pipe', 'pipe', 'inherit'] })
+const child = spawn(${JSON.stringify(electronBin)}, [${JSON.stringify(demoBin)}], { stdio: ['pipe', 'pipe', 'inherit'] })
 let buf = ''
+let initialized = false
 const done = new Promise((resolveIt) => {
+  child.on('error', (error) => {
+    console.error('boot check 启动失败:', error.message)
+    process.exitCode = 1
+    resolveIt()
+  })
+  child.on('exit', (code) => {
+    if (initialized) return
+    console.error('boot check 在 initialize 前退出:', code)
+    process.exitCode = 1
+    resolveIt()
+  })
   child.stdout.on('data', (d) => {
     buf += String(d)
     let i
@@ -255,6 +303,7 @@ const done = new Promise((resolveIt) => {
       if (!line) continue
       let msg; try { msg = JSON.parse(line) } catch { continue }
       if (msg.id === 1) {
+        initialized = true
         if (msg.error) { console.error('initialize error:', JSON.stringify(msg.error)); process.exitCode = 1 }
         else console.log('serverInfo:', JSON.stringify(msg.result?.serverInfo))
         child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'shutdown', params: {} }) + '\\n')
@@ -270,7 +319,7 @@ clearTimeout(timer)
 try { child.stdin.end() } catch {}
 `,
     ],
-    { cwd: stageRoot, timeout: 60000 },
+    { cwd: stageRoot, timeout: 60000, env },
   )
   if (probe.status !== 0) fail(`staged runtime boot check exited ${probe.status}`)
   // 清理 boot check 产生的会话目录,避免进入安装包

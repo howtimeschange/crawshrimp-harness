@@ -34,6 +34,13 @@ const REQUIRED_BACKEND_IMPORTS = [
   'mcp',
 ]
 
+const REQUIRED_WINDOWS_BACKEND_PATHS = [
+  'colorama',
+  'win32/lib/pywintypes.py',
+  'pywin32_system32/pywintypes312.dll',
+  'pywin32.pth',
+]
+
 const REQUIRED_VIDEO_INTEGRATION_FILES = [
   'seedanceCLI/package.json',
   'seedanceCLI/bin/seedance.js',
@@ -60,6 +67,8 @@ const REQUIRED_DEEPSEEK_HARNESS_FILES = [
   'web-cordis.yml',
   'worker/worker.mjs',
 ]
+
+const DEEPSEEK_RUNTIME_TARGET_MARKER = '.crawshrimp-runtime-target.json'
 
 function getPythonExecutable(srcPython, srcKey = '') {
   if (srcKey === 'win-x64') return path.join(srcPython, 'python.exe')
@@ -92,7 +101,10 @@ function requirePythonBundle(srcPython, srcKey = '') {
     throw new Error(`[after-pack] bundled Python site-packages not found: ${sitePackages}`)
   }
 
-  const missing = REQUIRED_BACKEND_IMPORTS.filter(name => !fs.existsSync(path.join(sitePackages, name)))
+  const requiredPaths = srcKey === 'win-x64'
+    ? [...REQUIRED_BACKEND_IMPORTS, ...REQUIRED_WINDOWS_BACKEND_PATHS]
+    : REQUIRED_BACKEND_IMPORTS
+  const missing = requiredPaths.filter(name => !fs.existsSync(path.join(sitePackages, name)))
   if (missing.length) {
     throw new Error(
       `[after-pack] missing bundled Python dependencies in ${sitePackages}: ${missing.join(', ')}. ` +
@@ -149,10 +161,69 @@ function requirePythonScriptsBundle(resourcesPath) {
   }
 }
 
-function requireDeepseekHarnessBundle(resourcesPath) {
+function nativeRuntimePackageSpecs({ platform, arch }) {
+  const suffix = `${platform}-${arch}`
+  return [
+    { packagePath: `@img/sharp-${suffix}`, artifactExtension: '.node' },
+    { packagePath: `@koromix/koffi-${suffix}`, artifactExtension: '.node' },
+    {
+      packagePath: `@vscode/ripgrep-${suffix}`,
+      artifactName: platform === 'win32' ? 'rg.exe' : 'rg',
+    },
+  ]
+}
+
+function packageContainsArtifact(packageRoot, spec) {
+  if (!fs.existsSync(packageRoot)) return false
+  const pending = [packageRoot]
+  while (pending.length) {
+    const current = pending.pop()
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const target = path.join(current, entry.name)
+      if (entry.isDirectory()) {
+        pending.push(target)
+      } else if (entry.isFile()) {
+        if (spec.artifactName && entry.name === spec.artifactName) return true
+        if (spec.artifactExtension && entry.name.endsWith(spec.artifactExtension)) return true
+      }
+    }
+  }
+  return false
+}
+
+function requireNativeRuntimePackages(bundleRoot, target) {
+  for (const spec of nativeRuntimePackageSpecs(target)) {
+    const packageRoot = path.join(bundleRoot, 'node_modules', ...spec.packagePath.split('/'))
+    if (!packageContainsArtifact(packageRoot, spec)) {
+      throw new Error(
+        `[after-pack] deepseek-harness ${target.platform}-${target.arch} 原生依赖缺失: ${spec.packagePath}`
+      )
+    }
+  }
+}
+
+function requireDeepseekHarnessBundle(resourcesPath, expectedTarget = {}) {
   const bundleRoot = path.join(resourcesPath, 'deepseek-harness')
   if (!fs.existsSync(bundleRoot)) {
     throw new Error(`[after-pack] deepseek-harness bundle 未打包: ${bundleRoot}`)
+  }
+  if (expectedTarget.platform) {
+    const targetMarker = path.join(bundleRoot, DEEPSEEK_RUNTIME_TARGET_MARKER)
+    let actualTarget
+    try {
+      actualTarget = JSON.parse(fs.readFileSync(targetMarker, 'utf8'))
+    } catch (error) {
+      throw new Error(`[after-pack] deepseek-harness target metadata missing or invalid: ${targetMarker}: ${error.message}`)
+    }
+    const actualId = `${actualTarget.platform || 'unknown'}-${actualTarget.arch || 'unknown'}`
+    const expectedId = expectedTarget.arch
+      ? `${expectedTarget.platform}-${expectedTarget.arch}`
+      : expectedTarget.platform
+    const mismatch = actualTarget.platform !== expectedTarget.platform ||
+      (expectedTarget.arch && actualTarget.arch !== expectedTarget.arch)
+    if (mismatch) {
+      throw new Error(`[after-pack] deepseek-harness target ${actualId} does not match ${expectedId}`)
+    }
   }
   const missing = REQUIRED_DEEPSEEK_HARNESS_FILES.filter(relativePath => {
     const target = path.join(bundleRoot, relativePath)
@@ -163,6 +234,9 @@ function requireDeepseekHarnessBundle(resourcesPath) {
       `[after-pack] deepseek-harness bundle 不完整,缺少: ${missing.join(', ')}。` +
       '请先运行 node integrations/deepseek-harness/scripts/stage-runtime.mjs。'
     )
+  }
+  if (expectedTarget.platform && expectedTarget.arch) {
+    requireNativeRuntimePackages(bundleRoot, expectedTarget)
   }
 }
 
@@ -211,7 +285,10 @@ async function afterPack(context) {
   console.log(`[after-pack] Copying deepseek-harness → ${destHarness}`)
   fs.mkdirSync(destHarness, { recursive: true })
   copyDirSync(stageHarness, destHarness)
-  requireDeepseekHarnessBundle(resourcesPath)
+  requireDeepseekHarnessBundle(resourcesPath, {
+    platform: electronPlatformName,
+    arch: electronPlatformName === 'win32' ? archName : '',
+  })
   console.log('[after-pack] deepseek-harness bundled')
 
   const destPython = path.join(resourcesPath, 'python')
@@ -250,6 +327,8 @@ exports.default = afterPack
 exports.requirePythonBundle = requirePythonBundle
 exports.requirePythonScriptsBundle = requirePythonScriptsBundle
 exports.requireDeepseekHarnessBundle = requireDeepseekHarnessBundle
+exports.requireNativeRuntimePackages = requireNativeRuntimePackages
 exports.REQUIRED_BACKEND_IMPORTS = REQUIRED_BACKEND_IMPORTS
+exports.REQUIRED_WINDOWS_BACKEND_PATHS = REQUIRED_WINDOWS_BACKEND_PATHS
 exports.REQUIRED_VIDEO_INTEGRATION_FILES = REQUIRED_VIDEO_INTEGRATION_FILES
 exports.REQUIRED_DEEPSEEK_HARNESS_FILES = REQUIRED_DEEPSEEK_HARNESS_FILES

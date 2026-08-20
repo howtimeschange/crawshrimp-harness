@@ -33,6 +33,18 @@ def resolve_node_executable() -> str:
     if os.environ.get("CRAWSHRIMP_ELECTRON_NODE", "").strip():
         return os.environ["CRAWSHRIMP_ELECTRON_NODE"].strip()
     # 开发态:app/node_modules/electron
+    electron_root = _app_root() / "node_modules" / "electron"
+    electron_dist = electron_root / "dist"
+    path_file = electron_root / "path.txt"
+    try:
+        relative_executable = path_file.read_text(encoding="utf-8").strip()
+        candidate = (electron_dist / relative_executable).resolve()
+        candidate.relative_to(electron_dist.resolve())
+        if relative_executable and candidate.is_file():
+            return str(candidate)
+    except (OSError, ValueError):
+        pass
+
     bin_dir = _app_root() / "node_modules" / ".bin"
     electron = bin_dir / ("electron.cmd" if os.name == "nt" else "electron")
     if electron.exists():
