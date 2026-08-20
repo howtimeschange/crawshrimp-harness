@@ -253,8 +253,8 @@ test('DSH web cordis registers Crawshrimp DeepSeek provider without exposing the
 
   assert.match(launcherBlock, /--no-open/)
   assert.match(webRuntimeBlock, /openBrowser:\s*!!js ctx\.webStartup\.openBrowser/)
-  assert.match(defaultBlock, /provider:\s*crawshrimp-overseas-openai/)
-  assert.match(defaultBlock, /model:\s*gpt-5\.6-terra/)
+  assert.match(defaultBlock, /provider:\s*!!js process\.env\.CRAWSHRIMP_AGENT_PROVIDER \?\? 'crawshrimp-overseas-openai'/)
+  assert.match(defaultBlock, /model:\s*!!js process\.env\.CRAWSHRIMP_AGENT_MODEL \?\? 'gpt-5\.6-terra'/)
   assert.match(attachmentBlock, /maxImageDimension:\s*4096/)
   assert.match(attachmentBlock, /maxImageBytes:\s*16777216/)
   assert.match(genWebCordis, /maxImageDimension:\s*4096/)

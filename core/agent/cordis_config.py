@@ -83,8 +83,9 @@ def build_cordis_yaml(cfg: dict, selected_model: Optional[str] = None) -> str:
 
     基于 web-cordis.yml 模板(完整 DSH web host 全量嵌入,见方案 §12.7):
     模板由 integrations/deepseek-harness/scripts/gen-web-cordis.py 静态生成,
-    运行时仅替换 agent-default-model 的 provider/model 行(会话级模型切换);
-    baseURL/端口等经环境表达式读取,由 AgentService 在起 worker 前注入环境。
+    正常发布包直接使用 web-cordis.yml,会话级 provider/model/baseURL/端口
+    经环境表达式读取,由 AgentService 在起 worker 前注入环境。
+    本函数仅在需要生成 legacy runtime profile 时替换 agent-default-model 行;
     模板缺失(旧发布包)时回退到内置 legacy 极简 profile。
     """
     llm = (cfg.get("ai") or {}).get("llm") or {}

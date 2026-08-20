@@ -1009,6 +1009,7 @@ class AgentService:
             model_id, provider_id = self._resolve_model()
         if provider_id is None:
             provider_id = resolve_provider_for_model(model_id)
+        runtime_model_id = deepseek_official_real_model(model_id)
 
         # API key 进入进程环境(不落盘)
         cfg = load_config()
@@ -1016,6 +1017,8 @@ class AgentService:
         api_key = os.environ.get("CRAWSHRIMP_LLM_API_KEY", "").strip() or str(llm.get("api_key") or "").strip()
         if api_key:
             os.environ["CRAWSHRIMP_LLM_API_KEY"] = api_key
+        os.environ["CRAWSHRIMP_AGENT_PROVIDER"] = provider_id
+        os.environ["CRAWSHRIMP_AGENT_MODEL"] = runtime_model_id
 
         # 轮换 runtime token
         self.runtime_token = secrets.token_hex(32)
@@ -1054,17 +1057,20 @@ class AgentService:
         self.web_port = _pick_free_port(self.web_port, 8)
         self._web_port_verified = False
         os.environ["CRAWSHRIMP_WEB_PORT"] = str(self.web_port)
-        # runtime cordis 必须写在 harness root(node_modules 旁):
-        # dsh-app-boot 以 config 所在目录为模块解析基准(ctx.baseUrl),
-        # 写进 data 目录会导致 client 插件包(bare import)解析失败,web BOOT entries 为空。
+        # runtime cordis 必须位于 harness root(node_modules 旁):
+        # dsh-app-boot 以 config 所在目录为模块解析基准(ctx.baseUrl)。
+        # Windows 安装到 Program Files 后不可写,所以正常路径使用包内 web-cordis.yml,
+        # 会话级 provider/model 通过环境变量注入,避免落盘改写安装目录。
         harness_root = resolve_harness_root()
-        cordis_path = harness_root / "runtime-cordis.yml"
-        try:
-            cordis_path.write_text(build_cordis_yaml(cfg, model_id), encoding="utf-8")
-        except OSError as exc:
-            print(f"[agent] 无法写入 {cordis_path}({exc}),回退 data 目录", flush=True)
-            cordis_path = agent_dir / "runtime-cordis.yml"
-            cordis_path.write_text(build_cordis_yaml(cfg, model_id), encoding="utf-8")
+        cordis_path = harness_root / "web-cordis.yml"
+        if not cordis_path.exists():
+            cordis_path = harness_root / "runtime-cordis.yml"
+            try:
+                cordis_path.write_text(build_cordis_yaml(cfg, model_id), encoding="utf-8")
+            except OSError as exc:
+                print(f"[agent] 无法写入 {cordis_path}({exc}),回退 legacy data 目录", flush=True)
+                cordis_path = agent_dir / "runtime-cordis.yml"
+                cordis_path.write_text(build_cordis_yaml(cfg, model_id), encoding="utf-8")
 
         worker = AgentWorker(
             runtime_root=str(resolve_harness_root()),
@@ -1089,7 +1095,7 @@ class AgentService:
                 "generation": self.generation,
                 "provider": provider_id,
                 # DeepSeek 官方模型:产品内 ID → runtime 真实模型名
-                "model": deepseek_official_real_model(model_id),
+                "model": runtime_model_id,
                 "maxTokens": model_capabilities(model_id).get("max_output_tokens", 8192),
                 "cwd": str(agent_dir / "runtime-workdir"),
             }, timeout=120)

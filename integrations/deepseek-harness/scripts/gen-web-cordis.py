@@ -293,7 +293,11 @@ def main() -> int:
                            "disabled": None, "config_lines": _cfg_from_text(CRAWSHRIMP_LLM_CONFIG)}
     merged["agent-default-model"] = {"id": "agent-default-model", "name": "@deepseek-ai/dsh-agent-default-model",
                                      "disabled": None,
-                                     "config_lines": [(0, "config:"), (2, "provider: crawshrimp-overseas-openai"), (2, "model: gpt-5.6-terra")]}
+                                     "config_lines": [
+                                         (0, "config:"),
+                                         (2, "provider: !!js process.env.CRAWSHRIMP_AGENT_PROVIDER ?? 'crawshrimp-overseas-openai'"),
+                                         (2, "model: !!js process.env.CRAWSHRIMP_AGENT_MODEL ?? 'gpt-5.6-terra'"),
+                                     ]}
     merged["attachment-local"] = {"id": "attachment-local", "name": "@deepseek-ai/dsh-attachment-local",
                                   "disabled": None,
                                   "config_lines": _cfg_from_text("""config:

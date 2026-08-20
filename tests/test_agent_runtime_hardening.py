@@ -1109,3 +1109,53 @@ def test_dsh_native_deepseek_route_is_hidden_in_favor_of_crawshrimp_route():
     assert "provider: crawshrimp-deepseek-official" in default_block
     assert "provider: deepseek-official" not in default_block
     assert "disabled: true" in native_block
+
+
+def test_agent_start_generation_uses_packaged_web_cordis_without_install_write(tmp_path, monkeypatch):
+    from core.agent import service as service_mod
+
+    harness_root = tmp_path / "Program Files" / "crawshrimp-harness" / "resources" / "deepseek-harness"
+    harness_root.mkdir(parents=True)
+    web_cordis = harness_root / "web-cordis.yml"
+    web_cordis.write_text("- id: agent-default-model\n", encoding="utf-8")
+    data_root = tmp_path / "LocalAppData" / "crawshrimp"
+    calls = {}
+
+    class FakeWorker:
+        def __init__(self, **kwargs):
+            calls["worker_kwargs"] = kwargs
+
+        async def start(self):
+            calls["started"] = True
+
+        async def request(self, method, params, timeout=None):
+            calls[method] = {"params": params, "timeout": timeout}
+            return {"ok": True}
+
+        async def stop(self):
+            calls["stopped"] = True
+
+    async def settle_noop(_self, _preferred):
+        calls["settled"] = True
+
+    monkeypatch.setattr(service_mod, "resolve_harness_root", lambda: harness_root)
+    monkeypatch.setattr(service_mod, "_data_root", lambda: data_root)
+    monkeypatch.setattr(service_mod, "_cleanup_orphan_runtimes", lambda _root: None)
+    monkeypatch.setattr(service_mod, "_pick_free_port", lambda port, _span: port or 19065)
+    monkeypatch.setattr(service_mod, "load_config", lambda: {"ai": {"llm": {"api_key": "test-key"}}})
+    monkeypatch.setattr(service_mod, "AgentWorker", FakeWorker)
+    monkeypatch.setattr(service_mod.AgentService, "_settle_web_port", settle_noop)
+    monkeypatch.setenv("CRAWSHRIMP_AGENT_PROVIDER", "stale-provider")
+    monkeypatch.setenv("CRAWSHRIMP_AGENT_MODEL", "stale-model")
+
+    service = service_mod.AgentService()
+    service.mcp_port = 18965
+
+    assert asyncio.run(service.start_generation("crawshrimp-overseas-openai", "gpt-5.6-terra"))
+    assert calls["worker_kwargs"]["cordis_path"] == str(web_cordis)
+    assert calls["worker.initialize"]["params"]["cordisPath"] == str(web_cordis)
+    assert calls["worker.start_generation"]["params"]["model"] == "gpt-5.6-terra"
+    assert service_mod.os.environ["CRAWSHRIMP_AGENT_PROVIDER"] == "crawshrimp-overseas-openai"
+    assert service_mod.os.environ["CRAWSHRIMP_AGENT_MODEL"] == "gpt-5.6-terra"
+    assert not (harness_root / "runtime-cordis.yml").exists()
+    assert not (data_root / "agent" / "runtime-cordis.yml").exists()
