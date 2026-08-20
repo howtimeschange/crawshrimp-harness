@@ -122,7 +122,8 @@ test('settings page displays the runtime backend port reported by the main proce
   assert.match(appShell, /apiPort: 18765/)
   assert.match(appShell, /apiState: 'starting'/)
   assert.match(appShell, /function applyRuntimeStatus\(next = \{\}\)/)
-  assert.match(appShell, /status\.value = \{ \.\.\.status\.value, \.\.\.\(next \|\| \{\}\) \}/)
+  assert.match(appShell, /const patch = \{ \.\.\.\(next \|\| \{\}\) \}/)
+  assert.match(appShell, /status\.value = \{ \.\.\.status\.value, \.\.\.patch \}/)
   assert.match(settings, /核心服务 \(端口 \{\{ props\.status\?\.apiPort \|\| 18765 \}\}\)/)
 })
 
