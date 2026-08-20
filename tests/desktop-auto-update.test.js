@@ -77,9 +77,9 @@ test('desktop builder packages the Electron version declared by the app', () => 
   assert.match(buildConfig, new RegExp(`electronVersion:\\s*["']?${escapedVersion}["']?`))
 })
 
-test('desktop CI uses the Node floor required by Electron 43', () => {
+test('desktop CI uses the Node floor required by the staged DSH runtime', () => {
   const workflow = readRepoFile('.github/workflows/build-desktop.yml')
-  const nodeSetupVersions = workflow.match(/node-version:\s*["']?22\.12\.0["']?/g) || []
+  const nodeSetupVersions = workflow.match(/node-version:\s*["']?22\.19\.0["']?/g) || []
 
   assert.equal(nodeSetupVersions.length, 2)
 })

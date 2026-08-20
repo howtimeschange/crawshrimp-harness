@@ -54,6 +54,41 @@ test('stage runtime rejects an Electron path that escapes the package dist direc
   }
 })
 
+test('stage runtime lets the Electron package repair a missing downloaded executable', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-electron-runtime-'))
+
+  try {
+    const electronExe = path.join(tmp, 'node_modules', 'electron', 'dist', 'electron')
+    fs.mkdirSync(path.dirname(electronExe), { recursive: true })
+    fs.writeFileSync(electronExe, '')
+
+    const { resolveElectronExecutable } = await import(helperUrl)
+    assert.equal(
+      resolveElectronExecutable(tmp, { loadElectron: () => electronExe }),
+      electronExe,
+    )
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('stage runtime rejects an Electron loader result outside the package dist directory', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-electron-runtime-'))
+
+  try {
+    const outsideExe = path.join(tmp, 'outside-electron')
+    fs.writeFileSync(outsideExe, '')
+
+    const { resolveElectronExecutable } = await import(helperUrl)
+    assert.equal(
+      resolveElectronExecutable(tmp, { loadElectron: () => outsideExe }),
+      '',
+    )
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
 test('Windows staging records its target and requires Windows x64 native dependencies', async () => {
   const {
     getRequiredNativeRuntimePackages,
