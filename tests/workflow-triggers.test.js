@@ -34,6 +34,14 @@ test('desktop build release jobs request write permissions explicitly', () => {
 
   assert.match(
     workflow,
+    /prepare-version-release:[\s\S]*?permissions:\n      contents: write[\s\S]*?steps:/m,
+  )
+  assert.match(
+    workflow,
+    /build:[\s\S]*?permissions:\n      contents: write[\s\S]*?strategy:/m,
+  )
+  assert.match(
+    workflow,
     /publish-version-release:[\s\S]*?permissions:\n      contents: write[\s\S]*?steps:/m,
   )
   assert.doesNotMatch(workflow, /publish-release:/)
@@ -58,31 +66,33 @@ test('desktop build workflow marks the validated version release as GitHub lates
   assert.doesNotMatch(workflow, /gh release create "\$\{GITHUB_REF_NAME\}"[\s\S]*--latest\s*\\[\s\S]*--verify-tag/)
 })
 
-test('desktop version release publication is idempotent for already published exact assets', () => {
+test('desktop version release uploads build assets directly and validates release readback', () => {
   const workflow = fs.readFileSync(path.join(repoRoot, '.github/workflows/build-desktop.yml'), 'utf8')
-  const publishStep = workflow.slice(workflow.indexOf('name: Publish versioned release'))
-  const existingReleaseBranch = publishStep.slice(
-    publishStep.indexOf('if gh release view "${GITHUB_REF_NAME}"'),
-    publishStep.indexOf('else', publishStep.indexOf('if gh release view "${GITHUB_REF_NAME}"')),
+  const buildUploadStep = workflow.slice(
+    workflow.indexOf('name: Upload release assets to GitHub Release'),
+    workflow.indexOf('prepare-version-release:'),
   )
+  const publishStep = workflow.slice(workflow.indexOf('name: Publish versioned release'))
 
-  assert.match(publishStep, /release_state=\$\(gh release view "\$\{GITHUB_REF_NAME\}" --json isDraft --jq '\.isDraft'/)
-  assert.match(publishStep, /if \[ "\$\{release_state\}" = "false" \]/)
-  assert.match(publishStep, /Published version release already has expected assets; leaving it unchanged/)
-  assert.match(publishStep, /exit 0/)
-  assert.doesNotMatch(existingReleaseBranch, /gh release edit "\$\{GITHUB_REF_NAME\}"[\s\S]*--draft\s*\\[\s\S]*gh release upload/)
+  assert.match(buildUploadStep, /gh release upload "\$\{GITHUB_REF_NAME\}" "\$\{release_assets\[@\]\}" --clobber/)
+  assert.match(workflow, /prepare-version-release:[\s\S]*gh release create "\$\{GITHUB_REF_NAME\}"[\s\S]*--draft[\s\S]*--verify-tag/)
+  assert.match(workflow, /gh release download "\$\{GITHUB_REF_NAME\}" --dir release-downloads --clobber/)
+  assert.match(workflow, /node app\/scripts\/validate-update-artifacts\.js release-assets --formal-release --version "\$\{APP_VERSION\}"/)
+  assert.match(publishStep, /gh release view "\$\{GITHUB_REF_NAME\}" --json assets --jq '\.assets\[\]\.name'/)
+  assert.doesNotMatch(workflow, /actions\/upload-artifact@v4/)
+  assert.doesNotMatch(workflow, /actions\/download-artifact@v4/)
 })
 
-test('desktop version release fails published asset mismatch before mutation', () => {
+test('desktop version release fails asset mismatch before publishing', () => {
   const workflow = fs.readFileSync(path.join(repoRoot, '.github/workflows/build-desktop.yml'), 'utf8')
   const publishStep = workflow.slice(workflow.indexOf('name: Publish versioned release'))
-  const mismatchIndex = publishStep.indexOf('Published version release asset set differs from expected assets')
+  const mismatchIndex = publishStep.indexOf('Unexpected release asset set')
   const editIndex = publishStep.indexOf('gh release edit "${GITHUB_REF_NAME}"')
   const uploadIndex = publishStep.indexOf('gh release upload "${GITHUB_REF_NAME}"')
 
-  assert.ok(mismatchIndex !== -1, 'published mismatch failure is present')
+  assert.ok(mismatchIndex !== -1, 'release mismatch failure is present')
   assert.ok(editIndex === -1 || mismatchIndex < editIndex, 'published mismatch fails before release edit')
-  assert.ok(uploadIndex === -1 || mismatchIndex < uploadIndex, 'published mismatch fails before release upload')
+  assert.equal(uploadIndex, -1, 'publish step does not upload assets after validation')
 })
 
 test('independent desktop publication uses only the validated version release', () => {
