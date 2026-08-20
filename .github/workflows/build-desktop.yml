@@ -68,8 +68,13 @@ jobs:
 
   build:
     name: ${{ matrix.name }}
-    needs: test
+    needs:
+      - test
+      - prepare-version-release
+    if: ${{ always() && needs.test.result == 'success' && (!startsWith(github.ref, 'refs/tags/v') || needs.prepare-version-release.result == 'success') }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -79,24 +84,17 @@ jobs:
             python_target: mac-arm64,mac-x64
             artifact_suffix: mac
             build_script: build:mac:ci
-            artifact_glob: |
-              app/dist/*.dmg
-              app/dist/*.zip
-              app/dist/*.zip.blockmap
-              app/dist/latest*.yml
           - name: Windows x64
             os: windows-2022
             python_target: win-x64
             artifact_suffix: win-x64
             build_script: build:win
-            artifact_glob: |
-              app/dist/*.exe
-              app/dist/*.exe.blockmap
-              app/dist/latest*.yml
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -324,14 +322,109 @@ jobs:
         shell: bash
         run: node scripts/validate-update-artifacts.js dist
 
-      - name: Upload release build artifacts
+      - name: Upload release assets to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/upload-artifact@v4
+        working-directory: app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_SUFFIX: ${{ matrix.artifact_suffix }}
+        run: |
+          set -euo pipefail
+          APP_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "${APP_VERSION}" != "${TAG_VERSION}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match app/package.json version ${APP_VERSION}"
+            exit 1
+          fi
+
+          shopt -s nullglob
+          case "${ARTIFACT_SUFFIX}" in
+            mac)
+              release_assets=(dist/*.dmg dist/*.zip dist/*.zip.blockmap dist/latest*.yml)
+              ;;
+            win-x64)
+              release_assets=(dist/*.exe dist/*.exe.blockmap dist/latest*.yml)
+              ;;
+            *)
+              echo "::error::Unknown artifact suffix ${ARTIFACT_SUFFIX}"
+              exit 1
+              ;;
+          esac
+
+          if [ "${#release_assets[@]}" -eq 0 ]; then
+            echo "::error::No release assets found in app/dist"
+            exit 1
+          fi
+          printf 'Uploading release assets to %s:\n' "${GITHUB_REF_NAME}"
+          printf ' - %s\n' "${release_assets[@]}"
+          gh release upload "${GITHUB_REF_NAME}" "${release_assets[@]}" --clobber
+
+  prepare-version-release:
+    name: Prepare Versioned GitHub Release
+    runs-on: ubuntu-latest
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          name: crawshrimp-harness-${{ matrix.artifact_suffix }}
-          path: ${{ matrix.artifact_glob }}
-          if-no-files-found: error
-          retention-days: 1
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Create or reset draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Only exact stable vX.Y.Z tags can publish desktop releases: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+          APP_VERSION=$(python3 -c "import json; print(json.load(open('app/package.json'))['version'])")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "${APP_VERSION}" != "${TAG_VERSION}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match app/package.json version ${APP_VERSION}"
+            exit 1
+          fi
+
+          NOTES_FILE="release-notes/v${APP_VERSION}.md"
+          if [ -f "${NOTES_FILE}" ]; then
+            cp "${NOTES_FILE}" release-notes.md
+          else
+            printf '## v%s\n\n- 自动桌面构建\n' "${APP_VERSION}" > release-notes.md
+          fi
+          printf '\n---\n\n构建信息：\n- Commit: %s\n- Workflow: %s/%s/actions/runs/%s\n- 产物：macOS DMG/ZIP（Apple Silicon / Intel）、Windows 安装包\n- 自动更新：GitHub Release 元数据已启用；未发布 Cloudflare R2 镜像\n' \
+            "${GITHUB_SHA}" \
+            "${GITHUB_SERVER_URL}" \
+            "${GITHUB_REPOSITORY}" \
+            "${GITHUB_RUN_ID}" >> release-notes.md
+
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            release_state=$(gh release view "${GITHUB_REF_NAME}" --json isDraft --jq '.isDraft')
+            gh release edit "${GITHUB_REF_NAME}" \
+              --title "抓虾 Harness Desktop v${APP_VERSION}" \
+              --notes-file release-notes.md
+            if [ "${release_state}" = "true" ]; then
+              gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name' |
+                while IFS= read -r asset_name; do
+                  if [ -n "${asset_name}" ]; then
+                    gh release delete-asset "${GITHUB_REF_NAME}" "${asset_name}" --yes
+                  fi
+                done
+            fi
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "抓虾 Harness Desktop v${APP_VERSION}" \
+              --notes-file release-notes.md \
+              --draft \
+              --latest=false \
+              --verify-tag
+          fi
 
   publish-version-release:
     name: Publish Versioned GitHub Release
@@ -346,18 +439,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: crawshrimp-harness-mac
-          path: release-assets/macos
-
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: crawshrimp-harness-win-x64
-          path: release-assets/windows
+          persist-credentials: false
 
       - name: Validate release tag and package version
         shell: bash
@@ -374,6 +456,41 @@ jobs:
             exit 1
           fi
           echo "APP_VERSION=${APP_VERSION}" >> "${GITHUB_ENV}"
+
+      - name: Download uploaded release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf release-downloads release-assets
+          mkdir -p release-downloads release-assets/macos release-assets/windows
+          gh release download "${GITHUB_REF_NAME}" --dir release-downloads --clobber
+
+          shopt -s nullglob
+          files=(release-downloads/*)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::No release assets found on ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
+          for file in "${files[@]}"; do
+            name="$(basename "${file}")"
+            case "${name}" in
+              latest-mac.yml|crawshrimp-harness-v${APP_VERSION}-mac-*.dmg|crawshrimp-harness-v${APP_VERSION}-mac-*.zip|crawshrimp-harness-v${APP_VERSION}-mac-*.zip.blockmap)
+                cp "${file}" "release-assets/macos/${name}"
+                ;;
+              latest.yml|crawshrimp-harness-v${APP_VERSION}-win-*.exe|crawshrimp-harness-v${APP_VERSION}-win-*.exe.blockmap)
+                cp "${file}" "release-assets/windows/${name}"
+                ;;
+              *)
+                echo "::error::Unexpected release asset ${name}"
+                exit 1
+                ;;
+            esac
+          done
+
+          find release-assets -type f -print | sort
 
       - name: Validate release update artifacts
         run: node app/scripts/validate-update-artifacts.js release-assets --formal-release --version "${APP_VERSION}"
@@ -400,48 +517,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t release_assets < <(find release-assets -type f | sort)
-          if [ "${#release_assets[@]}" -eq 0 ]; then
-            echo "::error::No release assets found"
-            exit 1
-          fi
-          printf '%s\n' "${release_assets[@]##*/}" | sort > expected-assets.txt
-
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            release_state=$(gh release view "${GITHUB_REF_NAME}" --json isDraft --jq '.isDraft')
-            gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name' | sort > actual-assets.txt
-            if [ "${release_state}" = "false" ]; then
-              if ! diff -u expected-assets.txt actual-assets.txt; then
-                echo "::error::Published version release asset set differs from expected assets"
-                exit 1
-              fi
-              echo "Published version release already has expected assets; leaving it unchanged"
-              exit 0
-            fi
-            comm -23 actual-assets.txt expected-assets.txt | while IFS= read -r asset_name; do
-              if [ -n "${asset_name}" ]; then
-                gh release delete-asset "${GITHUB_REF_NAME}" "${asset_name}" --yes
-              fi
-            done
-            gh release edit "${GITHUB_REF_NAME}" \
-              --title "抓虾 Harness Desktop v${APP_VERSION}" \
-              --notes-file release-notes.md \
-              --latest=false
-            gh release upload "${GITHUB_REF_NAME}" \
-              "${release_assets[@]}" \
-              --clobber
-          else
-            gh release create "${GITHUB_REF_NAME}" \
-              --title "抓虾 Harness Desktop v${APP_VERSION}" \
-              --notes-file release-notes.md \
-              --draft \
-              --latest=false \
-              --verify-tag
-            gh release upload "${GITHUB_REF_NAME}" \
-              "${release_assets[@]}" \
-              --clobber
-          fi
-
+          find release-assets -type f -printf '%f\n' | sort > expected-assets.txt
           gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name' | sort > actual-assets.txt
           if ! diff -u expected-assets.txt actual-assets.txt; then
             echo "::error::Unexpected release asset set"
