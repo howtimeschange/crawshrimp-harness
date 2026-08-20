@@ -59,10 +59,25 @@ function createUpdateService({
     requiredBytes = largestFileSize(info)
   }
 
+  function isConfirmedNewerVersion(version) {
+    return compareVersions(version, state.currentVersion) > 0
+  }
+
   const handlers = {
     'checking-for-update': () => publish({ status: 'checking', error: '', progress: null }),
     'update-available': info => {
       rememberUpdateInfo(info)
+      if (!isConfirmedNewerVersion(state.latestVersion)) {
+        publish({
+          status: 'up-to-date',
+          error: '',
+          progress: null,
+          blockers: [],
+          downloaded: false,
+          lastCheckedAt: new Date().toISOString(),
+        })
+        return
+      }
       publish({
         status: 'available',
         latestVersion: state.latestVersion,
@@ -96,9 +111,12 @@ function createUpdateService({
       })
     },
     error: error => publish({
-      status: 'error',
+      status: isNoPublishedUpdateError(error) && !state.downloaded ? 'up-to-date' : 'error',
       progress: null,
-      error: readableError(error),
+      error: isNoPublishedUpdateError(error) && !state.downloaded ? '' : readableError(error),
+      lastCheckedAt: isNoPublishedUpdateError(error) && !state.downloaded
+        ? new Date().toISOString()
+        : state.lastCheckedAt,
     }),
   }
 
@@ -117,6 +135,15 @@ function createUpdateService({
       return await autoUpdater.checkForUpdates()
     } catch (primaryError) {
       if (!String(updateFeedUrl || '').trim()) {
+        if (isNoPublishedUpdateError(primaryError) && !state.downloaded) {
+          publish({
+            status: 'up-to-date',
+            error: '',
+            progress: null,
+            lastCheckedAt: new Date().toISOString(),
+          })
+          return null
+        }
         publish({ status: 'error', error: readableError(primaryError), progress: null })
         throw primaryError
       }
@@ -127,6 +154,15 @@ function createUpdateService({
         log?.warn?.('Cloudflare update feed failed; retrying through GitHub', primaryError)
         return await autoUpdater.checkForUpdates()
       } catch (fallbackError) {
+        if (isNoPublishedUpdateError(fallbackError) && !state.downloaded) {
+          publish({
+            status: 'up-to-date',
+            error: '',
+            progress: null,
+            lastCheckedAt: new Date().toISOString(),
+          })
+          return null
+        }
         const error = new Error(`Cloudflare 更新源不可用，GitHub 回退也失败：${readableError(fallbackError)}`)
         publish({ status: 'error', error: readableError(error), progress: null })
         throw error
@@ -304,6 +340,33 @@ function largestFileSize(info = {}) {
 
 function readableError(error) {
   return String(error?.message || error || '桌面更新失败。')
+}
+
+function isNoPublishedUpdateError(error) {
+  const message = readableError(error)
+  return /(?:404|not found|No published versions|Cannot find .*latest.*\.ya?ml|latest release)/i.test(message)
+}
+
+function normalizeVersionForCompare(value) {
+  return String(value || '').trim().replace(/^v(?=\d)/i, '')
+}
+
+function compareVersions(left, right) {
+  const a = normalizeVersionForCompare(left)
+  const b = normalizeVersionForCompare(right)
+  if (!a || !b) return a && a !== b ? 1 : 0
+  if (a === b) return 0
+  const aParts = a.split(/[.-]/).map(part => Number(part))
+  const bParts = b.split(/[.-]/).map(part => Number(part))
+  if (aParts.some(part => !Number.isFinite(part)) || bParts.some(part => !Number.isFinite(part))) {
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+  }
+  const length = Math.max(aParts.length, bParts.length)
+  for (let index = 0; index < length; index += 1) {
+    const diff = (aParts[index] || 0) - (bParts[index] || 0)
+    if (diff !== 0) return diff > 0 ? 1 : -1
+  }
+  return 0
 }
 
 function formatBytes(value) {

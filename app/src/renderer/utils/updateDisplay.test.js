@@ -140,7 +140,7 @@ test('downloaded and installing statuses remain non-actionable', () => {
   )
 })
 
-test('error status maps to retry copy and action', () => {
+test('error status for a known newer version maps to retry copy and action', () => {
   assert.deepEqual(
     buildSidebarUpdatePresentation({
       status: 'error',
@@ -157,6 +157,38 @@ test('error status maps to retry copy and action', () => {
       percent: null,
     },
   )
+})
+
+test('error status without a newer version is not a titlebar update action', () => {
+  assert.deepEqual(
+    buildSidebarUpdatePresentation({
+      status: 'error',
+      currentVersion: '2.0.0',
+      latestVersion: '2.0.0',
+      error: 'latest release not found',
+    }, false),
+    {
+      action: null,
+      label: '',
+      versionLabel: 'v2.0.0',
+      title: '更新失败：latest release not found',
+      tone: 'error',
+      percent: null,
+    },
+  )
+})
+
+test('same-version error with v prefix is not a titlebar update action', () => {
+  const presentation = buildSidebarUpdatePresentation({
+    status: 'error',
+    currentVersion: '0.1.2',
+    latestVersion: 'v0.1.2',
+    error: 'latest release not found',
+  }, false)
+
+  assert.equal(presentation.action, null)
+  assert.equal(presentation.label, '')
+  assert.equal(presentation.versionLabel, 'v0.1.2')
 })
 
 test('disabled status shows version only and no action', () => {

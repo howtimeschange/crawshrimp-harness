@@ -1,6 +1,5 @@
 const ACTION_BY_STATUS = Object.freeze({
   available: 'download',
-  error: 'retry',
   'ready-to-install': 'install',
 })
 
@@ -78,9 +77,12 @@ export function buildSidebarUpdatePresentation(updateStatus = {}, collapsed = fa
 
   if (status === 'error') {
     const error = String(updateStatus.error || '桌面更新失败。')
+    const hasNewerVersion = latestVersion && latestVersion !== currentVersion
+    const canRetryUpdateArtifact = hasNewerVersion || updateStatus.downloaded === true
     return {
       ...base,
-      label: '重试',
+      action: canRetryUpdateArtifact ? 'retry' : null,
+      label: canRetryUpdateArtifact ? '重试' : '',
       title: `更新失败：${error}`,
       tone: 'error',
     }
@@ -99,7 +101,7 @@ function normalizePercent(value) {
 }
 
 function normalizeVersion(value) {
-  return String(value || '').trim()
+  return String(value || '').trim().replace(/^v(?=\d)/i, '')
 }
 
 function formatFullVersion(version) {

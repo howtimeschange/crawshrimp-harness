@@ -119,6 +119,33 @@ test('no available update publishes the declared up-to-date status', () => {
   assert.equal(service.getStatus().status, 'up-to-date')
 })
 
+test('same-version update-available event is treated as up-to-date', async () => {
+  const updater = createUpdater()
+  updater.checkForUpdates = async () => {
+    updater.emit('update-available', { version: '2.0.0', releaseNotes: 'current release' })
+  }
+  const service = createService({ autoUpdater: updater })
+
+  await service.checkForUpdates({ manual: false })
+
+  assert.equal(service.getStatus().status, 'up-to-date')
+  assert.equal(service.getStatus().latestVersion, '2.0.0')
+  assert.equal(service.getStatus().downloaded, false)
+})
+
+test('missing GitHub release metadata is not surfaced as a retryable update', async () => {
+  const updater = createUpdater()
+  updater.checkForUpdates = async () => {
+    throw new Error('404 latest release not found')
+  }
+  const service = createService({ autoUpdater: updater })
+
+  await assert.doesNotReject(() => service.checkForUpdates({ manual: false }))
+
+  assert.equal(service.getStatus().status, 'up-to-date')
+  assert.equal(service.getStatus().error, '')
+})
+
 test('download progress is normalized to a stable percent and byte shape', () => {
   const updater = createUpdater()
   const service = createUpdateService({
@@ -255,4 +282,25 @@ test('Cloudflare update check falls back to GitHub when the primary feed is unav
     { provider: 'generic', url: 'https://updates.crawshrimp.com/' },
     { provider: 'github', owner: 'howtimeschange', repo: 'crawshrimp-harness' },
   ])
+})
+
+test('configured feed with missing GitHub fallback metadata is treated as up-to-date', async () => {
+  const updater = createUpdater()
+  let checks = 0
+  updater.checkForUpdates = async () => {
+    checks += 1
+    if (checks === 1) throw new Error('Cloudflare update feed unavailable')
+    throw new Error('404 latest release not found')
+  }
+
+  const service = createService({
+    autoUpdater: updater,
+    updateFeedUrl: 'https://updates.crawshrimp.com/',
+    log: { warn: () => {} },
+  })
+
+  await assert.doesNotReject(() => service.checkForUpdates())
+
+  assert.equal(service.getStatus().status, 'up-to-date')
+  assert.equal(service.getStatus().error, '')
 })

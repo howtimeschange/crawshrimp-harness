@@ -65,6 +65,7 @@ const workspaceRoot = ref('')
 const runtimeGeneration = ref(0)
 const frameEl = ref(null)
 const activeRuntimeSessionId = ref('')
+const lastRuntimeState = ref('')
 let pollTimer = null
 let tabPollTimer = null
 let warmStarted = false
@@ -101,8 +102,10 @@ function applyRuntimeSnapshot(result) {
 async function loadRuntime() {
   try {
     const result = await window.cs.agentApi('GET', '/agent/runtime')
+    const state = String(result?.state || '')
+    lastRuntimeState.value = state
     const url = applyRuntimeSnapshot(result)
-    if (url) {
+    if (url && state === 'ready') {
       webUrl.value = url
       loading.value = false
       error.value = ''
@@ -110,10 +113,15 @@ async function loadRuntime() {
       return true
     }
     webUrl.value = ''
-    if (result?.state === 'failed' || result?.error) {
+    if (state === 'starting' || state === 'ready') {
+      loading.value = true
+      error.value = state === 'ready' ? '智能体会话界面启动中' : ''
+      return true
+    }
+    if (state === 'failed' || state === 'crashed' || result?.error) {
       error.value = result.error || '运行时启动失败'
       loading.value = false
-    } else if (result?.enabled !== false && !result?.active_run) {
+    } else if (result?.enabled !== false && !result?.active_run && ['stopped', 'unknown', ''].includes(state)) {
       // 预热:web host 未起(首轮会话前)→ 拉起 runtime
       try {
         const warm = await window.cs.agentApi('POST', '/agent/runtime/restart')
@@ -125,6 +133,7 @@ async function loadRuntime() {
       loading.value = false
     }
   } catch (err) {
+    lastRuntimeState.value = 'offline'
     error.value = err?.message || '无法连接本地服务'
     loading.value = false
   }
@@ -308,8 +317,10 @@ onMounted(() => {
   pollTimer = setInterval(async () => {
     try {
       const st = await window.cs.agentApi('GET', '/agent/runtime')
+      const state = String(st?.state || '')
+      lastRuntimeState.value = state
       const runtimeUrl = applyRuntimeSnapshot(st)
-      if (runtimeUrl && st.state === 'ready') {
+      if (runtimeUrl && state === 'ready') {
         let reachable = true
         try {
           await fetch(runtimeUrl.replace(/\/+$/, '') + '/?__probe=' + Date.now(), { mode: 'no-cors', cache: 'no-store' })
@@ -328,6 +339,13 @@ onMounted(() => {
           error.value = '智能体会话界面未就绪'
           autoRecover()
         }
+        return
+      }
+      if (state === 'starting' || state === 'ready') {
+        probeFailCount = 0
+        webUrl.value = ''
+        loading.value = true
+        error.value = state === 'ready' ? '智能体会话界面启动中' : ''
         return
       }
       probeFailCount = 0

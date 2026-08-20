@@ -104,6 +104,35 @@ def _pick_free_port(start_port: int, max_steps: int = 8) -> int:
     raise RuntimeError(f"端口范围 {start_port}..{port - 1} 均已占用")
 
 
+_DSH_WEB_REQUIRED_MARKERS = ("__DSH_BOOT__", "crawshrimp-slots")
+
+
+def _is_crawshrimp_web_host(port: int, timeout: float = 0.25) -> bool:
+    """确认端口返回的是本实例 DSH Web，而不是旧进程或普通 HTTP 页面。"""
+    import http.client as _http
+    conn = None
+    try:
+        conn = _http.HTTPConnection("127.0.0.1", int(port), timeout=timeout)
+        conn.request("GET", "/")
+        resp = conn.getresponse()
+        body = resp.read(64 * 1024).decode("utf-8", "replace")
+        return resp.status == 200 and all(marker in body for marker in _DSH_WEB_REQUIRED_MARKERS)
+    except OSError:
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _find_crawshrimp_web_port(preferred: int, max_steps: int = 8,
+                              timeout: float = 0.25) -> int:
+    base = max(1, int(preferred or 0))
+    for port in range(base, base + max(1, int(max_steps)) + 1):
+        if _is_crawshrimp_web_host(port, timeout=timeout):
+            return port
+    return 0
+
+
 def _reserve_free_port(start_port: int, max_steps: int = 8):
     """绑定并保留监听 socket，供 uvicorn 直接接管，消除检查后再 bind 的竞态。"""
     import socket
@@ -315,6 +344,8 @@ class AgentService:
         self.runtime_state = "stopped"  # stopped|starting|ready|crashed|disabled_until_manual_restart
         self.runtime_error = ""
         self.crash_budget: list[float] = []
+        self.web_port = 0
+        self._web_port_verified = False
 
         self.queue: asyncio.Queue[dict] = asyncio.Queue()
         self.active_run: Optional[dict] = None          # run 行
@@ -946,6 +977,7 @@ class AgentService:
         # Web host 端口自愈:清完残留再选端口,并把结果回写 self.web_port,
         # runtime_status 必须上报与 harness 实际监听一致的端口。
         self.web_port = _pick_free_port(self.web_port, 8)
+        self._web_port_verified = False
         os.environ["CRAWSHRIMP_WEB_PORT"] = str(self.web_port)
         # runtime cordis 必须写在 harness root(node_modules 旁):
         # dsh-app-boot 以 config 所在目录为模块解析基准(ctx.baseUrl),
@@ -1006,34 +1038,20 @@ class AgentService:
     async def _settle_web_port(self, preferred: int) -> None:
         """探测 DSH web host 真实监听端口(webserver 内部端口冲突会 +1)。
 
-        在 [preferred, preferred+8] 范围内找第一个返回 __DSH_BOOT__ 特征的
-        端口并回写 self.web_port 与环境变量;最多探测约 15s(webserver 启动有延迟)。
+        在 [preferred, preferred+8] 范围内找第一个返回 DSH boot + 抓虾 slots
+        特征的端口并回写 self.web_port 与环境变量;最多探测约 15s(webserver 启动有延迟)。
         """
-        import http.client as _http
         import time as _time
         base = max(1, int(preferred or 0))
         deadline = _time.monotonic() + 15
 
-        def _probe(port: int) -> Optional[int]:
-            conn = None
-            try:
-                conn = _http.HTTPConnection("127.0.0.1", port, timeout=0.25)
-                conn.request("GET", "/")
-                resp = conn.getresponse()
-                body = resp.read(64 * 1024).decode("utf-8", "replace")
-                if (resp.status == 200 and "__DSH_BOOT__" in body
-                        and "crawshrimp-product-bridge" in body and "crawshrimp-slots" in body):
-                    return port
-            except OSError:
-                return None
-            finally:
-                if conn is not None:
-                    conn.close()
-            return None
-
         while _time.monotonic() < deadline:
             matches = await asyncio.gather(*(
-                asyncio.to_thread(_probe, port) for port in range(base, base + 9)
+                asyncio.to_thread(
+                    lambda candidate=port: candidate
+                    if _is_crawshrimp_web_host(candidate, timeout=0.25) else None
+                )
+                for port in range(base, base + 9)
             ))
             found = next((port for port in matches if port), None)
             if found:
@@ -1041,7 +1059,9 @@ class AgentService:
                     print(f"[agent] web host 实际端口修正 {self.web_port}→{found}", flush=True)
                     self.web_port = found
                     os.environ["CRAWSHRIMP_WEB_PORT"] = str(found)
+                self._web_port_verified = True
                 return
+            self._web_port_verified = False
             await asyncio.sleep(0.25)
         print(f"[agent] 15 秒内未发现本实例 DSH web host，保留端口 {self.web_port}", flush=True)
 
@@ -1074,7 +1094,18 @@ class AgentService:
         cfg = load_config()
         llm = (cfg.get("ai") or {}).get("llm") or {}
         import os as _os
-        web_port = getattr(self, "web_port", 0) or int(_os.environ.get("CRAWSHRIMP_WEB_PORT", "0") or 0)
+        web_port = 0
+        candidate_web_port = getattr(self, "web_port", 0) or int(_os.environ.get("CRAWSHRIMP_WEB_PORT", "0") or 0)
+        if self.runtime_state == "ready" and candidate_web_port:
+            if not self._web_port_verified:
+                found = _find_crawshrimp_web_port(candidate_web_port, 8, timeout=0.12)
+                if found:
+                    if found != self.web_port:
+                        self.web_port = found
+                        _os.environ["CRAWSHRIMP_WEB_PORT"] = str(found)
+                    self._web_port_verified = True
+            if self._web_port_verified:
+                web_port = int(getattr(self, "web_port", 0) or candidate_web_port)
         gateway_key_configured = bool(os.environ.get("CRAWSHRIMP_LLM_API_KEY") or llm.get("api_key"))
         deepseek_key_configured = bool(os.environ.get("CRAWSHRIMP_DEEPSEEK_API_KEY") or llm.get("deepseek_api_key"))
         return {

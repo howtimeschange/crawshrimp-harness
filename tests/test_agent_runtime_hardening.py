@@ -613,12 +613,12 @@ def test_reserved_port_socket_prevents_second_bind():
         reserved.close()
 
 
-def test_settle_web_port_requires_all_crawshrimp_markers(monkeypatch):
+def test_settle_web_port_requires_dsh_boot_and_crawshrimp_slots(monkeypatch):
     import http.client
 
     bodies = {
         19300: "<script>window.__DSH_BOOT__={}</script>",
-        19301: "__DSH_BOOT__ crawshrimp-product-bridge crawshrimp-slots",
+        19301: "__DSH_BOOT__ crawshrimp-slots",
     }
     probed = []
 
@@ -650,6 +650,39 @@ def test_settle_web_port_requires_all_crawshrimp_markers(monkeypatch):
     asyncio.run(service._settle_web_port(19300))
     assert service.web_port == 19301
     assert 19300 in probed and 19301 in probed
+
+
+def test_runtime_status_withholds_unverified_ready_web_url(monkeypatch, tmp_path):
+    service = AgentService()
+    service.runtime_state = "ready"
+    service.web_port = 19300
+    service._web_port_verified = False
+    monkeypatch.setattr("core.agent.service._find_crawshrimp_web_port", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr("core.agent.service._data_root", lambda: tmp_path)
+    monkeypatch.setattr("core.agent.service.load_config", lambda: {"ai": {"llm": {}}})
+
+    status = service.runtime_status()
+
+    assert status["state"] == "ready"
+    assert status["web_port"] == 0
+    assert status["web_url"] == ""
+
+
+def test_runtime_status_repairs_and_reports_drifted_web_port(monkeypatch, tmp_path):
+    service = AgentService()
+    service.runtime_state = "ready"
+    service.web_port = 19300
+    service._web_port_verified = False
+    monkeypatch.setattr("core.agent.service._find_crawshrimp_web_port", lambda *_args, **_kwargs: 19301)
+    monkeypatch.setattr("core.agent.service._data_root", lambda: tmp_path)
+    monkeypatch.setattr("core.agent.service.load_config", lambda: {"ai": {"llm": {}}})
+
+    status = service.runtime_status()
+
+    assert status["web_port"] == 19301
+    assert status["web_url"] == "http://127.0.0.1:19301/"
+    assert service.web_port == 19301
+    assert service._web_port_verified is True
 
 
 def test_orphan_cleanup_preserves_live_parent_and_terminates_true_orphan(tmp_path, monkeypatch):
