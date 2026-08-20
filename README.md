@@ -2,7 +2,7 @@
 
 Crawshrimp Harness 把抓虾桌面应用与 DeepSeek Harness（DSH）组合成一个本地优先的电商运营智能体。DSH Web 会话是唯一主界面；抓虾提供任务、Adapter、文件、浏览器 CDP、媒体、审批和审计能力。
 
-本仓库是独立的 Harness 开发线，不是上游 `crawshrimp` 发布仓的 README 镜像。DSH 依赖族精确锁定在 `@deepseek-ai/*@0.1.0-rc.6`，升级时必须重新验证协议、插件和 hash 类名。
+本仓库是独立的 Harness 开发线，不是上游 `crawshrimp` 发布仓的 README 镜像。DSH 依赖族精确锁定在 `@deepseek-ai/*@0.1.0-rc.8`，升级时必须重新验证协议、插件和 hash 类名。
 
 ## 当前形态
 
@@ -12,6 +12,24 @@ Crawshrimp Harness 把抓虾桌面应用与 DeepSeek Harness（DSH）组合成�
 - Vite 开发服务器默认 `5173`；Electron 调试 CDP 为 `9223`；托管 Chrome CDP 为 `9222`。
 - SQLite 保存产品投影和审计，DSH JSONL 保存模型会话真值。
 - macOS arm64/x64 可构建；Windows unpacked 可在 macOS 验证，NSIS 安装器应在 Windows 构建机生成。
+
+## 版本记录
+
+### v0.1.2
+
+- 修复 DSH composer 的 `📎` 附件与 `@` 命令 hover 标签：附件标签在深色主题中保持可读，命令标签只在 hover/focus 时显示，不再常驻或错位到附件按钮。
+- 稳定 DSH 左侧注入菜单：展开全部时复用已有 DOM，只追加或移除必要按钮，避免整组重建造成侧栏闪烁。
+- 去掉自定义菜单项入场动画，降低 DSH 原生会话列表刷新或展开时触发整栏闪一下的概率。
+- 补充合同测试，锁定 tooltip、菜单 DOM 复用和无入场动画的行为。
+
+### v0.1.1
+
+- 升级桌面应用版本号到 `0.1.1`，用于承接 DSH rc.8 集成后的桌面构建。
+
+### v0.1.0
+
+- 首个独立 Harness 桌面版本，提供 macOS Apple Silicon / Intel 与 Windows x64 构建产物。
+- 独立仓库发布，不发布到主抓虾项目的 Cloudflare R2 更新源。
 
 ```mermaid
 flowchart LR
