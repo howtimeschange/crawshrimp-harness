@@ -96,7 +96,10 @@ function applyRuntimeSnapshot(result) {
     workspaceRoot.value = result.workspace_root
     pushWorkspace()
   }
-  return result?.web_url || ''
+  // `web_url` is strict: backend only fills it after DSH HTML markers verify.
+  // Windows packaged builds can serve the first page slowly, so use the
+  // loopback candidate URL while backend verification is still settling.
+  return result?.web_url || result?.web_candidate_url || ''
 }
 
 async function loadRuntime() {

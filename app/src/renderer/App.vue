@@ -250,6 +250,8 @@ const status = ref({
   cdpPort: 9222,
   chromeDiagnostic: { kind: 'unknown', message: '' },
 })
+const API_STATUS_OFF_STREAK_THRESHOLD = 3
+let apiStatusOffStreak = 0
 const activeScript = ref(null)   // { adapter_id, adapter_name, tasks[] }
 const activeTaskId = ref(null)
 const activeInstanceUid = ref('')
@@ -475,7 +477,19 @@ function taskProgressSummary(task) {
 }
 
 function applyRuntimeStatus(next = {}) {
-  status.value = { ...status.value, ...(next || {}) }
+  const patch = { ...(next || {}) }
+  if (Object.prototype.hasOwnProperty.call(patch, 'api')) {
+    if (patch.api) {
+      apiStatusOffStreak = 0
+    } else {
+      apiStatusOffStreak += 1
+      const apiState = String(patch.apiState || status.value.apiState || '')
+      if (status.value.api && apiStatusOffStreak < API_STATUS_OFF_STREAK_THRESHOLD && apiState !== 'failed') {
+        patch.api = true
+      }
+    }
+  }
+  status.value = { ...status.value, ...patch }
 }
 
 async function refreshRuntimeStatus() {
@@ -568,7 +582,7 @@ let updateStatusCleanup = null
 let systemThemeCleanup = null
 onMounted(async () => {
   systemThemeCleanup = observeSystemTheme(systemThemeMedia, handleSystemThemeChange)
-  window.cs.onStatus(({ key, value }) => { status.value[key] = value })
+  window.cs.onStatus(({ key, value }) => { applyRuntimeStatus({ [key]: value }) })
   if (typeof window.cs.onUpdateStatus === 'function') {
     updateStatusCleanup = window.cs.onUpdateStatus(nextStatus => {
       updateStatus.value = { ...updateStatus.value, ...(nextStatus || {}) }

@@ -666,6 +666,10 @@ def test_runtime_status_withholds_unverified_ready_web_url(monkeypatch, tmp_path
     assert status["state"] == "ready"
     assert status["web_port"] == 0
     assert status["web_url"] == ""
+    assert status["web_candidate_port"] == 19300
+    assert status["web_candidate_url"] == "http://127.0.0.1:19300/"
+    assert status["web_verified"] is False
+    assert status["web_verification_pending"] is True
 
 
 def test_runtime_status_repairs_and_reports_drifted_web_port(monkeypatch, tmp_path):
@@ -681,6 +685,10 @@ def test_runtime_status_repairs_and_reports_drifted_web_port(monkeypatch, tmp_pa
 
     assert status["web_port"] == 19301
     assert status["web_url"] == "http://127.0.0.1:19301/"
+    assert status["web_candidate_port"] == 19301
+    assert status["web_candidate_url"] == "http://127.0.0.1:19301/"
+    assert status["web_verified"] is True
+    assert status["web_verification_pending"] is False
     assert service.web_port == 19301
     assert service._web_port_verified is True
 
@@ -702,6 +710,36 @@ def test_orphan_cleanup_preserves_live_parent_and_terminates_true_orphan(tmp_pat
     monkeypatch.setattr(service_module.os, "kill", lambda pid, sig: killed.append((pid, sig)))
     _cleanup_orphan_runtimes(str(tmp_path))
     assert killed == [(102, 15)]
+
+
+def test_windows_orphan_cleanup_preserves_live_parent_and_terminates_true_orphan(tmp_path, monkeypatch):
+    import core.agent.service as service_module
+
+    harness_root = tmp_path / "deepseek-harness"
+    worker_entry = harness_root / "worker" / "worker.mjs"
+    demo_entry = harness_root / "node_modules" / "@deepseek-ai" / "dsh-sdk-jsonrpc-demo" / "lib" / "bin.js"
+    output = json.dumps([
+        {"ProcessId": 501, "ParentProcessId": 601, "CommandLine": f"electron {worker_entry}"},
+        {"ProcessId": 502, "ParentProcessId": 1, "CommandLine": f"electron {demo_entry}"},
+    ])
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if args[0] == "powershell":
+            return SimpleNamespace(stdout=output)
+        if args[0] == "taskkill":
+            return SimpleNamespace(stdout="")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(service_module, "resolve_harness_root", lambda: harness_root)
+    monkeypatch.setattr(service_module, "_process_is_alive", lambda pid: pid == 601)
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    service_module._cleanup_orphan_runtimes_windows(str(tmp_path))
+
+    taskkill_calls = [call for call in calls if call[0] == "taskkill"]
+    assert taskkill_calls == [["taskkill", "/F", "/T", "/PID", "502"]]
 
 
 def test_artifact_collection_is_dispatched_to_thread(monkeypatch):

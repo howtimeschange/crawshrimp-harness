@@ -42,6 +42,20 @@ test('agent iframe reloads when runtime generation changes on the same web URL',
   assert.match(webView, /webUrl\.value !== runtimeUrl/)
 })
 
+test('agent iframe can load backend candidate URL while web verification settles', () => {
+  const webView = readFileSync(resolve(appRoot, 'src/renderer/views/AgentWebView.vue'), 'utf8')
+  assert.match(webView, /result\?\.web_url \|\| result\?\.web_candidate_url \|\| ''/)
+  assert.match(webView, /Windows packaged builds can serve the first page slowly/)
+})
+
+test('core status indicator debounces transient backend probe drops', () => {
+  const app = readFileSync(resolve(appRoot, 'src/renderer/App.vue'), 'utf8')
+  assert.match(app, /API_STATUS_OFF_STREAK_THRESHOLD = 3/)
+  assert.match(app, /apiStatusOffStreak \+= 1/)
+  assert.match(app, /status\.value\.api && apiStatusOffStreak < API_STATUS_OFF_STREAK_THRESHOLD/)
+  assert.match(app, /window\.cs\.onStatus\(\(\{ key, value \}\) => \{ applyRuntimeStatus\(\{ \[key\]: value \}\) \}\)/)
+})
+
 test('browser windows are isolated per target and remove closed tabs', () => {
   const main = readFileSync(resolve(appRoot, 'src/agentBrowser.js'), 'utf8')
   const panel = readFileSync(resolve(appRoot, 'src/renderer/components/agent/AgentBrowserPanel.vue'), 'utf8')

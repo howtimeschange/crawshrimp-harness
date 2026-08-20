@@ -107,6 +107,11 @@ def _pick_free_port(start_port: int, max_steps: int = 8) -> int:
 _DSH_WEB_REQUIRED_MARKERS = ("__DSH_BOOT__", "crawshrimp-slots")
 
 
+def _runtime_web_probe_timeout() -> float:
+    """Windows packaged runtimes can be slow to serve the first DSH HTML."""
+    return 0.8 if os.name == "nt" else 0.25
+
+
 def _is_crawshrimp_web_host(port: int, timeout: float = 0.25) -> bool:
     """确认端口返回的是本实例 DSH Web，而不是旧进程或普通 HTTP 页面。"""
     import http.client as _http
@@ -166,6 +171,9 @@ def _cleanup_orphan_runtimes(data_root: str) -> None:
 
     匹配依据:进程环境含本 data 目录的 harness 会话根路径。
     """
+    if os.name == "nt":
+        _cleanup_orphan_runtimes_windows(data_root)
+        return
     if os.name != "posix":
         return
     import subprocess
@@ -195,6 +203,73 @@ def _cleanup_orphan_runtimes(data_root: str) -> None:
             os.kill(pid, 15)
             print(f"[agent] 清理孤儿 runtime 进程 pid={pid}", flush=True)
         except (OSError, ValueError):
+            pass
+
+
+def _cleanup_orphan_runtimes_windows(data_root: str) -> None:
+    """Windows 版孤儿 runtime 清理。
+
+    Win32_Process 不暴露子进程环境变量，因此不能像 POSIX ps eww 那样匹配
+    CRAWSHRIMP_SESSION_ROOT。这里退而匹配抓虾 DSH runtime/worker 的命令行入口，
+    只在父进程已经不存在时终止，避免误杀仍由另一个抓虾桌面实例托管的进程。
+    """
+    import json as _json
+    import subprocess as _subprocess
+
+    harness_root = str(resolve_harness_root())
+    needles = [
+        str(Path(harness_root) / "worker" / "worker.mjs"),
+        str(Path(harness_root) / "node_modules" / "@deepseek-ai" / "dsh-sdk-jsonrpc-demo" / "lib" / "bin.js"),
+        "worker/worker.mjs",
+        "worker\\worker.mjs",
+        "dsh-sdk-jsonrpc-demo",
+    ]
+    env = dict(os.environ)
+    env["CRAWSHRIMP_RUNTIME_NEEDLES_JSON"] = _json.dumps(needles)
+    script = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+$needles = ConvertFrom-Json $env:CRAWSHRIMP_RUNTIME_NEEDLES_JSON
+Get-CimInstance Win32_Process |
+  Where-Object {
+    $cmd = [string]$_.CommandLine
+    if (-not $cmd) { return $false }
+    foreach ($needle in $needles) {
+      if ($needle -and $cmd.Contains([string]$needle)) { return $true }
+    }
+    return $false
+  } |
+  Select-Object ProcessId,ParentProcessId,CommandLine |
+  ConvertTo-Json -Compress
+"""
+    try:
+        out = _subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=env,
+        ).stdout.strip()
+    except Exception:  # noqa: BLE001
+        return
+    if not out:
+        return
+    try:
+        parsed = _json.loads(out)
+    except Exception:  # noqa: BLE001
+        return
+    processes = parsed if isinstance(parsed, list) else [parsed]
+    for entry in processes:
+        try:
+            pid = int(entry.get("ProcessId") or 0)
+            ppid = int(entry.get("ParentProcessId") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pid == os.getpid() or (ppid > 1 and _process_is_alive(ppid)):
+            continue
+        try:
+            _subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], timeout=5, stdout=_subprocess.DEVNULL, stderr=_subprocess.DEVNULL)
+            print(f"[agent] 清理 Windows 孤儿 runtime 进程 pid={pid}", flush=True)
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -1039,17 +1114,20 @@ class AgentService:
         """探测 DSH web host 真实监听端口(webserver 内部端口冲突会 +1)。
 
         在 [preferred, preferred+8] 范围内找第一个返回 DSH boot + 抓虾 slots
-        特征的端口并回写 self.web_port 与环境变量;最多探测约 15s(webserver 启动有延迟)。
+        特征的端口并回写 self.web_port 与环境变量。Windows 发布包首次
+        解压/杀毒扫描期间响应会明显慢于 macOS/Linux，因此给更长 settle 窗口。
         """
         import time as _time
         base = max(1, int(preferred or 0))
-        deadline = _time.monotonic() + 15
+        settle_seconds = 45 if os.name == "nt" else 15
+        deadline = _time.monotonic() + settle_seconds
+        probe_timeout = _runtime_web_probe_timeout()
 
         while _time.monotonic() < deadline:
             matches = await asyncio.gather(*(
                 asyncio.to_thread(
                     lambda candidate=port: candidate
-                    if _is_crawshrimp_web_host(candidate, timeout=0.25) else None
+                    if _is_crawshrimp_web_host(candidate, timeout=probe_timeout) else None
                 )
                 for port in range(base, base + 9)
             ))
@@ -1063,7 +1141,7 @@ class AgentService:
                 return
             self._web_port_verified = False
             await asyncio.sleep(0.25)
-        print(f"[agent] 15 秒内未发现本实例 DSH web host，保留端口 {self.web_port}", flush=True)
+        print(f"[agent] {settle_seconds} 秒内未发现本实例 DSH web host，保留端口 {self.web_port}", flush=True)
 
     def _note_crash(self, message: str) -> None:
         import time as _time
@@ -1098,14 +1176,17 @@ class AgentService:
         candidate_web_port = getattr(self, "web_port", 0) or int(_os.environ.get("CRAWSHRIMP_WEB_PORT", "0") or 0)
         if self.runtime_state == "ready" and candidate_web_port:
             if not self._web_port_verified:
-                found = _find_crawshrimp_web_port(candidate_web_port, 8, timeout=0.12)
+                found = _find_crawshrimp_web_port(candidate_web_port, 8, timeout=_runtime_web_probe_timeout())
                 if found:
                     if found != self.web_port:
                         self.web_port = found
                         _os.environ["CRAWSHRIMP_WEB_PORT"] = str(found)
+                    candidate_web_port = found
                     self._web_port_verified = True
             if self._web_port_verified:
                 web_port = int(getattr(self, "web_port", 0) or candidate_web_port)
+        candidate_web_port = int(candidate_web_port or 0) if self.runtime_state == "ready" else 0
+        candidate_web_url = f"http://127.0.0.1:{candidate_web_port}/" if candidate_web_port else ""
         gateway_key_configured = bool(os.environ.get("CRAWSHRIMP_LLM_API_KEY") or llm.get("api_key"))
         deepseek_key_configured = bool(os.environ.get("CRAWSHRIMP_DEEPSEEK_API_KEY") or llm.get("deepseek_api_key"))
         return {
@@ -1124,6 +1205,10 @@ class AgentService:
             # DSH web host(方案 §12.7):前端 iframe 嵌入的页面地址
             "web_port": web_port,
             "web_url": f"http://127.0.0.1:{web_port}/" if web_port else "",
+            "web_candidate_port": candidate_web_port,
+            "web_candidate_url": candidate_web_url,
+            "web_verified": bool(web_port),
+            "web_verification_pending": bool(candidate_web_port and not web_port),
             # 默认工作区(前端自动建立,不需要用户指定)
             "workspace_root": str(_data_root() / "agent" / "workspace"),
         }
