@@ -1352,8 +1352,19 @@ async function savePanel(panelId, options = {}) {
     }
     state.err = false
     if (!options.silent) {
-      state.msg = result?.restart_required ? '已保存，重启应用后生效' : '已保存'
+      if (panelId === 'ai-llm' && result?.agent_runtime_reload === 'restarted') {
+        state.msg = '已保存，智能体运行时已同步重启'
+      } else if (panelId === 'ai-llm' && result?.agent_runtime_reload === 'scheduled') {
+        state.msg = '已保存，智能体运行时正在重启'
+      } else if (panelId === 'ai-llm' && result?.agent_runtime_reload === 'busy') {
+        state.msg = '已保存，当前有运行中的智能体任务，结束后请重启运行时'
+      } else if (panelId === 'ai-llm' && result?.agent_runtime_reload === 'failed') {
+        state.msg = `已保存，智能体运行时重启失败:${result?.agent_runtime_error || '未知错误'}`
+      } else {
+        state.msg = result?.restart_required ? '已保存，重启应用后生效' : '已保存'
+      }
     }
+    if (panelId === 'ai-llm') await refreshAgentRuntime()
     return result
   } catch (e) {
     state.err = true

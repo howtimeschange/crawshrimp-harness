@@ -2790,10 +2790,10 @@ secureHandle('agent:browser:stream:state', async () => getAgentBrowserState())
 
 secureHandle('agent:pick-attachments', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: '选择附件(图片/表格/文本)',
+    title: '选择附件(表格/文本/数据文件)',
     properties: ['openFile', 'multiSelections'],
     filters: [
-      { name: '图片与数据文件', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'csv', 'xlsx', 'json', 'txt', 'md'] },
+      { name: '数据与文本文件', extensions: ['csv', 'xlsx', 'json', 'txt', 'md', 'pdf'] },
       { name: '所有文件', extensions: ['*'] },
     ],
   })
@@ -2803,7 +2803,7 @@ secureHandle('agent:pick-attachments', async () => {
     const ext = path.extname(p).toLowerCase()
     const mimeMap = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
                       '.webp': 'image/webp', '.csv': 'text/csv', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                      '.json': 'application/json', '.txt': 'text/plain', '.md': 'text/markdown' }
+                      '.json': 'application/json', '.txt': 'text/plain', '.md': 'text/markdown', '.pdf': 'application/pdf' }
     let size = 0
     try { size = fs.statSync(p).size } catch {}
     return { name, path: p, mime: mimeMap[ext] || '', size }

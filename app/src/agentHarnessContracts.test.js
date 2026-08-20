@@ -32,6 +32,16 @@ test('agent SSE consumers reconnect from the last persisted event id', () => {
   assert.match(agentHome, /streamAgentEvents\(props\.sessionId,\s*lastEventSeq/)
 })
 
+test('agent iframe reloads when runtime generation changes on the same web URL', () => {
+  const webView = readFileSync(resolve(appRoot, 'src/renderer/views/AgentWebView.vue'), 'utf8')
+  assert.match(webView, /const runtimeGeneration = ref\(0\)/)
+  assert.match(webView, /csRuntimeGeneration/)
+  assert.match(webView, /function applyRuntimeSnapshot\(result\)/)
+  assert.match(webView, /generation !== runtimeGeneration\.value/)
+  assert.match(webView, /const runtimeUrl = applyRuntimeSnapshot\(st\)/)
+  assert.match(webView, /webUrl\.value !== runtimeUrl/)
+})
+
 test('browser windows are isolated per target and remove closed tabs', () => {
   const main = readFileSync(resolve(appRoot, 'src/agentBrowser.js'), 'utf8')
   const panel = readFileSync(resolve(appRoot, 'src/renderer/components/agent/AgentBrowserPanel.vue'), 'utf8')
@@ -56,16 +66,20 @@ test('browser windows are isolated per target and remove closed tabs', () => {
   assert.match(productLayer, /pendingIds\.has\(String\(card\.approvalId/)
 })
 
-test('DSH attachment bridge sends image content blocks through session prompt', () => {
+test('DSH attachment bridge leaves images to the native composer rail', () => {
   const slots = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-slots/lib/client.js'), 'utf8')
   const slotsPackage = JSON.parse(readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-slots/package.json'), 'utf8'))
   const webView = readFileSync(resolve(appRoot, 'src/renderer/views/AgentWebView.vue'), 'utf8')
   const worker = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/worker.mjs'), 'utf8')
   assert.ok(slotsPackage.dsh.client.inject.includes('@deepseek-ai/dsh-client-runtime'))
   assert.match(slots, /exports\.inject\s*=\s*\[[^\]]*['"]sessions['"]/)
-  assert.match(slots, /session\.prompt\([\s\S]*?['"]queue['"]\)/)
-  assert.match(slots, /mediaType:[\s\S]*?data:/)
-  assert.match(slots, /pendingImagePartsBySession/)
+  assert.match(slots, /function isImageFile\(file\)/)
+  assert.match(slots, /function nonImageFiles\(files\)/)
+  assert.match(slots, /filter\(\(file\) => file && !isImageFile\(file\)\)/)
+  assert.doesNotMatch(slots, /pendingImagePartsBySession/)
+  assert.doesNotMatch(slots, /submitPendingImages/)
+  assert.doesNotMatch(slots, /session\.prompt\([\s\S]*?pendingImage/)
+  assert.doesNotMatch(slots, /imagePart/)
   assert.match(slots, /pendingAttachmentHintsBySession/)
   assert.match(slots, /queueAttachmentHint\(sessionId/)
   assert.match(slots, /localStorage\?\.getItem\?\.\(['"]dsh\.sessions\.current['"]\)/)
@@ -75,7 +89,39 @@ test('DSH attachment bridge sends image content blocks through session prompt', 
   assert.match(slots, /document\.documentElement\.dataset\.csAttachCapture/)
   assert.doesNotMatch(slots, /document\.dataset\.csAttachCapture/)
   assert.match(slots, /data\.runtimeSessionId\s*\|\|\s*currentRuntimeSessionId/)
-  assert.match(webView, /readAgentImageDataUrl/)
+  assert.match(slots, /const UPLOAD_BUTTON_TOOLTIP = ['"]上传附件['"]/)
+  assert.match(slots, /function setComposerButtonTooltip\(button,\s*tooltip,\s*ariaLabel\)/)
+  assert.match(slots, /button\.dataset\.csTooltip = tooltip/)
+  assert.match(slots, /addBtn\.removeAttribute\(['"]aria-haspopup['"]\)/)
+  assert.match(slots, /addBtn\.removeAttribute\(['"]aria-expanded['"]\)/)
+  assert.match(slots, /function installComposerTooltipShield\(\)/)
+  assert.match(slots, /document\.documentElement\.dataset\.csUploadHover = ['"]1['"]/)
+  assert.match(slots, /\[data-cs-upload-hover="1"\] \[role="tooltip"\]/)
+  assert.match(slots, /at\.dataset\.csCommandButton = ['"]1['"]/)
+  assert.match(slots, /setComposerButtonTooltip\(at,\s*COMMAND_BUTTON_LABEL,\s*COMMAND_BUTTON_LABEL\)/)
+  assert.match(slots, /if \(at\.className !== wantedClass\) at\.className = wantedClass/)
+  assert.match(slots, /if \(at\.dataset\.csCommandButton !== ['"]1['"]\) at\.dataset\.csCommandButton = ['"]1['"]/)
+  assert.match(slots, /if \(at\.getAttribute\(['"]aria-haspopup['"]\) !== ['"]listbox['"]\)/)
+  assert.match(slots, /if \(!glyph \|\| glyph\.textContent !== ['"]@['"]\)/)
+  assert.doesNotMatch(slots, /at\.innerHTML = ['"]['"]/)
+  assert.match(slots, /let composerButtonMountQueued = false/)
+  assert.match(slots, /function scheduleComposerButtonMount\(\)/)
+  assert.match(slots, /requestAnimationFrame\(run\)/)
+  assert.match(slots, /let lastRailMetricsSignature = ['"]['"]/)
+  assert.match(slots, /function scheduleRailMetricsPush\(force = false\)/)
+  assert.match(slots, /function installRailResizeObserver\(\)/)
+  assert.match(slots, /signature === lastRailMetricsSignature/)
+  assert.match(slots, /function mutationsTouchShellMountPoints\(mutations\)/)
+  assert.match(slots, /if \(!mutationsTouchShellMountPoints\(mutations\)\) return/)
+  assert.match(slots, /scheduleComposerButtonMount\(\)[\s\S]*?installRailResizeObserver\(\)[\s\S]*?scheduleRailMetricsPush\(\)/)
+  assert.match(slots, /observer\.observe\(document\.documentElement,\s*\{\s*childList:\s*true,\s*subtree:\s*true\s*\}\)/)
+  assert.doesNotMatch(slots, /observer\.observe\(document\.documentElement,\s*\{[^\}]*attributes:\s*true/)
+  assert.doesNotMatch(slots, /attributeFilter:\s*\[['"]class['"],\s*['"]style['"]\]/)
+  assert.match(webView, /function isImageLikeFile\(file\)/)
+  assert.match(webView, /if \(isImageLikeFile\(file\)\) return/)
+  assert.match(webView, /if \(isImageLikeFile\(file\)\) continue/)
+  assert.doesNotMatch(webView, /attachmentImagePart/)
+  assert.doesNotMatch(webView, /readAgentImageDataUrl/)
   assert.match(webView, /runtime_session_id:\s*runtimeId/)
   assert.match(webView, /runtimeSessionId:\s*runtimeId/)
   assert.match(worker, /type:\s*['"]image['"]/)
@@ -106,6 +152,23 @@ test('DSH Crawshrimp brand slots replace the official DeepSeek Harness wordmark'
   assert.doesNotMatch(slots, /抓虾 Harness 智能体/)
   assert.match(brandOfficialBlock, /name:\s*'@deepseek-ai\/dsh-client-ui-brand-official'/)
   assert.match(brandOfficialBlock, /disabled:\s*true/)
+})
+
+test('agent persona introduces itself as Crawshrimp agent', () => {
+  const webCordis = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/web-cordis.yml'), 'utf8')
+  const genWebCordis = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/gen-web-cordis.py'), 'utf8')
+  const runtimeCordisSource = readFileSync(resolve(appRoot, '../core/agent/cordis_config.py'), 'utf8')
+  const promptBlock = webCordis.split('- id: system-prompt', 2)[1]?.split('\n- id:', 1)[0] || ''
+
+  for (const source of [promptBlock, genWebCordis, runtimeCordisSource]) {
+    assert.match(source, /你是抓虾智能体/)
+    assert.match(source, /只有当用户明确询问身份[\s\S]*首句回答[\s\S]*我是抓虾智能体/)
+    assert.match(source, /普通寒暄[\s\S]*不要主动自我介绍[\s\S]*不要写[\s\S]*我是抓虾智能体/)
+    assert.match(source, /能力咨询[\s\S]*不要以身份开头/)
+    assert.match(source, /用户说[\s\S]*你好[\s\S]*需要我帮你处理什么/)
+    assert.doesNotMatch(source, /首句必须明确回答/)
+    assert.doesNotMatch(source, /你是抓虾桌面应用中的操作智能体/)
+  }
 })
 
 test('DSH rc.8 dependency graph keeps launcher and runtime on one cmdline version', () => {
@@ -143,8 +206,10 @@ test('DSH web cordis registers Crawshrimp DeepSeek provider without exposing the
   const launcherBlock = webCordis.split('- id: launcher', 2)[1].split('\n- id:', 1)[0]
   const webRuntimeBlock = webCordis.split('- id: web-runtime', 2)[1].split('\n- id:', 1)[0]
   const defaultBlock = webCordis.split('- id: agent-default-model', 2)[1].split('\n- id:', 1)[0]
+  const attachmentBlock = webCordis.split('- id: attachment-local', 2)[1].split('\n- id:', 1)[0]
   const piAiBlock = webCordis.split('- id: llm-pi-ai', 2)[1].split('\n- id:', 1)[0]
   const nativeBlock = webCordis.split('- id: llm-deepseek', 2)[1].split('\n- id:', 1)[0]
+  const genWebCordis = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/gen-web-cordis.py'), 'utf8')
   const activeWebRows = [
     ['session-reference', '@deepseek-ai/dsh-session-reference'],
     ['file-reference-local', '@deepseek-ai/dsh-file-reference-local'],
@@ -158,6 +223,10 @@ test('DSH web cordis registers Crawshrimp DeepSeek provider without exposing the
   assert.match(webRuntimeBlock, /openBrowser:\s*!!js ctx\.webStartup\.openBrowser/)
   assert.match(defaultBlock, /provider:\s*crawshrimp-overseas-openai/)
   assert.match(defaultBlock, /model:\s*gpt-5\.6-terra/)
+  assert.match(attachmentBlock, /maxImageDimension:\s*4096/)
+  assert.match(attachmentBlock, /maxImageBytes:\s*16777216/)
+  assert.match(genWebCordis, /maxImageDimension:\s*4096/)
+  assert.match(genWebCordis, /maxImageBytes:\s*16777216/)
   assert.match(piAiBlock, /crawshrimp-deepseek-official:/)
   assert.match(piAiBlock, /apiKeyEnv:\s*CRAWSHRIMP_DEEPSEEK_API_KEY/)
   assert.match(piAiBlock, /baseURL:[\s\S]*CRAWSHRIMP_DEEPSEEK_BASE_URL[\s\S]*https:\/\/api\.deepseek\.com/)

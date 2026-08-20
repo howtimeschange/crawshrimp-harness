@@ -62,6 +62,7 @@ const browserMinimizeCount = ref(0)
 const browserWindows = ref([])
 const recoverAttempts = ref(0)
 const workspaceRoot = ref('')
+const runtimeGeneration = ref(0)
 const frameEl = ref(null)
 const activeRuntimeSessionId = ref('')
 let pollTimer = null
@@ -73,6 +74,7 @@ const frameSrc = computed(() => {
   if (!webUrl.value) return ''
   const url = new URL(webUrl.value, window.location.href)
   if (props.theme === 'light' || props.theme === 'dark') url.searchParams.set('theme', props.theme)
+  if (runtimeGeneration.value > 0) url.searchParams.set('csRuntimeGeneration', String(runtimeGeneration.value))
   return url.href
 })
 const frameOrigin = computed(() => {
@@ -84,14 +86,22 @@ function postToFrame(message) {
   frameEl.value.contentWindow.postMessage(message, frameOrigin.value)
 }
 
+function applyRuntimeSnapshot(result) {
+  const generation = Number(result?.generation || 0)
+  if (Number.isFinite(generation) && generation > 0 && generation !== runtimeGeneration.value) {
+    runtimeGeneration.value = generation
+  }
+  if (result?.workspace_root && result.workspace_root !== workspaceRoot.value) {
+    workspaceRoot.value = result.workspace_root
+    pushWorkspace()
+  }
+  return result?.web_url || ''
+}
+
 async function loadRuntime() {
   try {
     const result = await window.cs.agentApi('GET', '/agent/runtime')
-    const url = result?.web_url || ''
-    if (result?.workspace_root && result.workspace_root !== workspaceRoot.value) {
-      workspaceRoot.value = result.workspace_root
-      pushWorkspace()
-    }
+    const url = applyRuntimeSnapshot(result)
     if (url) {
       webUrl.value = url
       loading.value = false
@@ -215,9 +225,15 @@ function onWindowMessage(event) {
 }
 
 const MAX_ATTACHMENT_BYTES = 200 * 1024 * 1024
+const IMAGE_MIME_PREFIX = 'image/'
+
+function isImageLikeFile(file) {
+  return String(file?.type || file?.mime || '').toLowerCase().startsWith(IMAGE_MIME_PREFIX)
+}
 
 async function registerAttachmentFile(file, runtimeSessionId = '') {
   if (!file || typeof window.cs?.saveAgentAttachment !== 'function') return
+  if (isImageLikeFile(file)) return
   if (Number(file.size || 0) > MAX_ATTACHMENT_BYTES) {
     console.warn('[agent] 附件过大(>200MB),已跳过:', file.name)
     return
@@ -238,13 +254,11 @@ async function registerAttachmentFile(file, runtimeSessionId = '') {
     })
     const att = registered?.attachment
     if (att) {
-      const imagePart = await attachmentImagePart(att)
       postToFrame({
         __crawshrimp: 'attachment-added',
         name: att.filename,
         attachmentId: att.attachment_id,
         runtimeSessionId: runtimeId,
-        imagePart,
       })
     }
   } catch (error) {
@@ -260,6 +274,7 @@ async function handlePickAttachments(runtimeSessionId = '') {
     const result = await window.cs.pickAgentAttachments()
     if (!result?.ok) return
     for (const file of result.files || []) {
+      if (isImageLikeFile(file)) continue
       try {
         const registered = await window.cs.agentApi('POST', '/agent/attachments/inbox', {
           name: file.name, path: file.path, mime: file.mime, size: file.size,
@@ -267,13 +282,11 @@ async function handlePickAttachments(runtimeSessionId = '') {
         })
         const att = registered?.attachment
         if (att) {
-          const imagePart = await attachmentImagePart(att)
           postToFrame({
             __crawshrimp: 'attachment-added',
             name: att.filename,
             attachmentId: att.attachment_id,
             runtimeSessionId: runtimeId,
-            imagePart,
           })
         }
       } catch (error) {
@@ -282,20 +295,6 @@ async function handlePickAttachments(runtimeSessionId = '') {
     }
   } catch (error) {
     console.warn('[agent] 附件选择失败:', error?.message)
-  }
-}
-
-async function attachmentImagePart(attachment) {
-  if (!String(attachment?.mime || '').startsWith('image/')) return null
-  if (Number(attachment?.size || 0) > 8 * 1024 * 1024) return null
-  if (typeof window.cs?.readAgentImageDataUrl !== 'function') return null
-  try {
-    const result = await window.cs.readAgentImageDataUrl(String(attachment.path || ''))
-    const match = /^data:([^;]+);base64,(.+)$/.exec(String(result?.dataUrl || ''))
-    if (!result?.ok || !match) return null
-    return { type: 'image', mediaType: match[1], data: match[2], name: attachment.filename || 'image' }
-  } catch {
-    return null
   }
 }
 
@@ -309,16 +308,17 @@ onMounted(() => {
   pollTimer = setInterval(async () => {
     try {
       const st = await window.cs.agentApi('GET', '/agent/runtime')
-      if (st?.web_url && st.state === 'ready') {
+      const runtimeUrl = applyRuntimeSnapshot(st)
+      if (runtimeUrl && st.state === 'ready') {
         let reachable = true
         try {
-          await fetch(st.web_url.replace(/\/+$/, '') + '/?__probe=' + Date.now(), { mode: 'no-cors', cache: 'no-store' })
+          await fetch(runtimeUrl.replace(/\/+$/, '') + '/?__probe=' + Date.now(), { mode: 'no-cors', cache: 'no-store' })
         } catch {
           reachable = false
         }
         if (reachable) {
           probeFailCount = 0
-          if (!webUrl.value) webUrl.value = st.web_url
+          if (!webUrl.value || webUrl.value !== runtimeUrl) webUrl.value = runtimeUrl
           return
         }
         // 连续两次不可达才重挂 iframe,避免瞬断闪烁

@@ -37,8 +37,6 @@ window.__ModuleLoader__.load({
 
     let currentRuntimeSessionId = ''
     let lastPublishedRuntimeSessionId = ''
-    const pendingImagePartsBySession = new Map()
-    const pendingImageSubmitting = new Set()
     const pendingAttachmentHintsBySession = new Map()
 
     function persistedRuntimeSessionId() {
@@ -205,12 +203,22 @@ window.__ModuleLoader__.load({
     const MAIN_VISIBLE_DEFAULT = 3
 
     let lastMaxRailWidth = 0
+    let lastRailMetricsSignature = ''
+    let railMetricsQueued = false
+    let railMetricsForceQueued = false
+    let railResizeObserver = null
+    let railResizeTarget = null
+
+    function currentRailTarget() {
+      const rail = document.querySelector('.hHd-Xa_root')
+      if (!rail) return null
+      return rail.closest('[class*="sidebarCol"]') || rail.parentElement || rail
+    }
 
     function currentRailWidth() {
-      const rail = document.querySelector('.hHd-Xa_root')
-      if (!rail) return 0
-      const sidebarCol = rail.closest('[class*="sidebarCol"]') || rail.parentElement
-      const width = Math.round((sidebarCol || rail).getBoundingClientRect().width)
+      const target = currentRailTarget()
+      if (!target) return 0
+      const width = Math.round(target.getBoundingClientRect().width)
       if (width > lastMaxRailWidth) lastMaxRailWidth = width
       return width
     }
@@ -307,12 +315,42 @@ window.__ModuleLoader__.load({
     }
 
     // ---- 侧边栏宽度/折叠状态推送(shell 内容区覆盖层偏移用) ----
-    function pushRailMetrics() {
+    function pushRailMetrics(options = {}) {
       const width = currentRailWidth()
       if (!width) return
       const rail = document.querySelector('.hHd-Xa_root')
       const collapsed = rail ? rail.classList.contains('hHd-Xa_collapsed') : false
+      const signature = `${width}|${collapsed ? '1' : '0'}`
+      if (!options.force && signature === lastRailMetricsSignature) return
+      lastRailMetricsSignature = signature
       postToShell({ __crawshrimp: 'rail-metrics', width, collapsed })
+    }
+
+    function scheduleRailMetricsPush(force = false) {
+      railMetricsForceQueued = railMetricsForceQueued || force
+      if (railMetricsQueued) return
+      railMetricsQueued = true
+      const run = () => {
+        railMetricsQueued = false
+        const forceNow = railMetricsForceQueued
+        railMetricsForceQueued = false
+        pushRailMetrics({ force: forceNow })
+      }
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(run)
+      } else {
+        setTimeout(run, 50)
+      }
+    }
+
+    function installRailResizeObserver() {
+      if (typeof ResizeObserver === 'undefined') return
+      const target = currentRailTarget()
+      if (!target || target === railResizeTarget) return
+      if (railResizeObserver) railResizeObserver.disconnect()
+      railResizeTarget = target
+      railResizeObserver = new ResizeObserver(() => scheduleRailMetricsPush())
+      railResizeObserver.observe(target)
     }
 
     // ---- 产物媒体注入:会话消息流内直接显示图片(多图)/视频(可播放)/附件(可点击) ----
@@ -489,7 +527,12 @@ window.__ModuleLoader__.load({
       '.cs-attach-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; margin: 0 8px 8px 0; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font-size: 12.5px; cursor: pointer; transition: background-color 120ms cubic-bezier(0.4, 0, 0.2, 1); }',
       '.cs-attach-btn:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }',
       '.cs-attach-btn:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }',
+      '.uV2eYG_add[data-cs-tooltip] { position: relative; overflow: visible; }',
+      '.uV2eYG_add[data-cs-tooltip]::after { content: attr(data-cs-tooltip); z-index: 80; position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translate(-50%, 2px); opacity: 0; pointer-events: none; white-space: nowrap; border-radius: 8px; padding: 5px 9px; background: var(--dsw-alias-tooltip-bg, #2c2c2e); color: var(--dsw-alias-label-primary-inverted, #fff); font-size: 12px; font-weight: 500; line-height: 18px; box-shadow: var(--dsw-shadow-lv2, 0 4px 14px rgba(0,0,0,.22)); transition: opacity 120ms ease, transform 120ms ease; }',
+      '.uV2eYG_add[data-cs-tooltip]:hover::after, .uV2eYG_add[data-cs-tooltip]:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }',
+      '[data-cs-upload-hover="1"] [role="tooltip"] { display: none !important; }',
       '@media (prefers-reduced-motion: reduce) { .cs-attach-btn { transition: none; } }',
+      '@media (prefers-reduced-motion: reduce) { .uV2eYG_add[data-cs-tooltip]::after { transition: none; } }',
     ].join('\n')
 
     function injectAttachCss() {
@@ -514,7 +557,7 @@ window.__ModuleLoader__.load({
         btn.type = 'button'
         btn.className = 'cs-attach-btn'
         btn.textContent = '📎 附件'
-        btn.title = '上传附件(图片/表格/文本)'
+        btn.title = '上传附件(表格/文本/数据文件)'
         btn.addEventListener('click', () => {
           postToShell({ __crawshrimp: 'upload-attachment-pick', runtimeSessionId: activeRuntimeSessionId() })
         })
@@ -529,24 +572,47 @@ window.__ModuleLoader__.load({
       return !!(target && typeof target.closest === 'function' && target.closest('.wSkVaW_composerSeat'))
     }
 
+    function isImageFile(file) {
+      return String(file?.type || '').toLowerCase().startsWith('image/')
+    }
+
+    function nonImageFiles(files) {
+      return Array.from(files || []).filter((file) => file && !isImageFile(file))
+    }
+
+    function postAttachmentFiles(files) {
+      for (const file of nonImageFiles(files)) {
+        postToShell({ __crawshrimp: 'upload-attachment', file, runtimeSessionId: activeRuntimeSessionId() })
+      }
+    }
+
     function handlePasteAttachments(event) {
       if (!inComposer(event.target)) return
       const items = (event.clipboardData || {}).items || []
+      const files = []
       for (const item of items) {
         if (item.kind !== 'file') continue
         const file = item.getAsFile()
-        if (file) postToShell({ __crawshrimp: 'upload-attachment', file, runtimeSessionId: activeRuntimeSessionId() })
+        if (file) files.push(file)
       }
+      const attachments = nonImageFiles(files)
+      if (!attachments.length) return
+      event.preventDefault()
+      event.stopPropagation()
+      event.stopImmediatePropagation?.()
+      postAttachmentFiles(attachments)
     }
 
     function handleDropAttachments(event) {
       if (!inComposer(event.target)) return
       const files = (event.dataTransfer || {}).files
       if (!files || !files.length) return
+      const attachments = nonImageFiles(files)
+      if (!attachments.length) return
       event.preventDefault()
-      for (const file of files) {
-        postToShell({ __crawshrimp: 'upload-attachment', file, runtimeSessionId: activeRuntimeSessionId() })
-      }
+      event.stopPropagation()
+      event.stopImmediatePropagation?.()
+      postAttachmentFiles(attachments)
     }
 
     function insertAttachmentHint(name, attachmentId) {
@@ -578,40 +644,144 @@ window.__ModuleLoader__.load({
       for (const hint of hints) insertAttachmentHint(hint.name, hint.attachmentId)
     }
 
-    async function submitPendingImages(ctx, event) {
-      const sessionId = activeRuntimeSessionId()
-      const pendingImageParts = pendingImagePartsBySession.get(sessionId) || []
-      if (!sessionId || !pendingImageParts.length || pendingImageSubmitting.has(sessionId)) return false
-      const session = sessionId && ctx.sessions?.binding?.(sessionId)?.session
-      const ta = document.querySelector('textarea')
-      if (!session || !ta) return false
-      event?.preventDefault?.()
-      event?.stopPropagation?.()
-      event?.stopImmediatePropagation?.()
-      pendingImageSubmitting.add(sessionId)
-      try {
-        const text = String(ta.value || '').trim()
-        const content = [
-          ...pendingImageParts.map((part) => ({
-            type: 'image', mediaType: part.mediaType, data: part.data, name: part.name,
-          })),
-          ...(text ? [{ type: 'text', text }] : []),
-        ]
-        const result = await session.prompt(content, 'queue')
-        if (!result?.ok) throw new Error(result?.error?.message || '图片消息发送失败')
-        pendingImagePartsBySession.delete(sessionId)
-        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
-        setter.call(ta, '')
-        ta.dispatchEvent(new Event('input', { bubbles: true }))
-      } catch (error) {
-        console.warn('[crawshrimp] 图片消息发送失败:', error?.message || error)
-      } finally {
-        pendingImageSubmitting.delete(sessionId)
-      }
-      return true
+    // 与 DSH 原生 UI 统一:原「加号」按钮改造为上传附件;旁边单开「@」命令按钮。
+    const UPLOAD_BUTTON_TOOLTIP = '上传附件'
+    const UPLOAD_BUTTON_ARIA = '上传附件(表格/文本/数据文件)'
+    const COMMAND_BUTTON_LABEL = '命令'
+    let composerButtonMountQueued = false
+
+    function setComposerButtonTooltip(button, tooltip, ariaLabel) {
+      if (!button) return
+      if (button.hasAttribute('title')) button.removeAttribute('title')
+      if (button.dataset.csTooltip !== tooltip) button.dataset.csTooltip = tooltip
+      const label = ariaLabel || tooltip
+      if (button.getAttribute('aria-label') !== label) button.setAttribute('aria-label', label)
     }
 
-    // 与 DSH 原生 UI 统一:原「加号」按钮改造为上传附件;旁边单开「@」命令按钮。
+    function isUploadButtonEvent(event) {
+      const target = event && event.target
+      const btn = target && typeof target.closest === 'function' ? target.closest('.uV2eYG_add') : null
+      if (!btn || btn.classList.contains('cs-cmd-at-btn')) return null
+      return btn.dataset.csUploadButton === '1' ? btn : null
+    }
+
+    function installComposerTooltipShield() {
+      if (document.__csComposerTooltipShield) return
+      document.__csComposerTooltipShield = true
+      const showUploadHover = (event) => {
+        const btn = isUploadButtonEvent(event)
+        if (!btn) return
+        document.documentElement.dataset.csUploadHover = '1'
+        event.stopPropagation()
+      }
+      const clearUploadHover = (event) => {
+        const btn = isUploadButtonEvent(event)
+        if (!btn) return
+        const next = event.relatedTarget
+        if (next && btn.contains(next)) return
+        delete document.documentElement.dataset.csUploadHover
+        event.stopPropagation()
+      }
+      for (const type of ['mouseover', 'pointerover', 'focusin']) {
+        document.addEventListener(type, showUploadHover, true)
+      }
+      for (const type of ['mouseout', 'pointerout', 'focusout']) {
+        document.addEventListener(type, clearUploadHover, true)
+      }
+    }
+
+    function syncUploadButton(addBtn) {
+      if (addBtn.dataset.csUnified !== '1') addBtn.dataset.csUnified = '1'
+      if (addBtn.dataset.csUploadButton !== '1') addBtn.dataset.csUploadButton = '1'
+      if (addBtn.dataset.csCommandButton !== undefined) delete addBtn.dataset.csCommandButton
+      setComposerButtonTooltip(addBtn, UPLOAD_BUTTON_TOOLTIP, UPLOAD_BUTTON_ARIA)
+      if (addBtn.hasAttribute('aria-haspopup')) addBtn.removeAttribute('aria-haspopup')
+      if (addBtn.hasAttribute('aria-expanded')) addBtn.removeAttribute('aria-expanded')
+      if (!addBtn.querySelector('.cs-upload-glyph')) {
+        addBtn.innerHTML = ''
+        const glyph = document.createElement('span')
+        glyph.className = 'cs-upload-glyph'
+        glyph.textContent = '📎'
+        glyph.style.cssText = 'font-size:15px;line-height:1;'
+        addBtn.appendChild(glyph)
+      }
+    }
+
+    function syncCommandButton(at, addBtn) {
+      at.type = 'button'
+      const wantedClass = (addBtn.className || '').replace(/\bcs-cmd-at-btn\b/g, '').trim() + ' cs-cmd-at-btn'
+      if (at.className !== wantedClass) at.className = wantedClass
+      if (at.dataset.csUnified !== undefined) delete at.dataset.csUnified
+      if (at.dataset.csUploadButton !== undefined) delete at.dataset.csUploadButton
+      if (at.dataset.csCommandButton !== '1') at.dataset.csCommandButton = '1'
+      setComposerButtonTooltip(at, COMMAND_BUTTON_LABEL, COMMAND_BUTTON_LABEL)
+      if (at.getAttribute('aria-haspopup') !== 'listbox') at.setAttribute('aria-haspopup', 'listbox')
+      const disabled = !!addBtn.disabled
+      if (at.disabled !== disabled) at.disabled = disabled
+      const glyph = at.querySelector('.cs-upload-glyph')
+      if (!glyph || glyph.textContent !== '@') {
+        at.replaceChildren()
+        const nextGlyph = document.createElement('span')
+        nextGlyph.className = 'cs-upload-glyph'
+        nextGlyph.textContent = '@'
+        nextGlyph.style.cssText = 'font-size:15px;font-weight:700;line-height:1;'
+        at.appendChild(nextGlyph)
+      }
+      if (at.dataset.csCommandClick !== '1') {
+        at.dataset.csCommandClick = '1'
+        at.addEventListener('click', (e) => {
+          e.stopPropagation()
+          window.__csForwardCmd = true
+          try {
+            const currentAdd = document.querySelector('.wSkVaW_composerSeat .uV2eYG_add:not(.cs-cmd-at-btn)')
+            const commandSource = currentAdd || addBtn
+            commandSource.click()
+          } finally {
+            setTimeout(() => { window.__csForwardCmd = false }, 60)
+          }
+        })
+      }
+    }
+
+    function scheduleComposerButtonMount() {
+      if (composerButtonMountQueued) return
+      composerButtonMountQueued = true
+      const run = () => {
+        composerButtonMountQueued = false
+        mountUnifiedButtons()
+      }
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(run)
+      } else {
+        setTimeout(run, 50)
+      }
+    }
+
+    function nodeContainsShellMountPoint(node) {
+      if (!node || node.nodeType !== 1) return false
+      if (node.matches?.('.hHd-Xa_root, .wSkVaW_composerSeat, .uV2eYG_add')) return true
+      return !!node.querySelector?.('.hHd-Xa_root, .wSkVaW_composerSeat, .uV2eYG_add')
+    }
+
+    function mutationTouchesShellMountPoint(mutation) {
+      const target = mutation.target
+      if (target?.nodeType === 1) {
+        if (target.matches?.('.hHd-Xa_root, .wSkVaW_composerSeat, .uV2eYG_add')) return true
+        if (target.closest?.('.hHd-Xa_root, .wSkVaW_composerSeat')) return true
+      }
+      for (const node of mutation.addedNodes || []) {
+        if (nodeContainsShellMountPoint(node)) return true
+      }
+      for (const node of mutation.removedNodes || []) {
+        if (nodeContainsShellMountPoint(node)) return true
+      }
+      return false
+    }
+
+    function mutationsTouchShellMountPoints(mutations) {
+      return Array.from(mutations || []).some((mutation) => mutation.type === 'childList' && mutationTouchesShellMountPoint(mutation))
+    }
+
     function mountUnifiedButtons() {
       if (typeof document === 'undefined' || !document.documentElement) return
       try {
@@ -619,42 +789,16 @@ window.__ModuleLoader__.load({
         if (!composer) return
         const addBtn = composer.querySelector('.uV2eYG_add')
         if (!addBtn) return
-        if (addBtn.dataset.csUnified === '1' && document.querySelector('.cs-cmd-at-btn')) return
-        addBtn.dataset.csUnified = '1'
-        // 原加号 → 上传附件(保留 DSH 原生按钮样式,仅替换图标与语义)
-        addBtn.title = '上传附件'
-        addBtn.setAttribute('aria-label', '上传附件')
-        if (!addBtn.querySelector('.cs-upload-glyph')) {
-          addBtn.innerHTML = ''
-          const glyph = document.createElement('span')
-          glyph.className = 'cs-upload-glyph'
-          glyph.textContent = '📎'
-          glyph.style.cssText = 'font-size:15px;line-height:1;'
-          addBtn.appendChild(glyph)
-        }
+        injectAttachCss()
+        installComposerTooltipShield()
+        syncUploadButton(addBtn)
         // 旁边单开 @ 命令按钮(克隆原生加号按钮的结构与样式)
-        if (!document.querySelector('.cs-cmd-at-btn')) {
-          const at = addBtn.cloneNode(false)
-          at.className = (addBtn.className || '') + ' cs-cmd-at-btn'
-          at.title = '命令'
-          at.setAttribute('aria-label', '命令')
-          at.innerHTML = ''
-          const glyph2 = document.createElement('span')
-          glyph2.className = 'cs-upload-glyph'
-          glyph2.textContent = '@'
-          glyph2.style.cssText = 'font-size:15px;font-weight:700;line-height:1;'
-          at.appendChild(glyph2)
+        let at = document.querySelector('.cs-cmd-at-btn')
+        if (!at) {
+          at = document.createElement('button')
           addBtn.parentElement.insertBefore(at, addBtn.nextSibling)
-          at.addEventListener('click', (e) => {
-            e.stopPropagation()
-            window.__csForwardCmd = true
-            try {
-              addBtn.click()
-            } finally {
-              setTimeout(() => { window.__csForwardCmd = false }, 60)
-            }
-          })
         }
+        syncCommandButton(at, addBtn)
         // 拦截加号点击(捕获阶段)→ 改为触发上传;@ 转发时放行原命令行为
         if (!document.__csUploadIntercept) {
           document.__csUploadIntercept = true
@@ -677,9 +821,9 @@ window.__ModuleLoader__.load({
       if (typeof document === 'undefined' || !document.documentElement?.dataset) return
       if (document.documentElement.dataset.csAttachCapture === '1') return
       document.documentElement.dataset.csAttachCapture = '1'
-      document.addEventListener('paste', handlePasteAttachments)
+      document.addEventListener('paste', handlePasteAttachments, true)
       document.addEventListener('dragover', (e) => e.preventDefault())
-      document.addEventListener('drop', handleDropAttachments)
+      document.addEventListener('drop', handleDropAttachments, true)
     }
 
     // ---- 默认工作区:自动采用抓虾运行时目录,不需要用户指定 ----
@@ -741,31 +885,11 @@ window.__ModuleLoader__.load({
         if (data && data.__crawshrimp === 'attachment-added') {
           const sessionId = String(data.runtimeSessionId || currentRuntimeSessionId || '')
           queueAttachmentHint(sessionId, data.name, data.attachmentId)
-          if (data.imagePart?.type === 'image' && data.imagePart.mediaType && data.imagePart.data) {
-            if (sessionId) {
-              const items = pendingImagePartsBySession.get(sessionId) || []
-              items.push(data.imagePart)
-              pendingImagePartsBySession.set(sessionId, items.slice(-5))
-            }
-          }
         }
         if (data && data.__crawshrimp === 'open-runtime-session' && data.runtimeSessionId) {
           try { ctx.sessions.open(String(data.runtimeSessionId)) } catch (error) { /* 会话已删除 */ }
         }
       })
-      document.addEventListener('click', (event) => {
-        const target = event.target
-        const primary = target && typeof target.closest === 'function' ? target.closest('.uV2eYG_primary') : null
-        if (primary && (pendingImagePartsBySession.get(activeRuntimeSessionId()) || []).length) {
-          void submitPendingImages(ctx, event)
-        }
-      }, true)
-      document.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' && !event.shiftKey && event.target?.closest?.('textarea')
-            && (pendingImagePartsBySession.get(activeRuntimeSessionId()) || []).length) {
-          void submitPendingImages(ctx, event)
-        }
-      }, true)
       // apply 时 DOM 可能尚未就绪:轮询挂载(幂等),保证附件入口一定出现
       setInterval(() => {
         mountAttachmentCapture()
@@ -791,8 +915,9 @@ window.__ModuleLoader__.load({
           postToShell({ __crawshrimp: 'session-nav', kind: 'session' })
         }
       })
-      // 侧边栏重渲染后兜底重插 + 宽度变化推送
-      const observer = new MutationObserver(() => {
+      // 侧边栏/输入区重渲染后兜底重插。属性/尺寸变化由 ResizeObserver + 周期兜底处理。
+      const observer = new MutationObserver((mutations) => {
+        if (!mutationsTouchShellMountPoints(mutations)) return
         const rail = document.querySelector('.hHd-Xa_root')
         const region = rail && rail.querySelector('.hHd-Xa_regionArea')
         const foot = rail && rail.querySelector('.hHd-Xa_footArea')
@@ -806,15 +931,21 @@ window.__ModuleLoader__.load({
           if (foot) rail.insertBefore(bottom, foot)
           else rail.appendChild(bottom)
         }
-        mountUnifiedButtons()
-        pushRailMetrics()
+        scheduleComposerButtonMount()
+        installRailResizeObserver()
+        scheduleRailMetricsPush()
       })
-      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] })
-      setTimeout(pushRailMetrics, 0)
-      setTimeout(pushRailMetrics, 800)
-      // 周期同步兜底:侧栏拖拽宽度只改 AppFrame 的 grid 列宽,不触发 mutation,
-      // 高频推送保证 shell 覆盖层左偏移始终对齐侧栏实际宽度(折叠动画 200ms 内)
-      setInterval(pushRailMetrics, 800)
+      observer.observe(document.documentElement, { childList: true, subtree: true })
+      setTimeout(() => {
+        installRailResizeObserver()
+        pushRailMetrics({ force: true })
+      }, 0)
+      setTimeout(() => scheduleRailMetricsPush(), 800)
+      // 周期同步兜底:侧栏拖拽宽度只改 AppFrame 的 grid 列宽时,没有 DOM 子节点变化。
+      setInterval(() => {
+        installRailResizeObserver()
+        scheduleRailMetricsPush()
+      }, 800)
     }
 
     exports.apply = apply

@@ -112,6 +112,70 @@ class AiVideoGenerationSecurityApiTests(unittest.TestCase):
         self.assertNotIn("configured", llm)
         self.assertNotIn("deepseek_configured", llm)
 
+    def test_llm_settings_write_restarts_idle_agent_runtime_without_exposing_key(self):
+        class FakeLoop:
+            def is_closed(self):
+                return False
+
+        class FakeFuture:
+            def result(self, timeout=None):
+                return {"ok": True, "state": "ready", "secret": "must-not-return"}
+
+        class FakeAgentService:
+            active_run = None
+            active_runs_by_runtime = {}
+            runtime_state = "ready"
+            main_loop = FakeLoop()
+
+            def restart_runtime(self):
+                return object()
+
+        previous = getattr(api_server.app.state, "agent_service", None)
+        api_server.app.state.agent_service = FakeAgentService()
+        self.addCleanup(setattr, api_server.app.state, "agent_service", previous)
+
+        calls = []
+
+        def fake_run_coroutine_threadsafe(coro, loop):
+            calls.append((coro, loop))
+            return FakeFuture()
+
+        with patch.object(api_server.asyncio, "run_coroutine_threadsafe", fake_run_coroutine_threadsafe):
+            result = api_server.patch_settings({
+                "ai.llm.api_key": "llm-secret",
+                "ai.llm.default_model": "gpt-5.6-luna",
+            })
+
+        self.assertEqual(result["ok"], True)
+        self.assertEqual(result["agent_runtime_reload"], "restarted")
+        self.assertEqual(result["agent_runtime_state"], "ready")
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("llm-secret", json.dumps(result))
+        llm = load_config()["ai"]["llm"]
+        self.assertEqual(llm["api_key"], "llm-secret")
+        self.assertEqual(llm["default_model"], "gpt-5.6-luna")
+
+    def test_llm_settings_write_defers_runtime_restart_while_agent_is_active(self):
+        class FakeAgentService:
+            active_run = {"run_id": "run-active"}
+            active_runs_by_runtime = {}
+            runtime_state = "ready"
+            main_loop = None
+
+            def restart_runtime(self):
+                raise AssertionError("active runtime must not restart")
+
+        previous = getattr(api_server.app.state, "agent_service", None)
+        api_server.app.state.agent_service = FakeAgentService()
+        self.addCleanup(setattr, api_server.app.state, "agent_service", previous)
+
+        result = api_server.patch_settings({"ai.llm.default_model": "gpt-5.6-sol"})
+
+        self.assertEqual(result["ok"], True)
+        self.assertEqual(result["restart_required"], True)
+        self.assertEqual(result["agent_runtime_reload"], "busy")
+        self.assertEqual(load_config()["ai"]["llm"]["default_model"], "gpt-5.6-sol")
+
     def test_non_owner_backend_rejects_every_ai_video_mutation_route(self):
         previous = getattr(api_server.app.state, "owns_backend_instance", None)
         api_server.app.state.owns_backend_instance = False

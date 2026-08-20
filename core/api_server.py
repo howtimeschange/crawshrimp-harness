@@ -25,6 +25,7 @@ import tempfile
 import threading
 import time
 import zipfile
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -12204,6 +12205,15 @@ _AI_VIDEO_PRIVATE_SETTING_FIELDS = frozenset({
     "bailian_uploads_url",
 })
 _LLM_PRIVATE_SETTING_FIELDS = frozenset({"api_key", "deepseek_api_key"})
+_LLM_RUNTIME_SETTING_FIELDS = frozenset({
+    "api_key",
+    "deepseek_api_key",
+    "overseas_openai_base_url",
+    "overseas_anthropic_base_url",
+    "domestic_base_url",
+    "deepseek_base_url",
+    "default_model",
+})
 
 
 def _public_settings() -> dict:
@@ -12264,6 +12274,81 @@ def _safe_settings_write_patch(cfg: dict) -> dict:
     return patch
 
 
+def _flatten_setting_keys(value: dict, prefix: str = "") -> set[str]:
+    keys: set[str] = set()
+    if not isinstance(value, dict):
+        return keys
+    for raw_key, raw_value in value.items():
+        key = str(raw_key or "").strip()
+        if not key:
+            continue
+        full_key = f"{prefix}.{key}" if prefix else key
+        keys.add(full_key)
+        if isinstance(raw_value, dict):
+            keys.update(_flatten_setting_keys(raw_value, full_key))
+    return keys
+
+
+def _touches_llm_runtime_settings(patch: dict) -> bool:
+    """Return True when a settings write can change DSH provider/model env."""
+    for key in _flatten_setting_keys(patch):
+        if not key.startswith("ai.llm."):
+            continue
+        leaf = key.rsplit(".", 1)[-1]
+        if leaf in _LLM_RUNTIME_SETTING_FIELDS:
+            return True
+    return False
+
+
+def _reload_agent_runtime_after_llm_settings() -> dict:
+    """Restart the DSH runtime so saved LLM credentials reach apiKeyEnv providers."""
+    service = getattr(app.state, "agent_service", None)
+    if service is None:
+        return {"restart_required": True, "agent_runtime_reload": "unavailable"}
+    if getattr(service, "active_run", None) is not None or getattr(service, "active_runs_by_runtime", None):
+        return {"restart_required": True, "agent_runtime_reload": "busy"}
+    if str(getattr(service, "runtime_state", "") or "") == "stopped":
+        return {"agent_runtime_reload": "not_running"}
+
+    loop = getattr(service, "main_loop", None)
+    if loop is None or loop.is_closed():
+        return {"restart_required": True, "agent_runtime_reload": "unavailable"}
+
+    future = asyncio.run_coroutine_threadsafe(service.restart_runtime(), loop)
+    try:
+        restarted = future.result(timeout=45)
+    except FutureTimeoutError:
+        return {"restart_required": True, "agent_runtime_reload": "scheduled"}
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "restart_required": True,
+            "agent_runtime_reload": "failed",
+            "agent_runtime_error": str(exc)[:300],
+        }
+
+    if not restarted.get("ok"):
+        return {
+            "restart_required": True,
+            "agent_runtime_reload": "failed",
+            "agent_runtime_error": str(restarted.get("error") or "")[:300],
+        }
+    return {
+        "agent_runtime_reload": "restarted",
+        "agent_runtime_state": restarted.get("state") or "ready",
+    }
+
+
+def _write_settings(cfg: dict) -> dict:
+    patch = _safe_settings_write_patch(cfg)
+    reload_llm_runtime = _touches_llm_runtime_settings(patch)
+    patch_config(patch)
+    reset_bridge()
+    result = {"ok": True}
+    if reload_llm_runtime:
+        result.update(_reload_agent_runtime_after_llm_settings())
+    return result
+
+
 @app.get("/settings")
 def get_settings():
     return _public_settings()
@@ -12273,16 +12358,12 @@ def get_settings():
 def put_settings(cfg: dict):
     # Renderer reads a redacted document, so PUT must merge rather than erase
     # provider secrets that were intentionally omitted from that document.
-    patch_config(_safe_settings_write_patch(cfg))
-    reset_bridge()
-    return {"ok": True}
+    return _write_settings(cfg)
 
 
 @app.patch("/settings")
 def patch_settings(cfg: dict):
-    patch_config(_safe_settings_write_patch(cfg))
-    reset_bridge()
-    return {"ok": True}
+    return _write_settings(cfg)
 
 
 class TestNotifyRequest(BaseModel):
