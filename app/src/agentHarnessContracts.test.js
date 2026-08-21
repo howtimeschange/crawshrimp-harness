@@ -233,6 +233,24 @@ test('DSH rc.8 dependency graph keeps launcher and runtime on one cmdline versio
   assert.deepEqual(cmdlineEntries, [['node_modules/@deepseek-ai/dsh-cmdline', expected]])
 })
 
+test('DSH workspace directory picker avoids native Win32 dialog worker in Windows builds', () => {
+  const webCordis = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/web-cordis.yml'), 'utf8')
+  const genWebCordis = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/gen-web-cordis.py'), 'utf8')
+  const autoBlock = webCordis.split('- id: directory-picker', 2)[1]?.split('\n- id:', 1)[0] || ''
+  const winBrowseBlock = webCordis.split('- id: directory-picker-win-browse', 2)[1]?.split('\n- id:', 1)[0] || ''
+  const winBrowseUiBlock = webCordis.split('- id: ui-directory-picker-win-browse', 2)[1]?.split('\n- id:', 1)[0] || ''
+
+  assert.match(autoBlock, /name:\s*'@deepseek-ai\/dsh-host-directory-picker-auto'/)
+  assert.match(autoBlock, /disabled:\s*!!js process\.platform === 'win32'/)
+  assert.match(winBrowseBlock, /name:\s*'@deepseek-ai\/dsh-host-directory-picker-browse'/)
+  assert.match(winBrowseBlock, /disabled:\s*!!js process\.platform !== 'win32'/)
+  assert.match(winBrowseUiBlock, /name:\s*'@deepseek-ai\/dsh-client-ui-directory-picker-browse'/)
+  assert.match(winBrowseUiBlock, /disabled:\s*!!js process\.platform !== 'win32'/)
+  assert.match(genWebCordis, /directory-picker-win-browse/)
+  assert.match(genWebCordis, /ui-directory-picker-win-browse/)
+  assert.match(genWebCordis, /process\.platform === 'win32'/)
+})
+
 test('DSH web cordis registers Crawshrimp DeepSeek provider without exposing the native route', () => {
   const webCordis = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/web-cordis.yml'), 'utf8')
   const launcherBlock = webCordis.split('- id: launcher', 2)[1].split('\n- id:', 1)[0]

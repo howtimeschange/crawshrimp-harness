@@ -344,6 +344,37 @@ def main() -> int:
   trustedHosts: !!js ctx.webStartup.trustedHosts
 """)}
 
+    # Windows packaged builds run the DSH host under Electron-as-Node. The
+    # upstream native picker spawns its Win32 dialog worker through
+    # process.execPath, which is the Electron executable in that environment
+    # and can exit before the worker reports a folder. Use the in-app browse
+    # picker on Windows while leaving the upstream auto/native path unchanged
+    # elsewhere.
+    if "directory-picker" in merged:
+        merged["directory-picker"]["disabled"] = "!!js process.platform === 'win32'"
+    merged["directory-picker-win-browse"] = {
+        "id": "directory-picker-win-browse",
+        "name": "@deepseek-ai/dsh-host-directory-picker-browse",
+        "disabled": "!!js process.platform !== 'win32'",
+        "config_lines": [],
+    }
+    merged["ui-directory-picker-win-browse"] = {
+        "id": "ui-directory-picker-win-browse",
+        "name": "@deepseek-ai/dsh-client-ui-directory-picker-browse",
+        "disabled": "!!js process.platform !== 'win32'",
+        "config_lines": [],
+    }
+    if "directory-picker" in order:
+        insert_at = order.index("directory-picker") + 1
+        for new_id in ("directory-picker-win-browse", "ui-directory-picker-win-browse"):
+            if new_id not in order:
+                order.insert(insert_at, new_id)
+                insert_at += 1
+    else:
+        for new_id in ("directory-picker-win-browse", "ui-directory-picker-win-browse"):
+            if new_id not in order:
+                order.append(new_id)
+
     for did in DISABLE_IDS:
         if did in merged:
             merged[did]["disabled"] = "true"

@@ -536,6 +536,15 @@
 
 - id: directory-picker
   name: '@deepseek-ai/dsh-host-directory-picker-auto'
+  disabled: !!js process.platform === 'win32'
+
+- id: directory-picker-win-browse
+  name: '@deepseek-ai/dsh-host-directory-picker-browse'
+  disabled: !!js process.platform !== 'win32'
+
+- id: ui-directory-picker-win-browse
+  name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
+  disabled: !!js process.platform !== 'win32'
 
 - id: plugin-inventory
   name: '@deepseek-ai/dsh-host-plugin-inventory'
