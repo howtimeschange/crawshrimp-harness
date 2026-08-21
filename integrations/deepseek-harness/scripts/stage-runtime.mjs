@@ -53,6 +53,8 @@ const REQUIRED_STAGE_FILES = [
   'package.json',
   'node_modules/@deepseek-ai/dsh-sdk-jsonrpc-demo/lib/bin.js',
   'node_modules/@deepseek-ai/dsh-agent-spine-demo/package.json',
+  'node_modules/@deepseek-ai/dsh-client-ui-directory-picker-browse/package.json',
+  'node_modules/@deepseek-ai/dsh-host-directory-picker-browse/package.json',
   'node_modules/@deepseek-ai/dsh-llm-pi-ai/package.json',
   'node_modules/@deepseek-ai/dsh-mcp-client/package.json',
   'node_modules/@deepseek-ai/dsh-session-persistence-jsonl/package.json',
@@ -266,13 +268,54 @@ function bootCheck() {
   const electronBin = resolveElectronExecutable(appRoot)
   if (!electronBin) fail('app Electron 可执行文件不存在(打包机请先 npm install)')
   const demoBin = join(stageRoot, 'node_modules/@deepseek-ai/dsh-sdk-jsonrpc-demo/lib/bin.js')
+  const webBootPort = findFreeLoopbackPort()
+  bootCheckProfile(electronBin, demoBin, {
+    label: 'spike.cordis.yml',
+    cordisFile: 'spike.cordis.yml',
+    env: {
+      CRAWSHRIMP_SESSION_ROOT: join(stageRoot, '.boot-check-spike-sessions'),
+    },
+    cleanup: ['.boot-check-spike-sessions'],
+  })
+  bootCheckProfile(electronBin, demoBin, {
+    label: 'web-cordis.yml (Windows browse picker composition)',
+    cordisFile: 'web-cordis.yml',
+    env: {
+      CRAWSHRIMP_DIRECTORY_PICKER_MODE: 'browse',
+      CRAWSHRIMP_STAGE_BOOT_CHECK: '1',
+      CRAWSHRIMP_SESSION_ROOT: join(stageRoot, '.boot-check-web-sessions'),
+      CRAWSHRIMP_STORAGE_ROOT: join(stageRoot, '.boot-check-web-storages'),
+      CRAWSHRIMP_WORKSPACE_ROOT: stageRoot,
+      CRAWSHRIMP_WEB_PORT: String(webBootPort),
+      DSH_HOME: join(stageRoot, '.boot-check-dsh-home'),
+    },
+    webUrl: `http://127.0.0.1:${webBootPort}/`,
+    cleanup: ['.boot-check-web-sessions', '.boot-check-web-storages', '.boot-check-dsh-home'],
+  })
+  console.log('[stage-runtime] boot checks OK')
+}
+
+function findFreeLoopbackPort() {
+  const probe = spawnSync(
+    process.execPath,
+    ['-e', "const net=require('node:net');const server=net.createServer();server.listen(0,'127.0.0.1',()=>{process.stdout.write(String(server.address().port));server.close()})"],
+    { encoding: 'utf8', timeout: 5000 },
+  )
+  const port = Number(String(probe.stdout || '').trim())
+  if (probe.status !== 0 || !Number.isInteger(port) || port < 1 || port > 65535) {
+    fail(`无法为 web-cordis boot check 分配本机端口: ${probe.error?.message || probe.stderr || 'unknown error'}`)
+  }
+  return port
+}
+
+function bootCheckProfile(electronBin, demoBin, profile) {
   const env = {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
-    DSH_CORDIS_CONFIG: join(stageRoot, 'spike.cordis.yml'),
-    CRAWSHRIMP_SESSION_ROOT: join(stageRoot, '.boot-check-sessions'),
+    DSH_CORDIS_CONFIG: join(stageRoot, profile.cordisFile),
+    ...profile.env,
   }
-  console.log('[stage-runtime] boot check: Electron-as-Node 启动 staged dsh-jsonrpc-agent…')
+  console.log(`[stage-runtime] boot check ${profile.label}: Electron-as-Node 启动 staged dsh-jsonrpc-agent…`)
   const probe = spawnSync(
     process.execPath,
     [
@@ -283,15 +326,39 @@ import { spawn } from 'node:child_process'
 const child = spawn(${JSON.stringify(electronBin)}, [${JSON.stringify(demoBin)}], { stdio: ['pipe', 'pipe', 'inherit'] })
 let buf = ''
 let initialized = false
+const webUrl = ${JSON.stringify(profile.webUrl || '')}
+async function verifyWebSurface() {
+  if (!webUrl) return
+  let lastError
+  for (let attempt = 1; attempt <= 20; attempt += 1) {
+    try {
+      const response = await fetch(webUrl)
+      const html = await response.text()
+      if (!response.ok) throw new Error('HTTP ' + response.status)
+      const browseEntry = '"id":"@deepseek-ai/dsh-client-ui-directory-picker-browse"'
+      const nativeEntry = '"id":"@deepseek-ai/dsh-client-ui-directory-picker-native"'
+      const slotsEntry = '"id":"crawshrimp-slots"'
+      if (!html.includes(browseEntry)) throw new Error('browse picker client entry missing from HTML')
+      if (html.includes(nativeEntry)) throw new Error('native picker client entry unexpectedly active in HTML')
+      if (!html.includes(slotsEntry)) throw new Error('crawshrimp-slots client entry missing from HTML')
+      console.log(${JSON.stringify(profile.label)} + ' web surface: HTTP ' + response.status + ', browse picker active, native picker absent')
+      return
+    } catch (error) {
+      lastError = error
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 100))
+    }
+  }
+  throw lastError || new Error('web surface unavailable')
+}
 const done = new Promise((resolveIt) => {
   child.on('error', (error) => {
-    console.error('boot check 启动失败:', error.message)
+    console.error(${JSON.stringify(profile.label)} + ' 启动失败:', error.message)
     process.exitCode = 1
     resolveIt()
   })
   child.on('exit', (code) => {
     if (initialized) return
-    console.error('boot check 在 initialize 前退出:', code)
+    console.error(${JSON.stringify(profile.label)} + ' 在 initialize 前退出:', code)
     process.exitCode = 1
     resolveIt()
   })
@@ -304,15 +371,26 @@ const done = new Promise((resolveIt) => {
       let msg; try { msg = JSON.parse(line) } catch { continue }
       if (msg.id === 1) {
         initialized = true
-        if (msg.error) { console.error('initialize error:', JSON.stringify(msg.error)); process.exitCode = 1 }
-        else console.log('serverInfo:', JSON.stringify(msg.result?.serverInfo))
-        child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'shutdown', params: {} }) + '\\n')
-        resolveIt()
+        ;(async () => {
+          if (msg.error) {
+            console.error(${JSON.stringify(profile.label)} + ' initialize error:', JSON.stringify(msg.error))
+            process.exitCode = 1
+          } else {
+            console.log(${JSON.stringify(profile.label)} + ' serverInfo:', JSON.stringify(msg.result?.serverInfo))
+            try { await verifyWebSurface() } catch (error) {
+              console.error(${JSON.stringify(profile.label)} + ' web surface check failed:', error.message)
+              process.exitCode = 1
+            }
+          }
+          child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'shutdown', params: {} }) + '\\n')
+          resolveIt()
+        })()
+        return
       }
     }
   })
 })
-const timer = setTimeout(() => { console.error('boot check 超时'); process.exitCode = 1; try { child.kill() } catch {} }, 45000)
+const timer = setTimeout(() => { console.error(${JSON.stringify(profile.label)} + ' boot check 超时'); process.exitCode = 1; try { child.kill() } catch {} }, 45000)
 child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { cwd: ${JSON.stringify(stageRoot)}, provider: 'crawshrimp-overseas-openai', model: 'gpt-5.6-terra', maxTokens: 8000 } }) + '\\n')
 await done
 clearTimeout(timer)
@@ -321,8 +399,16 @@ try { child.stdin.end() } catch {}
     ],
     { cwd: stageRoot, timeout: 60000, env },
   )
-  if (probe.status !== 0) fail(`staged runtime boot check exited ${probe.status}`)
-  // 清理 boot check 产生的会话目录,避免进入安装包
-  try { rmSync(join(stageRoot, '.boot-check-sessions'), { recursive: true, force: true }) } catch {}
-  console.log('[stage-runtime] boot check OK')
+  const stdout = String(probe.stdout || '').trim()
+  const stderr = String(probe.stderr || '').trim()
+  // 清理 boot check 产生的状态目录,避免进入安装包。
+  for (const rel of profile.cleanup || []) {
+    try { rmSync(join(stageRoot, rel), { recursive: true, force: true }) } catch {}
+  }
+  if (probe.status !== 0) {
+    const detail = [probe.error?.message, stdout, stderr].filter(Boolean).join('\n').slice(-4000)
+    fail(`${profile.label} staged runtime boot check exited ${probe.status}: ${detail || 'unknown error'}`)
+  }
+  if (stdout) console.log(stdout.split('\n').map((line) => `[stage-runtime] ${line}`).join('\n'))
+  console.log(`[stage-runtime] boot check ${profile.label} OK`)
 }

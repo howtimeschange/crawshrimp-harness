@@ -316,7 +316,7 @@ def main() -> int:
   headers: !!js |
     ({ Authorization: 'Bearer ' + (process.env.CRAWSHRIMP_MCP_TOKEN ?? '') })
   toolCallTimeoutMs: 1800000
-  failOnStartupError: true
+  failOnStartupError: !!js process.env.CRAWSHRIMP_STAGE_BOOT_CHECK !== '1'
 """)}
     merged["sdk-jsonrpc-server"] = {"id": "sdk-jsonrpc-server", "name": "@deepseek-ai/dsh-sdk-jsonrpc-server",
                                     "disabled": None, "config_lines": []}
@@ -349,19 +349,30 @@ def main() -> int:
     # process.execPath, which is the Electron executable in that environment
     # and can exit before the worker reports a folder. Use the in-app browse
     # picker on Windows while leaving the upstream auto/native path unchanged
-    # elsewhere.
+    # elsewhere. CRAWSHRIMP_DIRECTORY_PICKER_MODE=browse lets staging/CI boot
+    # the exact Windows composition on another OS; it never re-enables native
+    # on Windows.
     if "directory-picker" in merged:
-        merged["directory-picker"]["disabled"] = "!!js process.platform === 'win32'"
+        merged["directory-picker"]["disabled"] = (
+            "!!js process.platform === 'win32' || "
+            "process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE === 'browse'"
+        )
     merged["directory-picker-win-browse"] = {
         "id": "directory-picker-win-browse",
         "name": "@deepseek-ai/dsh-host-directory-picker-browse",
-        "disabled": "!!js process.platform !== 'win32'",
+        "disabled": (
+            "!!js process.platform !== 'win32' && "
+            "process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE !== 'browse'"
+        ),
         "config_lines": [],
     }
     merged["ui-directory-picker-win-browse"] = {
         "id": "ui-directory-picker-win-browse",
         "name": "@deepseek-ai/dsh-client-ui-directory-picker-browse",
-        "disabled": "!!js process.platform !== 'win32'",
+        "disabled": (
+            "!!js process.platform !== 'win32' && "
+            "process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE !== 'browse'"
+        ),
         "config_lines": [],
     }
     if "directory-picker" in order:

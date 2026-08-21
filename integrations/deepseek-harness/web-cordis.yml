@@ -13,7 +13,7 @@
       headers: !!js |
         ({ Authorization: 'Bearer ' + (process.env.CRAWSHRIMP_MCP_TOKEN ?? '') })
       toolCallTimeoutMs: 1800000
-      failOnStartupError: true
+      failOnStartupError: !!js process.env.CRAWSHRIMP_STAGE_BOOT_CHECK !== '1'
 
 - id: sdk-jsonrpc-server
   name: '@deepseek-ai/dsh-sdk-jsonrpc-server'
@@ -536,15 +536,15 @@
 
 - id: directory-picker
   name: '@deepseek-ai/dsh-host-directory-picker-auto'
-  disabled: !!js process.platform === 'win32'
+  disabled: !!js process.platform === 'win32' || process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE === 'browse'
 
 - id: directory-picker-win-browse
   name: '@deepseek-ai/dsh-host-directory-picker-browse'
-  disabled: !!js process.platform !== 'win32'
+  disabled: !!js process.platform !== 'win32' && process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE !== 'browse'
 
 - id: ui-directory-picker-win-browse
   name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
-  disabled: !!js process.platform !== 'win32'
+  disabled: !!js process.platform !== 'win32' && process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE !== 'browse'
 
 - id: plugin-inventory
   name: '@deepseek-ai/dsh-host-plugin-inventory'

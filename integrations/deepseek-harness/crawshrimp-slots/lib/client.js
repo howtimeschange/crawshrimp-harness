@@ -881,16 +881,161 @@ window.__ModuleLoader__.load({
     }
 
     // ---- 默认工作区:自动采用抓虾运行时目录,不需要用户指定 ----
-    async function ensureDefaultWorkspace(ctx, root) {      if (!root || !ctx.workspaces) return
-      try {
-        const snap = ctx.workspaces.list?.getSnapshot?.() || {}
-        const existing = snap.items || []
-        if (existing.length > 0) return
-        // create 幂等:同一路径重复调用返回同一工作区
-        await ctx.workspaces.create(root)
-      } catch (error) {
-        // 已存在/暂不可用:下一轮消息再试
+    // workspace 消息通常早于 DSH 的 workspace/session baseline。这里订阅真实
+    // baseline，创建后再回读 workspace + session 投影；瞬时失败做有界退避，
+    // 避免把用户赶到手动 picker，也避免静默吞掉永久故障。
+    const DEFAULT_WORKSPACE_RETRY_DELAYS_MS = [250, 1000, 3000, 8000, 12000]
+    const DEFAULT_WORKSPACE_TIMEOUT_MS = 60000
+    const defaultWorkspaceRuns = new WeakMap()
+
+    function workspaceFailureMessage(error) {
+      const message = error && typeof error === 'object' && typeof error.message === 'string'
+        ? error.message
+        : String(error)
+      return message.length > 300 ? `${message.slice(0, 300)}…` : message
+    }
+
+    function finishDefaultWorkspaceRun(ctx, run, result) {
+      if (run.done) return
+      run.done = true
+      run.result = result
+      if (run.retryTimer) clearTimeout(run.retryTimer)
+      if (run.deadlineTimer) clearTimeout(run.deadlineTimer)
+      if (run.unsubscribe) run.unsubscribe()
+      run.resolve(result)
+    }
+
+    function scheduleDefaultWorkspaceAttempt(ctx, run, delayMs) {
+      if (run.done || defaultWorkspaceRuns.get(ctx) !== run) return
+      if (run.retryTimer) clearTimeout(run.retryTimer)
+      run.nextAttemptAt = Date.now() + delayMs
+      run.retryTimer = setTimeout(() => {
+        run.retryTimer = null
+        run.nextAttemptAt = 0
+        reconcileDefaultWorkspace(ctx, run)
+      }, delayMs)
+    }
+
+    async function reconcileDefaultWorkspace(ctx, run) {
+      if (run.done || run.inFlight || defaultWorkspaceRuns.get(ctx) !== run) return
+      if (run.nextAttemptAt && Date.now() < run.nextAttemptAt) return
+
+      const snap = ctx.workspaces.list?.getSnapshot?.() || {}
+      const items = Array.isArray(snap.items) ? snap.items : []
+      if (!run.workspaceId && items.length > 0) {
+        finishDefaultWorkspaceRun(ctx, run, { status: 'existing', workspaceId: items[0]?.workspaceId || '' })
+        return
       }
+      if (!snap.baselinesReady) return
+
+      run.inFlight = true
+      run.attempts += 1
+      try {
+        let workspace = run.workspaceId
+          ? items.find((item) => item.workspaceId === run.workspaceId)
+          : null
+        if (!run.workspaceId) {
+          // DSH rc.8 的契约是 create({ path })，不是 create(path)。传字符串会在
+          // Workspace 构造阶段抛错，旧实现又把该异常吞掉，导致默认工作区永远缺失。
+          workspace = await ctx.workspaces.create({ path: run.root })
+          if (run.done || defaultWorkspaceRuns.get(ctx) !== run) {
+            run.inFlight = false
+            return
+          }
+          if (!workspace?.workspaceId) throw new Error('workspace create returned no workspace id')
+          run.workspaceId = workspace.workspaceId
+        }
+
+        // create() 按契约会同步投影到 list；这里仍显式回读，防止“RPC 成功但 UI
+        // 状态没有落地”被误报成完成。若通知稍晚到，下一轮订阅/退避会继续核对。
+        const projected = (ctx.workspaces.list?.getSnapshot?.().items || [])
+          .find((item) => item.workspaceId === run.workspaceId)
+        if (!projected) throw new Error('workspace create succeeded without list projection')
+
+        let sessionId = ctx.sessions?.list?.getSnapshot?.().current
+        if (!sessionId && typeof ctx.workspaces.connectWorkspace === 'function' && ctx.sessions) {
+          sessionId = await ctx.workspaces.connectWorkspace(projected.workspaceId)
+          if (run.done || defaultWorkspaceRuns.get(ctx) !== run) {
+            run.inFlight = false
+            return
+          }
+          if (!ctx.sessions.list?.getSnapshot?.().current) ctx.sessions.open(sessionId)
+          const selected = ctx.sessions.list?.getSnapshot?.().current
+          if (selected !== sessionId) throw new Error('default workspace session was not selected')
+        }
+
+        run.inFlight = false
+        finishDefaultWorkspaceRun(ctx, run, {
+          status: 'created',
+          workspaceId: projected.workspaceId,
+          sessionId: sessionId || '',
+        })
+      } catch (error) {
+        run.inFlight = false
+        run.lastError = workspaceFailureMessage(error)
+        const maxAttempts = run.retryDelaysMs.length + 1
+        console.warn(
+          `[crawshrimp] default workspace initialization attempt ${run.attempts}/${maxAttempts} failed: ${run.lastError}`,
+        )
+        if (run.attempts >= maxAttempts) {
+          console.error(`[crawshrimp] default workspace initialization failed after ${run.attempts} attempts`)
+          finishDefaultWorkspaceRun(ctx, run, { status: 'failed', error: run.lastError })
+          return
+        }
+        const retryDelay = run.retryDelaysMs[Math.min(run.attempts - 1, run.retryDelaysMs.length - 1)]
+        scheduleDefaultWorkspaceAttempt(ctx, run, retryDelay)
+      }
+    }
+
+    function ensureDefaultWorkspace(ctx, root, options = {}) {
+      const normalizedRoot = String(root || '').trim()
+      if (!normalizedRoot || !ctx?.workspaces?.list) return Promise.resolve({ status: 'skipped' })
+
+      const previous = defaultWorkspaceRuns.get(ctx)
+      if (previous && previous.root === normalizedRoot && !previous.done) return previous.promise
+      if (previous && previous.root === normalizedRoot && previous.result?.status !== 'failed') {
+        return Promise.resolve(previous.result)
+      }
+      if (previous && !previous.done) {
+        finishDefaultWorkspaceRun(ctx, previous, { status: 'superseded' })
+      }
+
+      let resolveRun
+      const retryDelaysMs = Array.isArray(options.retryDelaysMs)
+        ? options.retryDelaysMs.map((value) => Math.max(0, Number(value) || 0))
+        : DEFAULT_WORKSPACE_RETRY_DELAYS_MS
+      const timeoutMs = Math.max(1, Number(options.timeoutMs) || DEFAULT_WORKSPACE_TIMEOUT_MS)
+      const run = {
+        root: normalizedRoot,
+        retryDelaysMs,
+        attempts: 0,
+        workspaceId: '',
+        inFlight: false,
+        done: false,
+        result: null,
+        lastError: '',
+        retryTimer: null,
+        deadlineTimer: null,
+        unsubscribe: null,
+        nextAttemptAt: 0,
+        resolve: (result) => resolveRun(result),
+        promise: null,
+      }
+      run.promise = new Promise((resolve) => { resolveRun = resolve })
+      defaultWorkspaceRuns.set(ctx, run)
+      if (typeof ctx.workspaces.list.subscribe === 'function') {
+        run.unsubscribe = ctx.workspaces.list.subscribe(() => reconcileDefaultWorkspace(ctx, run))
+      }
+      run.deadlineTimer = setTimeout(() => {
+        if (run.done) return
+        console.error('[crawshrimp] default workspace initialization timed out')
+        finishDefaultWorkspaceRun(ctx, run, {
+          status: 'failed',
+          error: run.lastError || 'workspace initialization did not complete before timeout',
+        })
+      }, timeoutMs)
+      reconcileDefaultWorkspace(ctx, run)
+      return run.promise
     }
 
     function publishCurrentSession(ctx) {
@@ -1003,6 +1148,8 @@ window.__ModuleLoader__.load({
     }
 
     exports.apply = apply
+    // 可执行契约测试直接调用真实实现，避免退化为源码字符串匹配。
+    exports.ensureDefaultWorkspace = ensureDefaultWorkspace
     // kernel 服务依赖声明:apply 内访问 ctx.theme/ctx.workspaces/ctx.sessions/ctx.slots 必须显式 inject
     exports.inject = ['theme', 'workspaces', 'sessions', 'slots']
     return module.exports
