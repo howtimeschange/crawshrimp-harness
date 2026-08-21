@@ -4,7 +4,35 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 
-const { stopManagedChrome } = require('./managedChrome')
+const { removeManagedChromeStateFile, stopManagedChrome } = require('./managedChrome')
+
+test('removeManagedChromeStateFile retries a transient Windows sharing violation', () => {
+  const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-chrome-state-'))
+  const stateFile = path.join(tmpdir, 'chrome-instance.json')
+  fs.writeFileSync(stateFile, '{}', 'utf8')
+  let attempts = 0
+  const fsApi = {
+    unlinkSync(target) {
+      attempts += 1
+      if (attempts === 1) {
+        const error = new Error('file is busy')
+        error.code = 'EBUSY'
+        throw error
+      }
+      fs.unlinkSync(target)
+    },
+  }
+
+  assert.equal(removeManagedChromeStateFile(stateFile, {
+    fsApi,
+    platform: 'win32',
+    retryDelaysMs: [0],
+    sleepSync: () => {},
+  }), true)
+  assert.equal(attempts, 2)
+  assert.equal(fs.existsSync(stateFile), false)
+  fs.rmSync(tmpdir, { recursive: true, force: true })
+})
 
 test('stopManagedChrome kills only the recorded managed Chrome instance', async () => {
   const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-chrome-'))

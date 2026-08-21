@@ -114,7 +114,9 @@ function spawnRuntime() {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
     DSH_CORDIS_CONFIG: cordisPath,
+    DSH_HOME: process.env.DSH_HOME || `${state.dataRoot}/agent/dsh-home`,
     CRAWSHRIMP_SESSION_ROOT: process.env.CRAWSHRIMP_SESSION_ROOT || `${state.dataRoot}/agent/harness-sessions`,
+    CRAWSHRIMP_STORAGE_ROOT: process.env.CRAWSHRIMP_STORAGE_ROOT || `${state.dataRoot}/agent/storages`,
     CRAWSHRIMP_MCP_URL: process.env.CRAWSHRIMP_MCP_URL || 'http://127.0.0.1:18965/mcp',
   }
 

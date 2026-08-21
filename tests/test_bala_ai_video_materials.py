@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from core import bala_ai_video_materials as materials
@@ -92,6 +94,27 @@ def test_missing_material_batch_error_explains_stale_batch():
 
     assert "素材批次不存在或已失效" in str(exc_info.value)
     assert "bala-material-missing-test" in str(exc_info.value)
+
+
+def test_material_batch_interrupted_save_keeps_the_previous_manifest(tmp_path, monkeypatch):
+    batch = {
+        "batch_id": "bala-material-atomic",
+        "artifact_dir": str(tmp_path),
+        "token": "before",
+        "items": [],
+    }
+    path = materials.save_material_batch(batch)
+
+    def interrupted_dump(_payload, handle, **_kwargs):
+        handle.write('{"partial":')
+        handle.flush()
+        raise OSError("simulated sharing interruption")
+
+    monkeypatch.setattr(json, "dump", interrupted_dump)
+    with pytest.raises(OSError, match="sharing interruption"):
+        materials.save_material_batch({**batch, "token": "after"})
+
+    assert json.loads(path.read_text(encoding="utf-8"))["token"] == "before"
 
 
 def test_export_ai_input_builds_outfit_swap_params_from_selected_materials(tmp_path):

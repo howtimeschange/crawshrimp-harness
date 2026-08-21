@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from core import data_sink
+from core.atomic_file import atomic_write_text, remove_path_with_retry
 from core.agent import db
 from core.agent import mcp_gateway
 from core.agent.redaction import REDACTED, redact_text as _redact_secret_text, redact_value
@@ -275,12 +276,7 @@ Get-CimInstance Win32_Process |
 
 def _remove_owned_tree(path: Path) -> None:
     """删除智能体自有目录；符号链接只移除链接本身，绝不跟随到外部目标。"""
-    import shutil
-
-    if path.is_symlink():
-        path.unlink()
-    elif path.exists():
-        shutil.rmtree(path, ignore_errors=False)
+    remove_path_with_retry(path)
 
 # 不写入产品事件表的 Harness 事件(窄 spec §7.1)
 FILTERED_EVENT_TYPES = {"request/header", "request/context"}
@@ -440,6 +436,7 @@ class AgentService:
         self.active_runs_by_runtime: dict[str, dict] = {}
         self.grants_by_run: dict[str, dict] = {}
         self._mcp_context_lock = asyncio.Lock()
+        self._runtime_mutation_lock = asyncio.Lock()
         self._mcp_context_lease_id = ""
         self._mcp_lease_expiry_task: Optional[asyncio.Task] = None
 
@@ -1000,6 +997,11 @@ class AgentService:
 
     async def start_generation(self, provider_id: Optional[str] = None,
                                model_id: Optional[str] = None) -> bool:
+        async with self._runtime_mutation_lock:
+            return await self._start_generation_unlocked(provider_id, model_id)
+
+    async def _start_generation_unlocked(self, provider_id: Optional[str] = None,
+                                         model_id: Optional[str] = None) -> bool:
         await self._stop_worker()
         self.generation += 1
         self.runtime_state = "starting"
@@ -1066,11 +1068,11 @@ class AgentService:
         if not cordis_path.exists():
             cordis_path = harness_root / "runtime-cordis.yml"
             try:
-                cordis_path.write_text(build_cordis_yaml(cfg, model_id), encoding="utf-8")
+                atomic_write_text(cordis_path, build_cordis_yaml(cfg, model_id))
             except OSError as exc:
                 print(f"[agent] 无法写入 {cordis_path}({exc}),回退 legacy data 目录", flush=True)
                 cordis_path = agent_dir / "runtime-cordis.yml"
-                cordis_path.write_text(build_cordis_yaml(cfg, model_id), encoding="utf-8")
+                atomic_write_text(cordis_path, build_cordis_yaml(cfg, model_id))
 
         worker = AgentWorker(
             runtime_root=str(resolve_harness_root()),
@@ -1575,10 +1577,15 @@ class AgentService:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(_APPROVAL_EXECUTOR, _post)
 
-    def clear_agent_data(self) -> dict:
+    async def clear_agent_data(self) -> dict:
         """清除智能体投影及其受控附件、草稿、运行日志和智能体发布适配包。"""
+        async with self._runtime_mutation_lock:
+            return await self._clear_agent_data_unlocked()
+
+    async def _clear_agent_data_unlocked(self) -> dict:
         if self.active_run is not None or self.active_runs_by_runtime:
             return {"ok": False, "error": "存在进行中的运行,请先停止后再清除"}
+        await self._stop_worker()
         try:
             with db._lock:
                 conn = db._conn()

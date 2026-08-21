@@ -3,8 +3,9 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from core import adapter_loader, knowledge_service
+from core import adapter_loader, atomic_file, knowledge_service
 
 
 def _write_adapter_with_notes(root: Path) -> Path:
@@ -95,7 +96,7 @@ class KnowledgeServiceTests(unittest.TestCase):
         adapter_loader._install_meta.clear()
 
     def test_rebuild_knowledge_index_materializes_notes_and_probe_cards(self):
-        with unittest.mock.patch.dict(os.environ, self.env, clear=False):
+        with mock.patch.dict(os.environ, self.env, clear=False):
             adapter_dir = _write_adapter_with_notes(Path(self.tmpdir.name) / "src")
             adapter_loader.install_from_dir(str(adapter_dir), install_mode="copy")
             _write_probe_bundle(Path(self.tmpdir.name))
@@ -111,7 +112,7 @@ class KnowledgeServiceTests(unittest.TestCase):
             self.assertTrue(skill_path.exists())
 
     def test_search_knowledge_filters_by_task_and_url(self):
-        with unittest.mock.patch.dict(os.environ, self.env, clear=False):
+        with mock.patch.dict(os.environ, self.env, clear=False):
             adapter_dir = _write_adapter_with_notes(Path(self.tmpdir.name) / "src")
             adapter_loader.install_from_dir(str(adapter_dir), install_mode="copy")
             _write_probe_bundle(Path(self.tmpdir.name))
@@ -129,6 +130,54 @@ class KnowledgeServiceTests(unittest.TestCase):
             self.assertGreaterEqual(result["total"], 1)
             self.assertEqual(result["cards"][0]["adapter_id"], "demo")
             self.assertEqual(result["cards"][0]["task_id"], "goods_traffic_detail")
+
+    def test_rebuild_knowledge_index_replaces_long_lived_state_atomically(self):
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            adapter_dir = _write_adapter_with_notes(Path(self.tmpdir.name) / "src")
+            adapter_loader.install_from_dir(str(adapter_dir), install_mode="copy")
+            _write_probe_bundle(Path(self.tmpdir.name))
+            knowledge_root = Path(self.tmpdir.name) / "knowledge"
+            original_write_text = Path.write_text
+
+            def reject_live_state_truncation(path, *args, **kwargs):
+                if (path == knowledge_root or knowledge_root in path.parents) and path.suffix in {".json", ".md"}:
+                    raise AssertionError(f"knowledge state must not be truncated in place: {path}")
+                return original_write_text(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "write_text", reject_live_state_truncation):
+                with mock.patch.object(
+                    knowledge_service,
+                    "atomic_write_json",
+                    wraps=atomic_file.atomic_write_json,
+                    create=True,
+                ) as write_json:
+                    with mock.patch.object(
+                        knowledge_service,
+                        "atomic_write_text",
+                        wraps=atomic_file.atomic_write_text,
+                        create=True,
+                    ) as write_text:
+                        result = knowledge_service.rebuild_knowledge_index()
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(
+                {call.args[0] for call in write_json.call_args_list},
+                {knowledge_root / "cards.json", knowledge_root / "index.json"},
+            )
+            self.assertTrue(any(call.args[0].suffix == ".md" for call in write_text.call_args_list))
+
+    def test_corrupt_cards_are_rebuilt_even_when_meta_fingerprint_matches(self):
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            adapter_dir = _write_adapter_with_notes(Path(self.tmpdir.name) / "src")
+            adapter_loader.install_from_dir(str(adapter_dir), install_mode="copy")
+            knowledge_service.rebuild_knowledge_index()
+            cards_path = Path(self.tmpdir.name) / "knowledge" / "cards.json"
+            cards_path.write_text("{truncated", encoding="utf-8")
+
+            result = knowledge_service.ensure_knowledge_index()
+
+            self.assertTrue(result["ok"])
+            self.assertIsInstance(json.loads(cards_path.read_text(encoding="utf-8")), list)
 
 
 if __name__ == "__main__":

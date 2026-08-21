@@ -681,6 +681,7 @@ class BalaAiVideoAssistantPackagingTests(unittest.TestCase):
             )
             with patch("core.api_server.runtime_paths.child_dir", return_value=runtime_dir), \
                     patch("core.api_server._bala_video_provider_env", return_value=({}, [])), \
+                    patch("core.api_server.atomic_write_json", side_effect=AssertionError("missing credentials must not persist a provider payload")), \
                     patch("core.api_server.asyncio.create_subprocess_exec", side_effect=AssertionError("missing credentials must not launch a provider CLI")):
                 seedance_result = asyncio.run(api_server._run_seedance_cli(seedance_request))
                 happyhorse_result = asyncio.run(api_server._run_happyhorse_cli(happyhorse_request))
@@ -689,6 +690,7 @@ class BalaAiVideoAssistantPackagingTests(unittest.TestCase):
         self.assertEqual(seedance_result["error"], "请先在 AI 能力配置 Seedance 凭据")
         self.assertEqual(happyhorse_result["error"], "请先在 AI 能力配置 百炼 HappyHorse 凭据")
         self.assertEqual(refresh_result["error"], "请先在 AI 能力配置 Seedance 凭据")
+        self.assertFalse(runtime_dir.exists())
 
     def test_provider_task_refresh_and_download_use_shared_cli_commands(self):
         runner = getattr(api_server, "_run_video_provider_task_cli", None)

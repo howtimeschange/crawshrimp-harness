@@ -32,6 +32,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from core import data_sink  # noqa: E402
+from core.atomic_file import atomic_write_json, atomic_write_text  # noqa: E402
 from core.cdp_bridge import CDPBridge  # noqa: E402
 from core.js_runner import JSRunner  # noqa: E402
 from core.one_xm_image import file_to_data_url  # noqa: E402
@@ -873,8 +874,8 @@ def write_approval_batch(
     board_path = artifact_dir / f"{APPROVAL_BOARD_FILENAME_PREFIX}-{batch_id}.html"
     batch["json_path"] = str(json_path)
     batch["board_path"] = str(board_path)
-    json_path.write_text(json.dumps(batch, ensure_ascii=False, indent=2), encoding="utf-8")
-    board_path.write_text(render_approval_board_html(batch), encoding="utf-8")
+    atomic_write_json(json_path, batch, ensure_ascii=False, indent=2)
+    atomic_write_text(board_path, render_approval_board_html(batch))
     return batch
 
 
@@ -884,10 +885,10 @@ def save_approval_batch(batch: Mapping[str, Any]) -> None:
         return
     json_path = Path(json_path_raw)
     json_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text(json.dumps(json_safe(batch), ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(json_path, json_safe(batch), ensure_ascii=False, indent=2)
     board_path = Path(compact(batch.get("board_path")))
     if board_path:
-        board_path.write_text(render_approval_board_html(batch), encoding="utf-8")
+        atomic_write_text(board_path, render_approval_board_html(batch))
 
 
 def update_approval_decisions(batch: dict[str, Any], decisions: Mapping[str, Any]) -> dict[str, Any]:
@@ -4367,7 +4368,7 @@ def write_submit_result_artifacts(
         column_order=TMALL_AI_IMAGE_RESULT_COLUMN_ORDER,
     )
     audit_path = artifact_dir / f"tmall-ai-image-approval-submit-{batch.get('batch_id', 'batch')}.json"
-    audit_path.write_text(json.dumps({
+    atomic_write_json(audit_path, {
         "status": status,
         "attempted": attempted,
         "succeeded": succeeded,
@@ -4375,7 +4376,7 @@ def write_submit_result_artifacts(
         "submitted": succeeded,
         "rows": result_rows,
         "excel_path": excel_path,
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    }, ensure_ascii=False, indent=2)
     batch["submit_result_path"] = str(audit_path)
     batch["submit_result_excel_path"] = str(excel_path)
     return str(audit_path), str(excel_path)

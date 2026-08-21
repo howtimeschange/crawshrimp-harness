@@ -47,6 +47,7 @@ from core.agent import db as agent_db
 from core.agent import api as agent_api
 from core.agent.service import AgentService
 from core.config import load_config, patch_config, save_config
+from core.atomic_file import atomic_write_json, atomic_write_text, remove_path_with_retry, replace_with_retry
 from core.cloud_approval_client import CloudApprovalClient, CloudApprovalError
 from core.cloud_approval_url import (
     invalidate_cloud_approval_url_cache,
@@ -74,6 +75,7 @@ from core.probe_models import ProbeRequest
 from core.probe_service import read_probe_bundle, read_probe_bundle_full, run_probe_request
 from core.runtime_install_guard import InstallRuntimeBusy, RuntimeInstallGuard, UpdateDrainActive
 from core.shenhui_pdf_screenshot import finalize_pdf_batch_screenshot_outputs, convert_pdf_rows_to_yq_output_root
+from core.windows_acl import harden_windows_path
 from core.amazon_label_splitter import (
     copy_amazon_label_outputs_to_export_folder,
     split_amazon_label_rows,
@@ -203,14 +205,12 @@ def _get_api_token() -> str:
     token_path = _backend_lock_dir() / "api-token"
     try:
         if token_path.exists():
+            harden_windows_path(token_path)
             return token_path.read_text(encoding="utf-8").strip()
         token_path.parent.mkdir(parents=True, exist_ok=True)
         token = secrets.token_hex(32)
-        token_path.write_text(token, encoding="utf-8")
-        try:
-            token_path.chmod(0o600)
-        except OSError:
-            pass
+        atomic_write_text(token_path, token)
+        harden_windows_path(token_path)
         return token
     except Exception as exc:
         logger.exception("Failed to read or create crawshrimp API token")
@@ -546,6 +546,8 @@ def _schedule_next_run_map() -> dict[str, str]:
 
 
 class BackendInstanceLock:
+    _METADATA_BYTES = 64
+
     def __init__(self, file_path: Path):
         self.file_path = file_path
         self.handle = None
@@ -553,7 +555,11 @@ class BackendInstanceLock:
 
     def acquire(self) -> bool:
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
-        self.handle = self.file_path.open("a+")
+        self.file_path.touch(exist_ok=True)
+        # Windows byte-range locks operate on bytes.  Keep this handle binary so
+        # newline translation cannot grow the fixed-width metadata on every
+        # process start while byte zero is locked.
+        self.handle = self.file_path.open("r+b")
         if os.name == "nt":
             try:
                 import msvcrt
@@ -587,10 +593,14 @@ class BackendInstanceLock:
                     self.handle = None
                 return False
         try:
+            # Never size an allocation from a user-editable lock file.  A
+            # corrupt/sparse file may be enormous; readers only consume this
+            # fixed first record and ignore any legacy suffix.
+            metadata = f"{os.getpid()}\n".encode("ascii").ljust(self._METADATA_BYTES, b" ")
             self.handle.seek(0)
-            self.handle.truncate()
-            self.handle.write(str(os.getpid()))
+            self.handle.write(metadata)
             self.handle.flush()
+            os.fsync(self.handle.fileno())
         except Exception:
             logger.debug("Failed to write backend instance lock metadata", exc_info=True)
             self.acquired = False
@@ -644,7 +654,8 @@ def _backend_runtime_info() -> dict:
     lock_dir = _backend_lock_dir()
     lock_pid = ""
     try:
-        lock_pid = _backend_lock_path().read_text(encoding="utf-8").strip()
+        with _backend_lock_path().open("rb") as handle:
+            lock_pid = handle.read(BackendInstanceLock._METADATA_BYTES).decode("ascii", errors="ignore").splitlines()[0].strip()
     except Exception:
         lock_pid = ""
     return {
@@ -2583,11 +2594,9 @@ def _compress_bala_video_image_if_needed(path: Path, threshold_bytes: int, log) 
 
     final_path = path if target_suffix == suffix else _ensure_unique_local_path(path.with_suffix(target_suffix))
     try:
-        if final_path == path:
-            best_temp.replace(path)
-        else:
-            shutil.move(str(best_temp), str(final_path))
-            path.unlink(missing_ok=True)
+        replace_with_retry(best_temp, final_path)
+        if final_path != path:
+            remove_path_with_retry(path)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -8224,11 +8233,19 @@ async def _run_seedance_cli(req: BalaSeedanceVideoRequest) -> dict:
     payload = _build_seedance_payload(req)
     output_path = _seedance_output_path(req)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    run_dir = runtime_paths.child_dir("bala-ai-video-seedance")
-    run_dir.mkdir(parents=True, exist_ok=True)
-    payload_path = run_dir / f"seedance-payload-{uuid4().hex}.json"
-    payload_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     node_executable, node_env = _bala_video_node_runtime()
+    env, secret_values = _bala_video_provider_env("seedance")
+    env.update(node_env)
+    if not str(env.get("ARK_API_KEY") or env.get("SEEDANCE_API_KEY") or "").strip():
+        return {
+            "ok": False,
+            "provider": "seedance",
+            "status": "needs_config",
+            "error": "请先在 AI 能力配置 Seedance 凭据",
+        }
+    run_dir = runtime_paths.child_dir("bala-ai-video-seedance")
+    payload_path = run_dir / f"seedance-payload-{uuid4().hex}.json"
+    atomic_write_json(payload_path, payload, ensure_ascii=False, indent=2)
     command = [
         node_executable,
         "bin/seedance.js",
@@ -8245,15 +8262,6 @@ async def _run_seedance_cli(req: BalaSeedanceVideoRequest) -> dict:
             "--timeout",
             str(max(30, min(int(req.timeout_seconds or 1800), 7200))),
         ])
-    env, secret_values = _bala_video_provider_env("seedance")
-    env.update(node_env)
-    if not str(env.get("ARK_API_KEY") or env.get("SEEDANCE_API_KEY") or "").strip():
-        return {
-            "ok": False,
-            "provider": "seedance",
-            "status": "needs_config",
-            "error": "请先在 AI 能力配置 Seedance 凭据",
-        }
     process = await asyncio.create_subprocess_exec(
         *command,
         cwd=str(BALA_SEEDANCE_CLI_DIR),
@@ -8617,10 +8625,9 @@ async def _run_happyhorse_cli(req: BalaHappyHorseVideoRequest) -> dict:
     output_path = _bailian_output_path(req)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     run_dir = runtime_paths.child_dir("bala-ai-video-bailian")
-    run_dir.mkdir(parents=True, exist_ok=True)
     provider_slug = re.sub(r"[^a-z0-9]+", "-", provider).strip("-") or "bailian"
     payload_path = run_dir / f"{provider_slug}-payload-{uuid4().hex}.json"
-    payload_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(payload_path, payload, ensure_ascii=False, indent=2)
 
     command = [node_executable, "bin/bailian.js", "submit", str(payload_path)]
     if req.wait:
@@ -10310,7 +10317,7 @@ def get_tmall_ai_image_approval_board(batch_id: str, token: str = ""):
     if not board_path.is_file():
         module = _load_tmall_ai_image_chain_module()
         board_path = Path(str(batch.get("json_path") or "")).with_name(f"tmall-ai-image-approval-board-{batch.get('batch_id', batch_id)}.html")
-        board_path.write_text(module.render_approval_board_html(batch), encoding="utf-8")
+        atomic_write_text(board_path, module.render_approval_board_html(batch))
     return FileResponse(board_path, media_type="text/html; charset=utf-8")
 
 
@@ -11804,10 +11811,7 @@ def delete_files(req: DeleteFilesRequest):
             if not path.exists():
                 missing_paths.append(item)
                 continue
-            if path.is_dir():
-                shutil.rmtree(path)
-            else:
-                path.unlink()
+            remove_path_with_retry(path)
             deleted_paths.append(item)
         except Exception as e:
             failed_paths.append({"path": item, "error": str(e)})

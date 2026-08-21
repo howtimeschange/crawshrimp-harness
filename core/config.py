@@ -1,9 +1,12 @@
 """全局配置读写"""
 import json
+from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from core import runtime_paths
+from core.atomic_file import atomic_write_json, replace_with_retry
 
 LEGACY_ONE_XM_BASE_URL = "https://api.1xm.ai/v1"
 DEFAULT_ONE_XM_BASE_URL = "https://one-xm-proxy.crawshrimp.com/v1"
@@ -66,12 +69,16 @@ DEFAULT_CONFIG = {
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
-    result = dict(base or {})
+    # Callers are allowed to mutate the returned runtime config before saving
+    # it.  A shallow copy leaves default-only nested branches shared with the
+    # module-level DEFAULT_CONFIG, so loading a partial config can silently
+    # change future defaults in this process.
+    result = deepcopy(base or {})
     for key, value in (override or {}).items():
         if isinstance(result.get(key), dict) and isinstance(value, dict):
             result[key] = _deep_merge(result[key], value)
         else:
-            result[key] = value
+            result[key] = deepcopy(value)
     return result
 
 
@@ -116,16 +123,24 @@ def load_config() -> dict:
     path = _config_path()
     if not path.exists():
         save_config(DEFAULT_CONFIG)
-        return DEFAULT_CONFIG.copy()
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
+        return deepcopy(DEFAULT_CONFIG)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("config root must be a JSON object")
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        quarantine = path.with_name(f"{path.name}.corrupt-{stamp}")
+        replace_with_retry(path, quarantine)
+        save_config(DEFAULT_CONFIG)
+        return deepcopy(DEFAULT_CONFIG)
     return _apply_config_migrations(_deep_merge(DEFAULT_CONFIG, _expand_dotted_keys(data)))
 
 
 def save_config(cfg: dict) -> None:
     path = _config_path()
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(_expand_dotted_keys(cfg), f, ensure_ascii=False, indent=2)
+    atomic_write_json(path, _expand_dotted_keys(cfg), ensure_ascii=False, indent=2)
 
 
 def patch_config(patch: dict) -> dict:

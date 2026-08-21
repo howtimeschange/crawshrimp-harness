@@ -3,6 +3,8 @@
 const fs = require('fs')
 const path = require('path')
 
+const { retryWindowsFileOperationSync } = require('./atomicFile')
+
 function normalizePathForIdentity(rawPath = '') {
   const resolved = path.resolve(String(rawPath || ''))
   try {
@@ -22,6 +24,25 @@ function readManagedChromeState(stateFile) {
     return JSON.parse(fs.readFileSync(stateFile, 'utf8') || '{}')
   } catch {
     return null
+  }
+}
+
+function removeManagedChromeStateFile(stateFile, {
+  fsApi = fs,
+  platform = process.platform,
+  retryDelaysMs,
+  sleepSync,
+} = {}) {
+  try {
+    retryWindowsFileOperationSync(() => fsApi.unlinkSync(stateFile), {
+      platform,
+      retryDelaysMs,
+      sleepSync,
+    })
+    return true
+  } catch (error) {
+    if (error?.code === 'ENOENT') return true
+    return false
   }
 }
 
@@ -53,7 +74,7 @@ async function stopManagedChrome(options = {}) {
     return { stopped: false, reason: 'profile-mismatch' }
   }
   if (!isPidAlive(pid)) {
-    try { fs.unlinkSync(stateFile) } catch (_) {}
+    removeManagedChromeStateFile(stateFile, options)
     return { stopped: false, reason: 'already-exited' }
   }
   if (!isManagedPid(pid, state)) {
@@ -65,12 +86,13 @@ async function stopManagedChrome(options = {}) {
   if (!signaled) return { stopped: false, reason: 'kill-failed' }
   const exited = await waitForPidExit(pid)
   if (!exited) return { stopped: false, reason: 'exit-timeout' }
-  try { fs.unlinkSync(stateFile) } catch (_) {}
+  removeManagedChromeStateFile(stateFile, options)
   return { stopped: true, pid }
 }
 
 module.exports = {
   readManagedChromeState,
+  removeManagedChromeStateFile,
   sameRuntimePath,
   stopManagedChrome,
 }

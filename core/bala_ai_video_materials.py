@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from core import runtime_paths
+from core.atomic_file import atomic_write_json, remove_path_with_retry, replace_with_retry
 
 WORKFLOW_ID = "bala_ai_video_material_selection"
 VIDEO_ADAPTER_ID = "bala-ai-video-assistant"
@@ -133,9 +134,12 @@ def ensure_material_thumbnail(
                 image = image.convert("RGBA" if "transparency" in image.info else "RGB")
             image.thumbnail((edge, edge), Image.Resampling.LANCZOS)
             image.save(temporary, format="WEBP", quality=webp_quality, method=4)
-        temporary.replace(destination)
+        replace_with_retry(temporary, destination)
     finally:
-        temporary.unlink(missing_ok=True)
+        try:
+            remove_path_with_retry(temporary)
+        except OSError:
+            pass
     return destination
 
 
@@ -183,7 +187,7 @@ def build_material_batch(rows: list[dict], artifact_dir: str, api_base_url: str)
 
 def save_material_batch(batch: dict) -> Path:
     path = _batch_json_path(batch)
-    path.write_text(json.dumps(batch, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(path, batch, ensure_ascii=False, indent=2)
     return path
 
 

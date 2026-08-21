@@ -27,6 +27,9 @@ const {
 } = require('./backendApi')
 const { collectCrawshrimpDataDirCandidates } = require('./dataDirRecovery')
 const { getBrowserExecutableCandidates } = require('./browserExecutablePaths')
+const { atomicWriteFileSync, atomicWriteJsonSync, retryWindowsFileOperationSync } = require('./atomicFile')
+const { assertNoLinkComponentsSync, normalizePathIdentity } = require('./pathIdentity')
+const { assertSafeWindowsDataRootSync, hardenWindowsPathSync } = require('./windowsAcl')
 const {
   readSavedAiVideoInputDirectory,
   rememberAiVideoInputDirectory,
@@ -186,9 +189,9 @@ function localMediaRootIdentity(rootPath = '') {
   const resolved = path.resolve(String(rootPath || '').trim())
   try {
     const real = fs.realpathSync.native(resolved)
-    return process.platform === 'win32' ? real.toLowerCase() : real
+    return normalizePathIdentity(real)
   } catch {
-    return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+    return normalizePathIdentity(resolved)
   }
 }
 
@@ -212,10 +215,7 @@ function authorizeLocalMediaRoot(rootPath = '') {
   const stat = fs.lstatSync(resolved)
   if (stat.isSymbolicLink()) throw new Error('媒体授权目录不能是符号链接')
   if (!stat.isDirectory()) throw new Error('媒体授权路径必须是文件夹')
-  const real = fs.realpathSync.native(resolved)
-  if (localMediaRootIdentity(resolved) !== localMediaRootIdentity(real) || path.resolve(resolved) !== path.resolve(real)) {
-    throw new Error('媒体授权目录不能包含符号链接')
-  }
+  const real = assertNoLinkComponentsSync(resolved)
   const identity = localMediaRootIdentity(real)
   authorizedLocalMediaRoots.add(identity)
   return identity
@@ -248,8 +248,7 @@ function getAuthorizedLocalMediaFile(filePath = '') {
   const stat = fs.lstatSync(resolved)
   if (stat.isSymbolicLink()) throw new Error('禁止预览符号链接媒体')
   if (!stat.isFile()) throw new Error('本地媒体不是文件')
-  const real = fs.realpathSync.native(resolved)
-  if (path.resolve(resolved) !== path.resolve(real)) throw new Error('禁止预览包含符号链接的媒体')
+  const real = assertNoLinkComponentsSync(resolved)
   if (!localMediaPathIsAuthorized(real)) throw new Error('该本地媒体未授权预览，请先通过系统选择器选择所在目录')
   const mime = localMediaMime(real)
   if (!mime) throw new Error('不支持的媒体类型')
@@ -272,8 +271,7 @@ function getAuthorizedLocalMediaDirectory(rootPath = '') {
   const stat = fs.lstatSync(resolved)
   if (stat.isSymbolicLink()) throw new Error('禁止扫描符号链接目录')
   if (!stat.isDirectory()) throw new Error('不是有效目录')
-  const real = fs.realpathSync.native(resolved)
-  if (path.resolve(resolved) !== path.resolve(real)) throw new Error('禁止扫描包含符号链接的目录')
+  const real = assertNoLinkComponentsSync(resolved)
   if (!localMediaPathIsAuthorized(real)) throw new Error('该目录未授权，请先通过系统选择器选择目录')
   return real
 }
@@ -529,8 +527,7 @@ function readDesktopConfig() {
 function writeDesktopConfig(patch = {}) {
   const next = { ...readDesktopConfig(), ...(patch || {}) }
   const configPath = getDesktopConfigPath()
-  fs.mkdirSync(path.dirname(configPath), { recursive: true })
-  fs.writeFileSync(configPath, JSON.stringify(next, null, 2), 'utf8')
+  atomicWriteJsonSync(configPath, next)
   return next
 }
 
@@ -571,14 +568,22 @@ function readLegacyConfiguredDataDir() {
 }
 
 function ensureWritableDirectory(dirPath, label = 'directory') {
+  if (process.platform === 'win32') {
+    assertNoLinkComponentsSync(dirPath, { allowMissing: true })
+  }
   fs.mkdirSync(dirPath, { recursive: true })
-  const probe = path.join(dirPath, `.crawshrimp-write-test-${process.pid}-${Date.now()}`)
+  const canonical = process.platform === 'win32'
+    ? assertNoLinkComponentsSync(dirPath)
+    : fs.realpathSync.native(dirPath)
+  hardenWindowsPathSync(canonical)
+  const probe = path.join(canonical, `.crawshrimp-write-test-${process.pid}-${Date.now()}`)
   fs.writeFileSync(probe, 'ok', 'utf8')
   fs.unlinkSync(probe)
-  return fs.realpathSync.native(dirPath)
+  return canonical
 }
 
 function ensureWritableDataDir(dirPath) {
+  assertSafeWindowsDataRootSync(dirPath, { homeDir: app.getPath('home') })
   const root = ensureWritableDirectory(dirPath, 'CRAWSHRIMP_DATA')
   for (const childName of ['adapters', 'adapter-meta', 'data', 'logs']) {
     ensureWritableDirectory(path.join(root, childName), childName)
@@ -664,10 +669,19 @@ function getBackendLockPath() {
 }
 
 function readBackendLockPid() {
+  let descriptor
   try {
-    return Number(fs.readFileSync(getBackendLockPath(), 'utf8').trim() || 0) || 0
+    descriptor = fs.openSync(getBackendLockPath(), 'r')
+    const record = Buffer.alloc(64)
+    const bytesRead = fs.readSync(descriptor, record, 0, record.length, 0)
+    const firstLine = record.subarray(0, bytesRead).toString('ascii').split(/\r?\n/, 1)[0].trim()
+    return Number(firstLine || 0) || 0
   } catch {
     return 0
+  } finally {
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor) } catch { /* best effort */ }
+    }
   }
 }
 
@@ -680,14 +694,14 @@ function getApiToken() {
     if (fs.existsSync(tokenPath)) {
       const existing = fs.readFileSync(tokenPath, 'utf8').trim()
       if (existing) {
+        hardenWindowsPathSync(tokenPath)
         process.env.CRAWSHRIMP_API_TOKEN = existing
         return existing
       }
     }
-    fs.mkdirSync(path.dirname(tokenPath), { recursive: true })
     const token = crypto.randomBytes(32).toString('hex')
-    fs.writeFileSync(tokenPath, token, 'utf8')
-    try { fs.chmodSync(tokenPath, 0o600) } catch (_) {}
+    atomicWriteFileSync(tokenPath, token)
+    hardenWindowsPathSync(tokenPath)
     process.env.CRAWSHRIMP_API_TOKEN = token
     return token
   } catch (error) {
@@ -1036,7 +1050,7 @@ function renderPdfPreviewWithQuickLook(pdfPath) {
   const previewRoot = path.join(getCrawshrimpDataDir(), 'pdf-previews')
   const digest = crypto.createHash('sha1').update(`${pdfPath}:${fs.statSync(pdfPath).mtimeMs}`).digest('hex').slice(0, 16)
   const outputDir = path.join(previewRoot, digest)
-  fs.rmSync(outputDir, { recursive: true, force: true })
+  retryWindowsFileOperationSync(() => fs.rmSync(outputDir, { recursive: true, force: true }))
   fs.mkdirSync(outputDir, { recursive: true })
 
   const pymupdfResult = renderPdfPreviewWithPyMuPDF(pdfPath, path.join(outputDir, 'pages'))
@@ -1294,12 +1308,13 @@ function getManagedChromeStateFile() {
 
 function writeManagedChromeState(state) {
   const filePath = getManagedChromeStateFile()
-  fs.mkdirSync(path.dirname(filePath), { recursive: true })
-  fs.writeFileSync(filePath, JSON.stringify(state, null, 2), 'utf8')
+  atomicWriteJsonSync(filePath, state)
 }
 
 function clearManagedChromeState() {
-  try { fs.unlinkSync(getManagedChromeStateFile()) } catch (_) {}
+  try {
+    retryWindowsFileOperationSync(() => fs.unlinkSync(getManagedChromeStateFile()))
+  } catch (_) {}
 }
 
 function isPidAlive(pid) {
@@ -1865,9 +1880,8 @@ function readLocalPromptLibraryState() {
 
 function writeLocalPromptLibraryState(state) {
   const storePath = localPromptLibraryStorePath()
-  fs.mkdirSync(path.dirname(storePath), { recursive: true })
   const libraries = (Array.isArray(state?.libraries) ? state.libraries : []).map(normalizeLocalPromptLibrary)
-  fs.writeFileSync(storePath, JSON.stringify({ libraries }, null, 2), 'utf8')
+  atomicWriteJsonSync(storePath, { libraries })
   return { libraries }
 }
 

@@ -7,6 +7,7 @@ const os = require('node:os')
 const path = require('node:path')
 
 const {
+  canonicalAiVideoInputDirectory,
   readSavedAiVideoInputDirectory,
   rememberAiVideoInputDirectory,
 } = require('./aiVideoDirectoryStore')
@@ -66,6 +67,25 @@ test('saved input directory survives a process secret rotation by issuing a fres
   }
 })
 
+test('Windows path casing changes do not masquerade as a symlink', () => {
+  const realpathSync = () => 'C:\\Media'
+  realpathSync.native = realpathSync
+  const directoryStat = {
+    isDirectory: () => true,
+    isSymbolicLink: () => false,
+  }
+  const fsApi = {
+    lstatSync: () => directoryStat,
+    realpathSync,
+  }
+
+  assert.equal(canonicalAiVideoInputDirectory('c:\\media', {
+    fsApi,
+    pathApi: path.win32,
+    platform: 'win32',
+  }), 'C:\\Media')
+})
+
 test('saved input directory returns empty when the store or canonical directory is unsafe', () => {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-ai-video-directory-invalid-')))
   try {
@@ -83,6 +103,40 @@ test('saved input directory returns empty when the store or canonical directory 
     fs.symlinkSync(movedDirectory, selectedDirectory, 'dir')
 
     assert.equal(readSavedAiVideoInputDirectory(storePath, { secret: SECRET_A }), null)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('saved input directory retries a transient Windows sharing violation', () => {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-ai-video-directory-retry-')))
+  try {
+    const inputDirectory = path.join(root, 'reference-library')
+    const storePath = path.join(root, 'data', 'ai-video-input-directory.json')
+    fs.mkdirSync(inputDirectory)
+    let renameAttempts = 0
+    const fsApi = Object.assign({}, fs, {
+      realpathSync: fs.realpathSync,
+      renameSync(source, target) {
+        renameAttempts += 1
+        if (renameAttempts === 1) {
+          const error = new Error('file is busy')
+          error.code = 'EBUSY'
+          throw error
+        }
+        return fs.renameSync(source, target)
+      },
+    })
+
+    rememberAiVideoInputDirectory(storePath, inputDirectory, {
+      fsApi,
+      platform: 'win32',
+      retryDelaysMs: [0, 0],
+      sleepSync: () => {},
+    })
+
+    assert.equal(renameAttempts, 2)
+    assert.equal(JSON.parse(fs.readFileSync(storePath, 'utf8')).inputDirectory, inputDirectory)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

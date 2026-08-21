@@ -3,11 +3,13 @@ import io
 import json
 import os
 import subprocess
+import stat
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -15,7 +17,7 @@ from unittest.mock import patch
 from PIL import Image
 
 from core import ai_video_generation_service as svc
-from core import data_sink
+from core import atomic_file, data_sink
 
 
 READY_PROVIDER_STATUS = {
@@ -753,25 +755,68 @@ class AiVideoGenerationServiceTests(unittest.TestCase):
         self.assertEqual(captured.exception.code, "ARCHIVE_WRITE_FAILED")
         self.assertEqual(list(outside.iterdir()), [])
 
-    def test_artifacts_skip_without_dirfd_support_and_never_follow_symlink(self):
+    def test_artifacts_write_with_path_identity_fallback_without_dirfd_support(self):
+        archive_dir = self.root / "unsupported-artifact-fallback"
+
+        with patch.object(svc.os, "supports_dir_fd", set()):
+            svc._write_run_artifacts(
+                archive_dir,
+                normalized={"prompt": "persist on Windows", "assets": [], "parameters": {}},
+                provider_payload={"prompt": "persist on Windows"},
+                event="submit_start",
+            )
+            svc._write_archive_json(archive_dir, "response.provider.redacted.json", {"ok": True})
+            svc._append_archive_event(archive_dir, {"event": "submitted"})
+
+        self.assertEqual(
+            json.loads((archive_dir / "request.normalized.json").read_text(encoding="utf-8"))["prompt"],
+            "persist on Windows",
+        )
+        self.assertEqual(
+            json.loads((archive_dir / "response.provider.redacted.json").read_text(encoding="utf-8")),
+            {"ok": True},
+        )
+        events = (archive_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        self.assertEqual([json.loads(line)["event"] for line in events], ["submit_start", "submitted"])
+
+    def test_artifact_path_fallback_never_follows_symlink(self):
         outside = self.root / "unsupported-artifact-outside"
         outside.mkdir()
         archive_link = self.root / "unsupported-artifact-link"
         archive_link.symlink_to(outside, target_is_directory=True)
 
-        with patch.object(svc.os, "supports_dir_fd", set()), \
-                patch.object(svc.logger, "warning") as warning:
-            svc._write_run_artifacts(
-                archive_link,
-                normalized={"prompt": "do not write through link", "assets": [], "parameters": {}},
-                provider_payload={"prompt": "do not write through link"},
-                event="submit_start",
-            )
-            svc._write_archive_json(archive_link, "response.provider.redacted.json", {"ok": True})
-            svc._append_archive_event(archive_link, {"event": "submitted"})
+        with patch.object(svc.os, "supports_dir_fd", set()):
+            for operation in (
+                lambda: svc._write_run_artifacts(
+                    archive_link,
+                    normalized={"prompt": "do not write through link", "assets": [], "parameters": {}},
+                    provider_payload={"prompt": "do not write through link"},
+                    event="submit_start",
+                ),
+                lambda: svc._write_archive_json(
+                    archive_link,
+                    "response.provider.redacted.json",
+                    {"ok": True},
+                ),
+                lambda: svc._append_archive_event(archive_link, {"event": "submitted"}),
+            ):
+                with self.assertRaises(svc.AiVideoError) as captured:
+                    operation()
+                self.assertEqual(captured.exception.code, "ARCHIVE_WRITE_FAILED")
 
         self.assertEqual(list(outside.iterdir()), [])
-        self.assertGreaterEqual(warning.call_count, 1)
+
+    def test_path_identity_helper_recognizes_windows_reparse_points(self):
+        class FakePath:
+            @staticmethod
+            def is_symlink():
+                return False
+
+            @staticmethod
+            def lstat():
+                return SimpleNamespace(st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+        self.assertTrue(svc._path_is_link_or_reparse(FakePath()))
 
     def test_submit_continues_when_secure_artifact_dirfd_is_unavailable(self):
         created = data_sink.create_ai_video_job_with_run(
@@ -804,16 +849,16 @@ class AiVideoGenerationServiceTests(unittest.TestCase):
 
         svc.set_cli_runner(fake_cli)
         with patch.object(svc.os, "supports_dir_fd", set()), \
-                patch.object(svc, "provider_status", return_value=READY_PROVIDER_STATUS), \
-                patch.object(svc.logger, "warning") as warning:
+                patch.object(svc, "provider_status", return_value=READY_PROVIDER_STATUS):
             svc._submit_run(created["run"])
 
         run = data_sink.get_ai_video_run(created["run"]["id"])
         self.assertEqual(len(cli_calls), 1)
         self.assertEqual(run["status"], "running")
         self.assertEqual(run["providerTaskId"], "task-without-artifacts")
-        self.assertEqual(list(self.output_dir.rglob("request.normalized.json")), [])
-        self.assertGreaterEqual(warning.call_count, 1)
+        artifacts = list(self.output_dir.rglob("request.normalized.json"))
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(json.loads(artifacts[0].read_text(encoding="utf-8"))["prompt"], "provider create must continue")
 
     def test_validate_does_not_create_output_directory(self):
         output_dir = self.root / "not-created-by-validation" / "nested"
@@ -1126,6 +1171,8 @@ class AiVideoGenerationServiceTests(unittest.TestCase):
             },
         )
         payload_paths = []
+        unlink_attempts = 0
+        original_unlink = Path.unlink
 
         def fake_cli(*, provider, args, cwd, timeout_seconds):
             payload_path = Path(args[-1])
@@ -1133,10 +1180,25 @@ class AiVideoGenerationServiceTests(unittest.TestCase):
             payload_paths.append(payload_path)
             return {"objects": [{"id": "task-cleanup", "status": "queued"}]}
 
+        def transient_unlink(path, *args, **kwargs):
+            nonlocal unlink_attempts
+            if payload_paths and path == payload_paths[0]:
+                unlink_attempts += 1
+                if unlink_attempts == 1:
+                    error = PermissionError("[WinError 32] sharing violation")
+                    error.winerror = 32
+                    raise error
+            return original_unlink(path, *args, **kwargs)
+
         svc.set_cli_runner(fake_cli)
-        with patch.object(svc, "provider_status", return_value=READY_PROVIDER_STATUS):
+        with patch.object(svc, "provider_status", return_value=READY_PROVIDER_STATUS), \
+                patch.object(svc, "atomic_write_text", wraps=atomic_file.atomic_write_text) as atomic_write, \
+                patch.object(Path, "unlink", transient_unlink):
             svc._submit_run(created["run"])
         self.assertEqual(len(payload_paths), 1)
+        atomic_write.assert_called_once()
+        self.assertEqual(Path(atomic_write.call_args.args[0]), payload_paths[0])
+        self.assertEqual(unlink_attempts, 2)
         self.assertFalse(payload_paths[0].exists())
 
     def test_submit_rejects_reference_image_content_changed_after_snapshot(self):

@@ -1,4 +1,6 @@
 import unittest
+import json
+from copy import deepcopy
 from unittest.mock import patch
 
 from core.config import DEFAULT_CONFIG, load_config, patch_config, save_config
@@ -108,6 +110,92 @@ class AiSettingsConfigTests(unittest.TestCase):
         self.assertEqual(loaded["notify"]["dingtalk_webhook"], "https://example.test/new")
         self.assertEqual(loaded["notify"]["feishu_webhook"], "https://open.feishu.cn/old")
         self.assertEqual(loaded["data_dir"], "/tmp/crawshrimp-data")
+
+    def test_failed_save_keeps_the_previous_config_intact(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "config.json"
+            path.write_text('{"stable": true}\n', encoding="utf-8")
+
+            def interrupted_dump(_payload, handle, **_kwargs):
+                handle.write('{"partial":')
+                handle.flush()
+                raise OSError("simulated interrupted write")
+
+            with patch("core.config._config_path", return_value=path), \
+                    patch.object(json, "dump", side_effect=interrupted_dump):
+                with self.assertRaisesRegex(OSError, "interrupted write"):
+                    save_config({"stable": False})
+
+            self.assertEqual(path.read_text(encoding="utf-8"), '{"stable": true}\n')
+
+    def test_load_config_quarantines_invalid_json_and_recovers_defaults(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "config.json"
+            path.write_text('{"partial":', encoding="utf-8")
+
+            with patch("core.config._config_path", return_value=path):
+                loaded = load_config()
+
+            self.assertEqual(loaded["api_port"], DEFAULT_CONFIG["api_port"])
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["api_port"], DEFAULT_CONFIG["api_port"])
+            quarantined = list(Path(tmpdir).glob("config.json.corrupt-*"))
+            self.assertEqual(len(quarantined), 1)
+            self.assertEqual(quarantined[0].read_text(encoding="utf-8"), '{"partial":')
+
+    def test_load_config_quarantines_valid_json_with_non_object_root(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "config.json"
+            path.write_text('["not", "an", "object"]\n', encoding="utf-8")
+
+            with patch("core.config._config_path", return_value=path):
+                loaded = load_config()
+
+            self.assertEqual(loaded["api_port"], DEFAULT_CONFIG["api_port"])
+            quarantined = list(Path(tmpdir).glob("config.json.corrupt-*"))
+            self.assertEqual(len(quarantined), 1)
+            self.assertEqual(quarantined[0].read_text(encoding="utf-8"), '["not", "an", "object"]\n')
+
+    def test_first_load_returns_a_detached_default_config(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "config.json"
+            with patch("core.config._config_path", return_value=path):
+                loaded = load_config()
+
+            loaded["ai"]["llm"]["api_key"] = "mutated"
+            self.assertEqual(DEFAULT_CONFIG["ai"]["llm"]["api_key"], "")
+
+    def test_partial_config_load_does_not_share_default_only_nested_branches(self):
+        import tempfile
+        from pathlib import Path
+
+        snapshot = deepcopy(DEFAULT_CONFIG)
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                path = Path(tmpdir) / "config.json"
+                path.write_text('{"api_port": 19999}\n', encoding="utf-8")
+                with patch("core.config._config_path", return_value=path):
+                    loaded = load_config()
+
+                loaded["ai"]["video"]["seedance_api_key"] = "mutated"
+                loaded["notify"]["dingtalk_secret"] = "mutated"
+
+            self.assertEqual(DEFAULT_CONFIG["ai"]["video"]["seedance_api_key"], "")
+            self.assertEqual(DEFAULT_CONFIG["notify"]["dingtalk_secret"], "")
+        finally:
+            DEFAULT_CONFIG.clear()
+            DEFAULT_CONFIG.update(snapshot)
 
 
 if __name__ == "__main__":

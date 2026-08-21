@@ -5,11 +5,40 @@ const os = require('node:os')
 const path = require('node:path')
 
 const {
+  copyDirSync,
   requireDeepseekHarnessBundle,
   requireNativeRuntimePackages,
   requirePythonBundle,
   requirePythonScriptsBundle,
 } = require('./after-pack')
+
+test('copyDirSync materializes directory symlinks instead of shipping or dropping them', (t) => {
+  assert.equal(typeof copyDirSync, 'function', 'after-pack copy helper must be testable')
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-after-pack-link-'))
+  const source = path.join(tmp, 'source')
+  const shared = path.join(tmp, 'shared-package')
+  const destination = path.join(tmp, 'destination')
+  fs.mkdirSync(source)
+  fs.mkdirSync(shared)
+  fs.writeFileSync(path.join(shared, 'index.js'), 'module.exports = 1\n')
+  try {
+    fs.symlinkSync(shared, path.join(source, 'linked-package'), 'dir')
+  } catch (error) {
+    fs.rmSync(tmp, { recursive: true, force: true })
+    t.skip(`directory symlink unavailable: ${error.code || error.message}`)
+    return
+  }
+
+  try {
+    fs.mkdirSync(destination)
+    copyDirSync(source, destination)
+    const copied = path.join(destination, 'linked-package')
+    assert.equal(fs.lstatSync(copied).isSymbolicLink(), false)
+    assert.equal(fs.readFileSync(path.join(copied, 'index.js'), 'utf8'), 'module.exports = 1\n')
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
 
 test('requirePythonBundle rejects missing bundled Python source', () => {
   const missing = path.join(__dirname, '..', '.missing-python-dist', 'win-x64')
@@ -118,6 +147,50 @@ test('requirePythonBundle rejects a Windows bundle missing pywintypes', () => {
   }
 })
 
+test('requirePythonBundle rejects a Windows bundle missing ACL modules', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-python-win32security-'))
+
+  try {
+    const sitePackages = path.join(tmp, 'Lib', 'site-packages')
+    fs.writeFileSync(path.join(tmp, 'python.exe'), '')
+    for (const name of [
+      'fastapi',
+      'uvicorn',
+      'websockets',
+      'yaml',
+      'apscheduler',
+      'openpyxl',
+      'xlrd',
+      'pydantic',
+      'aiofiles',
+      'jsonschema',
+      'tzdata',
+      'PIL',
+      'fitz',
+      'cryptography',
+      'mcp',
+      'colorama',
+      'win32/lib',
+      'pywin32_system32',
+    ]) {
+      fs.mkdirSync(path.join(sitePackages, name), { recursive: true })
+    }
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'lib', 'pywintypes.py'), '')
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'lib', 'win32con.py'), '')
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'lib', 'ntsecuritycon.py'), '')
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'win32api.pyd'), '')
+    fs.writeFileSync(path.join(sitePackages, 'pywin32_system32', 'pywintypes312.dll'), '')
+    fs.writeFileSync(path.join(sitePackages, 'pywin32.pth'), '')
+
+    assert.throws(
+      () => requirePythonBundle(tmp, 'win-x64'),
+      /win32\/win32security\.pyd/
+    )
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
 test('requirePythonBundle rejects a Windows bundle missing colorama', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-python-colorama-'))
 
@@ -146,6 +219,10 @@ test('requirePythonBundle rejects a Windows bundle missing colorama', () => {
       fs.mkdirSync(path.join(sitePackages, name), { recursive: true })
     }
     fs.writeFileSync(path.join(sitePackages, 'win32', 'lib', 'pywintypes.py'), '')
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'lib', 'win32con.py'), '')
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'lib', 'ntsecuritycon.py'), '')
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'win32api.pyd'), '')
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'win32security.pyd'), '')
     fs.writeFileSync(path.join(sitePackages, 'pywin32_system32', 'pywintypes312.dll'), '')
     fs.writeFileSync(path.join(sitePackages, 'pywin32.pth'), '')
 

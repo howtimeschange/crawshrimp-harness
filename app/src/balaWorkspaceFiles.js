@@ -3,6 +3,8 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
+const { atomicWriteFileSync, atomicWriteJsonSync, retryWindowsFileOperationSync } = require('./atomicFile')
+
 const BALA_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp'])
 const BALA_VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.webm'])
 const BALA_WORKSPACE_MANIFEST_FILENAME = '.crawshrimp-ai-video-workflow.json'
@@ -52,16 +54,20 @@ function rememberAuthorizedBalaWorkspaceRoot(rootPath, {
   roots = new Set(),
   storePath = '',
   fsApi = fs,
+  platform = process.platform,
+  retryDelaysMs,
+  sleepSync,
 } = {}) {
   const canonical = authorizeBalaWorkspaceRoot(rootPath, { roots, fsApi })
   const rawStorePath = String(storePath || '').trim()
   if (!rawStorePath) return canonical
-  const parent = path.dirname(rawStorePath)
-  fsApi.mkdirSync(parent, { recursive: true })
-  const tempPath = `${rawStorePath}.${process.pid}.tmp`
-  const payload = JSON.stringify({ version: 1, roots: [...roots].sort() }, null, 2)
-  fsApi.writeFileSync(tempPath, `${payload}\n`, { encoding: 'utf8', mode: 0o600 })
-  fsApi.renameSync(tempPath, rawStorePath)
+  atomicWriteJsonSync(rawStorePath, { version: 1, roots: [...roots].sort() }, {
+    fsApi,
+    mode: 0o600,
+    platform,
+    retryDelaysMs,
+    sleepSync,
+  })
   return canonical
 }
 
@@ -198,7 +204,15 @@ function readAuthorizedBalaWorkspaceManifest({ workspaceRoot, roots = new Set(),
   return payload
 }
 
-function writeAuthorizedBalaWorkspaceManifest({ workspaceRoot, payload, roots = new Set(), fsApi = fs } = {}) {
+function writeAuthorizedBalaWorkspaceManifest({
+  workspaceRoot,
+  payload,
+  roots = new Set(),
+  fsApi = fs,
+  platform = process.platform,
+  retryDelaysMs,
+  sleepSync,
+} = {}) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('工作区恢复清单格式无效')
   }
@@ -207,9 +221,13 @@ function writeAuthorizedBalaWorkspaceManifest({ workspaceRoot, payload, roots = 
   if (Buffer.byteLength(serialized, 'utf8') > BALA_WORKSPACE_MANIFEST_MAX_BYTES) {
     throw new Error('工作区恢复清单超过大小限制')
   }
-  const temporaryPath = `${manifestPath}.${process.pid}.${Date.now().toString(36)}.tmp`
-  fsApi.writeFileSync(temporaryPath, serialized, { encoding: 'utf8', mode: 0o600 })
-  fsApi.renameSync(temporaryPath, manifestPath)
+  atomicWriteFileSync(manifestPath, serialized, {
+    fsApi,
+    mode: 0o600,
+    platform,
+    retryDelaysMs,
+    sleepSync,
+  })
   return { ok: true, path: manifestPath }
 }
 
@@ -228,6 +246,9 @@ function canonicalMissingPath(filePath, fsApi = fs) {
 function deleteAuthorizedWorkspaceImage({
   filePath,
   fsApi = fs,
+  platform = process.platform,
+  retryDelaysMs,
+  sleepSync,
 } = {}) {
   const rawFile = String(filePath || '').trim()
   if (!rawFile) throw new Error('缺少待删除图片路径')
@@ -247,7 +268,11 @@ function deleteAuthorizedWorkspaceImage({
   if (!BALA_IMAGE_EXTENSIONS.has(path.extname(resolvedFile).toLowerCase())) {
     throw new Error('只能删除 png、jpg、jpeg 或 webp 图片文件')
   }
-  fsApi.unlinkSync(canonicalFile)
+  retryWindowsFileOperationSync(() => fsApi.unlinkSync(canonicalFile), {
+    platform,
+    retryDelaysMs,
+    sleepSync,
+  })
   return { ok: true, path: canonicalFile }
 }
 

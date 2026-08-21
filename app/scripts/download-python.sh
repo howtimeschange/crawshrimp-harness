@@ -135,6 +135,10 @@ has_core_requirements() {
   if [ "$key" = "win-x64" ]; then
     [ -d "${site_packages}/colorama" ] &&
       [ -f "${site_packages}/win32/lib/pywintypes.py" ] &&
+      [ -f "${site_packages}/win32/lib/win32con.py" ] &&
+      [ -f "${site_packages}/win32/lib/ntsecuritycon.py" ] &&
+      [ -f "${site_packages}/win32/win32api.pyd" ] &&
+      [ -f "${site_packages}/win32/win32security.pyd" ] &&
       [ -f "${site_packages}/pywin32_system32/pywintypes${PY_MAJOR}${PY_MINOR}.dll" ] &&
       [ -f "${site_packages}/pywin32.pth" ]
   fi
@@ -181,7 +185,7 @@ verify_target_imports() {
   (
     cd "$ROOT_DIR"
     PYTHONNOUSERSITE=1 "$py_bin" -c \
-      'import os, tempfile; os.environ["CRAWSHRIMP_DATA"] = tempfile.mkdtemp(prefix="crawshrimp-build-import-"); import pywintypes; from mcp.server.mcpserver import MCPServer; import core.api_server'
+      'import os, tempfile; os.environ["CRAWSHRIMP_DATA"] = tempfile.mkdtemp(prefix="crawshrimp-build-import-"); import ntsecuritycon, pywintypes, win32api, win32con, win32security; from mcp.server.mcpserver import MCPServer; import core.api_server'
     PYTHONNOUSERSITE=1 "$py_bin" -m pip check
   )
   echo "[ok] $key backend imports verified"

@@ -9,6 +9,7 @@ import zipfile
 import logging
 import re
 import threading
+from uuid import uuid4
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
@@ -16,6 +17,7 @@ import yaml
 from pydantic import ValidationError
 
 from core import runtime_paths
+from core.atomic_file import atomic_write_json, remove_path_with_retry, replace_with_retry
 from core.models import AdapterManifest
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,7 @@ _install_meta: Dict[str, dict[str, Any]] = {}
 _scan_lock = threading.RLock()
 
 SCRIPT_SUFFIXES = (".js",)
+_TRANSACTION_DIR_RE = re.compile(r"^\..+\.(?:install|backup)-[0-9a-f]{32}$")
 
 
 def _adapters_root() -> Path:
@@ -85,6 +88,8 @@ def iter_manifest_dirs(root: Path) -> Iterator[Path]:
 
     for item in entries:
         try:
+            if _TRANSACTION_DIR_RE.fullmatch(item.name):
+                continue
             if item.is_dir() and (item / "manifest.yaml").exists():
                 yield item
         except OSError as e:
@@ -101,6 +106,8 @@ def _collect_manifest_dirs(root: Path) -> tuple[list[Path], bool]:
     manifest_dirs: list[Path] = []
     for item in entries:
         try:
+            if _TRANSACTION_DIR_RE.fullmatch(item.name):
+                continue
             if item.is_dir() and (item / "manifest.yaml").exists():
                 manifest_dirs.append(item)
         except OSError as e:
@@ -175,11 +182,7 @@ def resolve_adapter_file(
 
 
 def _remove_installed_path(path: Path) -> None:
-    if path.is_symlink():
-        path.unlink()
-        return
-    if path.exists():
-        shutil.rmtree(path)
+    remove_path_with_retry(path)
 
 
 def _read_install_metadata(adapter_id: str) -> dict[str, Any]:
@@ -196,16 +199,13 @@ def _read_install_metadata(adapter_id: str) -> dict[str, Any]:
 
 def _write_install_metadata(adapter_id: str, payload: dict[str, Any]) -> None:
     path = _metadata_path(adapter_id)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(path, payload, ensure_ascii=False, indent=2)
     _install_meta[adapter_id] = dict(payload)
 
 
 def _delete_install_metadata(adapter_id: str) -> None:
     path = _metadata_path(adapter_id)
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        pass
+    remove_path_with_retry(path)
     _install_meta.pop(adapter_id, None)
 
 
@@ -299,6 +299,11 @@ def set_enabled(adapter_id: str, enabled: bool) -> None:
 
 
 def install_from_dir(source_dir: str, install_mode: str = "copy", preserve_existing_link: bool = False) -> AdapterManifest:
+    with _scan_lock:
+        return _install_from_dir_locked(source_dir, install_mode, preserve_existing_link)
+
+
+def _install_from_dir_locked(source_dir: str, install_mode: str, preserve_existing_link: bool) -> AdapterManifest:
     src = Path(source_dir).expanduser()
     if not (src / "manifest.yaml").exists():
         raise FileNotFoundError(f"缺少 manifest.yaml: {source_dir}")
@@ -319,7 +324,7 @@ def install_from_dir(source_dir: str, install_mode: str = "copy", preserve_exist
 
     if preserve_existing_link and install_mode == "copy" and dest.exists() and not dest.is_symlink():
         existing_manifest = _load_manifest_if_exists(dest)
-        if existing_manifest and _version_key(existing_manifest.version) > _version_key(m.version):
+        if existing_manifest and _version_key(existing_manifest.version) >= _version_key(m.version):
             metadata = {
                 "adapter_id": existing_manifest.id,
                 "install_mode": "copy",
@@ -331,26 +336,104 @@ def install_from_dir(source_dir: str, install_mode: str = "copy", preserve_exist
             _adapter_dirs[existing_manifest.id] = dest
             _enabled[existing_manifest.id] = True
             logger.info(
-                "保留较新的已安装适配包: %s v%s >= built-in v%s",
+                "保留同版或较新的已安装适配包: %s v%s >= built-in v%s",
                 existing_manifest.id,
                 existing_manifest.version,
                 m.version,
             )
             return existing_manifest
 
-    if dest.exists() or dest.is_symlink():
-        _remove_installed_path(dest)
-    if install_mode == "link":
-        dest.symlink_to(src, target_is_directory=True)
-    else:
-        shutil.copytree(src, dest)
+    root = _adapters_root()
+    transaction_id = uuid4().hex
+    staged = root / f".{m.id}.install-{transaction_id}"
+    backup = root / f".{m.id}.backup-{transaction_id}"
     metadata = {
         "adapter_id": m.id,
         "install_mode": install_mode,
         "runtime_path": _safe_realpath(dest),
         "source_path": _safe_realpath(src),
     }
-    _write_install_metadata(m.id, metadata)
+    previous_manifest = _adapters.get(m.id)
+    previous_dir = _adapter_dirs.get(m.id)
+    previous_enabled = _enabled.get(m.id)
+    previous_meta = _install_meta.get(m.id)
+    moved_previous = False
+    installed_new = False
+    try:
+        if install_mode == "link":
+            staged.symlink_to(src, target_is_directory=True)
+        else:
+            shutil.copytree(src, staged)
+        staged_manifest = _read_manifest_file(staged / "manifest.yaml")
+        if staged_manifest.id != m.id or staged_manifest.version != m.version:
+            raise ValueError("适配包 staging 校验失败")
+
+        if dest.exists() or dest.is_symlink():
+            replace_with_retry(dest, backup)
+            moved_previous = True
+        replace_with_retry(staged, dest)
+        installed_new = True
+        _write_install_metadata(m.id, metadata)
+    except Exception as install_exc:
+        rollback_errors: list[tuple[str, Exception]] = []
+        if installed_new and (dest.exists() or dest.is_symlink()):
+            try:
+                _remove_installed_path(dest)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("adapter 事务回滚删除新版本失败: %s", dest)
+                rollback_errors.append(("删除新版本失败", exc))
+        if moved_previous and (backup.exists() or backup.is_symlink()):
+            try:
+                replace_with_retry(backup, dest)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("adapter 事务回滚恢复旧版本失败: %s", dest)
+                rollback_errors.append(("恢复旧版本失败", exc))
+        elif moved_previous:
+            rollback_errors.append(("恢复旧版本失败", OSError(f"备份目录丢失: {backup}")))
+
+        if rollback_errors:
+            # Disk state is no longer authoritative enough to advertise either
+            # version from the in-memory registry.  Keep the backup directory
+            # for operator recovery and fail closed until the next clean scan.
+            _adapters.pop(m.id, None)
+            _adapter_dirs.pop(m.id, None)
+            _enabled.pop(m.id, None)
+            _install_meta.pop(m.id, None)
+            rollback_detail = "; ".join(f"{label}: {exc}" for label, exc in rollback_errors)
+            raise RuntimeError(
+                f"适配包 {m.id} 安装失败，且回滚未完成；"
+                f"原始错误: {install_exc}; 回滚错误: {rollback_detail}"
+            ) from rollback_errors[-1][1]
+
+        if previous_manifest is None:
+            _adapters.pop(m.id, None)
+        else:
+            _adapters[m.id] = previous_manifest
+        if previous_dir is None:
+            _adapter_dirs.pop(m.id, None)
+        else:
+            _adapter_dirs[m.id] = previous_dir
+        if previous_enabled is None:
+            _enabled.pop(m.id, None)
+        else:
+            _enabled[m.id] = previous_enabled
+        if previous_meta is None:
+            _install_meta.pop(m.id, None)
+        else:
+            _install_meta[m.id] = previous_meta
+        raise
+    finally:
+        if staged.exists() or staged.is_symlink():
+            try:
+                _remove_installed_path(staged)
+            except OSError:
+                logger.warning("adapter staging 清理失败: %s", staged, exc_info=True)
+
+    if moved_previous and (backup.exists() or backup.is_symlink()):
+        try:
+            _remove_installed_path(backup)
+        except OSError:
+            logger.warning("adapter 旧版本备份清理失败: %s", backup, exc_info=True)
     _adapters[m.id] = m
     _adapter_dirs[m.id] = dest
     _enabled[m.id] = True
@@ -388,6 +471,11 @@ def install_from_zip(zip_path: str, install_mode: str = "copy") -> AdapterManife
 
 
 def uninstall(adapter_id: str) -> None:
+    with _scan_lock:
+        _uninstall_locked(adapter_id)
+
+
+def _uninstall_locked(adapter_id: str) -> None:
     d = _adapter_dirs.get(adapter_id)
     if d and (d.exists() or d.is_symlink()):
         _remove_installed_path(d)

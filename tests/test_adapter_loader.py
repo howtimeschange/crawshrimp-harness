@@ -138,6 +138,33 @@ class AdapterLoaderTests(unittest.TestCase):
             self.assertFalse(runtime_dir.exists())
             self.assertTrue(adapter_dir.exists(), "源码目录不应在卸载 link 安装时被删除")
 
+    def test_uninstall_retries_transient_metadata_sharing_violation(self):
+        with unittest.mock.patch.dict(os.environ, self.env, clear=False):
+            src_root = Path(self.tmpdir.name) / "src"
+            src_root.mkdir(parents=True, exist_ok=True)
+            adapter_dir = _write_adapter(src_root, adapter_id="uninstall-retry-adapter")
+            manifest = adapter_loader.install_from_dir(str(adapter_dir), install_mode="copy")
+            metadata_path = Path(self.tmpdir.name) / "adapter-meta" / f"{manifest.id}.json"
+            original_unlink = Path.unlink
+            attempts = 0
+
+            def transient_unlink(path, *args, **kwargs):
+                nonlocal attempts
+                if path == metadata_path:
+                    attempts += 1
+                    if attempts == 1:
+                        error = PermissionError("[WinError 32] sharing violation")
+                        error.winerror = 32
+                        raise error
+                return original_unlink(path, *args, **kwargs)
+
+            with unittest.mock.patch.object(Path, "unlink", transient_unlink):
+                adapter_loader.uninstall(manifest.id)
+
+            self.assertEqual(attempts, 2)
+            self.assertFalse(metadata_path.exists())
+            self.assertIsNone(adapter_loader.get_adapter(manifest.id))
+
     def test_install_from_zip_rejects_link_mode(self):
         with unittest.mock.patch.dict(os.environ, self.env, clear=False):
             src_root = Path(self.tmpdir.name) / "src"
@@ -281,6 +308,37 @@ class AdapterLoaderTests(unittest.TestCase):
 
             self.assertEqual([manifest.id for manifest in manifests], ["good-adapter"])
 
+    def test_scan_all_ignores_stale_install_and_backup_transaction_directories(self):
+        with unittest.mock.patch.dict(os.environ, self.env, clear=False):
+            runtime_root = Path(self.tmpdir.name) / "adapters"
+            stable = _write_adapter(runtime_root, adapter_id="stable-adapter")
+            stale_install = _write_adapter(
+                runtime_root,
+                adapter_id=f".stale-install.install-{'a' * 32}",
+            )
+            stale_backup = _write_adapter(
+                runtime_root,
+                adapter_id=f".stale-backup.backup-{'b' * 32}",
+            )
+            for directory, manifest_id in (
+                (stale_install, "stale-install"),
+                (stale_backup, "stale-backup"),
+            ):
+                manifest_path = directory / "manifest.yaml"
+                manifest_path.write_text(
+                    manifest_path.read_text(encoding="utf-8").replace(
+                        f"id: {directory.name}",
+                        f"id: {manifest_id}",
+                    ),
+                    encoding="utf-8",
+                )
+
+            discovered = list(adapter_loader.iter_manifest_dirs(runtime_root))
+            manifests = adapter_loader.scan_all()
+
+            self.assertEqual(discovered, [stable])
+            self.assertEqual([manifest.id for manifest in manifests], ["stable-adapter"])
+
     def test_scan_all_keeps_previous_registry_when_root_scan_fails(self):
         with unittest.mock.patch.dict(os.environ, self.env, clear=False):
             runtime_root = Path(self.tmpdir.name) / "adapters"
@@ -381,6 +439,87 @@ class AdapterLoaderTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 adapter_loader.resolve_adapter_relative_file(adapter_dir, str(outside))
+
+    def test_copy_install_failure_preserves_previous_adapter(self):
+        with unittest.mock.patch.dict(os.environ, self.env, clear=False):
+            src_root = Path(self.tmpdir.name) / "src"
+            src_root.mkdir(parents=True, exist_ok=True)
+            old_source = _write_adapter(src_root, adapter_id="transactional-adapter", version="1.0.0")
+            adapter_loader.install_from_dir(str(old_source), install_mode="copy")
+            runtime_dir = Path(self.tmpdir.name) / "adapters" / "transactional-adapter"
+            (runtime_dir / "old-marker.txt").write_text("keep-old", encoding="utf-8")
+
+            new_root = Path(self.tmpdir.name) / "new-src"
+            new_root.mkdir()
+            new_source = _write_adapter(new_root, adapter_id="transactional-adapter", version="2.0.0")
+
+            def interrupted_copy(_src, dest, *_args, **_kwargs):
+                Path(dest).mkdir(parents=True, exist_ok=True)
+                (Path(dest) / "partial.txt").write_text("partial", encoding="utf-8")
+                raise PermissionError("[WinError 32] sharing violation")
+
+            with unittest.mock.patch.object(adapter_loader.shutil, "copytree", side_effect=interrupted_copy):
+                with self.assertRaisesRegex(PermissionError, "sharing violation"):
+                    adapter_loader.install_from_dir(str(new_source), install_mode="copy")
+
+            self.assertEqual((runtime_dir / "old-marker.txt").read_text(encoding="utf-8"), "keep-old")
+            self.assertEqual(adapter_loader.get_adapter("transactional-adapter").version, "1.0.0")
+
+    def test_install_reports_original_and_restore_errors_and_fails_closed(self):
+        with unittest.mock.patch.dict(os.environ, self.env, clear=False):
+            src_root = Path(self.tmpdir.name) / "src"
+            src_root.mkdir(parents=True, exist_ok=True)
+            old_source = _write_adapter(src_root, adapter_id="rollback-error-adapter", version="1.0.0")
+            adapter_loader.install_from_dir(str(old_source), install_mode="copy")
+
+            new_root = Path(self.tmpdir.name) / "new-src"
+            new_root.mkdir()
+            new_source = _write_adapter(new_root, adapter_id="rollback-error-adapter", version="2.0.0")
+            original_replace = adapter_loader.replace_with_retry
+
+            def fail_commit_and_restore(source, target):
+                source_path = Path(source)
+                if ".install-" in source_path.name:
+                    raise PermissionError("new placement locked")
+                if ".backup-" in source_path.name:
+                    raise PermissionError("old restore locked")
+                return original_replace(source, target)
+
+            with unittest.mock.patch.object(
+                adapter_loader,
+                "replace_with_retry",
+                side_effect=fail_commit_and_restore,
+            ):
+                with self.assertRaises(RuntimeError) as raised:
+                    adapter_loader.install_from_dir(str(new_source), install_mode="copy")
+
+            self.assertIn("new placement locked", str(raised.exception))
+            self.assertIn("old restore locked", str(raised.exception))
+            self.assertIsNone(adapter_loader.get_adapter("rollback-error-adapter"))
+            backups = list((Path(self.tmpdir.name) / "adapters").glob(".rollback-error-adapter.backup-*"))
+            self.assertEqual(len(backups), 1)
+
+    def test_builtin_same_version_copy_is_a_noop(self):
+        with unittest.mock.patch.dict(os.environ, self.env, clear=False):
+            src_root = Path(self.tmpdir.name) / "src"
+            src_root.mkdir(parents=True, exist_ok=True)
+            source = _write_adapter(src_root, adapter_id="same-version-adapter", version="1.0.0")
+            adapter_loader.install_from_dir(str(source), install_mode="copy")
+            runtime_dir = Path(self.tmpdir.name) / "adapters" / "same-version-adapter"
+            marker = runtime_dir / "user-runtime-marker.txt"
+            marker.write_text("preserve", encoding="utf-8")
+
+            with unittest.mock.patch.object(
+                adapter_loader.shutil,
+                "copytree",
+                side_effect=AssertionError("same version must not be recopied"),
+            ):
+                manifest = adapter_loader.install_from_dir(
+                    str(source), install_mode="copy", preserve_existing_link=True
+                )
+
+            self.assertEqual(manifest.version, "1.0.0")
+            self.assertEqual(marker.read_text(encoding="utf-8"), "preserve")
 
 
 if __name__ == "__main__":

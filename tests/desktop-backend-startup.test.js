@@ -269,6 +269,38 @@ test('desktop backend receives a resolved writable CRAWSHRIMP_DATA directory', (
   assert.match(main, /\[api\] launch context:/)
 })
 
+test('desktop rejects broad Windows data roots and protects data directories and API token with native ACLs', () => {
+  const main = readRepoFile('app/src/main.js')
+  const requirements = readRepoFile('core/requirements.txt')
+
+  assert.match(main, /const \{[^}]*assertSafeWindowsDataRootSync[^}]*hardenWindowsPathSync[^}]*\} = require\('\.\/windowsAcl'\)/)
+  assert.match(main, /function ensureWritableDataDir\([\s\S]*?assertSafeWindowsDataRootSync\(dirPath/)
+  assert.match(main, /function ensureWritableDirectory\([\s\S]*?assertNoLinkComponentsSync\(dirPath, \{ allowMissing: true \}\)[\s\S]*?hardenWindowsPathSync\(canonical\)/)
+  assert.match(main, /function getApiToken\([\s\S]*?hardenWindowsPathSync\(tokenPath\)/)
+  assert.match(requirements, /pywin32>=311; sys_platform == "win32"/)
+})
+
+test('desktop retries transient Windows sharing violations while resetting PDF previews', () => {
+  const main = readRepoFile('app/src/main.js')
+  const body = main.slice(
+    main.indexOf('function renderPdfPreviewWithQuickLook'),
+    main.indexOf('function getLocalPromptLibraryStatePath'),
+  )
+
+  assert.match(main, /const \{[^}]*retryWindowsFileOperationSync[^}]*\} = require\('\.\/atomicFile'\)/)
+  assert.match(body, /retryWindowsFileOperationSync\(\(\) => fs\.rmSync\(outputDir, \{ recursive: true, force: true \}\)\)/)
+})
+
+test('desktop persistent JSON state uses atomic replacement', () => {
+  const main = readRepoFile('app/src/main.js')
+  assert.match(main, /const \{[^}]*atomicWriteJsonSync[^}]*\} = require\('\.\/atomicFile'\)/)
+  for (const name of ['writeDesktopConfig', 'writeManagedChromeState', 'writeLocalPromptLibraryState']) {
+    const body = main.match(new RegExp(`function ${name}\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}`))?.[1] || ''
+    assert.match(body, /atomicWriteJsonSync\(/, `${name} must use atomic replacement`)
+    assert.doesNotMatch(body, /fs\.writeFileSync\(/, `${name} must not truncate the live state file`)
+  }
+})
+
 test('desktop backend startup fails before spawn when API token cannot be prepared', () => {
   const main = readRepoFile('app/src/main.js')
   const apiServer = readRepoFile('core/api_server.py')

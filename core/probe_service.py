@@ -10,6 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from core import runtime_paths
 from core.browser_session import open_browser_session
+from core.atomic_file import atomic_write_json, atomic_write_text
 from core.probe_analyzer import (
     analyze_endpoints,
     build_page_map,
@@ -379,7 +380,7 @@ def _redact_capture_payload(payload: Any) -> Any:
 
 
 def _write_json(path: Path, payload: Any) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(path, payload, ensure_ascii=False, indent=2)
 
 
 async def run_probe_request(req: ProbeRequest) -> ProbeRunResponse:
@@ -492,7 +493,7 @@ async def run_probe_request(req: ProbeRequest) -> ProbeRunResponse:
     _write_json(bundle_dir / "strategy.json", strategy)
     _write_json(bundle_dir / "recommendations.json", recommendations)
     report_path = bundle_dir / "report.md"
-    report_path.write_text(report_md, encoding="utf-8")
+    atomic_write_text(report_path, report_md)
 
     summary = {
         "final_url": final_url,

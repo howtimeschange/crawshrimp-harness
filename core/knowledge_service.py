@@ -12,6 +12,7 @@ from typing import Any
 
 from core import adapter_loader
 from core import runtime_paths
+from core.atomic_file import atomic_write_json, atomic_write_text, remove_path_with_retry
 
 
 SECTION_PATTERN = re.compile(r"^(#{2,3})\s+(.*)$")
@@ -336,7 +337,9 @@ def _load_cards() -> list[dict[str, Any]]:
     if not path.exists():
         return []
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return payload if isinstance(payload, list) else []
+    if not isinstance(payload, list):
+        raise ValueError("knowledge cards must be a JSON array")
+    return payload
 
 
 def _write_skill_docs(cards: list[dict[str, Any]]) -> dict[tuple[str, str], str]:
@@ -344,7 +347,7 @@ def _write_skill_docs(cards: list[dict[str, Any]]) -> dict[tuple[str, str], str]
     if skills_root.exists():
         for path in sorted(skills_root.glob("**/*"), reverse=True):
             if path.is_file():
-                path.unlink()
+                remove_path_with_retry(path)
             elif path.is_dir():
                 try:
                     path.rmdir()
@@ -381,7 +384,7 @@ def _write_skill_docs(cards: list[dict[str, Any]]) -> dict[tuple[str, str], str]
                 lines.append("")
                 lines.append(f"Source: `{entry['source_path']}`")
                 lines.append("")
-        skill_path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+        atomic_write_text(skill_path, "\n".join(lines).strip() + "\n")
     return path_map
 
 
@@ -408,13 +411,13 @@ def rebuild_knowledge_index() -> dict[str, Any]:
             " ".join(card.get("url_patterns") or []),
         ])
 
-    _cards_path().write_text(json.dumps(cards, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(_cards_path(), cards, ensure_ascii=False, indent=2)
     meta = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "fingerprint": _source_fingerprint(),
         "card_count": len(cards),
     }
-    _meta_path().write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(_meta_path(), meta, ensure_ascii=False, indent=2)
     return {"ok": True, **meta}
 
 
@@ -424,6 +427,7 @@ def ensure_knowledge_index() -> dict[str, Any]:
         return rebuild_knowledge_index()
     try:
         meta = json.loads(_meta_path().read_text(encoding="utf-8"))
+        _load_cards()
     except Exception:
         return rebuild_knowledge_index()
     if meta.get("fingerprint") != current_fingerprint:

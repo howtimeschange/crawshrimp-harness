@@ -14,6 +14,7 @@ from typing import Any, Callable, Mapping
 from core import ai_image_service
 from core import data_sink
 from core import runtime_paths
+from core.atomic_file import atomic_write_json
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 WORKFLOW_ID = "bala_ai_video_image_review"
@@ -221,12 +222,7 @@ def build_review_batch(rows: list[dict], run_params: dict, artifact_dir: str, ap
 
 def save_review_batch(batch: dict) -> Path:
     path = _batch_json_path(batch)
-    temporary = path.with_name(f".{path.name}.{secrets.token_hex(6)}.tmp")
-    try:
-        temporary.write_text(json.dumps(batch, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    atomic_write_json(path, batch, ensure_ascii=False, indent=2)
     return path
 
 
@@ -493,7 +489,7 @@ def export_video_input_manifest(batch: dict, output_root: str, provider: str = V
         "styles": styles,
     }
     manifest_path = root / "bala-video-input-manifest.json"
-    manifest_path.write_text(json.dumps(manifest_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(manifest_path, manifest_payload, ensure_ascii=False, indent=2)
     return {
         **manifest_payload,
         "manifest_path": str(manifest_path),

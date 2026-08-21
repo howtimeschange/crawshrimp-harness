@@ -590,6 +590,10 @@ if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then
   fi
   mkdir -p "$target/win32/lib" "$target/pywin32_system32"
   echo installed > "$target/win32/lib/pywintypes.py"
+  echo installed > "$target/win32/lib/win32con.py"
+  echo installed > "$target/win32/lib/ntsecuritycon.py"
+  echo installed > "$target/win32/win32api.pyd"
+  echo installed > "$target/win32/win32security.pyd"
   echo installed > "$target/pywin32_system32/pywintypes312.dll"
   echo installed > "$target/pywin32.pth"
   exit 0
@@ -612,6 +616,10 @@ exit 0
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
     assert.match(result.stdout, /Cross-installing backend requirements into win-x64/)
     assert.ok(fs.existsSync(path.join(sitePackages, 'win32', 'lib', 'pywintypes.py')))
+    assert.ok(fs.existsSync(path.join(sitePackages, 'win32', 'lib', 'win32con.py')))
+    assert.ok(fs.existsSync(path.join(sitePackages, 'win32', 'lib', 'ntsecuritycon.py')))
+    assert.ok(fs.existsSync(path.join(sitePackages, 'win32', 'win32api.pyd')))
+    assert.ok(fs.existsSync(path.join(sitePackages, 'win32', 'win32security.pyd')))
     assert.ok(fs.existsSync(path.join(sitePackages, 'pywin32_system32', 'pywintypes312.dll')))
     assert.ok(fs.existsSync(path.join(sitePackages, 'pywin32.pth')))
   } finally {
@@ -666,6 +674,10 @@ test('download-python refreshes Windows dependencies when their requirements cha
       fs.mkdirSync(path.join(sitePackages, name), { recursive: true })
     }
     fs.writeFileSync(path.join(sitePackages, 'win32', 'lib', 'pywintypes.py'), '')
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'lib', 'win32con.py'), '')
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'lib', 'ntsecuritycon.py'), '')
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'win32api.pyd'), '')
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'win32security.pyd'), '')
     fs.writeFileSync(path.join(sitePackages, 'pywin32_system32', 'pywintypes312.dll'), '')
     fs.writeFileSync(path.join(sitePackages, 'pywin32.pth'), '')
 
@@ -761,6 +773,10 @@ test('download-python smoke-tests the backend and dependency closure with a runn
       fs.mkdirSync(path.join(sitePackages, name), { recursive: true })
     }
     fs.writeFileSync(path.join(sitePackages, 'win32', 'lib', 'pywintypes.py'), '')
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'lib', 'win32con.py'), '')
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'lib', 'ntsecuritycon.py'), '')
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'win32api.pyd'), '')
+    fs.writeFileSync(path.join(sitePackages, 'win32', 'win32security.pyd'), '')
     fs.writeFileSync(path.join(sitePackages, 'pywin32_system32', 'pywintypes312.dll'), '')
     fs.writeFileSync(path.join(sitePackages, 'pywin32.pth'), '')
 
@@ -777,7 +793,7 @@ if [ "$1" = "-c" ]; then
     exit 3
   fi
   case "$2" in
-    *"import pywintypes"*"from mcp.server.mcpserver import MCPServer"*"import core.api_server"*)
+    *"import ntsecuritycon, pywintypes, win32api, win32con, win32security"*"from mcp.server.mcpserver import MCPServer"*"import core.api_server"*)
       echo verified > "\${FAKE_IMPORT_MARKER}"
       exit 0
       ;;

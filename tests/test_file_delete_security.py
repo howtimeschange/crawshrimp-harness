@@ -38,6 +38,35 @@ class FileDeleteSecurityTests(unittest.TestCase):
                 self.assertEqual(result["deleted_count"], 1)
                 self.assertFalse(target.exists())
 
+    def test_delete_files_retries_transient_windows_sharing_violation(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            target = Path(data_dir) / "exports" / "locked-preview.png"
+            target.parent.mkdir(parents=True)
+            target.write_bytes(b"preview")
+            target = target.resolve()
+            original_unlink = Path.unlink
+            attempts = 0
+
+            def transient_unlink(path, *args, **kwargs):
+                nonlocal attempts
+                if path == target:
+                    attempts += 1
+                    if attempts == 1:
+                        error = PermissionError("[WinError 32] sharing violation")
+                        error.winerror = 32
+                        raise error
+                return original_unlink(path, *args, **kwargs)
+
+            with patch("core.api_server.runtime_paths.data_root", return_value=Path(data_dir)), \
+                    patch("core.api_server.data_sink.is_output_file_path", return_value=True), \
+                    patch("core.api_server.data_sink.remove_output_files", return_value={"updated_runs": 0, "removed_refs": 1}), \
+                    patch.object(Path, "unlink", transient_unlink):
+                result = api_server.delete_files(api_server.DeleteFilesRequest(paths=[str(target)]))
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(attempts, 2)
+            self.assertFalse(target.exists())
+
     def test_delete_files_allows_paths_inside_runtime_data_root(self):
         with tempfile.TemporaryDirectory() as data_dir:
             target = Path(data_dir) / "exports" / "old.xlsx"

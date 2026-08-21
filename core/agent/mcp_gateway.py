@@ -18,7 +18,8 @@ from typing import Any, Optional
 
 from mcp.server.mcpserver import MCPServer
 
-from core import data_sink
+from core import data_sink, runtime_paths
+from core.atomic_file import atomic_write_text, retry_file_operation
 from core.agent import db
 from core.agent.cdp import CdpClient
 from core.agent.cordis_config import model_capabilities
@@ -957,13 +958,37 @@ def _skill_root() -> Optional[Path]:
     return root if root.exists() else None
 
 
+def _generated_skill_root(*, create: bool = False) -> Optional[Path]:
+    import os as _os
+    env = _os.environ.get("CRAWSHRIMP_GENERATED_SKILL_ROOT", "").strip()
+    root = Path(env).expanduser() if env else runtime_paths.data_root() / "agent" / "skills"
+    if create:
+        root.mkdir(parents=True, exist_ok=True)
+    return root if create or root.exists() else None
+
+
+def _skill_roots() -> list[Path]:
+    roots: list[Path] = []
+    for root in (_generated_skill_root(), _skill_root()):
+        if root is None:
+            continue
+        resolved = root.expanduser().resolve()
+        if resolved not in roots:
+            roots.append(resolved)
+    return roots
+
+
 def _skill_list_files(root: Path) -> list[dict]:
     entries = []
     for p in sorted(root.rglob("*")):
         if not p.is_file():
             continue
-        rel = str(p.relative_to(root))
-        if any(part.startswith(".") or part == "__pycache__" for part in p.parts):
+        relative = p.relative_to(root)
+        rel = relative.as_posix()
+        # Only entries inside the skill root are subject to the hidden-file
+        # filter.  The data root itself is commonly ~/.crawshrimp on Windows
+        # and macOS; checking the absolute parts hides every generated skill.
+        if any(part.startswith(".") or part == "__pycache__" for part in relative.parts):
             continue
         if p.suffix not in (".md", ".py", ".js", ".yaml", ".yml", ".json", ".txt"):
             continue
@@ -979,26 +1004,43 @@ def tool_skill_list() -> dict:
     guard = _require_run()
     if guard:
         return guard
-    root = _skill_root()
-    if not root:
+    roots = _skill_roots()
+    if not roots:
         return _failed("ARTIFACT_NOT_ALLOWED", "技能包不可用")
-    files = _skill_list_files(root)
+    files_by_path: dict[str, dict] = {}
+    for root in roots:
+        for item in _skill_list_files(root):
+            files_by_path.setdefault(item["path"], item)
+    files = sorted(files_by_path.values(), key=lambda item: item["path"])
     packs = sorted({f["path"].split("/")[0] for f in files})
-    return _ok({"root": str(root), "packs": packs, "files": files[:200], "total": len(files)})
+    primary_root = _skill_root() or roots[0]
+    return _ok({"root": str(primary_root), "packs": packs, "files": files[:200], "total": len(files)})
 
 
 def tool_skill_read(path: str, max_chars: int = 12000) -> dict:
     guard = _require_run()
     if guard:
         return guard
-    root = _skill_root()
-    if not root:
+    roots = _skill_roots()
+    if not roots:
         return _failed("ARTIFACT_NOT_ALLOWED", "技能包不可用")
-    safe = str(path or "").strip()
-    if not safe or ".." in safe.split("/"):
+    safe = str(path or "").strip().replace("\\", "/")
+    parts = [part for part in safe.split("/") if part]
+    if not safe or safe.startswith("/") or ".." in parts:
         return _failed("INVALID_PARAMETERS", "非法路径")
-    target = root / safe
-    if not target.is_file() or target.suffix not in (".md", ".py", ".js", ".yaml", ".yml", ".json", ".txt"):
+    target = None
+    root = None
+    for candidate_root in roots:
+        candidate = (candidate_root / Path(*parts)).resolve(strict=False)
+        try:
+            candidate.relative_to(candidate_root)
+        except ValueError:
+            return _failed("INVALID_PARAMETERS", "非法路径")
+        if candidate.is_file():
+            target = candidate
+            root = candidate_root
+            break
+    if target is None or root is None or target.suffix not in (".md", ".py", ".js", ".yaml", ".yml", ".json", ".txt"):
         return _failed("TASK_NOT_FOUND", f"技能文件不存在: {path}")
     try:
         text = target.read_text(encoding="utf-8", errors="replace")
@@ -1089,7 +1131,11 @@ def tool_fs_write(path: str, content: str) -> dict:
     try:
         # mkdir 本身也是写副作用，必须放在审批之后。
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(text, encoding="utf-8")
+        # This tool can target arbitrary user files, so do not replace their
+        # ACL/mode with the private-state defaults used by atomic_write_text.
+        # Retrying the open/write operation handles transient Windows sharing
+        # violations while preserving the target file's existing metadata.
+        retry_file_operation(lambda: p.write_text(text, encoding="utf-8"))
     except OSError as exc:
         return _failed("TASK_FAILED", f"写入失败: {exc}")
     return _ok({"path": str(p), "size": len(text.encode("utf-8")), "message": "已写入(经审批授权)"})
@@ -1616,11 +1662,13 @@ description: Locate the installed third-party repository "{safe}" as untrusted r
 - 调用其中的脚本/CLI 属于 local_write，必须遵守当前 DSH 权限策略与抓虾审计；
 - 先用只读文件工具理解结构，再优先运行只读/--dry-run 命令。
 """
-    from core.agent.worker import resolve_harness_root
-    skills_dir = resolve_harness_root() / "skills" / skill_name
     try:
+        generated_root = _generated_skill_root(create=True)
+        if generated_root is None:
+            raise OSError("智能体技能目录不可用")
+        skills_dir = generated_root / skill_name
         skills_dir.mkdir(parents=True, exist_ok=True)
-        (skills_dir / "SKILL.md").write_text(skill_body, encoding="utf-8")
+        atomic_write_text(skills_dir / "SKILL.md", skill_body)
     except OSError as exc:
         return _failed("WRITE_FAILED", f"写入技能包失败: {exc}")
     return _ok({"skill": skill_name, "path": f"{skill_name}/SKILL.md",
@@ -1862,7 +1910,7 @@ def tool_script_create_draft(filename: str, content: str) -> dict:
                          "禁止独立 Python 脚本;请按 crawshrimp-adapter-skill/references/script-contract.md 规范编写")
     path = ctx.workspace_root / safe
     try:
-        path.write_text(content, encoding="utf-8")
+        atomic_write_text(path, content)
     except Exception as exc:  # noqa: BLE001
         return _failed("TASK_FAILED", f"写草稿失败: {exc}")
     import hashlib

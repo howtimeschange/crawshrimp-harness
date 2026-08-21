@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 import socket
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -266,6 +267,35 @@ def test_fs_write_reaches_approval_instead_of_name_error(tmp_path, monkeypatch):
         mcp_gateway.ctx.active_run = previous_run
     assert result["status"] == "rejected"
     assert not (tmp_path / "blocked.txt").exists()
+
+
+def test_fs_write_retries_transient_windows_sharing_violation(tmp_path, monkeypatch):
+    target = tmp_path / "approved.txt"
+    original_write_text = Path.write_text
+    attempts = 0
+
+    def transient_write_text(path, *args, **kwargs):
+        nonlocal attempts
+        if path == target:
+            attempts += 1
+            if attempts == 1:
+                error = PermissionError("[WinError 32] sharing violation")
+                error.winerror = 32
+                raise error
+        return original_write_text(path, *args, **kwargs)
+
+    previous_run = mcp_gateway.ctx.active_run
+    mcp_gateway.ctx.active_run = {"run_id": "run-write-retry", "session_id": "session-write-retry"}
+    monkeypatch.setattr(mcp_gateway, "_await_approval_blocking", lambda *_args: "approved")
+    monkeypatch.setattr(Path, "write_text", transient_write_text)
+    try:
+        result = mcp_gateway.tool_fs_write(str(target), "content")
+    finally:
+        mcp_gateway.ctx.active_run = previous_run
+
+    assert result["ok"] is True
+    assert attempts == 2
+    assert target.read_text(encoding="utf-8") == "content"
 
 
 def _run_item() -> dict:
@@ -820,7 +850,7 @@ def test_clear_agent_data_removes_owned_files_and_agent_adapters(tmp_path, monke
         (directory / "owned.txt").write_text("owned", encoding="utf-8")
     mcp_gateway.ctx.plan_params["plan-secret"] = {"token": "secret"}
 
-    result = service.clear_agent_data()
+    result = asyncio.run(service.clear_agent_data())
 
     assert result["ok"] is True
     assert uninstalled == ["published", "review-test"]
@@ -830,6 +860,35 @@ def test_clear_agent_data_removes_owned_files_and_agent_adapters(tmp_path, monke
         "published-baselines",
     ))
     assert mcp_gateway.ctx.plan_params == {}
+
+
+def test_clear_agent_data_stops_idle_runtime_before_removing_files(tmp_path, monkeypatch):
+    service = AgentService()
+    service.worker = object()
+    service.runtime_state = "ready"
+    events = []
+
+    async def stop_worker():
+        events.append("stop-runtime")
+        service.worker = None
+        service.runtime_state = "stopped"
+
+    monkeypatch.setattr(service, "_stop_worker", stop_worker)
+    monkeypatch.setattr("core.agent.service.db._conn", lambda: _RevisionRowsConnection([]))
+    monkeypatch.setattr("core.agent.service.db.clear_agent_data", lambda: events.append("clear-db"))
+    monkeypatch.setattr("core.agent.service._data_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "core.agent.service._remove_owned_tree",
+        lambda _path: events.append("remove-files"),
+    )
+
+    result = asyncio.run(service.clear_agent_data())
+
+    assert result["ok"] is True
+    assert events[0] == "stop-runtime"
+    assert events.index("stop-runtime") < events.index("remove-files") < events.index("clear-db")
+    assert service.worker is None
+    assert service.runtime_state == "stopped"
 
 
 def test_clear_agent_data_stops_before_files_and_db_when_uninstall_fails(tmp_path, monkeypatch):
@@ -850,7 +909,7 @@ def test_clear_agent_data_stops_before_files_and_db_when_uninstall_fails(tmp_pat
     owned.parent.mkdir(parents=True)
     owned.write_text("owned", encoding="utf-8")
 
-    result = service.clear_agent_data()
+    result = asyncio.run(service.clear_agent_data())
 
     assert result["ok"] is False
     assert "permission denied" in result["error"]
@@ -870,7 +929,7 @@ def test_clear_agent_data_unlinks_owned_symlink_without_following_target(tmp_pat
     attachments.parent.mkdir(parents=True)
     attachments.symlink_to(external, target_is_directory=True)
 
-    result = service.clear_agent_data()
+    result = asyncio.run(service.clear_agent_data())
 
     assert result["ok"] is True
     assert not attachments.exists()

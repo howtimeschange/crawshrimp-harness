@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from core.atomic_file import atomic_write_text, remove_path_with_retry, retry_file_operation
 from core.agent import db, mcp_gateway
 from core.agent.service import AgentService
 
@@ -326,13 +327,13 @@ async def create_turn(session_id: str, req: TurnCreateRequest) -> dict:
 
 
 @router.post("/data/clear")
-def clear_agent_data() -> dict:
+async def clear_agent_data() -> dict:
     """清除智能体数据及受控附件/草稿/运行日志/智能体发布适配包。
 
     不清任务实例、任务产物与模型配置。
     """
     service = get_agent_service()
-    result = service.clear_agent_data()
+    result = await service.clear_agent_data()
     if not result.get("ok"):
         raise HTTPException(409, result.get("error", "存在进行中的运行,无法清除"))
     return result
@@ -716,6 +717,18 @@ def _adapter_snapshot_dir(adapter_id: str):
     return _data_root() / "agent" / "review-backups" / safe
 
 
+def _discard_adapter_backup_best_effort(path, label: str) -> bool:
+    """Remove an obsolete backup without turning a completed state change into a failure."""
+    try:
+        remove_path_with_retry(path)
+        return True
+    except OSError as exc:
+        # The restored/published adapter remains authoritative. Keeping a stale
+        # backup is safer than reporting the completed operation as failed.
+        print(f"[agent] {label}清理失败，将在后续清库时重试: {exc}", flush=True)
+        return False
+
+
 def _snapshot_existing_adapter(adapter_id: str) -> bool:
     """测试安装前快照同名生产适配器;无同名适配器时返回 False。"""
     if not adapter_id:
@@ -729,7 +742,7 @@ def _snapshot_existing_adapter(adapter_id: str) -> bool:
     backup = _adapter_snapshot_dir(adapter_id)
     backup_adapter = backup / "adapter"
     backup_meta = backup / "install-meta.json"
-    _sh.rmtree(str(backup), ignore_errors=True)
+    remove_path_with_retry(backup)
     try:
         backup.mkdir(parents=True, exist_ok=False)
         _sh.copytree(str(dest), str(backup_adapter), symlinks=True)
@@ -739,7 +752,7 @@ def _snapshot_existing_adapter(adapter_id: str) -> bool:
             _sh.copy2(str(meta_path), str(backup_meta))
         return True
     except Exception as exc:  # noqa: BLE001
-        _sh.rmtree(str(backup), ignore_errors=True)
+        _discard_adapter_backup_best_effort(backup, f"适配器 {adapter_id} 不完整快照")
         raise HTTPException(409, f"无法为现有适配器 {adapter_id} 创建安全快照: {exc}") from exc
 
 
@@ -756,30 +769,25 @@ def _restore_snapshotted_adapter(adapter_id: str) -> None:
         return
     dest = _data_root() / "adapters" / str(adapter_id)
     try:
-        _sh.rmtree(str(dest), ignore_errors=True)
+        remove_path_with_retry(dest)
         _sh.copytree(str(backup_adapter), str(dest), symlinks=True)
         from core import adapter_loader as _al
         meta_path = _al._metadata_path(adapter_id)
         if backup_meta.is_file():
-            meta_path.parent.mkdir(parents=True, exist_ok=True)
-            _sh.copy2(str(backup_meta), str(meta_path))
+            atomic_write_text(meta_path, backup_meta.read_text(encoding="utf-8"))
         else:
-            try:
-                meta_path.unlink()
-            except FileNotFoundError:
-                pass
-        _sh.rmtree(str(backup), ignore_errors=True)
+            remove_path_with_retry(meta_path)
         _al.scan_all()
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(500, f"恢复适配器 {adapter_id} 的发布前快照失败: {exc}") from exc
+    _discard_adapter_backup_best_effort(backup, f"适配器 {adapter_id} 已恢复快照")
 
 
 def _discard_adapter_snapshot(adapter_id: str) -> None:
     if not adapter_id:
         return
-    import shutil as _sh
     backup = _adapter_snapshot_dir(adapter_id)
-    _sh.rmtree(str(backup), ignore_errors=True)
+    _discard_adapter_backup_best_effort(backup, f"适配器 {adapter_id} 已提交快照")
 
 
 def _published_adapter_baseline_dir(adapter_id: str):
@@ -804,7 +812,7 @@ def _capture_published_adapter_baseline(adapter_id: str) -> bool:
     if state_path.is_file():
         return False
     tmp = baseline.parent / f".{baseline.name}.tmp-{uuid.uuid4().hex[:8]}"
-    _sh.rmtree(tmp, ignore_errors=True)
+    remove_path_with_retry(tmp)
     try:
         tmp.mkdir(parents=True, exist_ok=False)
         dest = _data_root() / "adapters" / str(adapter_id)
@@ -821,18 +829,20 @@ def _capture_published_adapter_baseline(adapter_id: str) -> bool:
         )
         baseline.parent.mkdir(parents=True, exist_ok=True)
         if baseline.exists():
-            _sh.rmtree(tmp, ignore_errors=True)
+            _discard_adapter_backup_best_effort(tmp, f"适配器 {adapter_id} 临时基线")
             return False
-        tmp.rename(baseline)
+        retry_file_operation(lambda: tmp.rename(baseline))
         return True
     except Exception as exc:  # noqa: BLE001
-        _sh.rmtree(tmp, ignore_errors=True)
+        _discard_adapter_backup_best_effort(tmp, f"适配器 {adapter_id} 不完整基线")
         raise HTTPException(409, f"无法保存适配器 {adapter_id} 的发布前基线: {exc}") from exc
 
 
 def _discard_published_adapter_baseline(adapter_id: str) -> None:
-    import shutil as _sh
-    _sh.rmtree(_published_adapter_baseline_dir(adapter_id), ignore_errors=True)
+    _discard_adapter_backup_best_effort(
+        _published_adapter_baseline_dir(adapter_id),
+        f"适配器 {adapter_id} 未发布基线",
+    )
 
 
 def _restore_published_adapter_baseline(adapter_id: str) -> bool:
@@ -853,20 +863,16 @@ def _restore_published_adapter_baseline(adapter_id: str) -> bool:
         backup_meta = baseline / "install-meta.json"
         _al.uninstall(adapter_id)
         dest = _data_root() / "adapters" / str(adapter_id)
-        _sh.rmtree(str(dest), ignore_errors=True)
+        remove_path_with_retry(dest)
         meta_path = _al._metadata_path(adapter_id)
         if had_adapter:
             if not backup_adapter.is_dir():
                 raise OSError("发布前适配器基线缺失")
             _sh.copytree(str(backup_adapter), str(dest), symlinks=True)
             if backup_meta.is_file():
-                meta_path.parent.mkdir(parents=True, exist_ok=True)
-                _sh.copy2(str(backup_meta), str(meta_path))
+                atomic_write_text(meta_path, backup_meta.read_text(encoding="utf-8"))
             else:
-                try:
-                    meta_path.unlink()
-                except FileNotFoundError:
-                    pass
+                remove_path_with_retry(meta_path)
         _al.scan_all()
         return True
     except Exception as exc:  # noqa: BLE001
@@ -887,7 +893,6 @@ def _revision_package_sha256(rev: dict) -> str:
 
 def _remove_failed_adapter(adapter_id: str) -> None:
     """无旧版本可恢复时清除正式安装留下的半目录并刷新加载缓存。"""
-    import shutil as _sh
     from core.agent.service import _data_root
     from core import adapter_loader as _al
     dest = _data_root() / "adapters" / str(adapter_id)
@@ -895,12 +900,29 @@ def _remove_failed_adapter(adapter_id: str) -> None:
         _al.uninstall(adapter_id)
     except Exception:  # noqa: BLE001
         pass
-    _sh.rmtree(str(dest), ignore_errors=True)
-    try:
-        _al._metadata_path(adapter_id).unlink()
-    except FileNotFoundError:
-        pass
+    remove_path_with_retry(dest)
+    remove_path_with_retry(_al._metadata_path(adapter_id))
     _al.scan_all()
+
+
+def _rollback_failed_adapter_install(
+    adapter_id: str,
+    *,
+    had_snapshot: bool,
+    original_exc: Exception,
+) -> None:
+    """Restore the pre-install state and retain both errors if rollback also fails."""
+    try:
+        if had_snapshot:
+            _restore_snapshotted_adapter(adapter_id)
+        else:
+            _remove_failed_adapter(adapter_id)
+    except Exception as rollback_exc:  # noqa: BLE001
+        raise HTTPException(
+            500,
+            f"适配器 {adapter_id} 发布失败，且无法恢复发布前状态；"
+            f"原始错误: {original_exc}; 回滚错误: {rollback_exc}",
+        ) from rollback_exc
 
 
 def _test_adapter_id(rev_id: str) -> str:
@@ -990,14 +1012,24 @@ async def test_install_script_revision(rev_id: str) -> dict:
         await _stop_test_adapter_instances(test_adapter_id)
     try:
         installed_id, _ = _install_revision_to_adapters(rev, adapter_id_override=test_adapter_id)
-    except Exception:
+    except Exception as install_exc:
         # adapter_loader 覆盖安装会先移除旧测试目录；失败后不能继续把修订
         # 标成 testing，也不能留下缓存中的半安装 review-* 包。
-        _remove_failed_adapter(test_adapter_id)
+        cleanup_exc = None
+        try:
+            _remove_failed_adapter(test_adapter_id)
+        except Exception as exc:  # noqa: BLE001
+            cleanup_exc = exc
         _db.update_script_revision(
             rev_id, status="pending_review", test_adapter_id=None,
             tested_sha256=None,
         )
+        if cleanup_exc is not None:
+            raise HTTPException(
+                500,
+                f"测试适配器安装失败，且残留目录清理失败；"
+                f"安装错误: {install_exc}; 清理错误: {cleanup_exc}",
+            ) from cleanup_exc
         raise
     _db.update_script_revision(
         rev_id, status="testing", adapter_id=target_adapter_id,
@@ -1088,11 +1120,12 @@ async def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
         raise
     try:
         _install_revision_to_adapters(rev)
-    except Exception:
-        if had_snapshot:
-            _restore_snapshotted_adapter(safe_adapter)
-        else:
-            _remove_failed_adapter(safe_adapter)
+    except Exception as exc:
+        _rollback_failed_adapter_install(
+            safe_adapter,
+            had_snapshot=had_snapshot,
+            original_exc=exc,
+        )
         if baseline_created:
             _discard_published_adapter_baseline(safe_adapter)
         raise
@@ -1103,11 +1136,12 @@ async def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
             target_adapter_id=safe_adapter, test_adapter_id=None,
             tested_sha256=package_sha256, source_sha256=sha,
         )
-    except Exception:
-        if had_snapshot:
-            _restore_snapshotted_adapter(safe_adapter)
-        else:
-            _remove_failed_adapter(safe_adapter)
+    except Exception as exc:
+        _rollback_failed_adapter_install(
+            safe_adapter,
+            had_snapshot=had_snapshot,
+            original_exc=exc,
+        )
         if baseline_created:
             _discard_published_adapter_baseline(safe_adapter)
         raise

@@ -76,6 +76,39 @@ test('workspace deletion allows regular images outside an approved workspace', (
   })
 })
 
+test('workspace deletion retries a transient Windows sharing violation for an outside image', () => {
+  withTempTree(({ workspace, outside }) => {
+    const outsideImage = path.join(outside, 'outside.jpg')
+    fs.writeFileSync(outsideImage, 'outside')
+    let unlinkAttempts = 0
+    const fsApi = Object.assign({}, fs, {
+      realpathSync: fs.realpathSync,
+      unlinkSync(target) {
+        unlinkAttempts += 1
+        if (unlinkAttempts === 1) {
+          const error = new Error('file is busy')
+          error.code = 'EBUSY'
+          throw error
+        }
+        return fs.unlinkSync(target)
+      },
+    })
+
+    const result = deleteAuthorizedWorkspaceImage({
+      workspaceRoot: workspace,
+      filePath: outsideImage,
+      fsApi,
+      platform: 'win32',
+      retryDelaysMs: [0],
+      sleepSync: () => {},
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(unlinkAttempts, 2)
+    assert.equal(fs.existsSync(outsideImage), false)
+  })
+})
+
 test('workspace deletion permits AI image cache files without a workspace grant', () => {
   withTempTree(({ parent, workspace, outside }) => {
     const cache = path.join(parent, 'ai-image-cache')
@@ -275,5 +308,42 @@ test('workspace manifest reads and writes under any selected workspace directory
     assert.equal(fs.existsSync(saved.path), true)
     assert.deepEqual(readAuthorizedBalaWorkspaceManifest({ workspaceRoot: workspace }), payload)
     assert.equal(readAuthorizedBalaWorkspaceManifest({ workspaceRoot: outside }), null)
+  })
+})
+
+test('workspace manifest atomically retries a transient Windows replacement failure', () => {
+  withTempTree(({ workspace }) => {
+    const first = { version: 1, marker: 'before' }
+    writeAuthorizedBalaWorkspaceManifest({ workspaceRoot: workspace, payload: first })
+    let renameAttempts = 0
+    const fsApi = Object.assign({}, fs, {
+      realpathSync: fs.realpathSync,
+      renameSync(source, target) {
+        renameAttempts += 1
+        if (renameAttempts === 1) {
+          const error = new Error('file is busy')
+          error.code = 'EBUSY'
+          throw error
+        }
+        return fs.renameSync(source, target)
+      },
+    })
+
+    const next = { version: 1, marker: 'after' }
+    writeAuthorizedBalaWorkspaceManifest({
+      workspaceRoot: workspace,
+      payload: next,
+      fsApi,
+      platform: 'win32',
+      retryDelaysMs: [0],
+      sleepSync: () => {},
+    })
+
+    assert.equal(renameAttempts, 2)
+    assert.deepEqual(readAuthorizedBalaWorkspaceManifest({ workspaceRoot: workspace }), next)
+    assert.deepEqual(
+      fs.readdirSync(workspace).filter(name => name.endsWith('.tmp')),
+      [],
+    )
   })
 })

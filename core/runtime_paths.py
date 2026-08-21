@@ -7,6 +7,12 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
+from core.windows_acl import (
+    assert_no_reparse_components_windows,
+    assert_safe_windows_data_root,
+    harden_windows_path,
+)
+
 logger = logging.getLogger(__name__)
 
 _runtime_data_root: Path | None = None
@@ -87,11 +93,14 @@ def _selection_key() -> str:
 
 
 def _ensure_dir(path: Path) -> Path:
+    assert_no_reparse_components_windows(path, allow_missing=True)
     path.mkdir(parents=True, exist_ok=True)
-    probe = path / f".crawshrimp-write-test-{os.getpid()}-{uuid4().hex}"
+    safe_path = assert_no_reparse_components_windows(path)
+    harden_windows_path(safe_path)
+    probe = safe_path / f".crawshrimp-write-test-{os.getpid()}-{uuid4().hex}"
     probe.write_text("ok", encoding="utf-8")
     probe.unlink()
-    return path
+    return safe_path
 
 
 def _select_root(*, child_name: str | None = None, create_child: bool = True) -> Path:
@@ -112,7 +121,8 @@ def _select_root(*, child_name: str | None = None, create_child: bool = True) ->
             continue
         seen.add(key)
         try:
-            _ensure_dir(base)
+            assert_safe_windows_data_root(base)
+            base = _ensure_dir(base)
             if child_name and create_child:
                 _ensure_dir(base / child_name)
             _runtime_data_root = base

@@ -37,6 +37,10 @@ const REQUIRED_BACKEND_IMPORTS = [
 const REQUIRED_WINDOWS_BACKEND_PATHS = [
   'colorama',
   'win32/lib/pywintypes.py',
+  'win32/lib/win32con.py',
+  'win32/lib/ntsecuritycon.py',
+  'win32/win32api.pyd',
+  'win32/win32security.pyd',
   'pywin32_system32/pywintypes312.dll',
   'pywin32.pth',
 ]
@@ -298,24 +302,29 @@ async function afterPack(context) {
   console.log(`[after-pack] Python bundled (${srcKey})`)
 }
 
-function copyDirSync(src, dest) {
+function copyDirSync(src, dest, ancestorSources = new Set()) {
+  const canonicalSource = fs.realpathSync(src)
+  if (ancestorSources.has(canonicalSource)) {
+    throw new Error(`[after-pack] cyclic directory link while copying ${src} -> ${canonicalSource}`)
+  }
+  const nextAncestors = new Set(ancestorSources)
+  nextAncestors.add(canonicalSource)
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
     const s = path.join(src, entry.name)
     const d = path.join(dest, entry.name)
     if (entry.isDirectory()) {
       fs.mkdirSync(d, { recursive: true })
-      copyDirSync(s, d)
+      copyDirSync(s, d, nextAncestors)
     } else if (entry.isSymbolicLink()) {
-      try {
-        const realSrc = fs.realpathSync(s)
+      const realSrc = fs.realpathSync(s)
+      const targetStat = fs.statSync(s)
+      if (targetStat.isDirectory()) {
+        fs.mkdirSync(d, { recursive: true })
+        copyDirSync(realSrc, d, nextAncestors)
+      } else if (targetStat.isFile()) {
         fs.copyFileSync(realSrc, d)
-      } catch {
-        try {
-          if (fs.existsSync(d)) fs.unlinkSync(d)
-          fs.symlinkSync(fs.readlinkSync(s), d)
-        } catch (e) {
-          console.warn(`[after-pack] WARN: symlink ${s}: ${e.message}`)
-        }
+      } else {
+        throw new Error(`[after-pack] unsupported symlink target while copying ${s}`)
       }
     } else {
       fs.copyFileSync(s, d)
@@ -324,6 +333,7 @@ function copyDirSync(src, dest) {
 }
 
 exports.default = afterPack
+exports.copyDirSync = copyDirSync
 exports.requirePythonBundle = requirePythonBundle
 exports.requirePythonScriptsBundle = requirePythonScriptsBundle
 exports.requireDeepseekHarnessBundle = requireDeepseekHarnessBundle

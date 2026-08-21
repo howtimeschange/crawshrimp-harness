@@ -26,6 +26,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from core import data_sink, runtime_paths
+from core.atomic_file import atomic_write_text, remove_path_with_retry, replace_with_retry
 from core.config import load_config
 
 logger = logging.getLogger(__name__)
@@ -269,13 +270,23 @@ def _decrypt_path_capability_payload(token: Any) -> dict:
     return dict(payload)
 
 
+def _path_is_link_or_reparse(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    try:
+        attributes = int(getattr(path.lstat(), "st_file_attributes", 0) or 0)
+    except FileNotFoundError:
+        return False
+    return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
 def _assert_no_symlink_components(path: Path) -> None:
     absolute = path.expanduser().absolute()
     current = Path(absolute.anchor)
     for part in absolute.parts[1:]:
         current = current / part
         try:
-            if current.is_symlink():
+            if _path_is_link_or_reparse(current):
                 raise AiVideoError("路径包含符号链接", code="PATH_NOT_ALLOWED")
             if not current.exists():
                 break
@@ -1568,7 +1579,7 @@ def _secure_mkdir_tree(path: Path) -> Path:
     current = Path(absolute.anchor)
     for part in absolute.parts[1:]:
         current = current / part
-        if current.is_symlink():
+        if _path_is_link_or_reparse(current):
             raise AiVideoError("输出路径包含符号链接", code="ARCHIVE_WRITE_FAILED")
         if current.exists():
             if not current.is_dir():
@@ -1577,7 +1588,7 @@ def _secure_mkdir_tree(path: Path) -> Path:
         try:
             current.mkdir(mode=0o700)
         except FileExistsError:
-            if current.is_symlink() or not current.is_dir():
+            if _path_is_link_or_reparse(current) or not current.is_dir():
                 raise AiVideoError("输出路径创建发生安全冲突", code="ARCHIVE_WRITE_FAILED")
         except OSError as exc:
             raise AiVideoError(
@@ -1736,34 +1747,213 @@ def _read_optional_bytes_at(directory_fd: int, name: str) -> bytes:
                 pass
 
 
-def _write_archive_json(archive_dir: Path, name: str, value: Any) -> None:
-    if not _secure_archive_dirfd_available():
-        logger.warning("Skipping optional AI video archive JSON: secure dir-fd writes are unavailable")
-        return
-    directory_fd = _open_directory_no_follow(archive_dir)
+def _same_path_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        stat.S_IFMT(left.st_mode) == stat.S_IFMT(right.st_mode)
+        and left.st_dev == right.st_dev
+        and left.st_ino == right.st_ino
+    )
+
+
+def _secure_archive_directory_snapshot(directory: Path) -> os.stat_result:
+    absolute = directory.expanduser().absolute()
     try:
-        payload = json.dumps(value, ensure_ascii=False, indent=2).encode("utf-8")
-        _atomic_write_bytes_at(directory_fd, name, payload)
+        _assert_no_symlink_components(absolute)
+        if _path_is_link_or_reparse(absolute):
+            raise OSError("archive directory is a reparse point")
+        metadata = os.stat(absolute, follow_symlinks=False)
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise OSError("archive path is not a directory")
+        if absolute.resolve(strict=True) != absolute:
+            raise OSError("archive directory changed during validation")
+        return metadata
+    except (AiVideoError, OSError) as exc:
+        raise AiVideoError(
+            "归档目录在写入前发生安全变化",
+            code="ARCHIVE_WRITE_FAILED",
+        ) from exc
+
+
+def _assert_archive_directory_identity(directory: Path, expected: os.stat_result) -> None:
+    current = _secure_archive_directory_snapshot(directory)
+    if not _same_path_identity(expected, current):
+        raise AiVideoError("归档目录在写入时发生安全变化", code="ARCHIVE_WRITE_FAILED")
+
+
+def _atomic_write_bytes_path(directory: Path, name: str, payload: bytes) -> None:
+    if not name or Path(name).name != name:
+        raise AiVideoError("归档文件名无效", code="ARCHIVE_WRITE_FAILED")
+    archive_dir = directory.expanduser().absolute()
+    expected_directory = _secure_archive_directory_snapshot(archive_dir)
+    temporary = archive_dir / f".{name}.{uuid4().hex}.tmp"
+    target = archive_dir / name
+    file_fd: Optional[int] = None
+    try:
+        file_fd = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0),
+            0o600,
+        )
+        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+            raise OSError("archive temporary path is not a regular file")
+        remaining = memoryview(payload)
+        while remaining:
+            written = os.write(file_fd, remaining)
+            if written <= 0:
+                raise OSError("short archive write")
+            remaining = remaining[written:]
+        os.fsync(file_fd)
+        os.close(file_fd)
+        file_fd = None
+
+        _assert_archive_directory_identity(archive_dir, expected_directory)
+        temporary_metadata = os.stat(temporary, follow_symlinks=False)
+        if _path_is_link_or_reparse(temporary) or not stat.S_ISREG(temporary_metadata.st_mode):
+            raise OSError("archive temporary path changed before replacement")
+        replace_with_retry(temporary, target)
+        _assert_archive_directory_identity(archive_dir, expected_directory)
+        target_metadata = os.stat(target, follow_symlinks=False)
+        if (
+            _path_is_link_or_reparse(target)
+            or not stat.S_ISREG(target_metadata.st_mode)
+            or not _same_path_identity(temporary_metadata, target_metadata)
+        ):
+            raise OSError("archive target changed after replacement")
+    except (AiVideoError, OSError) as exc:
+        if isinstance(exc, AiVideoError) and exc.code == "ARCHIVE_WRITE_FAILED":
+            raise
+        raise AiVideoError("归档文件安全写入失败", code="ARCHIVE_WRITE_FAILED") from exc
     finally:
-        os.close(directory_fd)
+        if file_fd is not None:
+            try:
+                os.close(file_fd)
+            except OSError:
+                pass
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+
+def _read_optional_bytes_path(directory: Path, name: str) -> bytes:
+    if not name or Path(name).name != name:
+        raise AiVideoError("归档文件名无效", code="ARCHIVE_WRITE_FAILED")
+    archive_dir = directory.expanduser().absolute()
+    expected_directory = _secure_archive_directory_snapshot(archive_dir)
+    target = archive_dir / name
+    file_fd: Optional[int] = None
+    try:
+        if _path_is_link_or_reparse(target):
+            raise OSError("archive event path is a reparse point")
+        try:
+            before = os.stat(target, follow_symlinks=False)
+        except FileNotFoundError:
+            return b""
+        if not stat.S_ISREG(before.st_mode):
+            raise OSError("archive event path is not a regular file")
+        file_fd = os.open(target, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0))
+        opened = os.fstat(file_fd)
+        current = os.stat(target, follow_symlinks=False)
+        if not stat.S_ISREG(opened.st_mode) or not _same_path_identity(before, opened) or not _same_path_identity(opened, current):
+            raise OSError("archive event path changed while opening")
+        chunks = []
+        while True:
+            chunk = os.read(file_fd, 256 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        _assert_archive_directory_identity(archive_dir, expected_directory)
+        return b"".join(chunks)
+    except (AiVideoError, OSError) as exc:
+        if isinstance(exc, AiVideoError) and exc.code == "ARCHIVE_WRITE_FAILED":
+            raise
+        raise AiVideoError("归档事件文件读取失败", code="ARCHIVE_WRITE_FAILED") from exc
+    finally:
+        if file_fd is not None:
+            try:
+                os.close(file_fd)
+            except OSError:
+                pass
+
+
+def _write_archive_json(archive_dir: Path, name: str, value: Any) -> None:
+    payload = json.dumps(value, ensure_ascii=False, indent=2).encode("utf-8")
+    if not _secure_archive_dirfd_available():
+        _atomic_write_bytes_path(archive_dir, name, payload)
+    else:
+        directory_fd = _open_directory_no_follow(archive_dir)
+        try:
+            _atomic_write_bytes_at(directory_fd, name, payload)
+        finally:
+            os.close(directory_fd)
 
 
 def _append_archive_event(archive_dir: Path, value: Mapping[str, Any]) -> None:
+    line = (json.dumps(dict(value), ensure_ascii=False) + "\n").encode("utf-8")
     if not _secure_archive_dirfd_available():
-        logger.warning("Skipping optional AI video archive event: secure dir-fd writes are unavailable")
-        return
-    directory_fd = _open_directory_no_follow(archive_dir)
-    try:
-        existing = _read_optional_bytes_at(directory_fd, "events.jsonl")
-        line = (json.dumps(dict(value), ensure_ascii=False) + "\n").encode("utf-8")
-        _atomic_write_bytes_at(directory_fd, "events.jsonl", existing + line)
-    finally:
-        os.close(directory_fd)
+        existing = _read_optional_bytes_path(archive_dir, "events.jsonl")
+        _atomic_write_bytes_path(archive_dir, "events.jsonl", existing + line)
+    else:
+        directory_fd = _open_directory_no_follow(archive_dir)
+        try:
+            existing = _read_optional_bytes_at(directory_fd, "events.jsonl")
+            _atomic_write_bytes_at(directory_fd, "events.jsonl", existing + line)
+        finally:
+            os.close(directory_fd)
+
+
+def _write_run_artifacts_path(
+    archive_dir: Path,
+    *,
+    normalized: Mapping[str, Any],
+    provider_payload: Mapping[str, Any],
+    event: str,
+) -> None:
+    _secure_mkdir_tree(archive_dir)
+    _atomic_write_bytes_path(
+        archive_dir,
+        "request.normalized.json",
+        json.dumps(redact_obj(dict(normalized)), ensure_ascii=False, indent=2).encode("utf-8"),
+    )
+    _atomic_write_bytes_path(
+        archive_dir,
+        "request.provider.redacted.json",
+        json.dumps(redact_obj(dict(provider_payload)), ensure_ascii=False, indent=2).encode("utf-8"),
+    )
+    existing_events = _read_optional_bytes_path(archive_dir, "events.jsonl")
+    event_line = json.dumps({"at": _now_iso(), "event": event}, ensure_ascii=False).encode("utf-8") + b"\n"
+    _atomic_write_bytes_path(archive_dir, "events.jsonl", existing_events + event_line)
+
+    input_dir = archive_dir / "input"
+    _secure_mkdir_tree(input_dir)
+    _secure_archive_directory_snapshot(input_dir)
+    for index, asset in enumerate(normalized.get("assets") or [], start=1):
+        src = _compact(asset.get("localPath"))
+        if not src:
+            continue
+        source_path = _validated_existing_file(Path(src))
+        target_name = f"image-{index:02d}{source_path.suffix.lower() or '.jpg'}"
+        target = input_dir / target_name
+        if _path_is_link_or_reparse(target):
+            raise AiVideoError("归档输入文件类型不安全", code="ARCHIVE_WRITE_FAILED")
+        if target.exists():
+            existing = os.stat(target, follow_symlinks=False)
+            if not stat.S_ISREG(existing.st_mode):
+                raise AiVideoError("归档输入文件类型不安全", code="ARCHIVE_WRITE_FAILED")
+            continue
+        _atomic_write_bytes_path(input_dir, target_name, source_path.read_bytes())
 
 
 def _write_run_artifacts(archive_dir: Path, *, normalized: Mapping[str, Any], provider_payload: Mapping[str, Any], event: str) -> None:
     if not _secure_archive_dirfd_available():
-        logger.warning("Skipping optional AI video run artifacts: secure dir-fd writes are unavailable")
+        _write_run_artifacts_path(
+            archive_dir,
+            normalized=normalized,
+            provider_payload=provider_payload,
+            event=event,
+        )
         return
     _secure_mkdir_tree(archive_dir)
     directory_fd = _open_directory_no_follow(archive_dir)
@@ -2507,9 +2697,8 @@ def _submit_run(run: Mapping[str, Any]) -> None:
         archive_dir = _secure_prepare_archive_dir(archive_root, archive_dir)
         _write_run_artifacts(archive_dir, normalized=provider_normalized, provider_payload=provider_payload, event="submit_start")
         payload_path = runtime_paths.child_dir("ai-video-generation") / f"payload-{run_id}.json"
-        payload_path.parent.mkdir(parents=True, exist_ok=True)
         # Write raw payload for CLI only; redacted copy already archived.
-        payload_path.write_text(json.dumps(provider_payload, ensure_ascii=False), encoding="utf-8")
+        atomic_write_text(payload_path, json.dumps(provider_payload, ensure_ascii=False))
         data_sink.update_ai_video_run(run_id, {
             "status": "queued",
             "providerStatus": "submitting",
@@ -2580,10 +2769,7 @@ def _submit_run(run: Mapping[str, Any]) -> None:
     finally:
         if payload_path is not None:
             try:
-                payload_path.unlink(missing_ok=True)
-            except TypeError:
-                if payload_path.exists():
-                    payload_path.unlink()
+                remove_path_with_retry(payload_path)
             except OSError:
                 logger.warning("Failed to remove raw AI video provider payload %s", payload_path, exc_info=True)
 
@@ -2985,7 +3171,7 @@ def _validate_download_size(size: int) -> None:
 
 def _remove_partial_download(part: Path) -> None:
     try:
-        part.unlink(missing_ok=True)
+        remove_path_with_retry(part)
     except OSError:
         pass
 
@@ -3009,7 +3195,7 @@ def _finalize_download_part(part: Path, target: Path) -> Path:
     _validate_download_size(part.stat().st_size)
     _assert_safe_download_path(part)
     _assert_safe_download_path(target)
-    part.replace(target)
+    replace_with_retry(part, target)
     return target
 
 

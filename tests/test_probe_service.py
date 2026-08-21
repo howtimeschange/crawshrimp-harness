@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from core.probe_models import ProbeRequest
 from core.probe_service import read_probe_bundle, read_probe_bundle_full, run_probe_request
-from core import api_server
+from core import api_server, atomic_file, probe_service
 
 
 class FakeRunner:
@@ -153,6 +153,31 @@ class ProbeServiceTests(unittest.IsolatedAsyncioTestCase):
                     clicked = network["interaction_captures"][0]["capture"]["matches"][0]
                     self.assertEqual(clicked["responseHeaders"]["Set-Cookie"], "[REDACTED]")
                     self.assertEqual(json.loads(clicked["postData"])["password"], "[REDACTED]")
+
+    async def test_probe_bundle_uses_atomic_writes_for_json_and_report(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"CRAWSHRIMP_DATA": tmpdir}, clear=False):
+                with patch("core.probe_service.open_browser_session", return_value=FakeSession()), \
+                        patch.object(
+                            probe_service,
+                            "atomic_write_json",
+                            wraps=atomic_file.atomic_write_json,
+                        ) as write_json, \
+                        patch.object(
+                            probe_service,
+                            "atomic_write_text",
+                            wraps=atomic_file.atomic_write_text,
+                        ) as write_text:
+                    result = await run_probe_request(ProbeRequest(
+                        adapter_id="demo",
+                        task_id="probe_task",
+                        goal="验证探查产物原子落盘",
+                    ))
+
+        self.assertTrue(result.ok)
+        self.assertGreaterEqual(write_json.call_count, 7)
+        self.assertEqual(write_text.call_count, 1)
+        self.assertEqual(Path(write_text.call_args.args[0]).name, "report.md")
 
     async def test_probe_api_route_returns_bundle_summary(self):
         with tempfile.TemporaryDirectory() as tmpdir:

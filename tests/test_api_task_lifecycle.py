@@ -216,6 +216,84 @@ class ApiTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse(lock.acquire())
                     self.assertIsNone(lock.handle)
 
+    async def test_backend_instance_lock_windows_does_not_truncate_the_locked_byte(self):
+        class FakeMsvcrt:
+            LK_NBLCK = 1
+            LK_UNLCK = 2
+
+            def locking(self, _fileno, _mode, _size):
+                return None
+
+        class WindowsLockedFile:
+            def __init__(self, handle):
+                self._handle = handle
+
+            def __getattr__(self, name):
+                return getattr(self._handle, name)
+
+            def truncate(self, *_args, **_kwargs):
+                raise PermissionError("[WinError 5] cannot truncate a locked byte range")
+
+        original_open = Path.open
+
+        def windows_open(path, *args, **kwargs):
+            return WindowsLockedFile(original_open(path, *args, **kwargs))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_path = Path(tmpdir) / "backend.lock"
+            lock_path.write_text("987654", encoding="utf-8")
+
+            with patch("core.api_server.os.name", "nt"):
+                with patch.dict(sys.modules, {"msvcrt": FakeMsvcrt()}):
+                    with patch.object(Path, "open", windows_open):
+                        lock = api_server.BackendInstanceLock(lock_path)
+                        self.assertTrue(lock.acquire())
+                        lock.close()
+
+            self.assertEqual(lock_path.read_text(encoding="utf-8").strip(), str(api_server.os.getpid()))
+
+    async def test_backend_instance_lock_metadata_width_is_stable_across_restarts(self):
+        class FakeMsvcrt:
+            LK_NBLCK = 1
+            LK_UNLCK = 2
+
+            def locking(self, _fileno, _mode, _size):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_path = Path(tmpdir) / "backend.lock"
+            with patch("core.api_server.os.name", "nt"):
+                with patch.dict(sys.modules, {"msvcrt": FakeMsvcrt()}):
+                    for _ in range(3):
+                        lock = api_server.BackendInstanceLock(lock_path)
+                        self.assertTrue(lock.acquire())
+                        lock.close()
+
+            self.assertEqual(lock_path.stat().st_size, api_server.BackendInstanceLock._METADATA_BYTES)
+            self.assertEqual(lock_path.read_text(encoding="ascii").strip(), str(api_server.os.getpid()))
+
+    async def test_backend_instance_lock_does_not_allocate_from_oversized_legacy_metadata(self):
+        class FakeMsvcrt:
+            LK_NBLCK = 1
+            LK_UNLCK = 2
+
+            def locking(self, _fileno, _mode, _size):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_path = Path(tmpdir) / "backend.lock"
+            lock_path.write_bytes(b"legacy\n" + (b"x" * 4096))
+            original_size = lock_path.stat().st_size
+            with patch("core.api_server.os.name", "nt"):
+                with patch.dict(sys.modules, {"msvcrt": FakeMsvcrt()}):
+                    lock = api_server.BackendInstanceLock(lock_path)
+                    self.assertTrue(lock.acquire())
+                    lock.close()
+
+            self.assertEqual(lock_path.stat().st_size, original_size)
+            first_record = lock_path.read_bytes()[:api_server.BackendInstanceLock._METADATA_BYTES]
+            self.assertEqual(first_record.decode("ascii").splitlines()[0], str(api_server.os.getpid()))
+
     async def test_health_exposes_backend_runtime_identity(self):
         with patch("core.api_server.CDPBridge") as bridge_cls:
             bridge_cls.return_value.is_available.return_value = True

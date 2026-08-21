@@ -587,6 +587,33 @@ class TmallAiImageChainScriptTests(unittest.TestCase):
             self.assertIn("AI 图 1", html)
             self.assertIn("保留主商品", html)
 
+    def test_interrupted_approval_batch_json_write_keeps_previous_file_intact(self):
+        module = load_script()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            artifact_dir = Path(temp_dir)
+            json_path = artifact_dir / f"{module.APPROVAL_BATCH_FILENAME_PREFIX}-batch-stable.json"
+            board_path = artifact_dir / f"{module.APPROVAL_BOARD_FILENAME_PREFIX}-batch-stable.html"
+            json_path.write_text('{"stable": true}\n', encoding="utf-8")
+            board_path.write_text("stable board", encoding="utf-8")
+
+            def interrupted_dump(_payload, handle, **_kwargs):
+                handle.write('{"partial":')
+                handle.flush()
+                raise OSError("simulated interrupted approval write")
+
+            with patch("core.atomic_file.json.dump", side_effect=interrupted_dump):
+                with self.assertRaisesRegex(OSError, "interrupted approval write"):
+                    module.write_approval_batch(
+                        artifact_dir,
+                        [],
+                        batch_id="batch-stable",
+                        token="token-stable",
+                    )
+
+            self.assertEqual(json_path.read_text(encoding="utf-8"), '{"stable": true}\n')
+            self.assertEqual(board_path.read_text(encoding="utf-8"), "stable board")
+
     def test_render_approval_board_html_escapes_user_controlled_fields(self):
         module = load_script()
         batch = {

@@ -501,3 +501,28 @@ def test_save_review_batch_atomically_replaces_the_manifest(tmp_path, monkeypatc
     assert temporary != path
     assert not temporary.exists()
     assert review.load_review_batch("atomic-review")["token"] == "token-atomic"
+
+
+def test_interrupted_review_save_keeps_the_previous_manifest(tmp_path, monkeypatch):
+    monkeypatch.setenv("CRAWSHRIMP_DATA", str(tmp_path / "data"))
+    runtime_paths.reset_runtime_data_root_cache()
+    review.save_review_batch({
+        "batch_id": "atomic-review-interrupted",
+        "token": "before",
+        "items": [],
+    })
+
+    def interrupted_dump(_payload, handle, **_kwargs):
+        handle.write('{"partial":')
+        handle.flush()
+        raise OSError("simulated sharing interruption")
+
+    monkeypatch.setattr(json, "dump", interrupted_dump)
+    with pytest.raises(OSError, match="sharing interruption"):
+        review.save_review_batch({
+            "batch_id": "atomic-review-interrupted",
+            "token": "after",
+            "items": [],
+        })
+
+    assert review.load_review_batch("atomic-review-interrupted")["token"] == "before"

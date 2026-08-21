@@ -16,6 +16,7 @@ from typing import Any, Iterable, List, Mapping, Optional
 
 from core import runtime_paths
 from core.models import TaskRun, TaskStatus
+from core.windows_acl import harden_windows_path
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +45,22 @@ def _db_path() -> Path:
 
 
 def _harden_db_file_permissions() -> None:
-    """Best-effort POSIX hardening for the local SQLite file that stores machine tokens."""
+    """Restrict the local SQLite database and transient sidecars."""
+    db_path = _db_path()
+    if os.name == "nt":
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        harden_windows_path(db_path.parent)
+        for candidate in (
+            db_path,
+            db_path.with_name(f"{db_path.name}-wal"),
+            db_path.with_name(f"{db_path.name}-shm"),
+            db_path.with_name(f"{db_path.name}-journal"),
+        ):
+            if candidate.exists():
+                harden_windows_path(candidate)
+        return
     if os.name != "posix":
         return
-    db_path = _db_path()
     try:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         os.chmod(db_path.parent, 0o700)
