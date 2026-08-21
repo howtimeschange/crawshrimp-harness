@@ -310,7 +310,7 @@ class WindowsAclTests(unittest.TestCase):
                 file_path.write_bytes(b"")
 
             def harden(path):
-                if Path(path).name == "crawshrimp.db-journal":
+                if getattr(path, "name", os.path.basename(str(path))) == "crawshrimp.db-journal":
                     raise FileNotFoundError(path)
                 return True
 
