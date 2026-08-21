@@ -346,16 +346,18 @@ test('DSH web cordis registers Crawshrimp DeepSeek provider without exposing the
 
   assert.match(launcherBlock, /--no-open/)
   assert.match(webRuntimeBlock, /openBrowser:\s*!!js ctx\.webStartup\.openBrowser/)
-  assert.match(defaultBlock, /provider:\s*!!js process\.env\.CRAWSHRIMP_AGENT_PROVIDER \?\? 'crawshrimp-overseas-openai'/)
-  assert.match(defaultBlock, /model:\s*!!js process\.env\.CRAWSHRIMP_AGENT_MODEL \?\? 'gpt-5\.6-terra'/)
+  assert.match(defaultBlock, /provider:\s*!!js process\.env\.CRAWSHRIMP_AGENT_PROVIDER \?\? 'crawshrimp-deepseek-official'/)
+  assert.match(defaultBlock, /model:\s*!!js process\.env\.CRAWSHRIMP_AGENT_MODEL \?\? 'deepseek-v4-flash'/)
   assert.match(attachmentBlock, /maxImageDimension:\s*4096/)
   assert.match(attachmentBlock, /maxImageBytes:\s*16777216/)
   assert.match(genWebCordis, /maxImageDimension:\s*4096/)
   assert.match(genWebCordis, /maxImageBytes:\s*16777216/)
-  assert.match(piAiBlock, /crawshrimp-deepseek-official:/)
-  assert.match(piAiBlock, /apiKeyEnv:\s*CRAWSHRIMP_DEEPSEEK_API_KEY/)
+  assert.match(piAiBlock, /providers\['crawshrimp-deepseek-official'\]/)
+  assert.match(piAiBlock, /apiKeyEnv:\s*'CRAWSHRIMP_DEEPSEEK_API_KEY'/)
   assert.match(piAiBlock, /baseURL:[\s\S]*CRAWSHRIMP_DEEPSEEK_BASE_URL[\s\S]*https:\/\/api\.deepseek\.com/)
-  assert.match(piAiBlock, /id:\s*deepseek-v4-flash/)
+  assert.match(piAiBlock, /id:\s*'deepseek-v4-flash'/)
+  assert.match(piAiBlock, /reasoningEfforts:\s*\{\s*off:\s*null,\s*low:\s*'low',\s*high:\s*'high',\s*max:\s*'max'\s*\}/)
+  assert.match(piAiBlock, /id:\s*'deepseek-v4-flash-vision-exp'[\s\S]*input:\s*\['text',\s*'image'\]/)
   assert.match(nativeBlock, /disabled:\s*true/)
 
   for (const [id, packageName] of activeWebRows) {
