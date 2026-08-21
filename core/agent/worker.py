@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 WORKER_ENTRY = "worker/worker.mjs"
+WORKER_STREAM_LIMIT_BYTES = 4 * 1024 * 1024 + 64 * 1024
 
 NotificationHandler = Callable[[str, dict], Awaitable[None]]
 
@@ -104,6 +105,7 @@ class AgentWorker:
             stderr=asyncio.subprocess.PIPE,
             env=env,
             cwd=str(Path(self.runtime_root)),
+            limit=WORKER_STREAM_LIMIT_BYTES,
         )
         self._reader_task = asyncio.create_task(self._read_loop())
 

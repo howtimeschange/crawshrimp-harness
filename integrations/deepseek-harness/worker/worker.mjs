@@ -66,11 +66,27 @@ function notifyWorkerStatus(status, extra = {}) {
   })
 }
 
+function extractEventText(data) {
+  if (!data || typeof data !== 'object') return ''
+  if (typeof data.text === 'string') return data.text
+  const content = data.message && Array.isArray(data.message.content) ? data.message.content : null
+  if (!content) return ''
+  return content.map((block) => (
+    block && typeof block === 'object' && typeof block.text === 'string' ? block.text : ''
+  )).join('')
+}
+
+function compactHarnessEvent(event) {
+  if (!event || event.type !== 'user/message') return event
+  const text = extractEventText(event.data || {})
+  return { ...event, data: text ? { text } : {} }
+}
+
 function notifyHarness(runId, event) {
   send({
     jsonrpc: '2.0',
     method: 'harness.notification',
-    params: { protocol_version: PROTOCOL_VERSION, runId, event },
+    params: { protocol_version: PROTOCOL_VERSION, runId, event: compactHarnessEvent(event) },
   })
 }
 
@@ -79,7 +95,7 @@ function notifyHarnessShadow(sessionId, event) {
   send({
     jsonrpc: '2.0',
     method: 'harness.notification',
-    params: { protocol_version: PROTOCOL_VERSION, runId: null, sessionId, event },
+    params: { protocol_version: PROTOCOL_VERSION, runId: null, sessionId, event: compactHarnessEvent(event) },
   })
 }
 

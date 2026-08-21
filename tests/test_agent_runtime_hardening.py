@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import concurrent.futures
 import json
 import os
@@ -17,8 +18,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from core.agent import mcp_gateway
+from core.agent import worker as worker_mod
 from core.agent.service import AgentService, _cleanup_orphan_runtimes, _pick_free_port, _reserve_free_port
-from core.agent.worker import AgentWorker, WorkerProtocolError, resolve_node_executable
+from core.agent.worker import AgentWorker, WORKER_STREAM_LIMIT_BYTES, WorkerProtocolError, resolve_node_executable
 
 
 def test_development_node_runtime_prefers_real_electron_executable(tmp_path, monkeypatch):
@@ -421,6 +423,39 @@ def test_worker_eof_rejects_all_pending_requests():
         assert worker._pending == {}
         with pytest.raises(WorkerProtocolError, match="已退出"):
             future.result()
+
+    asyncio.run(scenario())
+
+
+def test_worker_subprocess_stream_limit_handles_vision_frames(tmp_path, monkeypatch):
+    async def scenario():
+        runtime_root = tmp_path / "runtime"
+        worker_dir = runtime_root / "worker"
+        worker_dir.mkdir(parents=True)
+        (worker_dir / "worker.mjs").write_text("", encoding="utf-8")
+        captured = {}
+
+        async def fake_create_subprocess_exec(*_args, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(stdin=_SilentStdin(), stdout=_EofStream(), stderr=_EofStream())
+
+        monkeypatch.setattr(worker_mod, "resolve_node_executable", lambda: "node")
+        monkeypatch.setattr(worker_mod.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+        worker = AgentWorker(
+            runtime_root=str(runtime_root),
+            data_root=str(tmp_path),
+            cordis_path="cordis.yml",
+            mcp_url="http://127.0.0.1/mcp",
+            session_root=str(tmp_path / "sessions"),
+        )
+        await worker.start()
+        assert captured["limit"] == WORKER_STREAM_LIMIT_BYTES
+        assert captured["limit"] > 4 * 1024 * 1024
+        if worker._reader_task:
+            worker._reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker._reader_task
 
     asyncio.run(scenario())
 
@@ -1224,11 +1259,29 @@ def test_dsh_deepseek_official_models_expose_reasoning_efforts():
     profile = build_cordis_yaml({"ai": {"llm": {"default_model": "deepseek-official-v4-flash"}}})
     official_block = profile.split("providers['crawshrimp-deepseek-official']", 1)[1].split("if (hasGatewayKey)", 1)[0]
     efforts = "reasoningEfforts: { off: null, low: 'low', high: 'high', max: 'max' }"
+    vision_line = re.search(r"id: 'deepseek-v4-flash-vision-exp'[^\n]+", official_block).group(0)
 
     assert "reasoning: 'high'" in official_block
     assert re.search(r"id: 'deepseek-v4-flash'[\s\S]*" + re.escape(efforts), official_block)
     assert re.search(r"id: 'deepseek-v4-pro'[\s\S]*" + re.escape(efforts), official_block)
     assert official_block.count(efforts) == 2
+    assert "input: ['text', 'image']" in vision_line
+    assert "reasoningEfforts" not in vision_line
+
+
+def test_dsh_runtime_patch_guards_deepseek_vision_reasoning_and_image_bridge():
+    patcher = (Path(__file__).resolve().parents[1] / "integrations" / "deepseek-harness" / "scripts" / "patch-runtime-dependencies.mjs").read_text(encoding="utf-8")
+
+    assert "DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER" in patcher
+    assert "HOST_APIPROXY_DEEPSEEK_IMAGE_SELECTION_PATCH_MARKER" in patcher
+    assert "SDK_JSONRPC_IMAGE_ADMISSION_PATCH_MARKER" in patcher
+    assert "crawshrimpBridgeDeepSeekImages" in patcher
+    assert "deepseek-v4-flash-vision-exp" in patcher
+    assert "vision_preflight: true" in patcher
+    assert "process.stderr.write(\"crawshrimp.audit \"" in patcher
+    assert "DEEPSEEK_VISION_REASONING_GUARD_PATCH_MARKER" in patcher
+    assert "crawshrimpReasoningEffortForModel" in patcher
+    assert "resolveReasoningLevel(model, crawshrimpReasoningEffortForModel" in patcher
 
 
 def test_agent_default_model_prefers_deepseek_flash_when_key_is_configured(monkeypatch):

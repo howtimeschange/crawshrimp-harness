@@ -1,5 +1,5 @@
 <template>
-  <div class="agent-web-view">
+  <div :class="['agent-web-view', { 'browser-docked': hasDockedBrowserWindows }]">
     <!-- 主体:iframe(DSH Web UI) + 可展开浏览器面板 -->
     <div class="web-body">
       <div class="web-frame-wrap">
@@ -22,26 +22,36 @@
         </div>
         <!-- 实时浏览器面板悬浮开关 -->
         <button
-          class="browser-toggle"
+          :class="['browser-toggle', { active: hasVisibleBrowserWindows }]"
           type="button"
-          :title="browserOpen ? '收起实时浏览器' : '展开实时浏览器(9222 CDP)'"
-          @click="browserOpen = !browserOpen"
-        >🖥️</button>
+          :title="browserToggleTitle"
+          :aria-pressed="hasVisibleBrowserWindows"
+          :disabled="!canToggleBrowserWindows"
+          aria-label="打开实时浏览器"
+          @click="toggleBrowserWindows"
+        >
+          <IconDeviceDesktop :size="18" :stroke-width="2.1" aria-hidden="true" />
+        </button>
       </div>
-      <AgentBrowserPanel
-        v-for="(win, idx) in browserWindows"
-        :key="win.tabId"
-        :tab-id="win.tabId"
-        :window-index="idx"
-        :minimize-signal="browserMinimizeCount"
-        @collapse="closeBrowserWindow(win.tabId)"
-      />
+      <div v-show="hasDockedBrowserWindows" class="web-browser-panel">
+        <AgentBrowserPanel
+          v-for="(win, idx) in visibleBrowserWindows"
+          :key="win.tabId"
+          :layout="browserLayout"
+          :tab-id="win.tabId"
+          :window-index="idx"
+          :minimize-signal="browserMinimizeCount"
+          @collapse="hideBrowserWindow(win.tabId)"
+          @layout-change="setBrowserLayout"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { IconDeviceDesktop } from '@tabler/icons-vue'
 import AgentBrowserPanel from '../components/agent/AgentBrowserPanel.vue'
 
 const props = defineProps({
@@ -60,6 +70,8 @@ const loading = ref(true)
 const browserOpen = ref(false)
 const browserMinimizeCount = ref(0)
 const browserWindows = ref([])
+const BROWSER_LAYOUT_STORAGE_KEY = 'crawshrimp.browserLayout.v2'
+const browserLayout = ref(loadBrowserLayoutPreference())
 const recoverAttempts = ref(0)
 const workspaceRoot = ref('')
 const runtimeGeneration = ref(0)
@@ -82,6 +94,36 @@ const frameSrc = computed(() => {
 const frameOrigin = computed(() => {
   try { return webUrl.value ? new URL(webUrl.value, window.location.href).origin : '' } catch { return '' }
 })
+const visibleBrowserWindows = computed(() => (
+  browserOpen.value ? browserWindows.value.filter((win) => win.visible !== false) : []
+))
+const hasVisibleBrowserWindows = computed(() => visibleBrowserWindows.value.length > 0)
+const hasDockedBrowserWindows = computed(() => browserLayout.value === 'docked' && hasVisibleBrowserWindows.value)
+const sessionBrowserTabs = computed(() => tabsForActiveBrowserWindow(props.browserTabs))
+const canToggleBrowserWindows = computed(() => (
+  hasVisibleBrowserWindows.value || browserWindows.value.length > 0 || sessionBrowserTabs.value.length > 0
+))
+const browserToggleTitle = computed(() => {
+  if (hasVisibleBrowserWindows.value) return browserLayout.value === 'docked' ? '隐藏固定实时浏览器' : '隐藏浮动实时浏览器'
+  if (canToggleBrowserWindows.value) return '打开当前会话的实时浏览器'
+  return '当前会话暂无实时浏览器'
+})
+
+function loadBrowserLayoutPreference() {
+  try {
+    const value = localStorage.getItem(BROWSER_LAYOUT_STORAGE_KEY)
+    return value === 'docked' ? 'docked' : 'floating'
+  } catch {
+    return 'floating'
+  }
+}
+
+function setBrowserLayout(layout) {
+  const next = layout === 'floating' ? 'floating' : 'docked'
+  browserLayout.value = next
+  try { localStorage.setItem(BROWSER_LAYOUT_STORAGE_KEY, next) } catch { /* ignore */ }
+  if (browserWindows.value.some((win) => win.visible !== false)) browserOpen.value = true
+}
 
 function postToFrame(message) {
   if (!frameEl.value?.contentWindow || !frameOrigin.value) return
@@ -403,7 +445,7 @@ onMounted(() => {
       if (!snapshot?.ok) return
       const live = new Set((snapshot.tabs || []).map((tab) => String(tab.id || '')).filter(Boolean))
       const closed = browserWindows.value.filter((win) => !live.has(String(win.tabId)))
-      for (const win of closed) await closeBrowserWindow(win.tabId)
+      for (const win of closed) await removeBrowserWindow(win.tabId)
     } catch { /* 下一次快照重试 */ }
   }, 2000)
 })
@@ -425,32 +467,46 @@ watch(() => [props.navItems, props.activeNav], () => {
 // 智能体调用浏览器工具(浏览器操作画面)时自动弹出实时浏览器窗口
 watch(() => props.browserAutoOpen, (count) => {
   if (Number(count) > 0) {
-    browserOpen.value = true
+    void showBrowserWindows()
   }
 })
 
-// 多窗口实时浏览器:按会话/页面(tab)绑定,一个页面一个窗口
-watch(() => props.browserTabs, (payload) => {
+function tabsForActiveBrowserWindow(payload) {
+  const tabs = Array.isArray(payload?.tabs) ? payload.tabs.filter((tab) => tab?.id) : []
+  const activeTabId = String(payload?.activeTabId || payload?.active_tab_id || '')
+  if (activeTabId) {
+    const active = tabs.find((tab) => String(tab.id) === activeTabId)
+    if (active) return [active]
+    return []
+  }
+  return tabs.length ? [tabs[0]] : []
+}
+
+function syncBrowserTabs(payload, { forceVisible = false } = {}) {
   if (!payload || !Array.isArray(payload.tabs)) return
-  if (!payload.tabs.length) {
-    for (const win of browserWindows.value) void closeBrowserWindow(win.tabId)
+  const tabs = tabsForActiveBrowserWindow(payload)
+  if (!tabs.length) {
+    for (const win of browserWindows.value) void removeBrowserWindow(win.tabId)
+    browserOpen.value = false
     return
   }
   const next = []
-  for (const tab of payload.tabs) {
+  for (const tab of tabs) {
     if (!tab || !tab.id) continue
     const existing = browserWindows.value.find((w) => w.tabId === String(tab.id))
     if (existing) {
       existing.url = tab.url || existing.url
       existing.title = tab.title || existing.title
+      if (forceVisible) existing.visible = true
       next.push(existing)
     } else {
-      next.push({ tabId: String(tab.id), url: tab.url || '', title: tab.title || '' })
+      next.push({ tabId: String(tab.id), url: tab.url || '', title: tab.title || '', visible: true })
     }
   }
   browserWindows.value = next
+  if (forceVisible && next.some((win) => win.visible !== false)) browserOpen.value = true
   // 活跃 tab 的窗口置顶(排在数组尾部渲染在上层)
-  const active = String(payload.activeTabId || '')
+  const active = String(payload.activeTabId || payload.active_tab_id || tabs[tabs.length - 1]?.id || '')
   if (active) {
     const idx = browserWindows.value.findIndex((w) => w.tabId === active)
     if (idx >= 0) {
@@ -458,9 +514,41 @@ watch(() => props.browserTabs, (payload) => {
       browserWindows.value.push(win)
     }
   }
+}
+
+// 多窗口实时浏览器:按会话/页面(tab)绑定,一个页面一个窗口
+watch(() => props.browserTabs, (payload) => {
+  syncBrowserTabs(payload, { forceVisible: true })
 }, { deep: true })
 
-async function closeBrowserWindow(tabId) {
+function showBrowserWindows() {
+  if (sessionBrowserTabs.value.length) {
+    syncBrowserTabs(props.browserTabs, { forceVisible: true })
+    return
+  }
+  if (browserWindows.value.length) {
+    for (const win of browserWindows.value) win.visible = true
+    browserOpen.value = true
+    return
+  }
+  browserOpen.value = false
+}
+
+function hideBrowserWindow(tabId) {
+  const target = browserWindows.value.find((w) => w.tabId === String(tabId))
+  if (target) target.visible = false
+  if (!browserWindows.value.some((win) => win.visible !== false)) browserOpen.value = false
+}
+
+function toggleBrowserWindows() {
+  if (hasVisibleBrowserWindows.value) {
+    browserOpen.value = false
+  } else {
+    void showBrowserWindows()
+  }
+}
+
+async function removeBrowserWindow(tabId) {
   browserWindows.value = browserWindows.value.filter((w) => w.tabId !== String(tabId))
   if (typeof window.cs?.stopAgentBrowserStream === 'function') {
     await window.cs.stopAgentBrowserStream(String(tabId))
@@ -471,6 +559,7 @@ async function closeBrowserWindow(tabId) {
       }
     }
   }
+  if (!browserWindows.value.some((win) => win.visible !== false)) browserOpen.value = false
 }
 
 </script>
@@ -488,6 +577,7 @@ async function closeBrowserWindow(tabId) {
 .web-body {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
 }
 
@@ -503,17 +593,38 @@ async function closeBrowserWindow(tabId) {
   top: 10px;
   right: 12px;
   z-index: 10;
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--border);
-  background: var(--bg2);
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--bg2) 92%, transparent);
   border-radius: 8px;
   cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  opacity: 0.75;
+  color: var(--text2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.82;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease, background 120ms ease;
 }
-.browser-toggle:hover { opacity: 1; background: var(--soft-fill-hover); }
+.browser-toggle:hover,
+.browser-toggle.active {
+  opacity: 1;
+  color: var(--orange);
+  border-color: color-mix(in srgb, var(--orange) 64%, var(--border-strong));
+  background: var(--soft-fill-hover);
+}
+.browser-toggle:disabled {
+  cursor: default;
+  opacity: 0.45;
+  color: var(--text3);
+  border-color: var(--border);
+  background: var(--bg2);
+  box-shadow: none;
+}
+.browser-toggle svg {
+  display: block;
+}
 
 .web-frame {
   position: absolute;
@@ -525,9 +636,18 @@ async function closeBrowserWindow(tabId) {
 }
 
 .web-browser-panel {
-  width: 380px;
+  width: min(680px, max(360px, 40vw), 46%);
   flex: none;
   border-left: 1px solid var(--border);
+  background: var(--bg);
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.browser-docked .web-frame-wrap {
+  min-width: min(420px, 54%);
 }
 
 .web-placeholder {

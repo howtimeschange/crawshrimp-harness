@@ -396,11 +396,19 @@ function onRuntimeSession(runtimeSessionId) {
   activeRuntimeSessionId.value = String(runtimeSessionId || '')
   browserTabs.value = { tabs: [], activeTabId: '' }
 }
-function onBrowserOpenTabs(payload) {
-  browserTabs.value = {
-    tabs: Array.isArray(payload?.tabs) ? payload.tabs : [],
-    activeTabId: String(payload?.activeTabId || ''),
+function tabsForActiveBrowserWindow(payload) {
+  const tabs = Array.isArray(payload?.tabs) ? payload.tabs.filter((tab) => tab?.id) : []
+  const activeTabId = String(payload?.activeTabId || payload?.active_tab_id || '')
+  if (activeTabId) {
+    const active = tabs.find((tab) => String(tab.id) === activeTabId)
+    if (active) return { tabs: [active], activeTabId }
+    return { tabs: [], activeTabId }
   }
+  const first = tabs[0]
+  return { tabs: first ? [first] : [], activeTabId: first ? String(first.id) : activeTabId }
+}
+function onBrowserOpenTabs(payload) {
+  browserTabs.value = tabsForActiveBrowserWindow(payload)
 }
 // 脚本详情:独立二级页面(隐藏会话界面,内容区从 0 开始)
 const embedLeft = computed(() => (activeScript.value ? 0 : railWidth.value))
