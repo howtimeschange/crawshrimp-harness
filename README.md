@@ -134,7 +134,7 @@ my-adapter/
 - token 从当前运行数据目录的 `api-token` 读取；不要把值写入文档、URL、命令历史、截图或 Git。
 - preload 和开发 bridge 只允许访问 `127.0.0.1` / `localhost` 的 `18765..18865`，且不接受 query token。
 - 浏览器观察会隐藏 password 及 name/id/autocomplete 命中凭证特征的输入值；网络请求 URL、body、审批摘要和工具结果都会脱敏。
-- 仓库工具仅接受可解析为公网地址的 HTTP(S) Git URL，执行前重新解析并固定已验证 IP；仓库名只能是单个安全目录段。
+- 仓库工具以用户明确给出的 HTTP(S) Git URL 为准，不做 DNS 公网性拦截；仍拒绝嵌入账号密码的 URL，仓库名只能是单个安全目录段。
 - 第三方 README、源码和注释一律按不可信资料处理，不提升为系统或技能指令。
 
 ## 开发环境

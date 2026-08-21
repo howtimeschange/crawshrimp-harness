@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import socket
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -173,41 +172,20 @@ def test_tool_result_is_redacted_before_persistence(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_repo_url_rejects_private_and_integer_loopback(monkeypatch):
-    def private_dns(host, port, type=0):  # noqa: A002
-        address = "127.0.0.1" if host == "2130706433" else "10.0.0.8"
-        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port))]
-
-    monkeypatch.setattr(socket, "getaddrinfo", private_dns)
-    assert mcp_gateway._safe_repo_url("https://internal.example/repo.git") is None
-    assert mcp_gateway._safe_repo_url("http://2130706433/repo.git") is None
-
-
-def test_repo_url_accepts_only_public_dns(monkeypatch):
-    monkeypatch.setattr(
-        socket,
-        "getaddrinfo",
-        lambda _host, port, type=0: [  # noqa: A002
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))
-        ],
-    )
+def test_repo_url_accepts_user_http_urls_without_dns_gate():
+    assert mcp_gateway._safe_repo_url("https://internal.example/repo.git") == "https://internal.example/repo.git"
+    assert mcp_gateway._safe_repo_url("http://2130706433/repo.git") == "http://2130706433/repo.git"
+    assert mcp_gateway._safe_repo_url("http://localhost/repo.git") == "http://localhost/repo.git"
     assert mcp_gateway._safe_repo_url("https://example.com/repo.git") == "https://example.com/repo.git"
     assert mcp_gateway._safe_repo_url("file:///tmp/repo") is None
     assert mcp_gateway._safe_repo_url("https://user:password@example.com/repo.git") is None
 
 
-def test_repo_transport_pins_validated_public_ip_and_disables_redirects(monkeypatch):
-    monkeypatch.setattr(
-        socket,
-        "getaddrinfo",
-        lambda _host, port, type=0: [  # noqa: A002
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))
-        ],
-    )
+def test_repo_transport_uses_user_network_without_dns_pinning():
     args = mcp_gateway._repo_transport_args("https://example.com/repo.git")
-    assert "http.followRedirects=false" in args
-    assert "http.curloptResolve=example.com:443:93.184.216.34" in args
-    assert not any("curloptResolve=+" in item for item in args)
+    assert args == ["-c", "protocol.file.allow=never"]
+    assert not any("curloptResolve" in item for item in args)
+    assert "http.followRedirects=false" not in args
 
 
 def test_repo_list_url_removes_userinfo():

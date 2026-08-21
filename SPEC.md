@@ -339,7 +339,7 @@ GET  /settings/chrome-tabs
 - 清智能体数据前必须确认没有 active run；恢复 Adapter baseline 后再清数据库和受控目录。失败时保留 baseline 供重试。
 - API token 只从当前运行数据目录的 `api-token` 读取；禁止进入 URL、文档、日志、截图或 Git。
 - preload/dev bridge 只允许 loopback `18765..18865`，拒绝 query token 和任意绝对 API URL。
-- repo 工具只接受公网 HTTP(S) URL、安全单目录名和非 symlink 目标；审批后再次 DNS 校验并固定 Git transport。
+- repo 工具以用户明确给出的 HTTP(S) URL 为准，不做 DNS 公网性拦截；仍要求安全单目录名和非 symlink 目标，并禁用 Git file transport。
 
 必须通过的门禁：
 

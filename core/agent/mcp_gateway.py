@@ -1392,13 +1392,11 @@ def _repos_root() -> Path:
 
 
 def _safe_repo_url(url: str) -> Optional[str]:
-    """校验仓库 URL:http(s) 且 DNS 的每个地址均为公网地址。"""
+    """校验仓库 URL 的基本形态；是否可达交给用户网络与 git。"""
     value = str(url or "").strip()
     if not value:
         return None
     try:
-        import ipaddress
-        import socket
         from urllib.parse import urlparse
         parsed = urlparse(value)
         if parsed.scheme not in ("https", "http") or not parsed.netloc:
@@ -1406,53 +1404,16 @@ def _safe_repo_url(url: str) -> Optional[str]:
         if parsed.username is not None or parsed.password is not None:
             return None
         host = (parsed.hostname or "").strip().rstrip(".").lower()
-        if not host or host == "localhost":
-            return None
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        addresses = {
-            item[4][0]
-            for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-            if item and len(item) >= 5 and item[4]
-        }
-        if not addresses:
-            return None
-        if any(not ipaddress.ip_address(address).is_global for address in addresses):
+        if not host:
             return None
     except Exception:  # noqa: BLE001
         return None
     return value
 
 
-def _repo_transport_args(url: str) -> Optional[list[str]]:
-    """把 git HTTP 连接钉在本次已校验的公网 IP，关闭重定向以阻断 DNS rebinding/跳转 SSRF。"""
-    try:
-        import ipaddress
-        import socket
-        from urllib.parse import urlparse
-
-        parsed = urlparse(str(url or ""))
-        host = (parsed.hostname or "").strip().rstrip(".").lower()
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        resolved = []
-        for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
-            address = item[4][0]
-            if not ipaddress.ip_address(address).is_global:
-                return None
-            resolved.append((item[0], address))
-        if not resolved:
-            return None
-        # 优先 IPv4 兼容更多本地 git/libcurl；IPv6 地址按 CURLOPT_RESOLVE 语法加方括号。
-        _family, address = sorted(resolved, key=lambda item: item[0] != socket.AF_INET)[0]
-        pinned = f"[{address}]" if ":" in address else address
-        return [
-            "-c", "protocol.file.allow=never",
-            "-c", "http.followRedirects=false",
-            # 不加 CURLOPT_RESOLVE 的 ``+`` 前缀：带 ``+`` 的条目会按
-            # libcurl DNS cache 超时失效，长 clone 可能重新走 DNS。
-            "-c", f"http.curloptResolve={host}:{port}:{pinned}",
-        ]
-    except Exception:  # noqa: BLE001
-        return None
+def _repo_transport_args(_url: str) -> list[str]:
+    """Git 执行参数只保留本地文件协议禁用；HTTP(S) 解析遵循用户环境。"""
+    return ["-c", "protocol.file.allow=never"]
 
 
 def _redact_repo_url(url: str) -> str:
@@ -1543,7 +1504,7 @@ def tool_repo_install(url: str, name: str = "") -> dict:
         return guard
     safe_url = _safe_repo_url(url)
     if not safe_url:
-        return _failed("INVALID_PARAMETERS", f"仓库 URL 非法或不允许: {url}")
+        return _failed("INVALID_PARAMETERS", f"仓库 URL 非法: {url}")
     proposed_name = str(name or "").strip() or _repo_name_from_url(safe_url)
     repo_name, target = _repo_target(proposed_name)
     if not repo_name or target is None:
@@ -1564,10 +1525,7 @@ def tool_repo_install(url: str, name: str = "") -> dict:
         return _rejected("rejected", "APPROVAL_REJECTED", "用户拒绝了仓库安装。")
     if decision in ("expired", "canceled"):
         return _rejected(decision, "APPROVAL_" + decision.upper(), "审批未通过,未安装。")
-    # 审批等待期间 DNS 可能变化；执行前重新解析并把 libcurl 钉到已校验公网 IP。
     transport_args = _repo_transport_args(safe_url)
-    if transport_args is None:
-        return _failed("INVALID_PARAMETERS", "仓库地址在执行前解析为非公网地址，已拒绝克隆")
     _repos_root().mkdir(parents=True, exist_ok=True)
     ok, output = _run_git([*transport_args, "clone", "--depth", "1", "--", safe_url, str(target)])
     if not ok:
@@ -1587,7 +1545,7 @@ def tool_repo_update(name: str) -> dict:
         return _failed("INVALID_PARAMETERS", "仓库 name 非法、仓库不存在或目标目录不安全")
     ok, remote = _run_git(["remote", "get-url", "origin"], cwd=target)
     if not ok or _safe_repo_url(remote.strip()) is None:
-        return _failed("INVALID_PARAMETERS", "仓库 origin 不是可验证的公网 http(s) 地址，拒绝更新")
+        return _failed("INVALID_PARAMETERS", "仓库 origin 不是合法的 http(s) 地址，拒绝更新")
     decision = _await_approval_blocking(
         {"plan_id": f"repo-update-{safe}", "params_json": "{}", "risk": "external_write"},
         {"kind": "repo_update", "title": "更新代码仓库", "repo": safe,
@@ -1599,8 +1557,6 @@ def tool_repo_update(name: str) -> dict:
     if decision in ("expired", "canceled"):
         return _rejected(decision, "APPROVAL_" + decision.upper(), "审批未通过,未更新。")
     transport_args = _repo_transport_args(remote.strip())
-    if transport_args is None:
-        return _failed("INVALID_PARAMETERS", "仓库地址在执行前解析为非公网地址，已拒绝更新")
     if not target.exists():
         return _failed("TASK_NOT_FOUND", f"仓库未安装: {name}")
     ok, output = _run_git([*transport_args, "pull", "--ff-only"], cwd=target)
