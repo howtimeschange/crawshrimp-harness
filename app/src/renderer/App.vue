@@ -52,16 +52,13 @@
           />
           <span>{{ titlebarUpdate.versionLabel }} · {{ titlebarUpdate.label }}</span>
         </div>
-        <button
-          v-else-if="canRunDevUpdateMock"
-          class="titlebar-update-btn tone-available"
-          type="button"
-          title="开发模式模拟下载进度"
-          @click="startDevUpdateDownloadMock"
+        <span
+          v-else-if="showTitlebarVersionBadge"
+          class="titlebar-version-badge"
+          :title="titlebarUpdate.title"
         >
-          <span aria-hidden="true">⟳</span>
-          <span>{{ titlebarUpdate.versionLabel }} · 模拟下载</span>
-        </button>
+          {{ titlebarUpdate.versionLabel }}
+        </span>
       </div>
     </div>
 
@@ -588,8 +585,10 @@ const titlebarUpdate = computed(() => {
   return { ...presentation, icon }
 })
 
-const canRunDevUpdateMock = computed(() =>
-  import.meta.env.DEV && String(updateStatus.value.status || '') !== 'downloading'
+const showTitlebarVersionBadge = computed(() =>
+  import.meta.env.DEV
+  && !titlebarUpdate.value.action
+  && titlebarUpdate.value.tone !== 'downloading'
 )
 
 function onTitlebarUpdateAction() {
@@ -619,74 +618,6 @@ async function retryUpdateCheck() {
 async function installUpdate() {
   const result = await updateActionRunner.run(() => window.cs.installUpdate())
   if (result?.status) updateStatus.value = result
-}
-
-let devUpdateMockTimer = null
-let devUpdateMockDoneTimer = null
-
-function clearDevUpdateDownloadMock() {
-  if (devUpdateMockTimer) clearInterval(devUpdateMockTimer)
-  if (devUpdateMockDoneTimer) clearTimeout(devUpdateMockDoneTimer)
-  devUpdateMockTimer = null
-  devUpdateMockDoneTimer = null
-}
-
-function startDevUpdateDownloadMock() {
-  if (!import.meta.env.DEV) return
-  clearDevUpdateDownloadMock()
-  const currentVersion = String(updateStatus.value.currentVersion || '0.1.6').replace(/^v(?=\d)/i, '')
-  const latestVersion = String(updateStatus.value.latestVersion || bumpPatchVersion(currentVersion))
-  const totalBytes = 128 * 1024 * 1024
-  let percent = 0
-
-  updateStatus.value = buildDevDownloadStatus(currentVersion, latestVersion, percent, totalBytes)
-  devUpdateMockTimer = setInterval(() => {
-    percent = Math.min(100, percent + 2)
-    updateStatus.value = buildDevDownloadStatus(currentVersion, latestVersion, percent, totalBytes)
-    if (percent < 100) return
-
-    clearInterval(devUpdateMockTimer)
-    devUpdateMockTimer = null
-    devUpdateMockDoneTimer = setTimeout(() => {
-      updateStatus.value = {
-        ...updateStatus.value,
-        status: 'downloaded',
-        progress: null,
-        downloaded: true,
-        error: '',
-      }
-      devUpdateMockDoneTimer = null
-    }, 1800)
-  }, 300)
-}
-
-function buildDevDownloadStatus(currentVersion, latestVersion, percent, totalBytes) {
-  const transferred = Math.round(totalBytes * percent / 100)
-  return {
-    ...updateStatus.value,
-    status: 'downloading',
-    currentVersion,
-    latestVersion,
-    releaseNotes: '开发模式模拟下载进度',
-    downloaded: false,
-    error: '',
-    blockers: [],
-    progress: {
-      percent,
-      transferred,
-      total: totalBytes,
-      bytesPerSecond: 7 * 1024 * 1024,
-    },
-  }
-}
-
-function bumpPatchVersion(version) {
-  const parts = String(version || '').split('.').map(part => Number(part))
-  if (parts.length >= 3 && parts.every(part => Number.isInteger(part) && part >= 0)) {
-    parts[parts.length - 1] += 1
-    return parts.join('.')
-  }
-  return version ? `${version}.1` : '0.1.7'
 }
 
 let pollTimer = null
@@ -733,7 +664,6 @@ onMounted(async () => {
 onUnmounted(() => {
   systemThemeCleanup?.()
   systemThemeCleanup = null
-  clearDevUpdateDownloadMock()
   clearInterval(pollTimer)
   if (typeof updateStatusCleanup === 'function') updateStatusCleanup()
   window.cs.offStatus()
@@ -991,6 +921,14 @@ input, select, textarea { font-family: inherit; }
 .titlebar-update-btn.tone-ready, .titlebar-update-btn.tone-installing { color: var(--green); }
 .titlebar-update-btn.tone-error { color: var(--red); }
 .titlebar-update-status { cursor: default; }
+.titlebar-version-badge {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text3);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 3px 2px;
+}
 .dot { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text3); }
 .dot i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--text3); }
 .dot.on i { background: var(--green); box-shadow: 0 0 6px var(--green); }

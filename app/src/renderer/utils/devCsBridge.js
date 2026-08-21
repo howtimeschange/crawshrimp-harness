@@ -356,26 +356,33 @@ export function createDevCsBridge() {
     }
   }
 
-  return {
-    getStatus: async () => {
-      try {
-        let health = await apiCall('GET', '/health')
-        if (!isCrawshrimpHealthPayload(health)) {
-          const fallbackBase = await discoverApiBase(apiBase())
-          if (fallbackBase) health = await apiCall('GET', '/health')
-        }
-        return {
-          api: health?.status === 'ok',
-          chrome: Boolean(health?.chrome),
-          apiPort: Number(new URL(apiBase()).port || 18765),
-          cdpPort: 9222,
-          dev: true,
-        }
-      } catch {
+  async function getStatus() {
+    try {
+      let health = await apiCall('GET', '/health')
+      if (!isCrawshrimpHealthPayload(health)) {
         const fallbackBase = await discoverApiBase(apiBase())
-        return { api: false, chrome: false, apiPort: Number(new URL(fallbackBase || DEFAULT_API_BASE).port || 18765), cdpPort: 9222, dev: true }
+        if (fallbackBase) health = await apiCall('GET', '/health')
       }
-    },
+      return {
+        api: health?.status === 'ok',
+        chrome: Boolean(health?.chrome),
+        apiPort: Number(new URL(apiBase()).port || 18765),
+        cdpPort: 9222,
+        dev: true,
+      }
+    } catch {
+      const fallbackBase = await discoverApiBase(apiBase())
+      return { api: false, chrome: false, apiPort: Number(new URL(fallbackBase || DEFAULT_API_BASE).port || 18765), cdpPort: 9222, dev: true }
+    }
+  }
+
+  return {
+    getStatus,
+    restartBackend: async () => ({
+      ...(await getStatus()),
+      recovered: false,
+      error: '浏览器开发模式不能重启桌面后端，请在 Electron 开发壳中操作。',
+    }),
     getUpdateStatus: async () => disabledUpdateStatus(),
     checkForUpdates: async () => disabledUpdateStatus(),
     downloadUpdate: async () => disabledUpdateStatus(),
@@ -610,7 +617,12 @@ export function createDevCsBridge() {
 }
 
 export function installDevCsBridge() {
-  if (typeof window === 'undefined' || window.cs || !isLocalRenderer()) return false
+  if (typeof window === 'undefined' || !isLocalRenderer()) return false
+  if (window.__CRAWSHRIMP_DEV_BRIDGE__ && window.cs) {
+    Object.assign(window.cs, createDevCsBridge())
+    return true
+  }
+  if (window.cs) return false
   window.cs = createDevCsBridge()
   window.__CRAWSHRIMP_DEV_BRIDGE__ = true
   return true

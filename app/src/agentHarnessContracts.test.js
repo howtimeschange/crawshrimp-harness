@@ -59,6 +59,15 @@ test('staged DSH runtime bridges DeepSeek image sessions without leaking vision 
   assert.match(patcher, /crawshrimpDeepSeekTextModelCanUseVisionBridge/)
   assert.match(patcher, /deepseek-v4-flash-vision-exp/)
   assert.match(patcher, /crawshrimpBridgeDeepSeekImages/)
+  assert.match(patcher, /crawshrimp-deepseek-multimodal-fallback-v2/)
+  assert.match(patcher, /OLD_DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER/)
+  assert.match(patcher, /patchPiAiDeepSeekLatestImageTurnBridge/)
+  assert.match(patcher, /crawshrimpLatestImageUserMessageIndex/)
+  assert.match(patcher, /crawshrimpVisionOptionsForMessage/)
+  assert.match(patcher, /crawshrimpTextOnlyOptionsFromVision\(options,\s*visionText,\s*targetIndex\)/)
+  assert.match(patcher, /历史图片已省略，避免与本轮图片识别混淆/)
+  assert.match(patcher, /请只识别最新一条用户消息里的图片/)
+  assert.doesNotMatch(patcher, /请把本轮对话和历史里出现的图片/)
   assert.match(patcher, /completeSimple\(visionModel, visionContext/)
   assert.match(patcher, /DEEPSEEK_MULTIMODAL_AUDIT_PATCH_MARKER/)
   assert.match(patcher, /vision_preflight:\s*true/)
@@ -68,6 +77,15 @@ test('staged DSH runtime bridges DeepSeek image sessions without leaking vision 
   assert.match(patcher, /crawshrimpReasoningEffortForModel/)
   assert.match(patcher, /resolveReasoningLevel\(model, crawshrimpReasoningEffortForModel/)
   assert.match(patcher, /MODEL_DOES_NOT_SUPPORT_IMAGES/)
+})
+
+test('desktop dev shell patches DSH runtime dependencies before backend launch', () => {
+  const main = readFileSync(resolve(appRoot, 'src/main.js'), 'utf8')
+  assert.match(main, /function patchDeepseekHarnessDevRuntime\(harnessRoot\)/)
+  assert.match(main, /patch-runtime-dependencies\.mjs/)
+  assert.match(main, /ELECTRON_RUN_AS_NODE:\s*'1'/)
+  assert.match(main, /patchDeepseekHarnessDevRuntime\(deepseekHarnessRoot\)/)
+  assert.match(main, /CRAWSHRIMP_HARNESS_ROOT:\s*deepseekHarnessRoot/)
 })
 
 test('product bridge leases the matching DSH session and honors its approval policy', () => {

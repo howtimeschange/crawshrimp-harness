@@ -7,7 +7,8 @@ const WELCOME_NOTICE_PATCH_MARKER = 'crawshrimp-disable-dsh-welcome-notice-v1'
 const LLM_PI_AI_PROVIDER_ORDER_PATCH_MARKER = 'crawshrimp-llm-pi-ai-provider-order-v1'
 const OLD_SDK_JSONRPC_IMAGE_ADMISSION_PATCH_MARKER = 'crawshrimp-sdk-jsonrpc-image-admission-v1'
 const SDK_JSONRPC_IMAGE_ADMISSION_PATCH_MARKER = 'crawshrimp-sdk-jsonrpc-image-admission-v2'
-const DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER = 'crawshrimp-deepseek-multimodal-fallback-v1'
+const OLD_DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER = 'crawshrimp-deepseek-multimodal-fallback-v1'
+const DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER = 'crawshrimp-deepseek-multimodal-fallback-v2'
 const OLD_DEEPSEEK_MULTIMODAL_AUDIT_PATCH_MARKER = 'crawshrimp-deepseek-multimodal-audit-v1'
 const DEEPSEEK_MULTIMODAL_AUDIT_PATCH_MARKER = 'crawshrimp-deepseek-multimodal-audit-v2'
 const DEEPSEEK_VISION_REASONING_GUARD_PATCH_MARKER = 'crawshrimp-deepseek-vision-reasoning-guard-v1'
@@ -177,6 +178,136 @@ function patchPiAiProviderOrder(runtimeRoot) {
   return { patched: true, piAiProviderOrderEntry }
 }
 
+function patchPiAiDeepSeekLatestImageTurnBridge(source) {
+  if (!source.includes(OLD_DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER)) return { source, patched: false }
+  source = replaceRange(
+    source,
+    'const CRAWSHRIMP_DEEPSEEK_OFFICIAL_PROVIDER = "crawshrimp-deepseek-official";',
+    'async function toPiContextWithImages(options, attachments, onReplayDegrade, maxRequestImageBytes) {',
+    `const CRAWSHRIMP_DEEPSEEK_OFFICIAL_PROVIDER = "crawshrimp-deepseek-official";
+const CRAWSHRIMP_DEEPSEEK_VISION_MODEL = "deepseek-v4-flash-vision-exp";
+function crawshrimpDeepSeekTextModelCanUseVisionBridge(provider, model) {
+\treturn provider === CRAWSHRIMP_DEEPSEEK_OFFICIAL_PROVIDER && (model === "deepseek-v4-flash" || model === "deepseek-v4-pro");
+}
+function crawshrimpTextFromPiMessage(message) {
+\treturn message.content.filter((block) => block.type === "text").map((block) => block.text).join("").trim();
+}
+function crawshrimpContentWithoutImages(blocks, replacementText) {
+\tconst content = [];
+\tfor (const block of blocks) {
+\t\tif (block.type === "image") {
+\t\t\tif (replacementText) content.push({ type: "text", text: replacementText });
+\t\t\tcontinue;
+\t\t}
+\t\tif (block.type === "tool-result") {
+\t\t\tcontent.push({
+\t\t\t\t...block,
+\t\t\t\tcontent: crawshrimpContentWithoutImages(block.content, replacementText)
+\t\t\t});
+\t\t\tcontinue;
+\t\t}
+\t\tcontent.push(block);
+\t}
+\treturn content;
+}
+function crawshrimpContentWithVisionForLatestImage(blocks, visionText) {
+\tconst content = [];
+\tlet injected = false;
+\tfor (const block of blocks) {
+\t\tif (block.type === "image") {
+\t\t\tcontent.push({
+\t\t\t\ttype: "text",
+\t\t\t\ttext: injected ? "\\n[同一轮其余图片已在上方 DeepSeek Vision 识别结果中归纳]\\n" : "\\n\\n[DeepSeek Vision 识别结果]\\n" + visionText + "\\n\\n[兼容说明]\\n原始图片已经由 DeepSeek Vision 转写成以上文字；当前 DeepSeek 文本模型应直接基于这些文字继续回答，不要因为原始会话含图而要求用户切换到视觉模型。\\n\\n"
+\t\t\t});
+\t\t\tinjected = true;
+\t\t\tcontinue;
+\t\t}
+\t\tif (block.type === "tool-result") {
+\t\t\tconst nested = crawshrimpContentWithVisionForLatestImage(block.content, visionText);
+\t\t\tcontent.push({
+\t\t\t\t...block,
+\t\t\t\tcontent: nested.content
+\t\t\t});
+\t\t\tinjected = injected || nested.injected;
+\t\t\tcontinue;
+\t\t}
+\t\tcontent.push(block);
+\t}
+\treturn { content, injected };
+}
+function crawshrimpLatestImageUserMessageIndex(messages) {
+\tfor (let index = messages.length - 1; index >= 0; index--) {
+\t\tconst message = messages[index];
+\t\tif (message.role === "user" && contentHasImage(message.content)) return index;
+\t}
+\treturn -1;
+}
+function crawshrimpVisionOptionsForMessage(options, targetIndex) {
+\tconst target = options.messages[targetIndex];
+\tif (target === void 0) return void 0;
+\treturn {
+\t\t...options,
+\t\tmessages: [{ ...target, timestamp: 0 }],
+\t\ttools: void 0
+\t};
+}
+function crawshrimpTextOnlyOptionsFromVision(options, visionText, targetIndex) {
+\tlet injected = false;
+\tconst messages = options.messages.map((message, index) => {
+\t\tif (!contentHasImage(message.content)) return message;
+\t\tif (index === targetIndex) {
+\t\t\tconst result = crawshrimpContentWithVisionForLatestImage(message.content, visionText);
+\t\t\tinjected = injected || result.injected;
+\t\t\treturn { ...message, content: result.content };
+\t\t}
+\t\treturn {
+\t\t\t...message,
+\t\t\tcontent: crawshrimpContentWithoutImages(message.content, "\\n[历史图片已省略，避免与本轮图片识别混淆]\\n")
+\t\t};
+\t});
+\tif (!injected) messages.push({
+\t\trole: "user",
+\t\tcontent: [{ type: "text", text: "[DeepSeek Vision 识别结果]\\n" + visionText + "\\n\\n[兼容说明]\\n原始图片已经由 DeepSeek Vision 转写成以上文字；当前 DeepSeek 文本模型应直接基于这些文字继续回答，不要因为原始会话含图而要求用户切换到视觉模型。\\n" }],
+\t\ttimestamp: 0
+\t});
+\treturn { ...options, messages };
+}
+async function crawshrimpBridgeDeepSeekImages(snapshot, profile, options, apiKey, upstream, onReplayDegrade) {
+\t// ${DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER}: let DeepSeek text models consume image sessions via the official vision model first.
+\tif (!crawshrimpDeepSeekTextModelCanUseVisionBridge(options.provider, options.model)) return void 0;
+\tconst attachments = this.config.resolveAttachments?.();
+\tif (attachments === void 0) return void 0;
+\tconst targetIndex = crawshrimpLatestImageUserMessageIndex(options.messages);
+\tconst visionOptions = targetIndex < 0 ? void 0 : crawshrimpVisionOptionsForMessage(options, targetIndex);
+\tif (visionOptions === void 0) return void 0;
+\tconst visionModel = snapshot.models.getModel(options.provider, CRAWSHRIMP_DEEPSEEK_VISION_MODEL);
+\tif (visionModel === void 0 || !visionModel.input.includes("image")) return void 0;
+\tconst visionSystem = [
+\t\toptions.system,
+\t\t"你是抓虾 Harness 的图片识别前置模型。请只识别最新一条用户消息里的图片，并转写成准确、可供后续 DeepSeek 文本模型继续处理的中文描述。不要引用、比较或描述历史图片。保留界面文字、数字、按钮、错误码、商品/页面结构、用户可能关心的关键事实；不要执行任务，不要给操作建议。"
+\t].filter((part) => typeof part === "string" && part.trim()).join("\\n\\n");
+\tconst visionContext = await toPiContext({
+\t\t...visionOptions,
+\t\t...visionSystem ? { system: visionSystem } : {},
+\t\ttools: void 0
+\t}, attachments, onReplayDegrade, profile.maxRequestImageBytes);
+\tconst visionMessage = await snapshot.models.completeSimple(visionModel, visionContext, {
+\t\t...profileOptions(profile, void 0, apiKey),
+\t\tmaxTokens: 2048,
+\t\t...options.sessionId === void 0 ? {} : { sessionId: \`\${options.sessionId}:vision\` },
+\t\tsignal: upstream,
+\t\theaders: requestHeaders(profile.headers)
+\t});
+\tif (visionMessage.stopReason === "error") throw new LlmError(\`DeepSeek vision preflight failed: \${visionMessage.errorMessage ?? "unknown error"}\`, "UNSUPPORTED_CONTENT");
+\tconst visionText = crawshrimpTextFromPiMessage(visionMessage) || "DeepSeek Vision 未返回可用图片描述。";
+\treturn crawshrimpTextOnlyOptionsFromVision(options, visionText, targetIndex);
+}
+`,
+    'llm-pi-ai DeepSeek latest image-turn bridge upgrade',
+  )
+  return { source, patched: true }
+}
+
 function patchPiAiDeepSeekMultimodalFallback(runtimeRoot) {
   const piAiDeepSeekMultimodalFallbackEntry = join(
     resolve(runtimeRoot),
@@ -191,6 +322,16 @@ function patchPiAiDeepSeekMultimodalFallback(runtimeRoot) {
     const audit = patchPiAiDeepSeekVisionAudit(source)
     const guard = patchPiAiDeepSeekVisionReasoningGuard(audit.source)
     if (audit.patched || guard.patched) {
+      writeFileSync(piAiDeepSeekMultimodalFallbackEntry, guard.source, 'utf8')
+      return { patched: true, piAiDeepSeekMultimodalFallbackEntry }
+    }
+    return { patched: false, piAiDeepSeekMultimodalFallbackEntry }
+  }
+  if (source.includes(OLD_DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER)) {
+    const upgrade = patchPiAiDeepSeekLatestImageTurnBridge(source)
+    const audit = patchPiAiDeepSeekVisionAudit(upgrade.source)
+    const guard = patchPiAiDeepSeekVisionReasoningGuard(audit.source)
+    if (upgrade.patched || audit.patched || guard.patched) {
       writeFileSync(piAiDeepSeekMultimodalFallbackEntry, guard.source, 'utf8')
       return { patched: true, piAiDeepSeekMultimodalFallbackEntry }
     }
@@ -211,28 +352,17 @@ function crawshrimpDeepSeekTextModelCanUseVisionBridge(provider, model) {
 function crawshrimpTextFromPiMessage(message) {
 \treturn message.content.filter((block) => block.type === "text").map((block) => block.text).join("").trim();
 }
-function crawshrimpStripImagesFromContent(blocks, visionText, state) {
+function crawshrimpContentWithoutImages(blocks, replacementText) {
 \tconst content = [];
 \tfor (const block of blocks) {
 \t\tif (block.type === "image") {
-\t\t\tif (!state.injected) {
-\t\t\t\tcontent.push({
-\t\t\t\t\ttype: "text",
-\t\t\t\t\ttext: \`\\n\\n[DeepSeek Vision 识别结果]\\n\${visionText}\\n\\n[兼容说明]\\n原始图片已经由 DeepSeek Vision 转写成以上文字；当前 DeepSeek 文本模型应直接基于这些文字继续回答，不要因为原始会话含图而要求用户切换到视觉模型。\\n\\n\`
-\t\t\t\t});
-\t\t\t\tstate.injected = true;
-\t\t\t} else {
-\t\t\t\tcontent.push({
-\t\t\t\t\ttype: "text",
-\t\t\t\t\ttext: "\\n[图片已在上方 DeepSeek Vision 识别结果中归纳]\\n"
-\t\t\t\t});
-\t\t\t}
+\t\t\tif (replacementText) content.push({ type: "text", text: replacementText });
 \t\t\tcontinue;
 \t\t}
 \t\tif (block.type === "tool-result") {
 \t\t\tcontent.push({
 \t\t\t\t...block,
-\t\t\t\tcontent: crawshrimpStripImagesFromContent(block.content, visionText, state)
+\t\t\t\tcontent: crawshrimpContentWithoutImages(block.content, replacementText)
 \t\t\t});
 \t\t\tcontinue;
 \t\t}
@@ -240,15 +370,64 @@ function crawshrimpStripImagesFromContent(blocks, visionText, state) {
 \t}
 \treturn content;
 }
-function crawshrimpTextOnlyOptionsFromVision(options, visionText) {
-\tconst state = { injected: false };
-\tconst messages = options.messages.map((message) => contentHasImage(message.content) ? {
-\t\t...message,
-\t\tcontent: crawshrimpStripImagesFromContent(message.content, visionText, state)
-\t} : message);
-\tif (!state.injected) messages.push({
+function crawshrimpContentWithVisionForLatestImage(blocks, visionText) {
+\tconst content = [];
+\tlet injected = false;
+\tfor (const block of blocks) {
+\t\tif (block.type === "image") {
+\t\t\tcontent.push({
+\t\t\t\ttype: "text",
+\t\t\t\ttext: injected ? "\\n[同一轮其余图片已在上方 DeepSeek Vision 识别结果中归纳]\\n" : "\\n\\n[DeepSeek Vision 识别结果]\\n" + visionText + "\\n\\n[兼容说明]\\n原始图片已经由 DeepSeek Vision 转写成以上文字；当前 DeepSeek 文本模型应直接基于这些文字继续回答，不要因为原始会话含图而要求用户切换到视觉模型。\\n\\n"
+\t\t\t});
+\t\t\tinjected = true;
+\t\t\tcontinue;
+\t\t}
+\t\tif (block.type === "tool-result") {
+\t\t\tconst nested = crawshrimpContentWithVisionForLatestImage(block.content, visionText);
+\t\t\tcontent.push({
+\t\t\t\t...block,
+\t\t\t\tcontent: nested.content
+\t\t\t});
+\t\t\tinjected = injected || nested.injected;
+\t\t\tcontinue;
+\t\t}
+\t\tcontent.push(block);
+\t}
+\treturn { content, injected };
+}
+function crawshrimpLatestImageUserMessageIndex(messages) {
+\tfor (let index = messages.length - 1; index >= 0; index--) {
+\t\tconst message = messages[index];
+\t\tif (message.role === "user" && contentHasImage(message.content)) return index;
+\t}
+\treturn -1;
+}
+function crawshrimpVisionOptionsForMessage(options, targetIndex) {
+\tconst target = options.messages[targetIndex];
+\tif (target === void 0) return void 0;
+\treturn {
+\t\t...options,
+\t\tmessages: [{ ...target, timestamp: 0 }],
+\t\ttools: void 0
+\t};
+}
+function crawshrimpTextOnlyOptionsFromVision(options, visionText, targetIndex) {
+\tlet injected = false;
+\tconst messages = options.messages.map((message, index) => {
+\t\tif (!contentHasImage(message.content)) return message;
+\t\tif (index === targetIndex) {
+\t\t\tconst result = crawshrimpContentWithVisionForLatestImage(message.content, visionText);
+\t\t\tinjected = injected || result.injected;
+\t\t\treturn { ...message, content: result.content };
+\t\t}
+\t\treturn {
+\t\t\t...message,
+\t\t\tcontent: crawshrimpContentWithoutImages(message.content, "\\n[历史图片已省略，避免与本轮图片识别混淆]\\n")
+\t\t};
+\t});
+\tif (!injected) messages.push({
 \t\trole: "user",
-\t\tcontent: [{ type: "text", text: \`[DeepSeek Vision 识别结果]\\n\${visionText}\\n\\n[兼容说明]\\n原始图片已经由 DeepSeek Vision 转写成以上文字；当前 DeepSeek 文本模型应直接基于这些文字继续回答，不要因为原始会话含图而要求用户切换到视觉模型。\\n\` }],
+\t\tcontent: [{ type: "text", text: "[DeepSeek Vision 识别结果]\\n" + visionText + "\\n\\n[兼容说明]\\n原始图片已经由 DeepSeek Vision 转写成以上文字；当前 DeepSeek 文本模型应直接基于这些文字继续回答，不要因为原始会话含图而要求用户切换到视觉模型。\\n" }],
 \t\ttimestamp: 0
 \t});
 \treturn { ...options, messages };
@@ -258,14 +437,17 @@ async function crawshrimpBridgeDeepSeekImages(snapshot, profile, options, apiKey
 \tif (!crawshrimpDeepSeekTextModelCanUseVisionBridge(options.provider, options.model)) return void 0;
 \tconst attachments = this.config.resolveAttachments?.();
 \tif (attachments === void 0) return void 0;
+\tconst targetIndex = crawshrimpLatestImageUserMessageIndex(options.messages);
+\tconst visionOptions = targetIndex < 0 ? void 0 : crawshrimpVisionOptionsForMessage(options, targetIndex);
+\tif (visionOptions === void 0) return void 0;
 \tconst visionModel = snapshot.models.getModel(options.provider, CRAWSHRIMP_DEEPSEEK_VISION_MODEL);
 \tif (visionModel === void 0 || !visionModel.input.includes("image")) return void 0;
 \tconst visionSystem = [
 \t\toptions.system,
-\t\t"你是抓虾 Harness 的图片识别前置模型。请把本轮对话和历史里出现的图片转写成准确、可供后续 DeepSeek 文本模型继续处理的中文描述。保留界面文字、数字、按钮、错误码、商品/页面结构、用户可能关心的关键事实；不要执行任务，不要给操作建议。"
+\t\t"你是抓虾 Harness 的图片识别前置模型。请只识别最新一条用户消息里的图片，并转写成准确、可供后续 DeepSeek 文本模型继续处理的中文描述。不要引用、比较或描述历史图片。保留界面文字、数字、按钮、错误码、商品/页面结构、用户可能关心的关键事实；不要执行任务，不要给操作建议。"
 \t].filter((part) => typeof part === "string" && part.trim()).join("\\n\\n");
 \tconst visionContext = await toPiContext({
-\t\t...options,
+\t\t...visionOptions,
 \t\t...visionSystem ? { system: visionSystem } : {},
 \t\ttools: void 0
 \t}, attachments, onReplayDegrade, profile.maxRequestImageBytes);
@@ -278,7 +460,7 @@ async function crawshrimpBridgeDeepSeekImages(snapshot, profile, options, apiKey
 \t});
 \tif (visionMessage.stopReason === "error") throw new LlmError(\`DeepSeek vision preflight failed: \${visionMessage.errorMessage ?? "unknown error"}\`, "UNSUPPORTED_CONTENT");
 \tconst visionText = crawshrimpTextFromPiMessage(visionMessage) || "DeepSeek Vision 未返回可用图片描述。";
-\treturn crawshrimpTextOnlyOptionsFromVision(options, visionText);
+\treturn crawshrimpTextOnlyOptionsFromVision(options, visionText, targetIndex);
 }`,
     'llm-pi-ai DeepSeek multimodal fallback helpers',
   )
@@ -329,7 +511,31 @@ function crawshrimpReasoningEffortForModel(model, effort) {
 }
 
 function patchPiAiDeepSeekVisionAudit(source) {
+  const hasAuditLogger = source.includes('onVisionPreflight: ({ provider, model, visionModel, sessionId }) =>')
   if (source.includes(DEEPSEEK_MULTIMODAL_AUDIT_PATCH_MARKER)) {
+    if (!hasAuditLogger) {
+      source = replaceExact(
+        source,
+        '\t\tresolveAttachments: () => ctx.get("attachments"),\n\t\tonReplayDegrade: ({ provider, model, reason }) => {',
+        `\t\tresolveAttachments: () => ctx.get("attachments"),
+\t\tonVisionPreflight: ({ provider, model, visionModel, sessionId }) => {
+\t\t\tconst record = {
+\t\t\t\tevent: "deepseek_vision_preflight",
+\t\t\t\tvision_preflight: true,
+\t\t\t\tprovider,
+\t\t\t\tmodel,
+\t\t\t\toriginal_model: model,
+\t\t\t\tvision_model: visionModel,
+\t\t\t\tsession_id: sessionId ?? null
+\t\t\t};
+\t\t\tctx.logger.info("crawshrimp.audit " + JSON.stringify(record));
+\t\t\tprocess.stderr.write("crawshrimp.audit " + JSON.stringify(record) + "\\n");
+\t\t},
+\t\tonReplayDegrade: ({ provider, model, reason }) => {`,
+        'llm-pi-ai DeepSeek vision preflight audit logger',
+      )
+      return { source, patched: true }
+    }
     return { source, patched: false }
   }
   if (source.includes(OLD_DEEPSEEK_MULTIMODAL_AUDIT_PATCH_MARKER)) {
@@ -362,10 +568,11 @@ function patchPiAiDeepSeekVisionAudit(source) {
 \tconst visionSystem = [`,
     'llm-pi-ai DeepSeek vision preflight audit emit',
   )
-  source = replaceExact(
-    source,
-    '\t\tresolveAttachments: () => ctx.get("attachments"),\n\t\tonReplayDegrade: ({ provider, model, reason }) => {',
-    `\t\tresolveAttachments: () => ctx.get("attachments"),
+  if (!hasAuditLogger) {
+    source = replaceExact(
+      source,
+      '\t\tresolveAttachments: () => ctx.get("attachments"),\n\t\tonReplayDegrade: ({ provider, model, reason }) => {',
+      `\t\tresolveAttachments: () => ctx.get("attachments"),
 \t\tonVisionPreflight: ({ provider, model, visionModel, sessionId }) => {
 \t\t\tconst record = {
 \t\t\t\tevent: "deepseek_vision_preflight",
@@ -380,8 +587,9 @@ function patchPiAiDeepSeekVisionAudit(source) {
 \t\t\tprocess.stderr.write("crawshrimp.audit " + JSON.stringify(record) + "\\n");
 \t\t},
 \t\tonReplayDegrade: ({ provider, model, reason }) => {`,
-    'llm-pi-ai DeepSeek vision preflight audit logger',
-  )
+      'llm-pi-ai DeepSeek vision preflight audit logger',
+    )
+  }
   return { source, patched: true }
 }
 
@@ -534,6 +742,17 @@ function replaceExact(source, needle, replacement, label) {
     throw new Error(`cannot patch ${label}: expected source is ambiguous`)
   }
   return source.slice(0, first) + replacement + source.slice(first + needle.length)
+}
+
+function replaceRange(source, startNeedle, endNeedle, replacement, label) {
+  const first = source.indexOf(startNeedle)
+  if (first < 0) throw new Error(`cannot patch ${label}: expected start not found`)
+  const end = source.indexOf(endNeedle, first + startNeedle.length)
+  if (end < 0) throw new Error(`cannot patch ${label}: expected end not found`)
+  if (source.indexOf(startNeedle, first + startNeedle.length) >= 0) {
+    throw new Error(`cannot patch ${label}: expected start is ambiguous`)
+  }
+  return source.slice(0, first) + replacement + source.slice(end)
 }
 
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : ''

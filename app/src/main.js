@@ -120,6 +120,7 @@ let preferredCrawshrimpDataDir = ''
 let desktopServicesStartupPromise = null
 let backendRecoveryBarrier = null
 let dataDirRecoveryInfo = { recovered: false, from: '', to: '', errors: [] }
+let deepseekHarnessDevRuntimePatched = false
 
 function balaWorkspaceMediaUrl(workspaceRoot = '', filePath = '') {
   const payload = Buffer.from(JSON.stringify({ workspaceRoot, filePath }), 'utf8').toString('base64url')
@@ -1182,6 +1183,39 @@ function createWindow() {
 // ── FastAPI backend ────────────────────────────────────────────────────────────
 let backendProcess = null
 
+function getDeepseekHarnessRoot() {
+  return IS_DEV
+    ? path.resolve(__dirname, '..', '..', 'integrations', 'deepseek-harness')
+    : path.join(process.resourcesPath, 'deepseek-harness')
+}
+
+function patchDeepseekHarnessDevRuntime(harnessRoot) {
+  if (!IS_DEV || deepseekHarnessDevRuntimePatched) return
+  const patcher = path.join(harnessRoot, 'scripts', 'patch-runtime-dependencies.mjs')
+  if (!fs.existsSync(patcher)) {
+    log(`[dsh] dev runtime patcher missing: ${patcher}`)
+    return
+  }
+  try {
+    const output = execFileSync(process.execPath, [patcher, harnessRoot], {
+      cwd: harnessRoot,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      encoding: 'utf8',
+      timeout: 30000,
+      maxBuffer: 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    output.split('\n').filter(line => line.trim()).forEach(line => log(`[dsh] ${line}`))
+    deepseekHarnessDevRuntimePatched = true
+  } catch (error) {
+    const stderr = error?.stderr ? String(error.stderr).trim() : ''
+    const stdout = error?.stdout ? String(error.stdout).trim() : ''
+    if (stdout) log(`[dsh] runtime patch stdout: ${stdout}`)
+    if (stderr) log(`[dsh] runtime patch stderr: ${stderr}`)
+    throw new Error(`DeepSeek Harness dev runtime patch failed: ${error?.message || error}`)
+  }
+}
+
 function spawnBackendProcess() {
   const pythonBin  = getPythonBin()
   const serverScript = getApiServerScript()
@@ -1189,10 +1223,12 @@ function spawnBackendProcess() {
   const launchArgs = getBackendLaunchArgs()
   resolvedCrawshrimpDataDir = getCrawshrimpDataDir()
   const apiToken = getApiToken()
+  const deepseekHarnessRoot = getDeepseekHarnessRoot()
 
   if (!fs.existsSync(serverScript)) {
     throw new Error(`api_server.py not found: ${serverScript}`)
   }
+  patchDeepseekHarnessDevRuntime(deepseekHarnessRoot)
 
   log(`[api] launch context: port=${apiPort}, data=${resolvedCrawshrimpDataDir}, scripts=${scriptsDir}, python=${pythonBin}, lock=${getBackendLockPath()}, token=${apiToken ? 'set' : 'missing'}`)
   log(`[api] starting: ${pythonBin} ${launchArgs.join(' ')}`)
@@ -1213,9 +1249,7 @@ function spawnBackendProcess() {
       CRAWSHRIMP_APP_ENV: CLOUD_APPROVAL_APP_ENV,
       CRAWSHRIMP_NODE_EXECUTABLE: process.execPath,
       CRAWSHRIMP_NODE_MODULES_DIR: path.join(__dirname, '..', 'node_modules'),
-      CRAWSHRIMP_HARNESS_ROOT: IS_DEV
-        ? path.resolve(__dirname, '..', '..', 'integrations', 'deepseek-harness')
-        : path.join(process.resourcesPath, 'deepseek-harness'),
+      CRAWSHRIMP_HARNESS_ROOT: deepseekHarnessRoot,
       ELECTRON_RUN_AS_NODE: '',
       PYTHONPATH: scriptsDir,
     },
