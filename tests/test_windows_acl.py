@@ -79,6 +79,26 @@ class _FakeNtSecurityCon:
     FILE_ALL_ACCESS = 0x1F01FF
 
 
+class _FakeStat:
+    st_dev = 10
+    st_ino = 20
+
+    def __init__(self, *, ctime_ns, mtime_ns, size):
+        self.st_ctime_ns = ctime_ns
+        self.st_mtime_ns = mtime_ns
+        self.st_size = size
+
+
+class _FakePathWithStat:
+    def __init__(self, metadata):
+        self._metadata = metadata
+
+    def stat(self, *, follow_symlinks=False):
+        if follow_symlinks is not False:
+            raise AssertionError("Windows ACL identity must not follow symlinks")
+        return self._metadata
+
+
 class WindowsAclTests(unittest.TestCase):
     def _load_module(self):
         try:
@@ -124,6 +144,18 @@ class WindowsAclTests(unittest.TestCase):
                     self.assertTrue(windows_acl.harden_windows_path(Path(tmpdir)))
 
         self.assertEqual(len(security.applied), 1)
+
+    def test_file_identity_distinguishes_replacement_when_inode_is_reused(self):
+        windows_acl = self._load_module()
+
+        old_identity = windows_acl._file_identity(
+            _FakePathWithStat(_FakeStat(ctime_ns=100, mtime_ns=100, size=3))
+        )
+        replacement_identity = windows_acl._file_identity(
+            _FakePathWithStat(_FakeStat(ctime_ns=200, mtime_ns=200, size=11))
+        )
+
+        self.assertNotEqual(old_identity, replacement_identity)
 
     def test_replaced_file_at_same_path_receives_a_fresh_windows_dacl(self):
         windows_acl = self._load_module()

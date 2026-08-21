@@ -13,7 +13,7 @@ class WindowsAclError(PermissionError):
     """Raised when a Windows runtime path cannot be restricted safely."""
 
 
-_hardened_paths: dict[str, tuple[int, int]] = {}
+_hardened_paths: dict[str, tuple[int, int, int, int, int]] = {}
 _hardened_paths_lock = threading.RLock()
 
 
@@ -130,9 +130,15 @@ def harden_windows_path(path: Path | str) -> bool:
     return True
 
 
-def _file_identity(target: Path) -> tuple[int, int]:
+def _file_identity(target: Path) -> tuple[int, int, int, int, int]:
     metadata = target.stat(follow_symlinks=False)
-    return int(metadata.st_dev), int(metadata.st_ino)
+    return (
+        int(metadata.st_dev),
+        int(metadata.st_ino),
+        int(getattr(metadata, "st_ctime_ns", 0) or 0),
+        int(getattr(metadata, "st_mtime_ns", 0) or 0),
+        int(metadata.st_size),
+    )
 
 
 def _apply_windows_dacl(target: Path) -> None:
