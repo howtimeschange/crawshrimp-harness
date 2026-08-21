@@ -124,6 +124,19 @@ test('agent iframe can load backend candidate URL while web verification settles
   assert.match(webView, /Windows packaged builds can serve the first page slowly/)
 })
 
+test('agent runtime missing model keys is treated as configuration-needed, not crashed', () => {
+  const webView = readFileSync(resolve(appRoot, 'src/renderer/views/AgentWebView.vue'), 'utf8')
+  const settings = readFileSync(resolve(appRoot, 'src/renderer/views/SettingsPage.vue'), 'utf8')
+  const app = readFileSync(resolve(appRoot, 'src/renderer/App.vue'), 'utf8')
+  assert.match(webView, /needs_configuration/)
+  assert.match(webView, /lastRuntimeState\.value === 'needs_configuration'/)
+  assert.match(webView, /state === 'needs_configuration'/)
+  assert.match(webView, /emit\('open-settings', 'ai-llm'\)/)
+  assert.match(app, /@open-settings="openSettingsPanel"/)
+  assert.match(settings, /needs_configuration/)
+  assert.match(settings, /待配置/)
+})
+
 test('core status indicator debounces transient backend probe drops', () => {
   const app = readFileSync(resolve(appRoot, 'src/renderer/App.vue'), 'utf8')
   assert.match(app, /API_STATUS_OFF_STREAK_THRESHOLD = 3/)

@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core import api_server, atomic_file, data_sink, runtime_paths
+from core.windows_acl import WindowsAclError
 
 
 class _FakeHandle:
@@ -300,6 +301,44 @@ class WindowsAclTests(unittest.TestCase):
             [call.args[0] for call in harden.call_args_list],
             [db_path.parent, *files],
         )
+
+    def test_disappearing_sqlite_sidecar_does_not_fail_windows_db_hardening(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "crawshrimp.db"
+            sidecars = [Path(f"{db_path}-wal"), Path(f"{db_path}-shm"), Path(f"{db_path}-journal")]
+            for file_path in [db_path, *sidecars]:
+                file_path.write_bytes(b"")
+
+            def harden(path):
+                if Path(path).name == "crawshrimp.db-journal":
+                    raise FileNotFoundError(path)
+                return True
+
+            with patch.object(data_sink, "_db_path", return_value=db_path):
+                with patch.object(data_sink.os, "name", "nt"):
+                    with patch.object(data_sink, "harden_windows_path", side_effect=harden):
+                        data_sink._harden_db_file_permissions()
+
+    def test_sqlite_sidecar_acl_failure_is_best_effort_but_main_db_failure_is_strict(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "crawshrimp.db"
+            sidecar = Path(f"{db_path}-journal")
+            db_path.write_bytes(b"")
+            sidecar.write_bytes(b"")
+
+            def sidecar_failure(path):
+                if Path(path) == sidecar:
+                    raise WindowsAclError("transient sidecar lock")
+                return True
+
+            with patch.object(data_sink, "_db_path", return_value=db_path):
+                with patch.object(data_sink.os, "name", "nt"):
+                    with patch.object(data_sink, "harden_windows_path", side_effect=sidecar_failure):
+                        data_sink._harden_db_file_permissions()
+
+                    with patch.object(data_sink, "harden_windows_path", side_effect=WindowsAclError("main db denied")):
+                        with self.assertRaisesRegex(WindowsAclError, "main db denied"):
+                            data_sink._harden_db_file_permissions()
 
 
 if __name__ == "__main__":

@@ -47,6 +47,10 @@ _APPROVAL_EXECUTOR = ThreadPoolExecutor(
 AUTO_APPROVE_TASK_IDS = frozenset({"batch_image_download", "cloud_folder_download"})
 
 
+class AgentModelConfigurationError(RuntimeError):
+    """Raised when no configured model route can safely start the DSH runtime."""
+
+
 def _auto_approve_task(task_id: str, risk: str) -> bool:
     """简单下载/找图类任务自动批准;上传/发布/删除类即使名字相近也不放行。"""
     if risk not in ("read_only", "local_write"):
@@ -331,6 +335,52 @@ def _task_display_name(adapter_id: str, task_id: str) -> str:
     return str(task_id or "")
 
 
+def _resolve_configured_generation_model(
+    cfg: dict,
+    provider_id: Optional[str],
+    model_id: Optional[str],
+) -> tuple[str, str]:
+    requested_model = str(model_id or "").strip()
+    if not requested_model or not model_capabilities(requested_model).get("supports_tools"):
+        requested_model = select_default_model(cfg)
+    if model_has_configured_key(requested_model, cfg):
+        return requested_model, resolve_provider_for_model(requested_model)
+
+    fallback_model = select_default_model(cfg)
+    if (
+        fallback_model != requested_model
+        and model_capabilities(fallback_model).get("supports_tools")
+        and model_has_configured_key(fallback_model, cfg)
+    ):
+        return fallback_model, resolve_provider_for_model(fallback_model)
+
+    provider_label = str(provider_id or resolve_provider_for_model(requested_model) or "").strip()
+    raise AgentModelConfigurationError(
+        f"智能体模型 {requested_model}({provider_label}) 没有可用 API Key；"
+        "请配置 DeepSeek 官方 API Key，或配置网关 API Key 后再使用海外/国内网关模型。"
+    )
+
+
+def _sync_dsh_default_model_settings(agent_dir: Path, provider_id: str, runtime_model_id: str) -> None:
+    settings_path = agent_dir / "dsh-home" / "settings.yaml"
+    try:
+        import yaml
+    except ImportError as exc:  # pragma: no cover - pyyaml is in core requirements.
+        raise AgentModelConfigurationError("缺少 PyYAML，无法准备智能体运行时模型配置。") from exc
+
+    settings: dict[str, Any] = {}
+    if settings_path.exists():
+        loaded = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            settings = loaded
+    current = settings.get("agent-default-model")
+    entry = dict(current) if isinstance(current, dict) else {}
+    entry.update({"provider": provider_id, "model": runtime_model_id})
+    settings["agent-default-model"] = entry
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(settings_path, yaml.safe_dump(settings, allow_unicode=True, sort_keys=False))
+
+
 def _params_brief(params) -> str:
     """参数的人类可读摘要(截断,不泄密)。"""
     if not isinstance(params, dict) or not params:
@@ -418,8 +468,9 @@ class AgentService:
         self.worker: Optional[AgentWorker] = None
         self.generation = 0
         self.runtime_token = secrets.token_hex(32)  # 256-bit
-        self.runtime_state = "stopped"  # stopped|starting|ready|crashed|disabled_until_manual_restart
+        self.runtime_state = "stopped"  # stopped|starting|ready|needs_configuration|crashed|disabled_until_manual_restart
         self.runtime_error = ""
+        self.runtime_error_code = ""
         self.crash_budget: list[float] = []
         self.web_port = 0
         self._web_port_verified = False
@@ -901,7 +952,10 @@ class AgentService:
         try:
             generation_ok = await self._ensure_generation(item)
             if not generation_ok:
-                raise RuntimeError(self.runtime_error or "runtime 启动失败")
+                message = self.runtime_error or "runtime 启动失败"
+                if self.runtime_error_code == "MODEL_CONFIGURATION":
+                    raise AgentModelConfigurationError(message)
+                raise RuntimeError(message)
 
             budget = BUDGET_PROFILES["browser"] if self._is_browser_run(item) else BUDGET_PROFILES["default"]
             summary = await self.worker.request("worker.run", {
@@ -951,6 +1005,11 @@ class AgentService:
             await self.broadcast(session_id, 0, event_type, {"run_id": run_id, "status": status})
             if status == "completed":
                 await self._broadcast_run_artifacts(run_id, session_id)
+        except AgentModelConfigurationError as exc:
+            db.update_run(run_id, status="failed", finished_at=_now_iso(),
+                          error_code="MODEL_CONFIGURATION_ERROR", error_message=str(exc)[:500])
+            db.update_turn(turn_id, status="failed", completed_at=_now_iso())
+            await self.broadcast(session_id, 0, "run.failed", {"run_id": run_id, "error": str(exc)[:300]})
         except Exception as exc:  # noqa: BLE001
             db.update_run(run_id, status="failed", finished_at=_now_iso(),
                           error_code="WORKER_ERROR", error_message=str(exc)[:500])
@@ -1027,16 +1086,22 @@ class AgentService:
         self.generation += 1
         self.runtime_state = "starting"
         self.runtime_error = ""
-
-        if model_id is None:
-            model_id, provider_id = self._resolve_model()
-        if provider_id is None:
-            provider_id = resolve_provider_for_model(model_id)
-        runtime_model_id = deepseek_official_real_model(model_id)
+        self.runtime_error_code = ""
 
         # API key 进入进程环境(不落盘)
         cfg = load_config()
         llm = (cfg.get("ai") or {}).get("llm") or {}
+        if model_id is None:
+            model_id, provider_id = self._resolve_model()
+        try:
+            model_id, provider_id = _resolve_configured_generation_model(cfg, provider_id, model_id)
+        except AgentModelConfigurationError as exc:
+            self.runtime_error = str(exc)
+            self.runtime_error_code = "MODEL_CONFIGURATION"
+            self.runtime_state = "needs_configuration"
+            return False
+        runtime_model_id = deepseek_official_real_model(model_id)
+
         api_key = os.environ.get("CRAWSHRIMP_LLM_API_KEY", "").strip() or str(llm.get("api_key") or "").strip()
         if api_key:
             os.environ["CRAWSHRIMP_LLM_API_KEY"] = api_key
@@ -1072,6 +1137,13 @@ class AgentService:
 
         data_root = _data_root()
         agent_dir = data_root / "agent"
+        try:
+            _sync_dsh_default_model_settings(agent_dir, provider_id, runtime_model_id)
+        except AgentModelConfigurationError as exc:
+            self.runtime_error = str(exc)
+            self.runtime_error_code = "MODEL_CONFIGURATION"
+            self.runtime_state = "needs_configuration"
+            return False
         # 启动 worker 前先清理本 data 目录的孤儿 runtime(上次后端被强杀的残留),
         # 避免残留进程占用端口导致 DSH webserver 内部 +1 漂移(前端拿不到真实端口会白屏)。
         _cleanup_orphan_runtimes(str(data_root))
@@ -1126,6 +1198,7 @@ class AgentService:
                 raise RuntimeError(f"start_generation 失败: {gen}")
             self.worker = worker
             self.runtime_state = "ready"
+            self.runtime_error_code = ""
             self.generation_model = model_id
             self.generation_model_provider = provider_id
             # 端口漂移兜底:DSH webserver 在首选端口被占时会内部 +1,
@@ -1134,6 +1207,7 @@ class AgentService:
             return True
         except Exception as exc:  # noqa: BLE001
             self.runtime_error = str(exc)
+            self.runtime_error_code = "WORKER_ERROR"
             self.runtime_state = "crashed"
             await worker.stop()
             self._note_crash(str(exc))
@@ -1218,9 +1292,14 @@ class AgentService:
         candidate_web_url = f"http://127.0.0.1:{candidate_web_port}/" if candidate_web_port else ""
         gateway_key_configured = gateway_api_key_configured(cfg)
         deepseek_key_configured = deepseek_api_key_configured(cfg)
+        display_state = self.runtime_state
+        display_error = self.runtime_error
+        if not (gateway_key_configured or deepseek_key_configured) and display_state in ("stopped", "needs_configuration"):
+            display_state = "needs_configuration"
+            display_error = display_error or "请先配置 DeepSeek 官方 API Key 或网关 API Key。"
         return {
             "enabled": _os.environ.get("CRAWSHRIMP_AGENT_ENABLED", "1") not in ("0", "false", "no"),
-            "state": self.runtime_state,
+            "state": display_state,
             "generation": self.generation,
             "model": select_default_model(cfg),
             "api_key_configured": gateway_key_configured or deepseek_key_configured,
@@ -1229,7 +1308,7 @@ class AgentService:
             "active_run": ((self.active_run or next(iter(self.active_runs_by_runtime.values()), {}))
                            or {}).get("run_id"),
             "queue_depth": self.queue.qsize(),
-            "error": self.runtime_error,
+            "error": display_error,
             "node_executable": resolve_node_executable(),
             # DSH web host(方案 §12.7):前端 iframe 嵌入的页面地址
             "web_port": web_port,

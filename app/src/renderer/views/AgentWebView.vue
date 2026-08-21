@@ -13,11 +13,19 @@
           @load="onFrameLoad"
         />
         <div v-else class="web-placeholder">
-          <div class="placeholder-icon">🕐</div>
-          <div class="placeholder-title">智能体启动中…</div>
-          <div class="placeholder-text">正在准备会话环境,请稍候片刻。</div>
+          <div class="placeholder-icon">{{ placeholderIcon }}</div>
+          <div class="placeholder-title">{{ placeholderTitle }}</div>
+          <div class="placeholder-text">{{ placeholderText }}</div>
           <div class="placeholder-actions">
-            <span class="recover-state">自动就绪中,无需操作</span>
+            <button
+              v-if="isRuntimeNeedsConfiguration"
+              class="placeholder-btn"
+              type="button"
+              @click="emit('open-settings', 'ai-llm')"
+            >
+              打开模型配置
+            </button>
+            <span :class="['recover-state', { muted: isRuntimeNeedsConfiguration }]">{{ placeholderStateText }}</span>
           </div>
         </div>
         <!-- 实时浏览器面板悬浮开关 -->
@@ -62,7 +70,7 @@ const props = defineProps({
   browserTabs: { type: Object, default: () => ({ tabs: [], activeTabId: '' }) }, // 浏览器活动快照 → 多窗口跟随
 })
 
-const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav', 'runtime-session', 'repair-core'])
+const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav', 'runtime-session', 'repair-core', 'open-settings'])
 
 const webUrl = ref('')
 const error = ref('')
@@ -108,6 +116,17 @@ const browserToggleTitle = computed(() => {
   if (canToggleBrowserWindows.value) return '打开当前会话的实时浏览器'
   return '当前会话暂无实时浏览器'
 })
+const isRuntimeNeedsConfiguration = computed(() => lastRuntimeState.value === 'needs_configuration')
+const placeholderIcon = computed(() => isRuntimeNeedsConfiguration.value ? '钥' : '…')
+const placeholderTitle = computed(() => isRuntimeNeedsConfiguration.value ? '智能体待配置' : '智能体启动中…')
+const placeholderText = computed(() => (
+  isRuntimeNeedsConfiguration.value
+    ? (error.value || '请先配置 DeepSeek 官方 API Key 或网关 API Key。')
+    : '正在准备会话环境,请稍候片刻。'
+))
+const placeholderStateText = computed(() => (
+  isRuntimeNeedsConfiguration.value ? '等待模型配置' : '自动就绪中,无需操作'
+))
 
 function loadBrowserLayoutPreference() {
   try {
@@ -164,6 +183,11 @@ async function loadRuntime() {
       error.value = state === 'ready' ? '智能体会话界面启动中' : ''
       return true
     }
+    if (state === 'needs_configuration') {
+      error.value = result?.error || '请先配置 DeepSeek 官方 API Key 或网关 API Key。'
+      loading.value = false
+      return false
+    }
     if (state === 'failed' || state === 'crashed' || result?.error) {
       error.value = result.error || '运行时启动失败'
       loading.value = false
@@ -172,6 +196,12 @@ async function loadRuntime() {
       try {
         const warm = await window.cs.agentApi('POST', '/agent/runtime/restart')
         if (warm?.ok || warm?.state === 'ready') return await loadRuntime()
+        if (warm?.state === 'needs_configuration') {
+          lastRuntimeState.value = 'needs_configuration'
+          error.value = warm?.error || '请先配置 DeepSeek 官方 API Key 或网关 API Key。'
+          loading.value = false
+          return false
+        }
         error.value = warm?.error || '运行时启动失败'
       } catch (err) {
         error.value = err?.message || '无法启动运行时'
@@ -188,6 +218,7 @@ async function loadRuntime() {
 
 // 自动恢复:DSH 运行时不可用/后端掉线时循环自愈,不交给用户操作
 async function autoRecover() {
+  if (lastRuntimeState.value === 'needs_configuration') return
   if (recovering) return
   recovering = true
   try {
@@ -425,6 +456,13 @@ onMounted(() => {
         webUrl.value = ''
         loading.value = true
         error.value = state === 'ready' ? '智能体会话界面启动中' : ''
+        return
+      }
+      if (state === 'needs_configuration') {
+        probeFailCount = 0
+        webUrl.value = ''
+        loading.value = false
+        error.value = st?.error || '请先配置 DeepSeek 官方 API Key 或网关 API Key。'
         return
       }
       probeFailCount = 0
@@ -694,6 +732,10 @@ async function removeBrowserWindow(tabId) {
   border-radius: 50%;
   background: var(--yellow);
   animation: cs-pulse 1.2s infinite;
+}
+.recover-state.muted::before {
+  background: var(--text3);
+  animation: none;
 }
 @keyframes cs-pulse {
   0%, 100% { opacity: 1; }

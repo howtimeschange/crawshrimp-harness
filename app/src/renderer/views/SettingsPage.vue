@@ -506,8 +506,8 @@
               <p class="panel-kicker">AI 能力</p>
               <h3>智能体运行时</h3>
             </div>
-            <span :class="['badge', agentRuntime.state === 'ready' ? 'on' : 'off']">
-              {{ agentRuntime.state === 'ready' ? '就绪' : agentRuntime.state === 'crashed' ? '异常' : '启动中' }}
+            <span :class="['badge', agentRuntime.state === 'ready' ? 'on' : agentRuntime.state === 'needs_configuration' ? 'neutral' : 'off']">
+              {{ agentRuntimeLabel }}
             </span>
           </div>
 
@@ -915,6 +915,14 @@ const emit = defineEmits(['runtime-refresh', 'check-update', 'theme-change'])
 const agentRuntime = ref({ state: 'unknown', generation: 0, model: '', web_url: '', api_key_configured: false, error: '' })
 const agentBusy = ref('')
 const agentNotice = ref('')
+const agentRuntimeLabel = computed(() => {
+  const state = String(agentRuntime.value?.state || '')
+  if (state === 'ready') return '就绪'
+  if (state === 'needs_configuration') return '待配置'
+  if (state === 'crashed') return '异常'
+  if (state === 'stopped') return '已停止'
+  return '启动中'
+})
 
 async function refreshAgentRuntime() {
   try {

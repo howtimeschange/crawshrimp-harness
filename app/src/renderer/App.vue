@@ -134,6 +134,7 @@
           @session-nav="onSessionNav"
           @runtime-session="onRuntimeSession"
           @repair-core="repairCoreService"
+          @open-settings="openSettingsPanel"
         />
       </div>
       <!-- 覆盖层:其他菜单视图(左偏移让出智能体会话侧边栏) -->

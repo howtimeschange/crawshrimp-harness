@@ -13,7 +13,7 @@ import uuid
 import socket
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -377,6 +377,31 @@ def test_run_failure_before_status_assignment_keeps_original_error():
         ):
             await service._run_one(_run_item())
         assert any("worker exploded" in str(call.kwargs.get("error_message", ""))
+                   for call in update_run.call_args_list)
+
+    asyncio.run(scenario())
+
+
+def test_generation_model_configuration_error_does_not_consume_crash_budget():
+    async def scenario():
+        service = AgentService()
+        service._ensure_generation = AsyncMock(return_value=False)
+        service.broadcast = AsyncMock()
+        service.runtime_state = "needs_configuration"
+        service.runtime_error = "智能体模型 gpt-5.6-terra(crawshrimp-overseas-openai) 没有可用 API Key"
+        service.runtime_error_code = "MODEL_CONFIGURATION"
+        service._note_crash = Mock()
+        run = {"run_id": "run-1", "session_id": "session-1", "status": "queued"}
+        with (
+            patch("core.agent.service.db.get_run", return_value=run),
+            patch("core.agent.service.db.update_run") as update_run,
+            patch("core.agent.service.db.update_turn"),
+            patch("core.agent.service.db.update_session"),
+        ):
+            await service._run_one(_run_item())
+
+        service._note_crash.assert_not_called()
+        assert any(call.kwargs.get("error_code") == "MODEL_CONFIGURATION_ERROR"
                    for call in update_run.call_args_list)
 
     asyncio.run(scenario())
@@ -819,6 +844,23 @@ def test_runtime_status_repairs_and_reports_drifted_web_port(monkeypatch, tmp_pa
     assert status["web_verification_pending"] is False
     assert service.web_port == 19301
     assert service._web_port_verified is True
+
+
+def test_runtime_status_without_any_model_key_reports_needs_configuration(monkeypatch):
+    service = AgentService()
+    monkeypatch.setattr("core.agent.service.load_config", lambda: {"ai": {"llm": {
+        "api_key": "",
+        "deepseek_api_key": "",
+        "default_model": "deepseek-official-v4-flash",
+    }}})
+    monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
+
+    status = service.runtime_status()
+
+    assert status["state"] == "needs_configuration"
+    assert status["api_key_configured"] is False
+    assert "API Key" in status["error"]
 
 
 def test_orphan_cleanup_preserves_live_parent_and_terminates_true_orphan(tmp_path, monkeypatch):
@@ -1435,3 +1477,124 @@ def test_agent_start_generation_uses_packaged_web_cordis_without_install_write(t
     assert service_mod.os.environ["CRAWSHRIMP_AGENT_MODEL"] == "gpt-5.6-terra"
     assert not (harness_root / "runtime-cordis.yml").exists()
     assert not (data_root / "agent" / "runtime-cordis.yml").exists()
+
+
+def _patch_agent_generation_runtime(monkeypatch, service_mod, tmp_path, config):
+    harness_root = tmp_path / "Program Files" / "crawshrimp-harness" / "resources" / "deepseek-harness"
+    harness_root.mkdir(parents=True)
+    web_cordis = harness_root / "web-cordis.yml"
+    web_cordis.write_text("- id: agent-default-model\n", encoding="utf-8")
+    data_root = tmp_path / "LocalAppData" / "crawshrimp"
+    calls = {}
+
+    class FakeWorker:
+        def __init__(self, **kwargs):
+            calls["worker_kwargs"] = kwargs
+
+        async def start(self):
+            calls["started"] = True
+
+        async def request(self, method, params, timeout=None):
+            calls[method] = {"params": params, "timeout": timeout}
+            return {"ok": True}
+
+        async def stop(self):
+            calls["stopped"] = True
+
+    async def settle_noop(_self, _preferred):
+        calls["settled"] = True
+
+    monkeypatch.setattr(service_mod, "resolve_harness_root", lambda: harness_root)
+    monkeypatch.setattr(service_mod, "_data_root", lambda: data_root)
+    monkeypatch.setattr(service_mod, "_cleanup_orphan_runtimes", lambda _root: None)
+    monkeypatch.setattr(service_mod, "_pick_free_port", lambda port, _span: port or 19065)
+    monkeypatch.setattr(service_mod, "load_config", lambda: config)
+    monkeypatch.setattr(service_mod, "AgentWorker", FakeWorker)
+    monkeypatch.setattr(service_mod.AgentService, "_settle_web_port", settle_noop)
+    monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
+    return calls, harness_root, data_root
+
+
+def test_agent_start_generation_overwrites_stale_dsh_default_model_settings_with_deepseek(tmp_path, monkeypatch):
+    from core.agent import service as service_mod
+
+    calls, _harness_root, data_root = _patch_agent_generation_runtime(
+        monkeypatch,
+        service_mod,
+        tmp_path,
+        {"ai": {"llm": {
+            "api_key": "",
+            "deepseek_api_key": "sk-ds-official-unit",
+            "default_model": "deepseek-official-v4-flash",
+        }}},
+    )
+    settings_path = data_root / "agent" / "dsh-home" / "settings.yaml"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        "agent-default-model:\n"
+        "  provider: crawshrimp-overseas-openai\n"
+        "  model: gpt-5.6-terra\n"
+        "unrelated:\n"
+        "  keep: true\n",
+        encoding="utf-8",
+    )
+    service = service_mod.AgentService()
+    service.mcp_port = 18965
+
+    assert asyncio.run(service.start_generation())
+
+    assert calls["worker.start_generation"]["params"]["provider"] == "crawshrimp-deepseek-official"
+    assert calls["worker.start_generation"]["params"]["model"] == "deepseek-v4-flash"
+    settings = settings_path.read_text(encoding="utf-8")
+    assert "provider: crawshrimp-deepseek-official" in settings
+    assert "model: deepseek-v4-flash" in settings
+    assert "keep: true" in settings
+
+
+def test_agent_start_generation_falls_back_from_unkeyed_gateway_model_to_deepseek(tmp_path, monkeypatch):
+    from core.agent import service as service_mod
+
+    calls, _harness_root, _data_root = _patch_agent_generation_runtime(
+        monkeypatch,
+        service_mod,
+        tmp_path,
+        {"ai": {"llm": {
+            "api_key": "",
+            "deepseek_api_key": "sk-ds-official-unit",
+            "default_model": "gpt-5.6-terra",
+        }}},
+    )
+    service = service_mod.AgentService()
+    service.mcp_port = 18965
+
+    assert asyncio.run(service.start_generation("crawshrimp-overseas-openai", "gpt-5.6-terra"))
+
+    assert calls["worker.start_generation"]["params"]["provider"] == "crawshrimp-deepseek-official"
+    assert calls["worker.start_generation"]["params"]["model"] == "deepseek-v4-flash"
+    assert service_mod.os.environ["CRAWSHRIMP_AGENT_PROVIDER"] == "crawshrimp-deepseek-official"
+    assert service_mod.os.environ["CRAWSHRIMP_AGENT_MODEL"] == "deepseek-v4-flash"
+
+
+def test_agent_start_generation_missing_all_model_keys_does_not_launch_worker(tmp_path, monkeypatch):
+    from core.agent import service as service_mod
+
+    calls, _harness_root, _data_root = _patch_agent_generation_runtime(
+        monkeypatch,
+        service_mod,
+        tmp_path,
+        {"ai": {"llm": {
+            "api_key": "",
+            "deepseek_api_key": "",
+            "default_model": "gpt-5.6-terra",
+        }}},
+    )
+    service = service_mod.AgentService()
+    service.mcp_port = 18965
+
+    assert not asyncio.run(service.start_generation())
+
+    assert "started" not in calls
+    assert service.runtime_state == "needs_configuration"
+    assert "API Key" in service.runtime_error
+    assert service.crash_budget == []
