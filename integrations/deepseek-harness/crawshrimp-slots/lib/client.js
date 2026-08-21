@@ -687,6 +687,13 @@ window.__ModuleLoader__.load({
       return String(file?.type || '').toLowerCase().startsWith('image/')
     }
 
+    function hasFileTransfer(event) {
+      const types = event?.dataTransfer?.types
+      if (!types) return false
+      if (typeof types.includes === 'function') return types.includes('Files')
+      return Array.from(types).includes('Files')
+    }
+
     function nonImageFiles(files) {
       return Array.from(files || []).filter((file) => file && !isImageFile(file))
     }
@@ -715,7 +722,6 @@ window.__ModuleLoader__.load({
     }
 
     function handleDropAttachments(event) {
-      if (!inComposer(event.target)) return
       const files = (event.dataTransfer || {}).files
       if (!files || !files.length) return
       const attachments = nonImageFiles(files)
@@ -723,7 +729,106 @@ window.__ModuleLoader__.load({
       event.preventDefault()
       event.stopPropagation()
       event.stopImmediatePropagation?.()
-      postAttachmentFiles(attachments)
+      try {
+        postAttachmentFiles(attachments)
+      } finally {
+        resetNativeDropOverlay()
+      }
+    }
+
+    const DROP_TITLE_ZH = '图片/文件拖动到此处即可添加'
+    const DROP_TITLE_EN = 'Drag images or files here to add them'
+    const FILE_LIMIT_ZH = '文件最大 200MB'
+    const FILE_LIMIT_EN = 'files up to 200MB'
+    let dropOverlayCopyQueued = false
+
+    function resetNativeDropOverlay() {
+      if (typeof window === 'undefined') return
+      const reset = () => {
+        try {
+          let event
+          if (typeof Event === 'function') {
+            event = new Event('dragend')
+          } else if (typeof document !== 'undefined' && typeof document.createEvent === 'function') {
+            event = document.createEvent('Event')
+            event.initEvent('dragend', true, true)
+          }
+          if (event) window.dispatchEvent(event)
+        } catch (error) {
+          // 忽略:仅用于唤醒 DSH 原生 DropOverlay 的复位监听。
+        }
+      }
+      reset()
+      setTimeout(reset, 0)
+      setTimeout(reset, 120)
+    }
+
+    function updateNativeDropOverlayCopy(root = document) {
+      if (!root?.querySelectorAll) return
+      for (const title of root.querySelectorAll('.BInVoG_title')) {
+        const text = String(title.textContent || '').trim()
+        if (text === '图片拖动到此处即可添加') title.textContent = DROP_TITLE_ZH
+        if (text === 'Drag images here to add them') title.textContent = DROP_TITLE_EN
+      }
+      for (const desc of root.querySelectorAll('.BInVoG_desc')) {
+        const text = String(desc.textContent || '').trim()
+        if (!text || text.includes(FILE_LIMIT_ZH) || text.includes(FILE_LIMIT_EN)) continue
+        let next = text.replace(/^最多\s+(.+?)\s*张，每张\s+(.+)$/, `图片最多 $1 张，每张 $2；${FILE_LIMIT_ZH}`)
+        next = next.replace(/^Up to\s+(.+?)\s+images,\s+(.+?)\s+each$/i, `Images: up to $1, $2 each; ${FILE_LIMIT_EN}`)
+        if (next !== text) desc.textContent = next
+      }
+    }
+
+    function scheduleNativeDropOverlayCopy() {
+      if (dropOverlayCopyQueued) return
+      dropOverlayCopyQueued = true
+      const run = () => {
+        dropOverlayCopyQueued = false
+        updateNativeDropOverlayCopy()
+      }
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(run)
+      } else {
+        setTimeout(run, 16)
+      }
+    }
+
+    function mutationTouchesDropOverlay(mutation) {
+      const target = mutation.target
+      if (target?.nodeType === 3) {
+        const parent = target.parentElement
+        if (parent?.closest?.('.BInVoG_mask')) return true
+        const text = String(target.textContent || '')
+        return text.includes('图片拖动到此处') || text.includes('Drag images here')
+      }
+      if (target?.nodeType === 1 && target.closest?.('.BInVoG_mask, .BInVoG_title, .BInVoG_desc')) return true
+      for (const node of mutation.addedNodes || []) {
+        if (node?.nodeType !== 1) continue
+        if (node.matches?.('.BInVoG_mask, .BInVoG_title, .BInVoG_desc')) return true
+        if (node.querySelector?.('.BInVoG_mask, .BInVoG_title, .BInVoG_desc')) return true
+      }
+      return false
+    }
+
+    function installNativeDropOverlayFixups() {
+      if (typeof document === 'undefined' || !document.documentElement) return
+      if (document.__csNativeDropOverlayFixups) return
+      document.__csNativeDropOverlayFixups = true
+      updateNativeDropOverlayCopy()
+      const observer = new MutationObserver((mutations) => {
+        if (Array.from(mutations || []).some(mutationTouchesDropOverlay)) scheduleNativeDropOverlayCopy()
+      })
+      observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true })
+      document.addEventListener('drop', (event) => {
+        if (hasFileTransfer(event)) resetNativeDropOverlay()
+      }, true)
+      window.addEventListener('blur', resetNativeDropOverlay)
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') resetNativeDropOverlay()
+      })
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') resetNativeDropOverlay()
+      }, true)
     }
 
     function insertAttachmentHint(name, attachmentId) {
@@ -959,6 +1064,7 @@ window.__ModuleLoader__.load({
 
     function mountAttachmentCapture() {
       if (typeof document === 'undefined' || !document.documentElement?.dataset) return
+      installNativeDropOverlayFixups()
       if (document.documentElement.dataset.csAttachCapture === '1') return
       document.documentElement.dataset.csAttachCapture = '1'
       document.addEventListener('paste', handlePasteAttachments, true)

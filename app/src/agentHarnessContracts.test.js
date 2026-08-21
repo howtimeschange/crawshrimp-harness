@@ -190,6 +190,27 @@ test('DSH attachment bridge leaves images to the native composer rail', () => {
   assert.match(worker, /MODEL_IMAGE_MEDIA_TYPES\.has\(mediaType\)/)
 })
 
+test('DSH attachment bridge resets and retitles the native file-drop overlay', () => {
+  const slots = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-slots/lib/client.js'), 'utf8')
+  const dropHandler = slots.split('function handleDropAttachments(event)', 2)[1]?.split('\n    const DROP_TITLE_ZH', 1)[0] || ''
+
+  assert.match(slots, /function hasFileTransfer\(event\)/)
+  assert.doesNotMatch(dropHandler, /inComposer\(event\.target\)/)
+  assert.match(slots, /function resetNativeDropOverlay\(\)/)
+  assert.match(slots, /event = new Event\(['"]dragend['"]\)/)
+  assert.match(slots, /document\.createEvent\(['"]Event['"]\)/)
+  assert.match(slots, /window\.dispatchEvent\(event\)/)
+  assert.match(slots, /function installNativeDropOverlayFixups\(\)/)
+  assert.match(slots, /document\.addEventListener\(['"]drop['"],\s*\(event\) => \{[\s\S]*?hasFileTransfer\(event\)[\s\S]*?resetNativeDropOverlay\(\)[\s\S]*?\},\s*true\)/)
+  assert.match(slots, /try \{[\s\S]*?postAttachmentFiles\(attachments\)[\s\S]*?\} finally \{[\s\S]*?resetNativeDropOverlay\(\)[\s\S]*?\}/)
+  assert.match(slots, /const DROP_TITLE_ZH = ['"]图片\/文件拖动到此处即可添加['"]/)
+  assert.match(slots, /const DROP_TITLE_EN = ['"]Drag images or files here to add them['"]/)
+  assert.match(slots, /const FILE_LIMIT_ZH = ['"]文件最大 200MB['"]/)
+  assert.match(slots, /Images: up to \$1, \$2 each; \$\{FILE_LIMIT_EN\}/)
+  assert.match(slots, /mutationTouchesDropOverlay/)
+  assert.match(slots, /installNativeDropOverlayFixups\(\)[\s\S]*?if \(document\.documentElement\.dataset\.csAttachCapture === ['"]1['"]\) return/)
+})
+
 test('DSH Crawshrimp brand slots replace the official DeepSeek Harness wordmark', () => {
   const slots = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-slots/lib/client.js'), 'utf8')
   const slotsPackage = JSON.parse(readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-slots/package.json'), 'utf8'))
