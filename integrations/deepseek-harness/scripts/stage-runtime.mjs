@@ -21,6 +21,7 @@ import {
   shouldSkipBootCheck,
   stageTargetKey,
 } from './stage-runtime-platform.mjs'
+import { patchRuntimeDependencies } from './patch-runtime-dependencies.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const sourceRoot = resolve(here, '..')
@@ -171,7 +172,7 @@ function assertNativeRuntimePackages() {
 
 const sourceAssetsHash = ['crawshrimp-launcher', 'crawshrimp-slots', 'crawshrimp-product-bridge', 'worker', 'skills', 'web-cordis.yml']
   .map((p) => hashTree(join(sourceRoot, p)))
-  .join(':') + `:${hashOf(fileURLToPath(import.meta.url))}:${hashOf(join(here, 'stage-runtime-platform.mjs'))}:${STAGE_PRUNE_VERSION}`
+  .join(':') + `:${hashOf(fileURLToPath(import.meta.url))}:${hashOf(join(here, 'stage-runtime-platform.mjs'))}:${hashOf(join(here, 'patch-runtime-dependencies.mjs'))}:${STAGE_PRUNE_VERSION}`
 const lockHash = hashOf(join(sourceRoot, 'package-lock.json')) + '|' + sourceAssetsHash + '|target:' + stageTargetId
 const markerFile = join(stageRoot, '.staged-lock-hash')
 const upToDate = !force && existsSync(markerFile) && readFileSync(markerFile, 'utf8').trim() === lockHash
@@ -201,6 +202,7 @@ if (!upToDate) {
       copyDir(src, join(stageRoot, dir))
     }
   }
+  patchRuntimeDependencies(stageRoot)
   // CLI 技能包本体(项目根 skills/cli 的 submodule 内容)随安装包分发:
   // SKILL.md 内路径 skills/cli/<name> 在发布态即 Resources/deepseek-harness/skills/cli
   const cliSource = join(repoRoot, 'skills', 'cli')

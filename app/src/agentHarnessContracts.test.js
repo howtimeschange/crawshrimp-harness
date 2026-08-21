@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict')
-const { readFileSync } = require('node:fs')
+const { existsSync, readFileSync } = require('node:fs')
 const { resolve } = require('node:path')
 const test = require('node:test')
 
@@ -10,6 +10,36 @@ test('worker absolute timeout stops the runtime before reporting failure', () =>
   const timeoutBody = source.match(/timer:\s*setTimeout\(\(\)\s*=>\s*\{([\s\S]*?)\},\s*RUN_ABSOLUTE_TIMEOUT_MS\)/)?.[1] || ''
   assert.match(timeoutBody, /stopRuntime\(\)/)
   assert.match(timeoutBody, /RUN_TIMEOUT/)
+})
+
+test('worker keeps every mutable DSH runtime path under CRAWSHRIMP_DATA', () => {
+  const source = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/worker.mjs'), 'utf8')
+  assert.match(source, /DSH_HOME:\s*process\.env\.DSH_HOME\s*\|\|\s*`\$\{state\.dataRoot\}\/agent\/dsh-home`/)
+  assert.match(source, /CRAWSHRIMP_STORAGE_ROOT:\s*process\.env\.CRAWSHRIMP_STORAGE_ROOT\s*\|\|\s*`\$\{state\.dataRoot\}\/agent\/storages`/)
+  assert.match(source, /CRAWSHRIMP_SESSION_ROOT:\s*process\.env\.CRAWSHRIMP_SESSION_ROOT\s*\|\|\s*`\$\{state\.dataRoot\}\/agent\/harness-sessions`/)
+})
+
+test('staged DSH workspace status probes real read and atomic write access', () => {
+  const patcherPath = resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs')
+  assert.equal(existsSync(patcherPath), true, 'runtime dependency patcher must be packaged from source')
+  const patcher = readFileSync(patcherPath, 'utf8')
+  const staging = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/stage-runtime.mjs'), 'utf8')
+  assert.match(patcher, /probeWorkspaceDirectoryAccess/)
+  assert.match(patcher, /await readdir\(directory\)/)
+  assert.match(patcher, /await handle\.sync\(\)/)
+  assert.match(patcher, /await rename\(temporary, renamed\)/)
+  assert.match(patcher, /await unlink\(renamed\)/)
+  assert.match(patcher, /async create\(path, title\)[\s\S]*?await probeWorkspaceDirectoryAccess\(canonical\)/)
+  assert.match(patcher, /async status\(\)[\s\S]*?await probeWorkspaceDirectoryAccess\(this\.record\.path\)/)
+  assert.match(staging, /patchRuntimeDependencies\(stageRoot\)/)
+})
+
+test('staged DSH runtime removes the upstream internal testing welcome notice', () => {
+  const patcher = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs'), 'utf8')
+  assert.match(patcher, /WELCOME_NOTICE_PATCH_MARKER/)
+  assert.match(patcher, /dsh-client-ui-settings-models/)
+  assert.match(patcher, /id: "welcome-notice"/)
+  assert.match(patcher, /welcome notice onboarding registration/)
 })
 
 test('product bridge leases the matching DSH session and honors its approval policy', () => {
