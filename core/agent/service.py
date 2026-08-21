@@ -33,7 +33,6 @@ from core.config import load_config
 
 APPROVAL_WAIT_SECONDS = 15 * 60
 APPROVAL_MAX_CONCURRENCY = 4
-MCP_CONTEXT_ACQUIRE_TIMEOUT_SECONDS = 25
 MCP_CONTEXT_LEASE_MAX_SECONDS = 30 * 60
 
 # 审批桥最长会阻塞十五分钟，绝不能占用 asyncio 默认线程池（否则普通
@@ -439,13 +438,12 @@ class AgentService:
         self.shadow_runs: dict[str, dict] = {}
         # MCP client 是 runtime 级单连接，但 DSH Web 可并行运行多个会话。
         # 这里保存 runtime session → run 的真值；产品桥在每次 MCP 工具调用
-        # 外层获取互斥 lease，避免一个会话覆盖另一个会话的审批/grant 上下文。
+        # 外层获取会话 lease，并通过请求级 context 绑定 run/grant，避免跨会话串线。
         self.active_runs_by_runtime: dict[str, dict] = {}
         self.grants_by_run: dict[str, dict] = {}
-        self._mcp_context_lock = asyncio.Lock()
         self._runtime_mutation_lock = asyncio.Lock()
-        self._mcp_context_lease_id = ""
-        self._mcp_lease_expiry_task: Optional[asyncio.Task] = None
+        self._mcp_context_leases: dict[str, dict] = {}
+        self._mcp_lease_expiry_tasks: dict[str, asyncio.Task] = {}
 
         self._mcp_app = None
         self._mcp_uvicorn = None
@@ -492,6 +490,9 @@ class AgentService:
         if expected_run_id and str(current.get("run_id") or "") != expected_run_id:
             return
         removed = self.active_runs_by_runtime.pop(runtime_id, None) or {}
+        for lease_id, lease in list(self._mcp_context_leases.items()):
+            if lease.get("runtime_session_id") == runtime_id:
+                self.release_mcp_context(lease_id)
         self.grants_by_run.pop(str(removed.get("run_id") or ""), None)
 
     def active_run_for_session(self, session_id: str) -> Optional[dict]:
@@ -507,44 +508,34 @@ class AgentService:
 
         DSH 0.1.0-rc.6 的 MCP transport 是 runtime 级单连接，HTTP 请求本身
         不携带 agent/session。crawshrimp-product-bridge 能在 tools/execute 外层
-        读取 exec.agent.id，因此先通过本 lease 串行化并激活对应 run，再发 MCP
-        请求；finally 释放。未知会话安全失败，不回退到“最近一个 run”。
+        读取 exec.agent.id，因此先签发一个会话 lease，再由每个 MCP HTTP 请求
+        用该 lease 绑定对应 run。未知会话安全失败，不回退到“最近一个 run”。
         """
-        try:
-            await asyncio.wait_for(
-                self._mcp_context_lock.acquire(),
-                timeout=MCP_CONTEXT_ACQUIRE_TIMEOUT_SECONDS,
-            )
-        except asyncio.TimeoutError as exc:
-            raise TimeoutError("MCP context busy; previous tool call did not release its lease") from exc
-        try:
-            runtime_id = str(runtime_session_id or "").strip()
-            run = self.active_runs_by_runtime.get(runtime_id)
-            if not run:
-                raise LookupError(f"runtime session 没有 active run: {runtime_id}")
-            lease_id = f"lease-{uuid.uuid4().hex[:16]}"
-            self._mcp_context_lease_id = lease_id
-            self._mcp_lease_expiry_task = asyncio.create_task(
-                self._expire_mcp_context_lease(lease_id)
-            )
-            mcp_gateway.ctx.active_run = dict(run)
-            mcp_gateway.ctx.grant = self.grants_by_run.get(str(run.get("run_id") or ""))
-            mcp_gateway.ctx.current_tool_call_id = (
-                f"{run.get('run_id')}:{str(call_id).strip()}" if str(call_id or "").strip() else ""
-            )
-            return {
-                "lease_id": lease_id,
-                "run_id": run.get("run_id"),
-                "session_id": run.get("session_id"),
-                "call_id": str(call_id or ""),
-            }
-        except Exception:
-            self._mcp_context_lease_id = ""
-            mcp_gateway.ctx.active_run = None
-            mcp_gateway.ctx.grant = None
-            mcp_gateway.ctx.current_tool_call_id = ""
-            self._mcp_context_lock.release()
-            raise
+        runtime_id = str(runtime_session_id or "").strip()
+        run = self.active_runs_by_runtime.get(runtime_id)
+        if not run:
+            raise LookupError(f"runtime session 没有 active run: {runtime_id}")
+        run_id = str(run.get("run_id") or "").strip()
+        call_text = str(call_id or "").strip()
+        lease_id = f"lease-{uuid.uuid4().hex[:16]}"
+        lease = {
+            "lease_id": lease_id,
+            "runtime_session_id": runtime_id,
+            "active_run": dict(run),
+            "grant": self.grants_by_run.get(run_id),
+            "current_tool_call_id": f"{run_id}:{call_text}" if run_id and call_text else "",
+            "created_at": _now_iso(),
+        }
+        self._mcp_context_leases[lease_id] = lease
+        self._mcp_lease_expiry_tasks[lease_id] = asyncio.create_task(
+            self._expire_mcp_context_lease(lease_id)
+        )
+        return {
+            "lease_id": lease_id,
+            "run_id": run.get("run_id"),
+            "session_id": run.get("session_id"),
+            "call_id": call_text,
+        }
 
     async def _expire_mcp_context_lease(self, lease_id: str) -> None:
         try:
@@ -555,17 +546,20 @@ class AgentService:
 
     def release_mcp_context(self, lease_id: str) -> bool:
         supplied = str(lease_id or "").strip()
-        if not supplied or supplied != self._mcp_context_lease_id:
+        if not supplied:
             return False
-        active_run = mcp_gateway.ctx.active_run or {}
+        lease = self._mcp_context_leases.pop(supplied, None)
+        if lease is None:
+            return False
+        active_run = lease.get("active_run") or {}
         run_id = str(active_run.get("run_id") or "").strip()
-        if run_id and mcp_gateway.ctx.grant:
+        grant = lease.get("grant")
+        if run_id and grant:
             # MCP 工具会在原生审批通过后原地扩充 grant.toolset_json。
             # 每次调用使用独立 lease，因此释放前必须把新权限写回 run 级真值，
             # 否则下一次 acquire 会恢复批准前快照并重复弹审批卡。
-            self.grants_by_run[run_id] = dict(mcp_gateway.ctx.grant)
-        expiry_task = self._mcp_lease_expiry_task
-        self._mcp_lease_expiry_task = None
+            self.grants_by_run[run_id] = dict(grant)
+        expiry_task = self._mcp_lease_expiry_tasks.pop(supplied, None)
         if expiry_task and not expiry_task.done():
             try:
                 current = asyncio.current_task()
@@ -573,13 +567,16 @@ class AgentService:
                 current = None
             if expiry_task is not current:
                 expiry_task.cancel()
-        self._mcp_context_lease_id = ""
-        mcp_gateway.ctx.active_run = None
-        mcp_gateway.ctx.grant = None
-        mcp_gateway.ctx.current_tool_call_id = ""
-        if self._mcp_context_lock.locked():
-            self._mcp_context_lock.release()
         return True
+
+    def bind_mcp_context_for_request(self, lease_id: str):
+        lease = self._mcp_context_leases.get(str(lease_id or "").strip())
+        if lease is None:
+            raise LookupError("Unknown MCP context lease")
+        return mcp_gateway.bind_tool_context(lease)
+
+    def reset_mcp_context_for_request(self, token) -> None:
+        mcp_gateway.reset_tool_context(token)
 
     def _emit_tool_event_sync(self, event_type: str, payload: dict) -> None:
         """工具执行中同步广播产品事件(线程安全:投递到主事件循环)。"""
@@ -686,6 +683,8 @@ class AgentService:
             lambda: self.runtime_token,
             context_acquirer=self.acquire_mcp_context,
             context_releaser=self.release_mcp_context,
+            context_binder=self.bind_mcp_context_for_request,
+            context_resetter=self.reset_mcp_context_for_request,
         )
         config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
         self._mcp_uvicorn = uvicorn.Server(config)
@@ -722,10 +721,10 @@ class AgentService:
             if not fut.done():
                 fut.set_result("canceled")
         self.approval_waits.clear()
+        for lease_id in list(self._mcp_context_leases):
+            self.release_mcp_context(lease_id)
         self.active_runs_by_runtime.clear()
         self.grants_by_run.clear()
-        if self._mcp_context_lease_id:
-            self.release_mcp_context(self._mcp_context_lease_id)
 
     def _recover_on_startup(self) -> None:
         for run in db.list_nonterminal_runs():

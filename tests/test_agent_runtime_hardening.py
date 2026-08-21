@@ -460,7 +460,7 @@ def test_worker_subprocess_stream_limit_handles_vision_frames(tmp_path, monkeypa
     asyncio.run(scenario())
 
 
-def test_mcp_context_lease_serializes_sessions_and_restores_matching_run():
+def test_mcp_context_leases_bind_parallel_sessions_independently():
     async def scenario():
         service = AgentService()
         run_a = {"run_id": "run-a", "session_id": "session-a", "status": "running"}
@@ -471,22 +471,26 @@ def test_mcp_context_lease_serializes_sessions_and_restores_matching_run():
         service.register_run_context("runtime-b", run_b, grant_b)
 
         lease_a = await service.acquire_mcp_context("runtime-a", "call-a")
-        assert mcp_gateway.ctx.active_run["run_id"] == "run-a"
-        assert mcp_gateway.ctx.grant["tab_id"] == "tab-a"
-        assert mcp_gateway.ctx.current_tool_call_id == "run-a:call-a"
+        lease_b = await service.acquire_mcp_context("runtime-b", "call-b")
 
-        waiting = asyncio.create_task(service.acquire_mcp_context("runtime-b", "call-b"))
-        await asyncio.sleep(0)
-        assert not waiting.done()
+        token_a = service.bind_mcp_context_for_request(lease_a["lease_id"])
+        try:
+            assert mcp_gateway.ctx.active_run["run_id"] == "run-a"
+            assert mcp_gateway.ctx.grant["tab_id"] == "tab-a"
+            assert mcp_gateway.ctx.current_tool_call_id == "run-a:call-a"
+        finally:
+            service.reset_mcp_context_for_request(token_a)
+
+        token_b = service.bind_mcp_context_for_request(lease_b["lease_id"])
+        try:
+            assert mcp_gateway.ctx.active_run["run_id"] == "run-b"
+            assert mcp_gateway.ctx.grant["tab_id"] == "tab-b"
+            assert mcp_gateway.ctx.current_tool_call_id == "run-b:call-b"
+        finally:
+            service.reset_mcp_context_for_request(token_b)
 
         assert service.release_mcp_context(lease_a["lease_id"])
-        lease_b = await asyncio.wait_for(waiting, timeout=1)
-        assert mcp_gateway.ctx.active_run["run_id"] == "run-b"
-        assert mcp_gateway.ctx.grant["tab_id"] == "tab-b"
         assert service.release_mcp_context(lease_b["lease_id"])
-        assert mcp_gateway.ctx.active_run is None
-        assert mcp_gateway.ctx.grant is None
-        assert mcp_gateway.ctx.current_tool_call_id == ""
 
     asyncio.run(scenario())
 
@@ -503,11 +507,19 @@ def test_mcp_context_release_persists_approved_toolset_across_leases():
         service.register_run_context("runtime-approved", run, grant)
 
         first = await service.acquire_mcp_context("runtime-approved", "call-one")
-        mcp_gateway.ctx.grant["toolset_json"] = json.dumps(["act"])
+        token = service.bind_mcp_context_for_request(first["lease_id"])
+        try:
+            mcp_gateway.ctx.grant = dict(mcp_gateway.ctx.grant or {}, toolset_json=json.dumps(["act"]))
+        finally:
+            service.reset_mcp_context_for_request(token)
         assert service.release_mcp_context(first["lease_id"])
 
         second = await service.acquire_mcp_context("runtime-approved", "call-two")
-        assert json.loads(mcp_gateway.ctx.grant["toolset_json"]) == ["act"]
+        token = service.bind_mcp_context_for_request(second["lease_id"])
+        try:
+            assert json.loads(mcp_gateway.ctx.grant["toolset_json"]) == ["act"]
+        finally:
+            service.reset_mcp_context_for_request(token)
         assert service.release_mcp_context(second["lease_id"])
 
     asyncio.run(scenario())
@@ -557,26 +569,35 @@ def test_plan_is_claimed_before_creating_task_instance(monkeypatch):
         release_create.wait(timeout=2)
         return {"uid": reserved_uid}
 
-    previous_run = mcp_gateway.ctx.active_run
     previous_create = mcp_gateway.ctx.create_task_instance
     previous_start = mcp_gateway.ctx.run_task_instance
-    mcp_gateway.ctx.active_run = {"run_id": "run-race", "session_id": "session-race"}
     mcp_gateway.ctx.create_task_instance = create_instance
     mcp_gateway.ctx.run_task_instance = None
     monkeypatch.setattr(mcp_gateway.db, "get_plan", get_plan)
     monkeypatch.setattr(mcp_gateway.db, "claim_plan", claim_plan, raising=False)
     monkeypatch.setattr(mcp_gateway.db, "update_plan", update_plan)
+
+    def run_with_context():
+        token = mcp_gateway.bind_tool_context({
+            "active_run": {"run_id": "run-race", "session_id": "session-race"},
+            "grant": None,
+            "current_tool_call_id": "",
+        })
+        try:
+            return mcp_gateway.tool_task_run("plan-race")
+        finally:
+            mcp_gateway.reset_tool_context(token)
+
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            first = executor.submit(mcp_gateway.tool_task_run, "plan-race")
+            first = executor.submit(run_with_context)
             assert create_entered.wait(timeout=1)
-            second = executor.submit(mcp_gateway.tool_task_run, "plan-race")
+            second = executor.submit(run_with_context)
             second_result = second.result(timeout=1)
             release_create.set()
             first_result = first.result(timeout=1)
     finally:
         release_create.set()
-        mcp_gateway.ctx.active_run = previous_run
         mcp_gateway.ctx.create_task_instance = previous_create
         mcp_gateway.ctx.run_task_instance = previous_start
 
@@ -654,7 +675,7 @@ def test_unknown_runtime_session_cannot_acquire_mcp_context():
         service = AgentService()
         with pytest.raises(LookupError, match="active run"):
             await service.acquire_mcp_context("missing-runtime", "call-x")
-        assert not service._mcp_context_lock.locked()
+        assert service._mcp_context_leases == {}
 
     asyncio.run(scenario())
 
@@ -667,29 +688,23 @@ def test_mcp_context_lease_expires_if_bridge_never_releases(monkeypatch):
         service = AgentService()
         run = {"run_id": "run-expire", "session_id": "session-expire", "status": "running"}
         service.register_run_context("runtime-expire", run)
-        await service.acquire_mcp_context("runtime-expire", "call-expire")
+        lease = await service.acquire_mcp_context("runtime-expire", "call-expire")
+        token = service.bind_mcp_context_for_request(lease["lease_id"])
+        try:
+            assert mcp_gateway.ctx.active_run["run_id"] == "run-expire"
+        finally:
+            service.reset_mcp_context_for_request(token)
         await asyncio.sleep(0.03)
-        assert service._mcp_context_lease_id == ""
-        assert not service._mcp_context_lock.locked()
-        assert mcp_gateway.ctx.active_run is None
+        assert service._mcp_context_leases == {}
 
     asyncio.run(scenario())
 
 
-def test_mcp_context_acquire_times_out_instead_of_queuing_forever(monkeypatch):
+def test_unknown_mcp_context_lease_cannot_bind_request():
     async def scenario():
-        import core.agent.service as service_module
-
-        monkeypatch.setattr(service_module, "MCP_CONTEXT_ACQUIRE_TIMEOUT_SECONDS", 0.01, raising=False)
         service = AgentService()
-        run = {"run_id": "run-timeout", "session_id": "session-timeout", "status": "running"}
-        service.register_run_context("runtime-timeout", run)
-        await service._mcp_context_lock.acquire()
-        try:
-            with pytest.raises(TimeoutError, match="busy"):
-                await service.acquire_mcp_context("runtime-timeout", "call-timeout")
-        finally:
-            service._mcp_context_lock.release()
+        with pytest.raises(LookupError, match="Unknown MCP context lease"):
+            service.bind_mcp_context_for_request("lease-missing")
 
     asyncio.run(scenario())
 

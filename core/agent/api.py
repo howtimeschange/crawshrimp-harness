@@ -1171,7 +1171,8 @@ async def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
 
 
 def build_agent_mcp_asgi(token_provider, context_acquirer=None,
-                         context_releaser=None) -> Any:
+                         context_releaser=None, context_binder=None,
+                         context_resetter=None) -> Any:
     """构建带 Bearer 鉴权的 MCP ASGI 应用(独立端口服务,SDK session manager 需要自身 lifespan)。
 
     挂在 FastAPI 子路由上时 MCP SDK 2.0 的 lifespan 不会运行(Task group 未初始化),
@@ -1221,6 +1222,23 @@ def build_agent_mcp_asgi(token_provider, context_acquirer=None,
                 if not released:
                     return JSONResponse({"detail": "Unknown context lease"}, status_code=409)
                 return JSONResponse({"ok": True, "released": True})
+            context_token = None
+            if path == "/mcp":
+                lease_id = str(request.headers.get("x-crawshrimp-mcp-lease") or "").strip()
+                if lease_id:
+                    if context_binder is None or context_resetter is None:
+                        return JSONResponse({"detail": "Context leasing unavailable"}, status_code=503)
+                    try:
+                        context_token = context_binder(lease_id)
+                    except LookupError as exc:
+                        return JSONResponse({"detail": str(exc)}, status_code=409)
+                    except Exception as exc:  # noqa: BLE001
+                        return JSONResponse({"detail": str(exc)}, status_code=500)
+                try:
+                    return await call_next(request)
+                finally:
+                    if context_token is not None:
+                        context_resetter(context_token)
             return await call_next(request)
 
     return McpBearerAuth(inner)

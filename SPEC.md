@@ -237,9 +237,9 @@ GET  /settings/chrome-tabs
 - DSH JSONL 是模型上下文真值；SQLite 是产品 session/run/message/event/tool/approval/plan/grant/revision 真值。
 - DSH Web 原生会话在首个 `turn/start` 时建立产品影子 session/run。
 - 后端维护 `runtime_session_id → active run` 和 `run_id → grant`。
-- MCP transport 不携带 session；product bridge 必须在每次 Crawshrimp MCP tool execute 外层按 `exec.agent.id` 获取 context lease，并在 `finally` 释放。
+- MCP transport 不携带 session；product bridge 必须在每次 Crawshrimp MCP tool execute 外层按 `exec.agent.id` 获取 context lease，将 lease 注入对应 MCP HTTP 请求，并在 `finally` 释放。
 - context lease 释放前必须把工具调用原地更新的 grant 写回 `run_id → grant` 真值，防止下一次 lease 恢复审批前快照。
-- context 不存在或 lease 冲突时安全失败，禁止回退到最后活动 run。
+- context 不存在或 lease 无效时安全失败，禁止回退到最后活动 run。
 
 ### 11.3 UI
 

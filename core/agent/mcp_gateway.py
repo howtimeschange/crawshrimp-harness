@@ -2,12 +2,13 @@
 
 - 官方 MCP Python SDK 2.0(MCPServer + streamable_http_app,stateless HTTP + JSON);
 - 鉴权:FastAPI 中间件校验 Bearer runtime token(见 api.py),本模块只提供工具;
-- 工具归属:DSH session 对应的 Active Run；产品桥按调用获取互斥 lease 后注入;
+- 工具归属:DSH session 对应的 Active Run；产品桥按调用获取请求级 lease 后注入;
 - 返回封装统一 {ok, status, data, error, evidence}(窄 spec §13.4)。
 """
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import copy
 import json
 import re
@@ -54,12 +55,24 @@ def _failed(error_code: str, message: str) -> dict:
             "evidence": {"task_instance_uid": None, "artifact_ids": []}}
 
 
+_TOOL_CONTEXT_CTX: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "crawshrimp_mcp_tool_context",
+    default=None,
+)
+
+
+def _ensure_tool_context() -> dict:
+    current = _TOOL_CONTEXT_CTX.get()
+    if current is None:
+        current = {"active_run": None, "grant": None, "current_tool_call_id": ""}
+        _TOOL_CONTEXT_CTX.set(current)
+    return current
+
+
 class ToolContext:
     """工具执行上下文(由 service 注入)。"""
 
     def __init__(self) -> None:
-        self.active_run: Optional[dict] = None          # run 行
-        self.grant: Optional[dict] = None               # 能力授权行
         self.workspace_root: Optional[Path] = None
         self.create_task_instance = None                # (adapter_id, task_id, title, params) -> row
         self.run_task_instance = None                   # async (uid, params, tab_id) -> None
@@ -72,13 +85,48 @@ class ToolContext:
         self.record_tool_call = None                    # (run_id, dsh_call_id, name, args) -> tool_call row
         self.finish_tool_call = None                    # (tool_call_id, result_json, status, ...) -> None
         self.emit_event = None                          # (event_type, payload) -> None
-        self.current_tool_call_id = ""                 # 当前 lease 的 run_id:dsh_call_id
         # 执行计划的秘密参数只驻留进程内；SQLite 仅保存结构化脱敏副本与原文哈希。
         # 进程重启后含秘密的短时计划安全失效，不从磁盘恢复明文。
         self.plan_params: dict[str, dict] = {}
 
+    @property
+    def active_run(self) -> Optional[dict]:
+        current = _TOOL_CONTEXT_CTX.get()
+        return None if current is None else current.get("active_run")
+
+    @active_run.setter
+    def active_run(self, value: Optional[dict]) -> None:
+        _ensure_tool_context()["active_run"] = value
+
+    @property
+    def grant(self) -> Optional[dict]:
+        current = _TOOL_CONTEXT_CTX.get()
+        return None if current is None else current.get("grant")
+
+    @grant.setter
+    def grant(self, value: Optional[dict]) -> None:
+        _ensure_tool_context()["grant"] = value
+
+    @property
+    def current_tool_call_id(self) -> str:
+        current = _TOOL_CONTEXT_CTX.get()
+        return "" if current is None else str(current.get("current_tool_call_id") or "")
+
+    @current_tool_call_id.setter
+    def current_tool_call_id(self, value: str) -> None:
+        _ensure_tool_context()["current_tool_call_id"] = str(value or "")
+
 
 ctx = ToolContext()
+
+
+def bind_tool_context(context: dict) -> contextvars.Token:
+    """Bind one MCP HTTP request to its run context without touching other requests."""
+    return _TOOL_CONTEXT_CTX.set(context)
+
+
+def reset_tool_context(token: contextvars.Token) -> None:
+    _TOOL_CONTEXT_CTX.reset(token)
 
 
 def _broadcast_media_artifacts(paths, media_kind: str) -> None:

@@ -2,11 +2,44 @@
 // 接入 DSH 原生审批交互 —— ctx.approval.request 触发 approval/asked 会话事件,
 // apiproxy 建立 pending 并经原生 UI 呈现审批卡,用户决策后回传结果。
 // FastAPI 侧经 HTTP 调用本插件的 /api/crawshrimp/approval/request。
+import { AsyncLocalStorage } from 'node:async_hooks'
+
 export const name = 'crawshrimp-product-bridge'
 
 export const inject = ['webServer', 'approval', 'agents', 'tools']
 
 const MCP_TOOL_PREFIX = 'mcp__crawshrimp__'
+const MCP_LEASE_HEADER = 'x-crawshrimp-mcp-lease'
+const mcpLeaseStorage = new AsyncLocalStorage()
+let fetchBridgeInstalled = false
+
+function mcpUrlMatches(input) {
+  const raw = String(process.env.CRAWSHRIMP_MCP_URL || '').trim()
+  if (!raw) return false
+  try {
+    const target = new URL(raw)
+    const inputUrl = new URL(
+      typeof input === 'string' || input instanceof URL ? String(input) : String(input?.url || ''),
+    )
+    return inputUrl.origin === target.origin && inputUrl.pathname === target.pathname
+  } catch {
+    return false
+  }
+}
+
+function installMcpLeaseFetchBridge(ctx) {
+  if (fetchBridgeInstalled || typeof globalThis.fetch !== 'function') return
+  fetchBridgeInstalled = true
+  const originalFetch = globalThis.fetch.bind(globalThis)
+  globalThis.fetch = async (input, init) => {
+    const lease = mcpLeaseStorage.getStore()
+    if (!lease?.lease_id || !mcpUrlMatches(input)) return originalFetch(input, init)
+    const headers = new Headers(init?.headers || input?.headers || {})
+    headers.set(MCP_LEASE_HEADER, String(lease.lease_id))
+    return originalFetch(input, { ...(init || {}), headers })
+  }
+  ctx.logger?.info?.('Crawshrimp MCP per-call lease fetch bridge installed')
+}
 
 async function postMcpContext(action, payload) {
   const raw = String(process.env.CRAWSHRIMP_MCP_URL || '').trim()
@@ -67,9 +100,11 @@ function findLiveAgent(ctx, sessionId) {
 }
 
 export function apply(ctx) {
+  installMcpLeaseFetchBridge(ctx)
+
   // DSH 的 MCP transport 是 runtime 级单连接，请求上没有 session header。
   // tools/execute 的 exec.agent.id 是可靠会话身份：先租用后端对应 run 上下文，
-  // 再执行真实 MCP HTTP 调用，finally 释放。后端 lease 同时提供跨会话互斥。
+  // 再执行真实 MCP HTTP 调用，finally 释放。lease 通过 fetch bridge 仅绑定本次调用链。
   ctx.on('tools/execute', async (exec, next) => {
     if (!String(exec?.name || '').startsWith(MCP_TOOL_PREFIX)) return next()
     const runtimeSessionId = String(exec.agent?.id || '')
@@ -79,7 +114,7 @@ export function apply(ctx) {
       call_id: String(exec.callId || ''),
     })
     try {
-      return await next()
+      return await mcpLeaseStorage.run(lease, async () => await next())
     } finally {
       try {
         await postMcpContext('release', { lease_id: lease.lease_id })

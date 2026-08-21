@@ -76,7 +76,7 @@ flowchart LR
 | 提交、上传、发布、支付、删除等点击 | 原生审批卡 |
 | 简单下载、找图、找款 | 自动批准，审计保留 |
 
-审批等待使用独立有界 executor，不占用 asyncio 默认线程池。DSH Web 多会话通过 runtime-session → run 映射和 MCP context lease 绑定，未知会话不会回退到“最近一次运行”。审批通过后更新的 grant 会在 lease 释放前写回 run 级缓存，因此下一次工具调用不会恢复旧授权。跨会话审批提示以 SQLite pending 列表定时校准，终态、后端重启或 SSE 中断都不会留下幽灵卡片。
+审批等待使用独立有界 executor，不占用 asyncio 默认线程池。DSH Web 多会话通过 runtime-session → run 映射和请求级 MCP context lease 绑定，未知会话不会回退到“最近一次运行”，并行会话不会共享一个全局工具上下文。审批通过后更新的 grant 会在 lease 释放前写回 run 级缓存，因此下一次工具调用不会恢复旧授权。跨会话审批提示以 SQLite pending 列表定时校准，终态、后端重启或 SSE 中断都不会留下幽灵卡片。
 
 ## Adapter 创作与发布
 
