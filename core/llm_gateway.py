@@ -29,10 +29,12 @@ DEEPSEEK_OFFICIAL_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_OFFICIAL_MODELS = (
     "deepseek-official-v4-flash",
     "deepseek-official-v4-pro",
+    "deepseek-official-v4-flash-vision-exp",
 )
 _DEEPSEEK_OFFICIAL_REAL_MODELS = {
     "deepseek-official-v4-flash": "deepseek-v4-flash",
     "deepseek-official-v4-pro": "deepseek-v4-pro",
+    "deepseek-official-v4-flash-vision-exp": "deepseek-v4-flash-vision-exp",
 }
 
 

@@ -19,6 +19,7 @@ export const LLM_DEFAULTS = Object.freeze({
 export const LLM_MODELS = Object.freeze([
   { value: 'deepseek-official-v4-flash', label: 'DeepSeek 官方 · V4 Flash' },
   { value: 'deepseek-official-v4-pro', label: 'DeepSeek 官方 · V4 Pro' },
+  { value: 'deepseek-official-v4-flash-vision-exp', label: 'DeepSeek 官方 · V4 Flash Vision Exp' },
   { value: 'gpt-5.6-sol', label: '海外 · GPT-5.6 Sol' },
   { value: 'gpt-5.6-terra', label: '海外 · GPT-5.6 Terra' },
   { value: 'gpt-5.6-luna', label: '海外 · GPT-5.6 Luna' },
@@ -38,6 +39,7 @@ export const LLM_MODELS = Object.freeze([
 export const DEEPSEEK_OFFICIAL_MODELS_UI = Object.freeze([
   { value: 'deepseek-official-v4-flash', label: 'DeepSeek 官方 · V4 Flash' },
   { value: 'deepseek-official-v4-pro', label: 'DeepSeek 官方 · V4 Pro' },
+  { value: 'deepseek-official-v4-flash-vision-exp', label: 'DeepSeek 官方 · V4 Flash Vision Exp' },
 ])
 
 export const LLM_PANEL_FIELDS = Object.freeze([

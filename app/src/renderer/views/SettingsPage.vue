@@ -604,7 +604,7 @@
                 </section>
                 <section class="llm-provider-card ds">
                   <h4 class="llm-provider-title">DeepSeek 官方 · 原生接入</h4>
-                  <p class="llm-provider-sub">直达 api.deepseek.com,不经过森马网关;模型 deepseek-v4-flash / deepseek-v4-pro。</p>
+                  <p class="llm-provider-sub">直达 api.deepseek.com,不经过森马网关;官方 Key 覆盖文本与视觉模型。</p>
                   <div class="field">
                     <label>DeepSeek 官方 API Key</label>
                     <input

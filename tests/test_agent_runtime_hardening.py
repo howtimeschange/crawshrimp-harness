@@ -1197,11 +1197,13 @@ def test_dsh_model_catalog_declares_vision_without_widening_text_only_models():
     from core.agent.cordis_config import build_cordis_yaml, model_capabilities
 
     assert model_capabilities("gpt-5.5")["input_modalities"] == ["text", "image"]
+    assert model_capabilities("deepseek-official-v4-flash-vision-exp")["input_modalities"] == ["text", "image"]
     assert "input_modalities" not in model_capabilities("deepseek-v4-pro")
 
     profile = build_cordis_yaml({"ai": {"llm": {"default_model": "gpt-5.5"}}})
     assert re.search(r"id: 'gpt-5\.5'[\s\S]*input: \['text', 'image'\]", profile)
     assert re.search(r"id: 'deepseek-v4-pro'[\s\S]*input: \['text'\]", profile)
+    assert re.search(r"id: 'deepseek-v4-flash-vision-exp'[\s\S]*input: \['text', 'image'\]", profile)
 
 
 def test_dsh_native_deepseek_route_is_hidden_in_favor_of_crawshrimp_route():
@@ -1214,6 +1216,19 @@ def test_dsh_native_deepseek_route_is_hidden_in_favor_of_crawshrimp_route():
     assert "provider: crawshrimp-deepseek-official" in default_block
     assert "provider: deepseek-official" not in default_block
     assert "disabled: true" in native_block
+
+
+def test_dsh_deepseek_official_models_expose_reasoning_efforts():
+    from core.agent.cordis_config import build_cordis_yaml
+
+    profile = build_cordis_yaml({"ai": {"llm": {"default_model": "deepseek-official-v4-flash"}}})
+    official_block = profile.split("providers['crawshrimp-deepseek-official']", 1)[1].split("if (hasGatewayKey)", 1)[0]
+    efforts = "reasoningEfforts: { off: null, low: 'low', high: 'high', max: 'max' }"
+
+    assert "reasoning: 'high'" in official_block
+    assert re.search(r"id: 'deepseek-v4-flash'[\s\S]*" + re.escape(efforts), official_block)
+    assert re.search(r"id: 'deepseek-v4-pro'[\s\S]*" + re.escape(efforts), official_block)
+    assert official_block.count(efforts) == 2
 
 
 def test_agent_default_model_prefers_deepseek_flash_when_key_is_configured(monkeypatch):
@@ -1274,7 +1289,11 @@ def test_agent_models_endpoint_hides_unconfigured_gateway_models(monkeypatch):
 
     model_ids = [item["model_id"] for item in agent_api.list_agent_models()["models"]]
 
-    assert model_ids == ["deepseek-official-v4-flash", "deepseek-official-v4-pro"]
+    assert model_ids == [
+        "deepseek-official-v4-flash",
+        "deepseek-official-v4-pro",
+        "deepseek-official-v4-flash-vision-exp",
+    ]
 
 
 def test_agent_models_endpoint_keeps_official_deepseek_first_when_all_keys_exist(monkeypatch):
@@ -1293,7 +1312,11 @@ def test_agent_models_endpoint_keeps_official_deepseek_first_when_all_keys_exist
 
     model_ids = [item["model_id"] for item in agent_api.list_agent_models()["models"]]
 
-    assert model_ids[:2] == ["deepseek-official-v4-flash", "deepseek-official-v4-pro"]
+    assert model_ids[:3] == [
+        "deepseek-official-v4-flash",
+        "deepseek-official-v4-pro",
+        "deepseek-official-v4-flash-vision-exp",
+    ]
 
 
 def test_agent_start_generation_uses_packaged_web_cordis_without_install_write(tmp_path, monkeypatch):

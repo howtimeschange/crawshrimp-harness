@@ -102,9 +102,11 @@
               apiKeyEnv: 'CRAWSHRIMP_DEEPSEEK_API_KEY',
               api: 'openai-completions',
               baseURL: process.env.CRAWSHRIMP_DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
+              reasoning: 'high',
               models: [
-                { id: 'deepseek-v4-flash', contextWindow: 128000, maxTokens: 8192, input: ['text'] },
-                { id: 'deepseek-v4-pro', contextWindow: 128000, maxTokens: 16384, input: ['text'] },
+                { id: 'deepseek-v4-flash', contextWindow: 128000, maxTokens: 8192, input: ['text'], reasoningEfforts: { off: null, low: 'low', high: 'high', max: 'max' } },
+                { id: 'deepseek-v4-pro', contextWindow: 128000, maxTokens: 16384, input: ['text'], reasoningEfforts: { off: null, low: 'low', high: 'high', max: 'max' } },
+                { id: 'deepseek-v4-flash-vision-exp', contextWindow: 128000, maxTokens: 8192, input: ['text', 'image'] },
               ],
             }
           }
