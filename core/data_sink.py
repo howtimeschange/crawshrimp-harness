@@ -16,7 +16,7 @@ from typing import Any, Iterable, List, Mapping, Optional
 
 from core import runtime_paths
 from core.models import TaskRun, TaskStatus
-from core.windows_acl import WindowsAclError, harden_windows_path
+from core.windows_acl import harden_windows_path
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +52,6 @@ def _harden_db_file_permissions() -> None:
         harden_windows_path(db_path.parent)
         if db_path.exists():
             harden_windows_path(db_path)
-        for candidate in (
-            db_path.with_name(f"{db_path.name}-wal"),
-            db_path.with_name(f"{db_path.name}-shm"),
-            db_path.with_name(f"{db_path.name}-journal"),
-        ):
-            _harden_sqlite_sidecar_permissions(candidate)
         return
     if os.name != "posix":
         return
@@ -68,17 +62,6 @@ def _harden_db_file_permissions() -> None:
             os.chmod(db_path, 0o600)
     except OSError as exc:
         logger.warning("Unable to harden Crawshrimp SQLite permissions: %s", exc)
-
-
-def _harden_sqlite_sidecar_permissions(candidate: Path) -> None:
-    try:
-        if candidate.exists():
-            harden_windows_path(candidate)
-    except FileNotFoundError:
-        return
-    except WindowsAclError as exc:
-        logger.debug("Skipping transient SQLite sidecar ACL hardening for %s: %s", candidate, exc)
-
 
 def _get_conn() -> sqlite3.Connection:
     _harden_db_file_permissions()

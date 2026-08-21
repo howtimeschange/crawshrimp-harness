@@ -285,7 +285,7 @@ class WindowsAclTests(unittest.TestCase):
             atomic_write.assert_called_once()
             harden.assert_called_once_with(root / "api-token")
 
-    def test_sqlite_and_sidecars_receive_windows_dacls(self):
+    def test_sqlite_sidecars_are_skipped_for_windows_db_hardening(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "crawshrimp.db"
             files = [db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm"), Path(f"{db_path}-journal")]
@@ -299,10 +299,10 @@ class WindowsAclTests(unittest.TestCase):
 
         self.assertEqual(
             [call.args[0] for call in harden.call_args_list],
-            [db_path.parent, *files],
+            [db_path.parent, db_path],
         )
 
-    def test_disappearing_sqlite_sidecar_does_not_fail_windows_db_hardening(self):
+    def test_sqlite_sidecar_race_does_not_reach_windows_acl_hardening(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "crawshrimp.db"
             sidecars = [Path(f"{db_path}-wal"), Path(f"{db_path}-shm"), Path(f"{db_path}-journal")]
@@ -319,23 +319,13 @@ class WindowsAclTests(unittest.TestCase):
                     with patch.object(data_sink, "harden_windows_path", side_effect=harden):
                         data_sink._harden_db_file_permissions()
 
-    def test_sqlite_sidecar_acl_failure_is_best_effort_but_main_db_failure_is_strict(self):
+    def test_main_sqlite_db_acl_failure_remains_strict(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "crawshrimp.db"
-            sidecar = Path(f"{db_path}-journal")
             db_path.write_bytes(b"")
-            sidecar.write_bytes(b"")
-
-            def sidecar_failure(path):
-                if Path(path) == sidecar:
-                    raise WindowsAclError("transient sidecar lock")
-                return True
 
             with patch.object(data_sink, "_db_path", return_value=db_path):
                 with patch.object(data_sink.os, "name", "nt"):
-                    with patch.object(data_sink, "harden_windows_path", side_effect=sidecar_failure):
-                        data_sink._harden_db_file_permissions()
-
                     with patch.object(data_sink, "harden_windows_path", side_effect=WindowsAclError("main db denied")):
                         with self.assertRaisesRegex(WindowsAclError, "main db denied"):
                             data_sink._harden_db_file_permissions()
