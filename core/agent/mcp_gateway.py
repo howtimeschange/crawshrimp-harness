@@ -1275,25 +1275,50 @@ def tool_attachment_read(attachment_id: str, max_chars: int = 12000) -> dict:
 
 # ---------- AI 生图 / 生视频工具 ----------
 
-def _agent_image_job(settings) -> dict:
-    """智能体专用生图 job(按需创建,复用参数)。"""
+def _normalize_agent_image_size(size: Any) -> str:
+    value = str(size or "").strip()
+    aliases = {
+        "2k": "2048x2048",
+        "4k": "2880x2880",
+    }
+    return aliases.get(value.lower(), value) or "1024x1024"
+
+
+def _agent_image_job(settings: dict, params: dict) -> dict:
+    """智能体专用生图 job(按本次调用参数创建或刷新)。"""
+    model_key = str(
+        params.get("model")
+        or params.get("model_key")
+        or settings.get("model")
+        or settings.get("model_key")
+        or "gpt-image-2"
+    ).strip() or "gpt-image-2"
+    payload = {
+        "model_key": model_key,
+        "params": params,
+    }
     for job in data_sink.list_ai_image_jobs(200):
         if str(job.get("title") or "") == "智能体生图":
-            return job
-    params = {
-        "size": str(settings.get("size") or "1024x1024"),
-        "output_format": str(settings.get("output_format") or settings.get("response_format") or "png"),
-    }
+            return data_sink.update_ai_image_job(job["job_uid"], payload)
     return data_sink.create_ai_image_job({
         "title": "智能体生图",
-        "model_key": str(settings.get("model_key") or settings.get("model") or "gpt-image-2"),
+        "model_key": model_key,
         "status": "draft",
         "params": params,
     })
 
 
-def tool_image_generate(prompt: str, count: int = 1, size: str = "1024x1024") -> dict:
-    """调用抓虾 AI 生图(1XM):提交提示词,等待生成完成并下载到本地产物目录。"""
+def tool_image_generate(
+    prompt: str,
+    count: int = 1,
+    size: str = "1024x1024",
+    quality: str = "auto",
+    output_format: str = "png",
+    key_tier: str = "",
+    model_key_tier: str = "",
+    model: str = "gpt-image-2",
+) -> dict:
+    """调用抓虾 AI 生图(1XM):支持自定义尺寸/质量与 2K/4K key 档位。"""
     guard = _require_run()
     if guard:
         return guard
@@ -1307,16 +1332,28 @@ def tool_image_generate(prompt: str, count: int = 1, size: str = "1024x1024") ->
         count_n = max(1, min(int(count or 1), 4))
     except (TypeError, ValueError):
         count_n = 1
+    tier = str(model_key_tier or key_tier or "").strip().lower()
+    if tier not in {"2k", "4k"}:
+        tier = ""
+    params = {
+        "size": _normalize_agent_image_size(size),
+        "quality": str(quality or "auto").strip() or "auto",
+        "output_format": str(output_format or "png").strip() or "png",
+    }
+    if tier:
+        params["model_key_tier"] = tier
+    model_text = str(model or "gpt-image-2").strip() or "gpt-image-2"
     try:
         settings = _resolve_one_xm_settings()
     except Exception as exc:  # noqa: BLE001
         return _failed("MISSING_CONFIG", f"AI 生图未配置: {exc}")
     try:
-        job = _agent_image_job(settings)
+        job = _agent_image_job(settings, {**params, "model": model_text})
         job_uid = job["job_uid"]
         result = ai_image_service.generate_images_sync(
             job_uid,
             [{"prompt": prompt_text, "count": count_n}],
+            settings=settings,
             poll_timeout_seconds=900,
         )
     except ai_image_service.MissingModelKeyError as exc:
@@ -1333,6 +1370,11 @@ def tool_image_generate(prompt: str, count: int = 1, size: str = "1024x1024") ->
         "paths": paths,
         "output_dir": result.get("output_dir"),
         "job_uid": result.get("job_uid"),
+        "size": params["size"],
+        "quality": params["quality"],
+        "output_format": params["output_format"],
+        "key_tier": tier or "auto",
+        "model": model_text,
         "message": f"已生成 {len(paths)} 张图片,保存于 {result.get('output_dir')}",
     }, evidence={"artifact_ids": []})
 

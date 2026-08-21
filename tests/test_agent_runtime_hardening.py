@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from core import data_sink
 from core.agent import mcp_gateway
 from core.agent import worker as worker_mod
 from core.agent.service import AgentService, _cleanup_orphan_runtimes, _pick_free_port, _reserve_free_port
@@ -220,6 +221,59 @@ def test_generated_media_events_have_stable_nonempty_ids(tmp_path):
     assert len(ids) == 2
     assert ids[0].startswith("media-")
     assert ids[0] == ids[1]
+
+
+def test_agent_image_generate_passes_free_size_quality_and_4k_key_tier(tmp_path, monkeypatch):
+    monkeypatch.setattr("core.runtime_paths.data_root", lambda: tmp_path)
+    data_sink.init_db()
+    settings = {
+        "base_url": "https://one-xm-proxy.example/v1",
+        "ai.1xm.gpt_image_2k_key": "unit-2k-key",
+        "ai.1xm.gpt_image_4k_key": "unit-4k-key",
+    }
+    captured = {}
+
+    def fake_generate(job_uid, prompts, **kwargs):
+        job = data_sink.get_ai_image_job(job_uid)
+        captured["job"] = job
+        captured["prompts"] = prompts
+        captured["kwargs"] = kwargs
+        return {
+            "ok": True,
+            "assets": [{"path": str(tmp_path / "result.png")}],
+            "output_dir": str(tmp_path),
+            "job_uid": job_uid,
+        }
+
+    previous_run = mcp_gateway.ctx.active_run
+    monkeypatch.setattr("core.api_server._resolve_one_xm_settings", lambda: settings)
+    monkeypatch.setattr("core.ai_image_service.generate_images_sync", fake_generate)
+    mcp_gateway.ctx.active_run = {"run_id": "run-image", "session_id": "session-image"}
+    try:
+        result = mcp_gateway.tool_image_generate(
+            "make a portrait",
+            count=2,
+            size="3840x2160",
+            quality="high",
+            output_format="jpeg",
+            key_tier="4k",
+        )
+    finally:
+        mcp_gateway.ctx.active_run = previous_run
+
+    assert result["ok"] is True
+    assert result["data"]["size"] == "3840x2160"
+    assert result["data"]["quality"] == "high"
+    assert result["data"]["output_format"] == "jpeg"
+    assert result["data"]["key_tier"] == "4k"
+    assert captured["prompts"] == [{"prompt": "make a portrait", "count": 2}]
+    assert captured["kwargs"]["settings"] is settings
+    job = captured["job"]
+    assert job["model_key"] == "gpt-image-2"
+    assert job["params"]["size"] == "3840x2160"
+    assert job["params"]["quality"] == "high"
+    assert job["params"]["output_format"] == "jpeg"
+    assert job["params"]["model_key_tier"] == "4k"
 
 
 def test_navigate_auto_executes_without_approval(monkeypatch):

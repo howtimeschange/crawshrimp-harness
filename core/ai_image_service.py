@@ -352,6 +352,7 @@ def _download_outputs(image_urls: list[str], output_dir: Path, downloader: Calla
             target = _unique_path(output_dir / f"result-{index:02d}{suffix}")
             downloader(url, target)
             _validate_downloaded_image(target)
+            target = _normalize_downloaded_image_suffix(target)
         except Exception as exc:
             if target is not None and target.exists():
                 target.unlink()
@@ -360,18 +361,32 @@ def _download_outputs(image_urls: list[str], output_dir: Path, downloader: Calla
     return files
 
 
-def _validate_downloaded_image(path: Path) -> None:
+def _downloaded_image_suffix(path: Path) -> str:
     try:
         header = path.read_bytes()[:16]
     except FileNotFoundError as exc:
         raise ValueError(f"downloaded image file is missing: {path.name}") from exc
     if header.startswith(b"\x89PNG\r\n\x1a\n"):
-        return
+        return ".png"
     if header.startswith(b"\xff\xd8\xff"):
-        return
+        return ".jpg"
     if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
-        return
+        return ".webp"
     raise ValueError(f"downloaded file is not a supported image: {path.name}")
+
+
+def _validate_downloaded_image(path: Path) -> None:
+    _downloaded_image_suffix(path)
+
+
+def _normalize_downloaded_image_suffix(path: Path) -> Path:
+    detected = _downloaded_image_suffix(path)
+    current = path.suffix.lower()
+    if current == detected or (detected == ".jpg" and current in {".jpg", ".jpeg"}):
+        return path
+    target = _unique_path(path.with_suffix(detected))
+    path.replace(target)
+    return target
 
 
 def _unique_path(path: Path) -> Path:

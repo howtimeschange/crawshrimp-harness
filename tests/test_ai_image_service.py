@@ -15,6 +15,7 @@ PNG_1X1 = bytes.fromhex(
     "1f15c4890000000a49444154789c6360000002000154a24f5d00000000"
     "49454e44ae426082"
 )
+JPEG_HEADER = bytes.fromhex("ffd8ffe000104a4649460001010000010001")
 
 
 class AiImageServiceTests(unittest.TestCase):
@@ -761,6 +762,19 @@ class AiImageServiceTests(unittest.TestCase):
         self.assertEqual(existing.read_bytes(), b"existing")
         self.assertEqual(Path(files[0]).name, "result-01-1.png")
         self.assertEqual(Path(files[0]).read_bytes(), PNG_1X1)
+
+    def test_download_outputs_renames_extension_to_match_downloaded_image_signature(self):
+        output_dir = self.root / "downloads"
+
+        files = ai_image_service._download_outputs(
+            ["https://cdn.example/out.png"],
+            output_dir,
+            lambda _url, target: Path(target).write_bytes(JPEG_HEADER),
+        )
+
+        self.assertEqual(Path(files[0]).name, "result-01.jpg")
+        self.assertEqual(Path(files[0]).read_bytes(), JPEG_HEADER)
+        self.assertFalse((output_dir / "result-01.png").exists())
 
     def test_download_outputs_rejects_non_image_files_and_removes_bad_file(self):
         output_dir = self.root / "downloads"
