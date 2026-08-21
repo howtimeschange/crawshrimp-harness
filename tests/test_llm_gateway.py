@@ -87,8 +87,9 @@ class LlmGatewayTests(unittest.TestCase):
     def test_deepseek_official_requires_dedicated_key(self):
         config = self.config()
         config["ai"]["llm"].pop("deepseek_api_key", None)
-        with self.assertRaises(llm_gateway.LlmConfigurationError):
-            llm_gateway.route_for_model("deepseek-official-v4-flash", config)
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(llm_gateway.LlmConfigurationError):
+                llm_gateway.route_for_model("deepseek-official-v4-flash", config)
 
     def test_deepseek_official_key_can_come_from_runtime_environment(self):
         config = self.config()
