@@ -32,7 +32,7 @@ export function buildSidebarUpdatePresentation(updateStatus = {}, collapsed = fa
     return {
       ...base,
       label: `下载中 ${percent}%`,
-      title: `正在下载 ${formatFullVersion(latestVersion || currentVersion)}`,
+      title: `正在下载 ${formatFullVersion(latestVersion || currentVersion)}，已完成 ${percent}%`,
       tone: 'downloading',
       percent,
     }

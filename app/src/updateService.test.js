@@ -40,6 +40,13 @@ test('available update waits for explicit download', async () => {
   assert.equal(downloads, 0)
   await service.downloadUpdate()
   assert.equal(downloads, 1)
+  assert.equal(service.getStatus().status, 'downloading')
+  assert.deepEqual(service.getStatus().progress, {
+    percent: 0,
+    transferred: 0,
+    total: 0,
+    bytesPerSecond: 0,
+  })
 })
 
 test('available update records the time of the automatic check', async () => {

@@ -50,7 +50,7 @@ test('downloading status rounds and clamps progress without an action', () => {
       action: null,
       label: '下载中 100%',
       versionLabel: 'v2.0.0',
-      title: '正在下载 v2.0.1',
+      title: '正在下载 v2.0.1，已完成 100%',
       tone: 'downloading',
       percent: 100,
     },

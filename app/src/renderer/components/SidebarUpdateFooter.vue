@@ -14,7 +14,12 @@
       :disabled="busy"
       @click="onAction"
     >
-      <span v-if="presentation.label" class="status-icon" aria-hidden="true">{{ statusIcon }}</span>
+      <UpdateProgressRing
+        v-if="presentation.tone === 'downloading'"
+        :percent="presentation.percent || 0"
+        :aria-label="presentation.title"
+      />
+      <span v-else-if="presentation.label" class="status-icon" aria-hidden="true">{{ statusIcon }}</span>
       <span class="version-label">{{ presentation.versionLabel }}</span>
       <span v-if="!collapsed && presentation.label" class="update-copy">
         <span class="update-title">{{ presentation.label }}</span>
@@ -32,30 +37,24 @@
       :role="collapsed ? 'status' : undefined"
       aria-live="polite"
     >
-      <span v-if="presentation.label" class="status-icon" aria-hidden="true">{{ statusIcon }}</span>
+      <UpdateProgressRing
+        v-if="presentation.tone === 'downloading'"
+        :percent="presentation.percent || 0"
+        :aria-label="presentation.title"
+      />
+      <span v-else-if="presentation.label" class="status-icon" aria-hidden="true">{{ statusIcon }}</span>
       <span class="version-label">{{ presentation.versionLabel }}</span>
       <span v-if="!collapsed && presentation.label" class="update-copy">
         <span class="update-title">{{ presentation.label }}</span>
         <span class="update-detail">{{ presentation.title }}</span>
       </span>
     </div>
-
-    <div
-      v-if="presentation.tone === 'downloading'"
-      class="download-progress"
-      role="progressbar"
-      :aria-label="presentation.title"
-      :aria-valuenow="presentation.percent"
-      aria-valuemin="0"
-      aria-valuemax="100"
-    >
-      <span class="download-progress-fill" :style="{ width: `${presentation.percent || 0}%` }"></span>
-    </div>
   </footer>
 </template>
 
 <script setup>
 import { computed } from 'vue'
+import UpdateProgressRing from './UpdateProgressRing.vue'
 import { buildSidebarUpdatePresentation } from '../utils/updateDisplay.js'
 
 const props = defineProps({
@@ -197,22 +196,6 @@ button.update-control:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.download-progress {
-  position: relative;
-  height: 5px;
-  margin: 6px 4px 0;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.download-progress-fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--orange);
 }
 
 .sidebar-update-footer.collapsed {

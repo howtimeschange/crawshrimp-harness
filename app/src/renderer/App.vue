@@ -27,9 +27,40 @@
           :disabled="updateActionBusy"
           @click="onTitlebarUpdateAction"
         >
-          <span aria-hidden="true">{{ titlebarUpdate.icon }}</span>
+          <UpdateProgressRing
+            v-if="titlebarUpdate.tone === 'downloading'"
+            compact
+            :percent="titlebarUpdate.percent || 0"
+            :aria-label="titlebarUpdate.title"
+          />
+          <span v-else aria-hidden="true">{{ titlebarUpdate.icon }}</span>
           <span>{{ titlebarUpdate.versionLabel }} · {{ titlebarUpdate.label }}</span>
-          <span v-if="titlebarUpdate.tone === 'downloading'" class="titlebar-update-percent">{{ titlebarUpdate.percent }}%</span>
+        </button>
+        <div
+          v-else-if="titlebarUpdate.tone === 'downloading'"
+          class="titlebar-update-btn titlebar-update-status"
+          :class="`tone-${titlebarUpdate.tone}`"
+          :title="titlebarUpdate.title"
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <UpdateProgressRing
+            compact
+            :percent="titlebarUpdate.percent || 0"
+            :aria-label="titlebarUpdate.title"
+          />
+          <span>{{ titlebarUpdate.versionLabel }} · {{ titlebarUpdate.label }}</span>
+        </div>
+        <button
+          v-else-if="canRunDevUpdateMock"
+          class="titlebar-update-btn tone-available"
+          type="button"
+          title="开发模式模拟下载进度"
+          @click="startDevUpdateDownloadMock"
+        >
+          <span aria-hidden="true">⟳</span>
+          <span>{{ titlebarUpdate.versionLabel }} · 模拟下载</span>
         </button>
       </div>
     </div>
@@ -225,6 +256,7 @@ import AgentScriptReview from './views/AgentScriptReview.vue'
 import AgentProductLayer from './components/agent/AgentProductLayer.vue'
 import UpdateChangelogModal from './components/UpdateChangelogModal.vue'
 import SidebarUpdateFooter from './components/SidebarUpdateFooter.vue'
+import UpdateProgressRing from './components/UpdateProgressRing.vue'
 import { buildScriptGroups } from './utils/scriptGroups'
 import { buildTaskOverviewProgress, isTaskLiveActive, resolveTaskProgressConfig } from './utils/taskProgress'
 import { readSidebarCollapsed, writeSidebarCollapsed } from './utils/sidebarState.js'
@@ -548,6 +580,10 @@ const titlebarUpdate = computed(() => {
   return { ...presentation, icon }
 })
 
+const canRunDevUpdateMock = computed(() =>
+  import.meta.env.DEV && String(updateStatus.value.status || '') !== 'downloading'
+)
+
 function onTitlebarUpdateAction() {
   if (updateActionBusy.value) return
   const action = titlebarUpdate.value.action
@@ -575,6 +611,74 @@ async function retryUpdateCheck() {
 async function installUpdate() {
   const result = await updateActionRunner.run(() => window.cs.installUpdate())
   if (result?.status) updateStatus.value = result
+}
+
+let devUpdateMockTimer = null
+let devUpdateMockDoneTimer = null
+
+function clearDevUpdateDownloadMock() {
+  if (devUpdateMockTimer) clearInterval(devUpdateMockTimer)
+  if (devUpdateMockDoneTimer) clearTimeout(devUpdateMockDoneTimer)
+  devUpdateMockTimer = null
+  devUpdateMockDoneTimer = null
+}
+
+function startDevUpdateDownloadMock() {
+  if (!import.meta.env.DEV) return
+  clearDevUpdateDownloadMock()
+  const currentVersion = String(updateStatus.value.currentVersion || '0.1.6').replace(/^v(?=\d)/i, '')
+  const latestVersion = String(updateStatus.value.latestVersion || bumpPatchVersion(currentVersion))
+  const totalBytes = 128 * 1024 * 1024
+  let percent = 0
+
+  updateStatus.value = buildDevDownloadStatus(currentVersion, latestVersion, percent, totalBytes)
+  devUpdateMockTimer = setInterval(() => {
+    percent = Math.min(100, percent + 2)
+    updateStatus.value = buildDevDownloadStatus(currentVersion, latestVersion, percent, totalBytes)
+    if (percent < 100) return
+
+    clearInterval(devUpdateMockTimer)
+    devUpdateMockTimer = null
+    devUpdateMockDoneTimer = setTimeout(() => {
+      updateStatus.value = {
+        ...updateStatus.value,
+        status: 'downloaded',
+        progress: null,
+        downloaded: true,
+        error: '',
+      }
+      devUpdateMockDoneTimer = null
+    }, 1800)
+  }, 300)
+}
+
+function buildDevDownloadStatus(currentVersion, latestVersion, percent, totalBytes) {
+  const transferred = Math.round(totalBytes * percent / 100)
+  return {
+    ...updateStatus.value,
+    status: 'downloading',
+    currentVersion,
+    latestVersion,
+    releaseNotes: '开发模式模拟下载进度',
+    downloaded: false,
+    error: '',
+    blockers: [],
+    progress: {
+      percent,
+      transferred,
+      total: totalBytes,
+      bytesPerSecond: 7 * 1024 * 1024,
+    },
+  }
+}
+
+function bumpPatchVersion(version) {
+  const parts = String(version || '').split('.').map(part => Number(part))
+  if (parts.length >= 3 && parts.every(part => Number.isInteger(part) && part >= 0)) {
+    parts[parts.length - 1] += 1
+    return parts.join('.')
+  }
+  return version ? `${version}.1` : '0.1.7'
 }
 
 let pollTimer = null
@@ -621,6 +725,7 @@ onMounted(async () => {
 onUnmounted(() => {
   systemThemeCleanup?.()
   systemThemeCleanup = null
+  clearDevUpdateDownloadMock()
   clearInterval(pollTimer)
   if (typeof updateStatusCleanup === 'function') updateStatusCleanup()
   window.cs.offStatus()
@@ -865,9 +970,19 @@ input, select, textarea { font-family: inherit; }
 .titlebar-update-btn:hover { background: var(--soft-fill-hover); color: var(--text); }
 .titlebar-update-btn:disabled { opacity: 0.6; cursor: default; }
 .titlebar-update-btn.tone-available { border-color: var(--orange-dim); color: var(--orange-text); }
+.titlebar-update-btn.tone-downloading {
+  border-color: transparent;
+  background: transparent;
+  color: var(--orange-text);
+  padding: 0 2px;
+}
+.titlebar-update-btn.tone-downloading:hover {
+  background: transparent;
+  color: var(--orange-text);
+}
 .titlebar-update-btn.tone-ready, .titlebar-update-btn.tone-installing { color: var(--green); }
 .titlebar-update-btn.tone-error { color: var(--red); }
-.titlebar-update-percent { font-variant-numeric: tabular-nums; color: var(--text3); }
+.titlebar-update-status { cursor: default; }
 .dot { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text3); }
 .dot i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--text3); }
 .dot.on i { background: var(--green); box-shadow: 0 0 6px var(--green); }

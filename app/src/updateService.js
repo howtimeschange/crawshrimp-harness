@@ -179,7 +179,7 @@ function createUpdateService({
       if (requiredBytes > 0 && Number.isFinite(Number(freeBytes)) && Number(freeBytes) < requiredBytes) {
         throw new Error(`磁盘空间不足：更新需要 ${formatBytes(requiredBytes)}，当前可用 ${formatBytes(Number(freeBytes))}。`)
       }
-      publish({ status: 'downloading', error: '', progress: null })
+      publish({ status: 'downloading', error: '', progress: normalizeProgress({ percent: 0 }) })
       return await autoUpdater.downloadUpdate()
     } catch (error) {
       publish({ status: 'error', error: readableError(error), progress: null })
