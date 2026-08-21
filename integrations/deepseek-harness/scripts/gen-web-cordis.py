@@ -154,83 +154,64 @@ def transform(row: dict) -> None:
 
 
 CRAWSHRIMP_LLM_CONFIG = """config:
-  providers:
-    crawshrimp-overseas-openai:
-      displayName: 抓虾-海外 OpenAI
-      apiKeyEnv: CRAWSHRIMP_LLM_API_KEY
-      api: openai-completions
-      baseURL: !!js process.env.CRAWSHRIMP_OVERSEAS_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/overseas-openai-vip/v1'
-      models:
-        - id: gpt-5.6-terra
-          contextWindow: 200000
-          maxTokens: 32000
-          input: [text, image]
-        - id: gpt-5.6-sol
-          contextWindow: 200000
-          maxTokens: 32000
-          input: [text, image]
-        - id: gpt-5.6-luna
-          contextWindow: 200000
-          maxTokens: 32000
-          input: [text, image]
-        - id: gpt-5.5
-          contextWindow: 128000
-          maxTokens: 16384
-          input: [text, image]
-    crawshrimp-overseas-anthropic:
-      displayName: 抓虾-海外 Anthropic
-      apiKeyEnv: CRAWSHRIMP_LLM_API_KEY
-      api: anthropic-messages
-      baseURL: !!js process.env.CRAWSHRIMP_OVERSEAS_ANTHROPIC_BASE_URL ?? 'https://ai-aigw.semir.com/overseas-anthropic-vip'
-      models:
-        - id: claude-sonnet-5
-          contextWindow: 200000
-          maxTokens: 32000
-          input: [text, image]
-        - id: claude-opus-4-8
-          contextWindow: 200000
-          maxTokens: 32000
-          input: [text, image]
-    crawshrimp-domestic-openai:
-      displayName: 抓虾-国内 OpenAI 兼容
-      apiKeyEnv: CRAWSHRIMP_LLM_API_KEY
-      api: openai-completions
-      baseURL: !!js process.env.CRAWSHRIMP_DOMESTIC_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/bailian-codingplan/v1'
-      models:
-        - id: qwen3.8-max-preview
-          contextWindow: 128000
-          maxTokens: 16384
-          input: [text]
-        - id: qwen3.7-plus
-          contextWindow: 128000
-          maxTokens: 16384
-          input: [text]
-        - id: deepseek-v4-pro
-          contextWindow: 128000
-          maxTokens: 16384
-          input: [text]
-        - id: glm-5.2
-          contextWindow: 128000
-          maxTokens: 16384
-          input: [text]
-        - id: kimi-k2.7-code
-          contextWindow: 128000
-          maxTokens: 16384
-          input: [text]
-    crawshrimp-deepseek-official:
-      displayName: DeepSeek 官方
-      apiKeyEnv: CRAWSHRIMP_DEEPSEEK_API_KEY
-      api: openai-completions
-      baseURL: !!js process.env.CRAWSHRIMP_DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com'
-      models:
-        - id: deepseek-v4-flash
-          contextWindow: 128000
-          maxTokens: 8192
-          input: [text]
-        - id: deepseek-v4-pro
-          contextWindow: 128000
-          maxTokens: 16384
-          input: [text]
+  providers: !!js |
+    (() => {
+      const hasGatewayKey = Boolean(String(process.env.CRAWSHRIMP_LLM_API_KEY ?? '').trim())
+      const hasDeepSeekKey = Boolean(String(process.env.CRAWSHRIMP_DEEPSEEK_API_KEY ?? '').trim())
+      const providers = {}
+      if (hasDeepSeekKey) {
+        providers['crawshrimp-deepseek-official'] = {
+          displayName: 'DeepSeek 官方',
+          apiKeyEnv: 'CRAWSHRIMP_DEEPSEEK_API_KEY',
+          api: 'openai-completions',
+          baseURL: process.env.CRAWSHRIMP_DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
+          models: [
+            { id: 'deepseek-v4-flash', contextWindow: 128000, maxTokens: 8192, input: ['text'] },
+            { id: 'deepseek-v4-pro', contextWindow: 128000, maxTokens: 16384, input: ['text'] },
+          ],
+        }
+      }
+      if (hasGatewayKey) {
+        Object.assign(providers, {
+          'crawshrimp-overseas-openai': {
+            displayName: '抓虾-海外 OpenAI',
+            apiKeyEnv: 'CRAWSHRIMP_LLM_API_KEY',
+            api: 'openai-completions',
+            baseURL: process.env.CRAWSHRIMP_OVERSEAS_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/overseas-openai-vip/v1',
+            models: [
+              { id: 'gpt-5.6-terra', contextWindow: 200000, maxTokens: 32000, input: ['text', 'image'] },
+              { id: 'gpt-5.6-sol', contextWindow: 200000, maxTokens: 32000, input: ['text', 'image'] },
+              { id: 'gpt-5.6-luna', contextWindow: 200000, maxTokens: 32000, input: ['text', 'image'] },
+              { id: 'gpt-5.5', contextWindow: 128000, maxTokens: 16384, input: ['text', 'image'] },
+            ],
+          },
+          'crawshrimp-overseas-anthropic': {
+            displayName: '抓虾-海外 Anthropic',
+            apiKeyEnv: 'CRAWSHRIMP_LLM_API_KEY',
+            api: 'anthropic-messages',
+            baseURL: process.env.CRAWSHRIMP_OVERSEAS_ANTHROPIC_BASE_URL ?? 'https://ai-aigw.semir.com/overseas-anthropic-vip',
+            models: [
+              { id: 'claude-sonnet-5', contextWindow: 200000, maxTokens: 32000, input: ['text', 'image'] },
+              { id: 'claude-opus-4-8', contextWindow: 200000, maxTokens: 32000, input: ['text', 'image'] },
+            ],
+          },
+          'crawshrimp-domestic-openai': {
+            displayName: '抓虾-国内 OpenAI 兼容',
+            apiKeyEnv: 'CRAWSHRIMP_LLM_API_KEY',
+            api: 'openai-completions',
+            baseURL: process.env.CRAWSHRIMP_DOMESTIC_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/bailian-codingplan/v1',
+            models: [
+              { id: 'qwen3.8-max-preview', contextWindow: 128000, maxTokens: 16384, input: ['text'] },
+              { id: 'qwen3.7-plus', contextWindow: 128000, maxTokens: 16384, input: ['text'] },
+              { id: 'deepseek-v4-pro', contextWindow: 128000, maxTokens: 16384, input: ['text'] },
+              { id: 'glm-5.2', contextWindow: 128000, maxTokens: 16384, input: ['text'] },
+              { id: 'kimi-k2.7-code', contextWindow: 128000, maxTokens: 16384, input: ['text'] },
+            ],
+          },
+        })
+      }
+      return providers
+    })()
 """
 
 PERSONA = """你是抓虾智能体。
@@ -243,7 +224,7 @@ PERSONA = """你是抓虾智能体。
 3) AI 生图/生视频:用户要生成图片时用 image_generate(提示词+张数),要生成视频时用 video_generate(提示词,可选首帧图路径),完成后产物路径会返回给用户;image_assets/video_assets 可列出历史产物。
 4) 任务完成后,产物会以附件形式出现在对话中;用户要求分析时,用 artifacts_list/data_preview/data_analyze 读取并输出分析结论。
    附件跑任务:用户上传表格并说「用这个表格跑 XX 脚本」时,先 attachment_read 拿内容与 local_path,再用 tasks_search/task_describe 匹配脚本,然后 task_prepare 时把文件参数(如 input_file)传为 {"path": local_path} 或直接传附件 id att-*;后端会自动解析表格注入任务,不要手工构造 rows/sheets,也不要反复翻找附件目录。
-5) 本地 CLI 与通用内置技能包:skill_list 可见 cli-*(tmall/bmall/森马云盘/深绘/唯品会)、bilibili-video-transcript、xhs-video-capture、banner-generation、suanming、ecommerce-img-gen 等;按需 skill_read 学习 SKILL.md 和 references,执行包内 scripts/tools 前先 cd 到该 skill 目录并遵守各技能安全契约。
+5) 本地 CLI 与通用内置技能包:skill_list 可见 cli-*(tmall/bmall/森马云盘/深绘/唯品会)、documents/pdf/spreadsheets/excel-live-control/presentations/template-creator、docx-win/xlsx-win/pptx-win、bilibili-video-transcript、xhs-video-capture、banner-generation、suanming、ecommerce-img-gen 等;按需 skill_read 学习 SKILL.md、UPSTREAM/HARNESS 和 references,执行包内 scripts/tools 前先 cd 到该 skill 目录并遵守各技能安全契约。
 6) 代码仓库能力:repo_install 从 GitHub 等仓库克隆项目到本地,repo_learn 生成技能包后学习,repo_update 保持更新,repo_list 查看已装仓库。
 7) 本机访问权限已全面放开:fs_read/fs_list 可读本机任意文件与目录;fs_write(写文件)与 fs_exec(执行本机命令)经审批卡授权(用户点允许即执行),需要读/查/跑本机内容时直接使用,不必先问用户。
 约束:缺参数时向用户询问,不猜测账号、日期、店铺、文件、目录或浏览器标签。
@@ -295,8 +276,8 @@ def main() -> int:
                                      "disabled": None,
                                      "config_lines": [
                                          (0, "config:"),
-                                         (2, "provider: !!js process.env.CRAWSHRIMP_AGENT_PROVIDER ?? 'crawshrimp-overseas-openai'"),
-                                         (2, "model: !!js process.env.CRAWSHRIMP_AGENT_MODEL ?? 'gpt-5.6-terra'"),
+                                         (2, "provider: !!js process.env.CRAWSHRIMP_AGENT_PROVIDER ?? 'crawshrimp-deepseek-official'"),
+                                         (2, "model: !!js process.env.CRAWSHRIMP_AGENT_MODEL ?? 'deepseek-v4-flash'"),
                                      ]}
     merged["attachment-local"] = {"id": "attachment-local", "name": "@deepseek-ai/dsh-attachment-local",
                                   "disabled": None,

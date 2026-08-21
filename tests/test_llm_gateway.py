@@ -93,6 +93,24 @@ class LlmGatewayTests(unittest.TestCase):
             route = llm_gateway.route_for_model("deepseek-official-v4-flash", config)
         self.assertEqual(route.api_key, "runtime-ds-key")
 
+    def test_default_model_prefers_deepseek_flash_when_dedicated_key_is_configured(self):
+        config = self.config()
+        config["ai"]["llm"]["default_model"] = "deepseek-official-v4-flash"
+        config["ai"]["llm"]["deepseek_api_key"] = "sk-ds-official-unit"
+        with patch.dict(os.environ, {}, clear=True):
+            route = llm_gateway.route_for_model("", config)
+        self.assertEqual(route.model_id, "deepseek-v4-flash")
+        self.assertEqual(route.api_key, "sk-ds-official-unit")
+
+    def test_default_model_falls_back_to_gateway_when_deepseek_key_is_missing(self):
+        config = self.config()
+        config["ai"]["llm"]["default_model"] = "deepseek-official-v4-flash"
+        config["ai"]["llm"].pop("deepseek_api_key", None)
+        with patch.dict(os.environ, {}, clear=True):
+            route = llm_gateway.route_for_model("", config)
+        self.assertEqual(route.model_id, "gpt-5.6-terra")
+        self.assertEqual(route.api_key, "unit-key")
+
     def test_runtime_environment_key_can_be_used_without_persisting_it_in_config(self):
         config = self.config()
         config["ai"]["llm"]["api_key"] = ""

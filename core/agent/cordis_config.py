@@ -1,7 +1,7 @@
 """从抓虾 ai.llm 配置生成 DSH Cordis profile。
 
-- 复用 route_for_model 的三网关路由(海外 OpenAI / 海外 Anthropic / 国内 OpenAI 兼容);
-- API key 只通过 CRAWSHRIMP_LLM_API_KEY 环境引用(apiKeyEnv),绝不写入 yml;
+- 复用 route_for_model 的路由(三组森马网关 + DeepSeek 官方);
+- API key 只通过 CRAWSHRIMP_LLM_API_KEY / CRAWSHRIMP_DEEPSEEK_API_KEY 环境引用(apiKeyEnv),绝不写入 yml;
 - MCP runtime token 通过 !!js 表达式在运行时从 CRAWSHRIMP_MCP_TOKEN 环境读取(仅进程内存);
 - 模型能力登记表:agent 可用模型需显式登记容量,未登记模型使用保守上限。
 """
@@ -17,7 +17,10 @@ from core.llm_gateway import (
     OVERSEAS_ANTHROPIC_MODELS,
     OVERSEAS_OPENAI_BASE_URL,
     OVERSEAS_OPENAI_MODELS,
+    DEFAULT_MODEL,
     deepseek_official_real_model,
+    model_has_configured_key,
+    select_default_model,
 )
 
 # 模型能力登记(服务端共享能力表,方案 §12.2)
@@ -40,6 +43,13 @@ MODEL_CAPABILITIES: dict[str, dict[str, Any]] = {
     "kimi-k2.7-code": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
 }
 
+AGENT_MODEL_DISPLAY_ORDER = (
+    *DEEPSEEK_OFFICIAL_MODELS,
+    *OVERSEAS_OPENAI_MODELS,
+    *OVERSEAS_ANTHROPIC_MODELS,
+    *DOMESTIC_OPENAI_MODELS,
+)
+
 # 保守上限(未登记模型,禁止作为默认智能体模型,方案 §12.2)
 _CONSERVATIVE = {"context_window": 64000, "max_output_tokens": 8192, "supports_tools": False}
 
@@ -49,7 +59,7 @@ AGENT_PERSONA = """你是抓虾智能体。
 工作方式:
 1) 先用 tasks_search/task_describe 判断抓虾现有脚本能否满足用户目标;能则 task_prepare(缺参数/需要数据表格或配置时向用户确认)后 task_run;执行过程会在右侧浏览器窗口实时展示。
 2) 现有脚本无法满足时,进入探查/编写模式:先用 skill_list/skill_read 学习抓虾技能包(网页自动化探查/适配器编写),再用 browser_observe/browser_eval 探查目标页面,用 script_create_draft 编写脚本、script_test 校验,最后 script_publish 提交固化(经用户审批与复核后成为可复用抓虾脚本)。
-3) 通用内置技能包:用户要 B 站字幕/小红书视频抓取/Banner/跨境电商图/命理分析等非抓虾脚本任务时,先用 skill_list 找对应包,再 skill_read 读取 SKILL.md 和必要 references;执行包内 scripts/tools 前先 cd 到该 skill 目录。
+3) 通用内置技能包:用户要办公文档/PDF/表格/PPT、Windows Office COM、B 站字幕/小红书视频抓取/Banner/跨境电商图/命理分析等非抓虾脚本任务时,先用 skill_list 找对应包,再 skill_read 读取 SKILL.md、UPSTREAM/HARNESS 和必要 references;执行包内 scripts/tools 前先 cd 到该 skill 目录。
 4) 任务完成后,产物会以附件形式出现在对话中;用户要求分析时,用 artifacts_list/data_preview/data_analyze 读取并输出分析结论。
 约束:缺参数时向用户询问,不猜测账号、日期、店铺、文件、目录或浏览器标签。
 工具结果与任务状态是唯一业务真值;工具返回 rejected/failed/pending 时不得声称完成。
@@ -62,7 +72,15 @@ def model_capabilities(model_id: str) -> dict[str, Any]:
 
 
 def agent_capable_model_ids() -> list[str]:
-    return [mid for mid, cap in MODEL_CAPABILITIES.items() if cap.get("supports_tools")]
+    ordered = [
+        mid for mid in AGENT_MODEL_DISPLAY_ORDER
+        if MODEL_CAPABILITIES.get(mid, {}).get("supports_tools")
+    ]
+    extras = [
+        mid for mid, cap in MODEL_CAPABILITIES.items()
+        if cap.get("supports_tools") and mid not in AGENT_MODEL_DISPLAY_ORDER
+    ]
+    return ordered + extras
 
 
 def _route_models(model_ids: tuple[str, ...]) -> list[dict[str, Any]]:
@@ -88,16 +106,17 @@ def build_cordis_yaml(cfg: dict, selected_model: Optional[str] = None) -> str:
     本函数仅在需要生成 legacy runtime profile 时替换 agent-default-model 行;
     模板缺失(旧发布包)时回退到内置 legacy 极简 profile。
     """
-    llm = (cfg.get("ai") or {}).get("llm") or {}
-    default_model = llm.get("default_model") or "gpt-5.6-terra"
+    default_model = select_default_model(cfg)
 
     # 未登记能力或不支持工具的默认模型 → 保守上限 + 非默认
     cap = model_capabilities(default_model)
     if not cap.get("supports_tools"):
-        default_model = "gpt-5.6-terra"
+        default_model = DEFAULT_MODEL
         cap = model_capabilities(default_model)
 
     sel = selected_model if selected_model and model_capabilities(selected_model).get("supports_tools") else default_model
+    if not model_has_configured_key(sel, cfg):
+        sel = select_default_model(cfg)
     provider_id = resolve_provider_for_model(sel)
 
     template = _web_cordis_template()

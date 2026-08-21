@@ -12,11 +12,13 @@ export const LLM_DEFAULTS = Object.freeze({
   'ai.llm.overseas_anthropic_base_url': 'https://ai-aigw.semir.com/overseas-anthropic-vip',
   'ai.llm.domestic_base_url': 'https://ai-aigw.semir.com/bailian-codingplan/v1',
   'ai.llm.deepseek_base_url': DEEPSEEK_OFFICIAL_BASE_URL_DEFAULT,
-  'ai.llm.default_model': 'gpt-5.6-terra',
+  'ai.llm.default_model': 'deepseek-official-v4-flash',
 })
 
-// 默认模型下拉 = 森马网关模型(DeepSeek 官方模型在右侧官方卡片单独展示)
+// 默认模型下拉覆盖官方 DeepSeek 与森马网关模型;运行时只展示已配置 key 的路由。
 export const LLM_MODELS = Object.freeze([
+  { value: 'deepseek-official-v4-flash', label: 'DeepSeek 官方 · V4 Flash' },
+  { value: 'deepseek-official-v4-pro', label: 'DeepSeek 官方 · V4 Pro' },
   { value: 'gpt-5.6-sol', label: '海外 · GPT-5.6 Sol' },
   { value: 'gpt-5.6-terra', label: '海外 · GPT-5.6 Terra' },
   { value: 'gpt-5.6-luna', label: '海外 · GPT-5.6 Luna' },

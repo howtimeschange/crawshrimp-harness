@@ -5,6 +5,7 @@ import asyncio
 import concurrent.futures
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -156,7 +157,7 @@ def test_browser_activity_exposes_only_granted_tab():
     })]
 
 
-def test_service_browser_activity_expands_only_session_granted_live_tabs(monkeypatch):
+def test_service_browser_activity_keeps_only_active_session_tab(monkeypatch):
     service = AgentService()
     monkeypatch.setattr(
         "core.agent.service.db.list_granted_tab_ids_for_session",
@@ -170,11 +171,36 @@ def test_service_browser_activity_expands_only_session_granted_live_tabs(monkeyp
     monkeypatch.setattr("core.cdp_bridge.get_bridge", lambda: bridge)
 
     tabs = service._session_browser_tabs("session-a", {
+        "active_tab_id": "tab-b",
         "tabs": [{"id": "tab-b", "url": "https://old-b", "title": "Old B"}],
     })
-    assert {tab["id"] for tab in tabs} == {"tab-a", "tab-b"}
+    assert [tab["id"] for tab in tabs] == ["tab-b"]
     assert all(tab["id"] != "tab-other" for tab in tabs)
-    assert next(tab for tab in tabs if tab["id"] == "tab-b")["url"] == "https://b"
+    assert tabs[0]["url"] == "https://b"
+
+
+def test_service_browser_activity_uses_active_tab_when_payload_contains_global_tabs(monkeypatch):
+    service = AgentService()
+    monkeypatch.setattr(
+        "core.agent.service.db.list_granted_tab_ids_for_session",
+        lambda session_id: ["tab-active", "tab-old"] if session_id == "session-a" else [],
+    )
+    bridge = SimpleNamespace(get_tabs=lambda timeout=0: [
+        {"id": "tab-active", "type": "page", "url": "https://active", "title": "Active"},
+        {"id": "tab-old", "type": "page", "url": "https://old", "title": "Old"},
+        {"id": "tab-other", "type": "page", "url": "https://other", "title": "Other"},
+    ])
+    monkeypatch.setattr("core.cdp_bridge.get_bridge", lambda: bridge)
+
+    tabs = service._session_browser_tabs("session-a", {
+        "active_tab_id": "tab-active",
+        "tabs": [
+            {"id": "tab-active", "url": "https://active", "title": "Active"},
+            {"id": "tab-old", "url": "https://old", "title": "Old"},
+            {"id": "tab-other", "url": "https://other", "title": "Other"},
+        ],
+    })
+    assert tabs == [{"id": "tab-active", "url": "https://active", "title": "Active"}]
 
 
 def test_generated_media_events_have_stable_nonempty_ids(tmp_path):
@@ -1174,10 +1200,8 @@ def test_dsh_model_catalog_declares_vision_without_widening_text_only_models():
     assert "input_modalities" not in model_capabilities("deepseek-v4-pro")
 
     profile = build_cordis_yaml({"ai": {"llm": {"default_model": "gpt-5.5"}}})
-    gpt_block = profile.split("- id: gpt-5.5", 1)[1].split("- id:", 1)[0]
-    deepseek_block = profile.split("- id: deepseek-v4-pro", 1)[1].split("- id:", 1)[0]
-    assert "input: [text, image]" in gpt_block
-    assert "input: [text]" in deepseek_block
+    assert re.search(r"id: 'gpt-5\.5'[\s\S]*input: \['text', 'image'\]", profile)
+    assert re.search(r"id: 'deepseek-v4-pro'[\s\S]*input: \['text'\]", profile)
 
 
 def test_dsh_native_deepseek_route_is_hidden_in_favor_of_crawshrimp_route():
@@ -1190,6 +1214,86 @@ def test_dsh_native_deepseek_route_is_hidden_in_favor_of_crawshrimp_route():
     assert "provider: crawshrimp-deepseek-official" in default_block
     assert "provider: deepseek-official" not in default_block
     assert "disabled: true" in native_block
+
+
+def test_agent_default_model_prefers_deepseek_flash_when_key_is_configured(monkeypatch):
+    from core.agent import service as service_mod
+
+    monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setattr(service_mod, "load_config", lambda: {
+        "ai": {"llm": {
+            "api_key": "",
+            "deepseek_api_key": "sk-ds-official-unit",
+            "default_model": "deepseek-official-v4-flash",
+        }}
+    })
+
+    service = service_mod.AgentService()
+
+    assert service._resolve_model() == (
+        "deepseek-official-v4-flash",
+        "crawshrimp-deepseek-official",
+    )
+
+
+def test_agent_default_model_falls_back_to_gateway_when_deepseek_key_missing(monkeypatch):
+    from core.agent import service as service_mod
+
+    monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setattr(service_mod, "load_config", lambda: {
+        "ai": {"llm": {
+            "api_key": "gateway-key",
+            "deepseek_api_key": "",
+            "default_model": "deepseek-official-v4-flash",
+        }}
+    })
+
+    service = service_mod.AgentService()
+
+    assert service._resolve_model() == (
+        "gpt-5.6-terra",
+        "crawshrimp-overseas-openai",
+    )
+
+
+def test_agent_models_endpoint_hides_unconfigured_gateway_models(monkeypatch):
+    from core import config as config_mod
+    from core.agent import api as agent_api
+
+    monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setattr(config_mod, "load_config", lambda: {
+        "ai": {"llm": {
+            "api_key": "",
+            "deepseek_api_key": "sk-ds-official-unit",
+            "default_model": "deepseek-official-v4-flash",
+        }}
+    })
+
+    model_ids = [item["model_id"] for item in agent_api.list_agent_models()["models"]]
+
+    assert model_ids == ["deepseek-official-v4-flash", "deepseek-official-v4-pro"]
+
+
+def test_agent_models_endpoint_keeps_official_deepseek_first_when_all_keys_exist(monkeypatch):
+    from core import config as config_mod
+    from core.agent import api as agent_api
+
+    monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setattr(config_mod, "load_config", lambda: {
+        "ai": {"llm": {
+            "api_key": "gateway-key",
+            "deepseek_api_key": "sk-ds-official-unit",
+            "default_model": "deepseek-official-v4-flash",
+        }}
+    })
+
+    model_ids = [item["model_id"] for item in agent_api.list_agent_models()["models"]]
+
+    assert model_ids[:2] == ["deepseek-official-v4-flash", "deepseek-official-v4-pro"]
 
 
 def test_agent_start_generation_uses_packaged_web_cordis_without_install_write(tmp_path, monkeypatch):

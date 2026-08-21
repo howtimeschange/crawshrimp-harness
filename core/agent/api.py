@@ -91,10 +91,15 @@ async def runtime_restart() -> dict:
 
 @router.get("/models")
 def list_agent_models() -> dict:
-    from core.agent.cordis_config import MODEL_CAPABILITIES, resolve_provider_for_model
+    from core.agent.cordis_config import MODEL_CAPABILITIES, agent_capable_model_ids, resolve_provider_for_model
+    from core.config import load_config
+    from core.llm_gateway import model_has_configured_key
+
+    cfg = load_config()
     models = []
-    for model_id, cap in MODEL_CAPABILITIES.items():
-        if not cap.get("supports_tools"):
+    for model_id in agent_capable_model_ids():
+        cap = MODEL_CAPABILITIES[model_id]
+        if not model_has_configured_key(model_id, cfg):
             continue
         models.append({
             "model_id": model_id,
@@ -108,12 +113,17 @@ def list_agent_models() -> dict:
 @router.patch("/sessions/{session_id}/model")
 def set_session_model(session_id: str, req: SessionModelRequest) -> dict:
     from core.agent.cordis_config import MODEL_CAPABILITIES
+    from core.config import load_config
+    from core.llm_gateway import model_has_configured_key
+
     session = db.get_session(session_id)
     if not session:
         raise HTTPException(404, "会话不存在")
     model_id = str(req.model_id or "").strip()
     if model_id not in MODEL_CAPABILITIES or not MODEL_CAPABILITIES[model_id].get("supports_tools"):
         raise HTTPException(422, f"模型不可用于智能体: {model_id}")
+    if not model_has_configured_key(model_id, load_config()):
+        raise HTTPException(422, f"模型未配置 API Key: {model_id}")
     db.update_session(session_id, model_id=model_id)
     service = get_agent_service()
     service.note_model_changed(session_id, model_id)

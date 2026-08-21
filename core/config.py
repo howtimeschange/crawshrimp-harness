@@ -50,7 +50,7 @@ DEFAULT_CONFIG = {
             "overseas_anthropic_base_url": "https://ai-aigw.semir.com/overseas-anthropic-vip",
             "domestic_base_url": "https://ai-aigw.semir.com/bailian-codingplan/v1",
             "deepseek_base_url": "https://api.deepseek.com",
-            "default_model": "gpt-5.6-terra",
+            "default_model": "deepseek-official-v4-flash",
         },
     },
     "cloud_approval": {

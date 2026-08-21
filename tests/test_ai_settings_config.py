@@ -64,7 +64,7 @@ class AiSettingsConfigTests(unittest.TestCase):
         self.assertEqual(llm["overseas_anthropic_base_url"], "https://ai-aigw.semir.com/overseas-anthropic-vip")
         self.assertEqual(llm["domestic_base_url"], "https://ai-aigw.semir.com/bailian-codingplan/v1")
         self.assertEqual(llm["deepseek_base_url"], "https://api.deepseek.com")
-        self.assertEqual(llm["default_model"], "gpt-5.6-terra")
+        self.assertEqual(llm["default_model"], "deepseek-official-v4-flash")
 
     def test_save_config_expands_dotted_settings_keys(self):
         with patch("core.config._config_path") as config_path:

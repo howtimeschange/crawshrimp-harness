@@ -599,7 +599,7 @@
                         {{ model.label }}
                       </option>
                     </select>
-                    <p class="field-hint">森马网关的默认模型(适配器与智能体的默认选择)。</p>
+                    <p class="field-hint">适配器与智能体的默认选择；运行时只展示已配置 Key 的模型路由。</p>
                   </div>
                 </section>
                 <section class="llm-provider-card ds">

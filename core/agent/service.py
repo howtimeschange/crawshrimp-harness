@@ -20,7 +20,14 @@ from core.agent import db
 from core.agent import mcp_gateway
 from core.agent.redaction import REDACTED, redact_text as _redact_secret_text, redact_value
 from core.agent.cordis_config import build_cordis_yaml, resolve_provider_for_model, model_capabilities
-from core.llm_gateway import deepseek_official_real_model
+from core.llm_gateway import (
+    DEFAULT_MODEL,
+    deepseek_api_key_configured,
+    deepseek_official_real_model,
+    gateway_api_key_configured,
+    model_has_configured_key,
+    select_default_model,
+)
 from core.agent.worker import AgentWorker, resolve_harness_root, resolve_node_executable
 from core.config import load_config
 
@@ -603,14 +610,24 @@ class AgentService:
 
     @staticmethod
     def _session_browser_tabs(session_id: str, payload: dict) -> list[dict]:
-        """把当前 tab 扩展为会话级页面子集；绝不暴露其他会话的全局页面。"""
+        """只公开当前浏览器活动绑定的页面，避免把历史/全局 Chrome tab 展开到 UI。"""
         allowed = set(db.list_granted_tab_ids_for_session(session_id))
         current_tabs = payload.get("tabs") if isinstance(payload.get("tabs"), list) else []
         current_by_id = {
             str(tab.get("id") or ""): tab for tab in current_tabs
             if isinstance(tab, dict) and str(tab.get("id") or "")
         }
-        allowed.update(current_by_id)
+        active_tab_id = str(payload.get("active_tab_id") or "")
+        candidate_ids = []
+        if active_tab_id:
+            candidate_ids.append(active_tab_id)
+        elif len(current_by_id) == 1:
+            candidate_ids.extend(current_by_id)
+        elif current_by_id:
+            for tab_id in current_by_id:
+                if tab_id in allowed:
+                    candidate_ids.append(tab_id)
+                    break
         try:
             from core.cdp_bridge import get_bridge
             live_pages = [tab for tab in get_bridge().get_tabs(timeout=2) if tab.get("type") == "page"]
@@ -618,7 +635,13 @@ class AgentService:
             live_pages = list(current_by_id.values())
         live_by_id = {str(tab.get("id") or ""): tab for tab in live_pages}
         tabs = []
-        for tab_id in allowed:
+        seen = set()
+        for tab_id in candidate_ids:
+            if not tab_id or tab_id in seen:
+                continue
+            seen.add(tab_id)
+            if tab_id not in allowed and tab_id not in current_by_id:
+                continue
             tab = live_by_id.get(tab_id)
             if not tab:
                 continue
@@ -821,14 +844,13 @@ class AgentService:
 
     def _resolve_model(self, session_id: Optional[str] = None) -> tuple[str, str]:
         cfg = load_config()
-        llm = (cfg.get("ai") or {}).get("llm") or {}
-        model_id = llm.get("default_model") or "gpt-5.6-terra"
+        model_id = select_default_model(cfg)
         if session_id:
             session = db.get_session(session_id)
-            if session and session.get("model_id"):
+            if session and session.get("model_id") and model_has_configured_key(session["model_id"], cfg):
                 model_id = session["model_id"]
         if not model_capabilities(model_id).get("supports_tools"):
-            model_id = "gpt-5.6-terra"
+            model_id = select_default_model(cfg)
         return model_id, resolve_provider_for_model(model_id)
 
     def note_model_changed(self, session_id: str, model_id: str) -> None:
@@ -1195,13 +1217,13 @@ class AgentService:
                 web_port = int(getattr(self, "web_port", 0) or candidate_web_port)
         candidate_web_port = int(candidate_web_port or 0) if self.runtime_state == "ready" else 0
         candidate_web_url = f"http://127.0.0.1:{candidate_web_port}/" if candidate_web_port else ""
-        gateway_key_configured = bool(os.environ.get("CRAWSHRIMP_LLM_API_KEY") or llm.get("api_key"))
-        deepseek_key_configured = bool(os.environ.get("CRAWSHRIMP_DEEPSEEK_API_KEY") or llm.get("deepseek_api_key"))
+        gateway_key_configured = gateway_api_key_configured(cfg)
+        deepseek_key_configured = deepseek_api_key_configured(cfg)
         return {
             "enabled": _os.environ.get("CRAWSHRIMP_AGENT_ENABLED", "1") not in ("0", "false", "no"),
             "state": self.runtime_state,
             "generation": self.generation,
-            "model": llm.get("default_model") or "gpt-5.6-terra",
+            "model": select_default_model(cfg),
             "api_key_configured": gateway_key_configured or deepseek_key_configured,
             "gateway_api_key_configured": gateway_key_configured,
             "deepseek_api_key_configured": deepseek_key_configured,
@@ -1332,8 +1354,8 @@ class AgentService:
             run_id = f"run-web-{uuid.uuid4().hex[:12]}"
             db.create_turn(turn_id, session_id, db.next_turn_ordinal(session_id) + 1, f"{run_id}:user")
             run = db.create_run(run_id, session_id, turn_id,
-                                self.generation_model_provider or "crawshrimp-overseas-openai",
-                                self.generation_model or "gpt-5.6-terra")
+                                self.generation_model_provider or resolve_provider_for_model(DEFAULT_MODEL),
+                                self.generation_model or DEFAULT_MODEL)
             db.update_run(run_id, status="running", started_at=_now_iso())
             self.shadow_runs[runtime_session_id] = run
             # DSH Web 原生会话没有显式「附加当前页面」开关；首次 turn 固定绑定

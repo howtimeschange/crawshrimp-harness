@@ -468,7 +468,8 @@ function openTaskInstance(instanceUid) {
 
 function routeLabel(route) {
   return { 'crawshrimp-overseas-openai': '海外 OpenAI', 'crawshrimp-overseas-anthropic': '海外 Anthropic',
-           'crawshrimp-domestic-openai': '国内 OpenAI' }[route] || route
+           'crawshrimp-domestic-openai': '国内 OpenAI',
+           'crawshrimp-deepseek-official': 'DeepSeek 官方' }[route] || route
 }
 
 async function loadModels() {

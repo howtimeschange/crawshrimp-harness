@@ -285,6 +285,9 @@ function bootCheck() {
     env: {
       CRAWSHRIMP_DIRECTORY_PICKER_MODE: 'shell',
       CRAWSHRIMP_STAGE_BOOT_CHECK: '1',
+      CRAWSHRIMP_LLM_API_KEY: 'stage-boot-check',
+      CRAWSHRIMP_AGENT_PROVIDER: 'crawshrimp-overseas-openai',
+      CRAWSHRIMP_AGENT_MODEL: 'gpt-5.6-terra',
       CRAWSHRIMP_SESSION_ROOT: join(stageRoot, '.boot-check-web-sessions'),
       CRAWSHRIMP_STORAGE_ROOT: join(stageRoot, '.boot-check-web-storages'),
       CRAWSHRIMP_WORKSPACE_ROOT: stageRoot,

@@ -14,12 +14,14 @@ import {
 } from './llmSettings.mjs'
 
 test('LLM settings expose all configured gateway defaults and supported model ids', () => {
-  assert.equal(LLM_DEFAULTS['ai.llm.default_model'], 'gpt-5.6-terra')
+  assert.equal(LLM_DEFAULTS['ai.llm.default_model'], 'deepseek-official-v4-flash')
   assert.equal(LLM_DEFAULTS['ai.llm.deepseek_base_url'], 'https://api.deepseek.com')
-  assert.equal(LLM_MODELS.length, 13)
+  assert.equal(LLM_MODELS.length, 15)
   assert.deepEqual(
     LLM_MODELS.map(item => item.value),
     [
+      'deepseek-official-v4-flash',
+      'deepseek-official-v4-pro',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',

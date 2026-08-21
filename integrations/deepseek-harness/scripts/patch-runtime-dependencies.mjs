@@ -4,16 +4,20 @@ import { fileURLToPath } from 'node:url'
 
 const WORKSPACE_ACCESS_PROBE_MARKER = 'crawshrimp-workspace-access-probe-v1'
 const WELCOME_NOTICE_PATCH_MARKER = 'crawshrimp-disable-dsh-welcome-notice-v1'
+const LLM_PI_AI_PROVIDER_ORDER_PATCH_MARKER = 'crawshrimp-llm-pi-ai-provider-order-v1'
 
 export function patchRuntimeDependencies(runtimeRoot) {
   const workspaceResult = patchWorkspaceAccessProbe(runtimeRoot)
   const welcomeNoticeResult = patchWelcomeNotice(runtimeRoot)
+  const piAiProviderOrderResult = patchPiAiProviderOrder(runtimeRoot)
   return {
-    patched: workspaceResult.patched || welcomeNoticeResult.patched,
+    patched: workspaceResult.patched || welcomeNoticeResult.patched || piAiProviderOrderResult.patched,
     workspaceEntry: workspaceResult.workspaceEntry,
     welcomeNoticeEntry: welcomeNoticeResult.welcomeNoticeEntry,
+    piAiProviderOrderEntry: piAiProviderOrderResult.piAiProviderOrderEntry,
     workspacePatched: workspaceResult.patched,
     welcomeNoticePatched: welcomeNoticeResult.patched,
+    piAiProviderOrderPatched: piAiProviderOrderResult.patched,
   }
 }
 
@@ -108,6 +112,34 @@ function patchWelcomeNotice(runtimeRoot) {
   return { patched: true, welcomeNoticeEntry }
 }
 
+function patchPiAiProviderOrder(runtimeRoot) {
+  const piAiProviderOrderEntry = join(
+    resolve(runtimeRoot),
+    'node_modules',
+    '@deepseek-ai',
+    'dsh-llm-pi-ai',
+    'lib',
+    'index.js',
+  )
+  let source = readFileSync(piAiProviderOrderEntry, 'utf8')
+  if (source.includes(LLM_PI_AI_PROVIDER_ORDER_PATCH_MARKER)) {
+    return { patched: false, piAiProviderOrderEntry }
+  }
+
+  source = replaceExact(
+    source,
+    '\t\tconst routes = [...profiles().keys()];',
+    `\t\tconst routes = [...profiles().keys()].map((provider, index) => ({ provider, index })).sort((left, right) => {
+\t\t\t/* ${LLM_PI_AI_PROVIDER_ORDER_PATCH_MARKER}: Crawshrimp keeps the official DeepSeek route first when multiple keys are configured. */
+\t\t\tconst rank = (provider) => provider === "crawshrimp-deepseek-official" ? 0 : 1;
+\t\t\treturn rank(left.provider) - rank(right.provider) || left.index - right.index;
+\t\t}).map(({ provider }) => provider);`,
+    'llm-pi-ai provider registration order',
+  )
+  writeFileSync(piAiProviderOrderEntry, source, 'utf8')
+  return { patched: true, piAiProviderOrderEntry }
+}
+
 function replaceExact(source, needle, replacement, label) {
   const first = source.indexOf(needle)
   if (first < 0) throw new Error(`cannot patch ${label}: expected source not found`)
@@ -123,4 +155,5 @@ if (invokedPath && invokedPath === resolve(fileURLToPath(import.meta.url))) {
   const result = patchRuntimeDependencies(process.argv[2] || defaultRoot)
   console.log(`[patch-runtime-dependencies] workspace access probe ${result.workspacePatched ? 'applied' : 'already present'}`)
   console.log(`[patch-runtime-dependencies] welcome notice removal ${result.welcomeNoticePatched ? 'applied' : 'already present'}`)
+  console.log(`[patch-runtime-dependencies] pi-ai provider order ${result.piAiProviderOrderPatched ? 'applied' : 'already present'}`)
 }

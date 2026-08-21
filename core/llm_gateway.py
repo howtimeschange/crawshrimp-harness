@@ -66,7 +66,8 @@ SUPPORTED_MODELS = (
     *DOMESTIC_OPENAI_MODELS,
     *DEEPSEEK_OFFICIAL_MODELS,
 )
-DEFAULT_MODEL = "gpt-5.6-terra"
+DEFAULT_MODEL = "deepseek-official-v4-flash"
+GATEWAY_FALLBACK_MODEL = "gpt-5.6-terra"
 GUANG_TITLE_MIN_CHARS = 24
 GUANG_TITLE_MAX_CHARS = 30
 RECOMMEND_TITLE_MIN_CHARS = 16
@@ -122,11 +123,56 @@ def _nested(source: dict, *keys: str) -> Any:
     return value
 
 
-def route_for_model(model_id: str, config: dict | None = None) -> LlmRoute:
+def _llm_settings(config: dict | None = None) -> dict:
     cfg = config if isinstance(config, dict) else load_config()
     llm = _nested(cfg, "ai", "llm")
-    llm = llm if isinstance(llm, dict) else {}
-    selected = _compact(model_id) or _compact(llm.get("default_model")) or DEFAULT_MODEL
+    return llm if isinstance(llm, dict) else {}
+
+
+def gateway_api_key_configured(config: dict | None = None) -> bool:
+    llm = _llm_settings(config)
+    return bool(_compact(os.environ.get("CRAWSHRIMP_LLM_API_KEY")) or _compact(llm.get("api_key")))
+
+
+def deepseek_api_key_configured(config: dict | None = None) -> bool:
+    llm = _llm_settings(config)
+    return bool(
+        _compact(os.environ.get("CRAWSHRIMP_DEEPSEEK_API_KEY"))
+        or _compact(llm.get("deepseek_api_key"))
+    )
+
+
+def model_has_configured_key(model_id: str, config: dict | None = None) -> bool:
+    selected = _compact(model_id)
+    if selected in DEEPSEEK_OFFICIAL_MODELS:
+        return deepseek_api_key_configured(config)
+    if (
+        selected in OVERSEAS_OPENAI_MODELS
+        or selected in OVERSEAS_ANTHROPIC_MODELS
+        or selected in DOMESTIC_OPENAI_MODELS
+    ):
+        return gateway_api_key_configured(config)
+    return False
+
+
+def select_default_model(config: dict | None = None) -> str:
+    cfg = config if isinstance(config, dict) else load_config()
+    llm = _llm_settings(cfg)
+    configured = _compact(llm.get("default_model")) or DEFAULT_MODEL
+    if configured not in SUPPORTED_MODELS:
+        configured = DEFAULT_MODEL
+    if model_has_configured_key(configured, cfg):
+        return configured
+    for candidate in (DEFAULT_MODEL, GATEWAY_FALLBACK_MODEL):
+        if candidate != configured and model_has_configured_key(candidate, cfg):
+            return candidate
+    return configured
+
+
+def route_for_model(model_id: str, config: dict | None = None) -> LlmRoute:
+    cfg = config if isinstance(config, dict) else load_config()
+    llm = _llm_settings(cfg)
+    selected = _compact(model_id) or select_default_model(cfg)
     if selected not in SUPPORTED_MODELS:
         raise LlmConfigurationError(f"不支持的文本模型：{selected}")
 
