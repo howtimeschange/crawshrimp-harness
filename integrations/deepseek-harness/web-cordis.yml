@@ -536,15 +536,15 @@
 
 - id: directory-picker
   name: '@deepseek-ai/dsh-host-directory-picker-auto'
-  disabled: !!js process.platform === 'win32' || process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE === 'browse'
+  disabled: !!js process.platform === 'win32' || ['browse', 'shell'].includes(process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE || '')
 
 - id: directory-picker-win-browse
   name: '@deepseek-ai/dsh-host-directory-picker-browse'
-  disabled: !!js process.platform !== 'win32' && process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE !== 'browse'
+  disabled: !!js process.platform !== 'win32' && !['browse', 'shell'].includes(process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE || '')
 
 - id: ui-directory-picker-win-browse
   name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
-  disabled: !!js process.platform !== 'win32' && process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE !== 'browse'
+  disabled: !!js process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE !== 'browse'
 
 - id: plugin-inventory
   name: '@deepseek-ai/dsh-host-plugin-inventory'

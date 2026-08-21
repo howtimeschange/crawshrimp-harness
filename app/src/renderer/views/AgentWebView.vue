@@ -75,6 +75,7 @@ const frameSrc = computed(() => {
   if (!webUrl.value) return ''
   const url = new URL(webUrl.value, window.location.href)
   if (props.theme === 'light' || props.theme === 'dark') url.searchParams.set('theme', props.theme)
+  if (shouldUseShellDirectoryPicker()) url.searchParams.set('csDirectoryPicker', 'shell')
   if (runtimeGeneration.value > 0) url.searchParams.set('csRuntimeGeneration', String(runtimeGeneration.value))
   return url.href
 })
@@ -202,6 +203,37 @@ function pushNav() {
   })
 }
 
+function shouldUseShellDirectoryPicker() {
+  const platform = String(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent || '').toLowerCase()
+  return platform.includes('win')
+}
+
+async function handleWorkspaceDirectoryPick(data = {}) {
+  const requestId = String(data.requestId || '').trim()
+  if (!requestId) return
+  try {
+    if (typeof window.cs?.browseFile !== 'function') throw new Error('当前环境不支持系统文件夹选择器')
+    const selectedPath = await window.cs.browseFile({
+      directory: true,
+      createDirectory: true,
+      title: String(data.title || '选择工作区目录'),
+      defaultPath: workspaceRoot.value || undefined,
+    })
+    postToFrame({
+      __crawshrimp: 'workspace-directory-picked',
+      requestId,
+      path: selectedPath || '',
+      canceled: !selectedPath,
+    })
+  } catch (error) {
+    postToFrame({
+      __crawshrimp: 'workspace-directory-picked',
+      requestId,
+      error: error?.message || String(error),
+    })
+  }
+}
+
 // iframe 内菜单点击 / 侧边栏宽度变化 / 会话导航 → shell
 function onWindowMessage(event) {
   const data = event?.data
@@ -233,6 +265,8 @@ function onWindowMessage(event) {
   } else if (data.__crawshrimp === 'upload-attachment-pick') {
     // 会话界面 📎 按钮 → 打开原生选择器逐个注册
     handlePickAttachments(data.runtimeSessionId)
+  } else if (data.__crawshrimp === 'workspace-directory-pick') {
+    handleWorkspaceDirectoryPick(data)
   }
 }
 

@@ -344,35 +344,32 @@ def main() -> int:
   trustedHosts: !!js ctx.webStartup.trustedHosts
 """)}
 
-    # Windows packaged builds run the DSH host under Electron-as-Node. The
-    # upstream native picker spawns its Win32 dialog worker through
-    # process.execPath, which is the Electron executable in that environment
-    # and can exit before the worker reports a folder. Use the in-app browse
-    # picker on Windows while leaving the upstream auto/native path unchanged
-    # elsewhere. CRAWSHRIMP_DIRECTORY_PICKER_MODE=browse lets staging/CI boot
-    # the exact Windows composition on another OS; it never re-enables native
-    # on Windows.
+    # Windows packaged builds use the Crawshrimp Electron shell bridge for
+    # native folder picking: DSH keeps owning workspace creation while
+    # AgentWebView/main.js open Electron's system dialog. The upstream Win32
+    # worker is disabled on Windows because it runs through process.execPath
+    # (Electron-as-Node in our package) and can exit before reporting a path.
+    # CRAWSHRIMP_DIRECTORY_PICKER_MODE=shell lets staging/CI boot this exact
+    # no-upstream-picker composition on another OS; browse remains an explicit
+    # fallback only.
     if "directory-picker" in merged:
         merged["directory-picker"]["disabled"] = (
             "!!js process.platform === 'win32' || "
-            "process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE === 'browse'"
+            "['browse', 'shell'].includes(process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE || '')"
         )
     merged["directory-picker-win-browse"] = {
         "id": "directory-picker-win-browse",
         "name": "@deepseek-ai/dsh-host-directory-picker-browse",
         "disabled": (
             "!!js process.platform !== 'win32' && "
-            "process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE !== 'browse'"
+            "!['browse', 'shell'].includes(process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE || '')"
         ),
         "config_lines": [],
     }
     merged["ui-directory-picker-win-browse"] = {
         "id": "ui-directory-picker-win-browse",
         "name": "@deepseek-ai/dsh-client-ui-directory-picker-browse",
-        "disabled": (
-            "!!js process.platform !== 'win32' && "
-            "process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE !== 'browse'"
-        ),
+        "disabled": "!!js process.env.CRAWSHRIMP_DIRECTORY_PICKER_MODE !== 'browse'",
         "config_lines": [],
     }
     if "directory-picker" in order:

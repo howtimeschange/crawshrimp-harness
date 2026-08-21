@@ -70,6 +70,45 @@ window.__ModuleLoader__.load({
       window.parent.postMessage(message, shellOrigin())
     }
 
+    function shellDirectoryPickerEnabled() {
+      try {
+        return new URLSearchParams(window.location.search || '').get('csDirectoryPicker') === 'shell'
+      } catch (error) {
+        return false
+      }
+    }
+
+    let workspaceDirectoryPickSeq = 0
+    const pendingWorkspaceDirectoryPicks = new Map()
+
+    function pickWorkspaceDirectoryViaShell() {
+      return new Promise((resolve, reject) => {
+        const requestId = `workspace-directory-${Date.now()}-${++workspaceDirectoryPickSeq}`
+        pendingWorkspaceDirectoryPicks.set(requestId, { resolve, reject })
+        postToShell({
+          __crawshrimp: 'workspace-directory-pick',
+          requestId,
+          title: '选择工作区目录',
+        })
+      })
+    }
+
+    function handleWorkspaceDirectoryPicked(data) {
+      const requestId = String(data?.requestId || '')
+      if (!requestId || !pendingWorkspaceDirectoryPicks.has(requestId)) return
+      const pending = pendingWorkspaceDirectoryPicks.get(requestId)
+      pendingWorkspaceDirectoryPicks.delete(requestId)
+      if (data.error) {
+        pending.reject(new Error(String(data.error)))
+        return
+      }
+      if (data.canceled || !data.path) {
+        pending.resolve(null)
+        return
+      }
+      pending.resolve(String(data.path))
+    }
+
     // DeepSeek 蓝阶 / 通用蓝阶 → 抓虾橙阶(light 用 #FF5000 系,dark 用 #FF6B2B 系)
     const ORANGE_STEPS = {
       light: {
@@ -118,6 +157,53 @@ window.__ModuleLoader__.load({
         yield ctx.slots.register({ name: 'sidebar.brand.name' }, CrawshrimpBrandName)
         yield ctx.slots.register({ name: 'conversation.hero.brand.mark' }, CrawshrimpBrandMark)
       })))
+    }
+
+    function CrawshrimpShellDirectoryFlow(props) {
+      const { open, pick } = props
+      const armed = react.useRef(false)
+      const outcome = react.useRef(props)
+      outcome.current = props
+      const alive = react.useRef(true)
+      react.useEffect(() => {
+        alive.current = true
+        return () => {
+          alive.current = false
+        }
+      }, [])
+      react.useEffect(() => {
+        if (!open) {
+          armed.current = false
+          return
+        }
+        if (armed.current) return
+        armed.current = true
+        pick().then((selectedPath) => {
+          if (!alive.current) return
+          if (selectedPath === null) outcome.current.onCancel()
+          else outcome.current.onPicked(selectedPath)
+        }, (reason) => {
+          if (!alive.current) return
+          outcome.current.onError(reason instanceof Error ? reason.message : String(reason))
+        })
+      }, [open, pick])
+      return null
+    }
+
+    function registerCrawshrimpDirectoryFlow(ctx) {
+      if (!shellDirectoryPickerEnabled()) return
+      if (!ctx.slots?.inject || !ctx.slots?.register) return
+      const injected = () => ({ pick: () => pickWorkspaceDirectoryViaShell() })
+      ctx.slots.inject('conversation.hero.workspace.directoryFlow', () => ctx.slots.inject('sidebar.workspaces.directoryFlow', function* () {
+        yield ctx.slots.register({
+          name: 'conversation.hero.workspace.directoryFlow',
+          inject: injected,
+        }, CrawshrimpShellDirectoryFlow)
+        yield ctx.slots.register({
+          name: 'sidebar.workspaces.directoryFlow',
+          inject: injected,
+        }, CrawshrimpShellDirectoryFlow)
+      }))
     }
 
     // 去品牌 + 抓虾化样式
@@ -1054,6 +1140,7 @@ window.__ModuleLoader__.load({
 
     function apply(ctx) {
       registerCrawshrimpBrandSlots(ctx)
+      registerCrawshrimpDirectoryFlow(ctx)
       ctx.theme.overrideTokens('crawshrimp', CRAWSHRIMP_TOKENS)
       injectBrandCss()
       // 浏览器标题:去 DeepSeek(DocumentTitle 组件会在会话切换后重新拼后缀,需持续兜底)
@@ -1080,6 +1167,7 @@ window.__ModuleLoader__.load({
         if (data && data.__crawshrimp === 'theme') adopt(data.theme)
         if (data && data.__crawshrimp === 'nav') renderNav(data.items, data.active)
         if (data && data.__crawshrimp === 'workspace') ensureDefaultWorkspace(ctx, data.root)
+        if (data && data.__crawshrimp === 'workspace-directory-picked') handleWorkspaceDirectoryPicked(data)
         if (data && data.__crawshrimp === 'artifact-show') renderArtifactShow(data)
         if (data && data.__crawshrimp === 'attachment-added') {
           const sessionId = String(data.runtimeSessionId || currentRuntimeSessionId || '')

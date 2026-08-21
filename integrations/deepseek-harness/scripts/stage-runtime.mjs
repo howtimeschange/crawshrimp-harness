@@ -280,10 +280,10 @@ function bootCheck() {
     cleanup: ['.boot-check-spike-sessions'],
   })
   bootCheckProfile(electronBin, demoBin, {
-    label: 'web-cordis.yml (Windows browse picker composition)',
+    label: 'web-cordis.yml (Crawshrimp shell directory picker composition)',
     cordisFile: 'web-cordis.yml',
     env: {
-      CRAWSHRIMP_DIRECTORY_PICKER_MODE: 'browse',
+      CRAWSHRIMP_DIRECTORY_PICKER_MODE: 'shell',
       CRAWSHRIMP_STAGE_BOOT_CHECK: '1',
       CRAWSHRIMP_SESSION_ROOT: join(stageRoot, '.boot-check-web-sessions'),
       CRAWSHRIMP_STORAGE_ROOT: join(stageRoot, '.boot-check-web-storages'),
@@ -340,10 +340,10 @@ async function verifyWebSurface() {
       const browseEntry = '"id":"@deepseek-ai/dsh-client-ui-directory-picker-browse"'
       const nativeEntry = '"id":"@deepseek-ai/dsh-client-ui-directory-picker-native"'
       const slotsEntry = '"id":"crawshrimp-slots"'
-      if (!html.includes(browseEntry)) throw new Error('browse picker client entry missing from HTML')
+      if (html.includes(browseEntry)) throw new Error('browse picker client entry unexpectedly active in HTML')
       if (html.includes(nativeEntry)) throw new Error('native picker client entry unexpectedly active in HTML')
       if (!html.includes(slotsEntry)) throw new Error('crawshrimp-slots client entry missing from HTML')
-      console.log(${JSON.stringify(profile.label)} + ' web surface: HTTP ' + response.status + ', browse picker active, native picker absent')
+      console.log(${JSON.stringify(profile.label)} + ' web surface: HTTP ' + response.status + ', Crawshrimp slots active, upstream picker absent')
       return
     } catch (error) {
       lastError = error

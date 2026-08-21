@@ -3404,6 +3404,7 @@ secureHandle('save-adapter-template', async (_, adapterId, templateFile, templat
 
 secureHandle('browse-file', async (_, opts = {}) => {
   const props = opts.directory ? ['openDirectory'] : ['openFile']
+  if (opts.directory && opts.createDirectory) props.push('createDirectory')
   if (opts.multi && !opts.directory) props.push('multiSelections')
   const filters = opts.filters || (opts.excel
     ? [{ name: 'Excel / CSV', extensions: ['xlsx', 'xls', 'csv'] }, { name: '所有文件', extensions: ['*'] }]
