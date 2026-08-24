@@ -68,98 +68,53 @@
     </div>
     <Teleport to="body">
       <div v-if="inlineLlmModalOpen" class="inline-llm-modal-backdrop" @click.self="closeInlineLlmModal">
-        <form class="inline-llm-modal" @submit.prevent="saveInlineLlmSettings">
+        <section
+          class="inline-llm-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="inline-llm-modal-title"
+        >
           <header class="inline-modal-head">
             <div>
-              <strong>配置模型 Key</strong>
-              <span>保存后会启动智能体会话；其它抓虾功能不会受影响。</span>
+              <strong id="inline-llm-modal-title">配置大模型 Provider</strong>
+              <span>当前对话需要至少一个可用 Provider；其它抓虾功能不受影响。</span>
             </div>
             <button class="placeholder-btn link" type="button" @click="openDeepSeekPlatform">
               <IconExternalLink :size="15" :stroke-width="2.1" aria-hidden="true" />
-              <span>获取 Key</span>
+              <span>DeepSeek 平台</span>
             </button>
           </header>
 
           <div class="inline-llm-card in-modal">
             <div class="inline-card-head">
               <div>
-                <strong>DeepSeek 官方 · 原生接入</strong>
-                <span>推荐新用户直接配置官方 Key，默认使用官方 Base URL。</span>
+                <strong>使用完整 Provider 配置</strong>
+                <span>设置页支持 DeepSeek 官方、森马网关，以及自定义 OpenAI/Anthropic 兼容供应商和模型。</span>
               </div>
             </div>
-            <div class="inline-fields">
-              <label class="inline-field">
-                <span>DeepSeek 官方 API Key</span>
-                <input
-                  v-model="inlineLlmCfg[DEEPSEEK_API_KEY_FIELD]"
-                  class="inline-input"
-                  type="password"
-                  autocomplete="new-password"
-                  placeholder="sk-..."
-                  @focus="selectInputText"
-                />
-              </label>
-              <label class="inline-field">
-                <span>DeepSeek 官方 Base URL</span>
-                <input
-                  v-model="inlineLlmCfg[DEEPSEEK_BASE_URL_FIELD]"
-                  class="inline-input"
-                  placeholder="https://api.deepseek.com"
-                />
-              </label>
-            </div>
-            <details class="inline-advanced">
-              <summary>已有森马网关 Key</summary>
-              <label class="inline-field">
-                <span>森马海外 OpenAI Key</span>
-                <input
-                  v-model="inlineLlmCfg[OVERSEAS_OPENAI_API_KEY_FIELD]"
-                  class="inline-input"
-                  type="password"
-                  autocomplete="new-password"
-                  placeholder="输入海外 OpenAI 网关 Key"
-                  @focus="selectInputText"
-                />
-              </label>
-              <label class="inline-field">
-                <span>森马海外 Anthropic Key</span>
-                <input
-                  v-model="inlineLlmCfg[OVERSEAS_ANTHROPIC_API_KEY_FIELD]"
-                  class="inline-input"
-                  type="password"
-                  autocomplete="new-password"
-                  placeholder="输入海外 Anthropic 网关 Key"
-                  @focus="selectInputText"
-                />
-              </label>
-              <label class="inline-field">
-                <span>森马国内 OpenAI Key</span>
-                <input
-                  v-model="inlineLlmCfg[DOMESTIC_API_KEY_FIELD]"
-                  class="inline-input"
-                  type="password"
-                  autocomplete="new-password"
-                  placeholder="输入国内 OpenAI 网关 Key"
-                  @focus="selectInputText"
-                />
-              </label>
-            </details>
-            <div class="key-reset-guide" aria-label="重置 DeepSeek API Key 教程">
-              <strong>重置或更换 Key</strong>
-              <span>在 DeepSeek 官方平台创建新 Key，回到这里粘贴并保存即可覆盖旧值；旧 Key 不会在页面回显。</span>
+            <div class="provider-guide-list" aria-label="大模型 Provider 配置说明">
+              <div class="provider-guide-row">
+                <strong>内置 Provider</strong>
+                <span>分别配置 API Key、Base URL 和可用模型，不再使用旧的共享 Key 入口。</span>
+              </div>
+              <div class="provider-guide-row">
+                <strong>自定义 Provider</strong>
+                <span>添加供应商名称、协议类型、Base URL、API Key 和模型 ID 后即可保存。</span>
+              </div>
+              <div class="provider-guide-row">
+                <strong>Key 重置</strong>
+                <span>到对应 Provider 弹窗粘贴新 Key 并保存；旧 Key 不会在页面回显。</span>
+              </div>
             </div>
             <div class="inline-form-actions">
               <button class="placeholder-btn" type="button" @click="closeInlineLlmModal">取消</button>
-              <button class="placeholder-btn primary" type="submit" :disabled="inlineLlmSaving">
-                <IconDeviceFloppy :size="15" :stroke-width="2.1" aria-hidden="true" />
-                <span>{{ inlineLlmSaving ? '保存中...' : '保存并启动智能体' }}</span>
+              <button class="placeholder-btn primary" type="button" @click="openFullLlmSettings">
+                <IconSettings :size="15" :stroke-width="2.1" aria-hidden="true" />
+                <span>去完整配置</span>
               </button>
-              <span v-if="inlineLlmMessage" :class="['inline-llm-message', inlineLlmMessageOk ? 'ok' : 'err']">
-                {{ inlineLlmMessage }}
-              </span>
             </div>
           </div>
-        </form>
+        </section>
       </div>
     </Teleport>
   </div>
@@ -167,25 +122,9 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { IconDeviceDesktop, IconDeviceFloppy, IconExternalLink } from '@tabler/icons-vue'
+import { IconDeviceDesktop, IconExternalLink, IconSettings } from '@tabler/icons-vue'
 import AgentBrowserPanel from '../components/agent/AgentBrowserPanel.vue'
-import {
-  DEEPSEEK_API_KEY_FIELD,
-  DEEPSEEK_BASE_URL_FIELD,
-  DEEPSEEK_OFFICIAL_BASE_URL_DEFAULT,
-  DEEPSEEK_PLATFORM_URL,
-  DOMESTIC_API_KEY_FIELD,
-  LLM_DEFAULTS,
-  LLM_BUILTIN_PROVIDERS,
-  LLM_MASKED_CREDENTIAL_VALUE,
-  OVERSEAS_ANTHROPIC_API_KEY_FIELD,
-  OVERSEAS_OPENAI_API_KEY_FIELD,
-  buildLlmSettingsPatch,
-  clearWrittenLlmSettings,
-  isDeepSeekConfigured,
-  isLlmConfigured,
-  llmProviderConfigured,
-} from '../utils/llmSettings.mjs'
+import { DEEPSEEK_PLATFORM_URL } from '../utils/llmSettings.mjs'
 
 const props = defineProps({
   theme: { type: String, default: '' },        // effectiveTheme(light|dark)
@@ -215,6 +154,7 @@ let pollTimer = null
 let tabPollTimer = null
 let warmStarted = false
 let recovering = false
+const MISSING_LLM_PROVIDER_MESSAGE = '请先配置任一可用的大模型 Provider。'
 
 const frameSrc = computed(() => {
   if (!webUrl.value) return ''
@@ -248,26 +188,14 @@ const placeholderIcon = computed(() => isRuntimeNeedsConfiguration.value ? '钥'
 const placeholderTitle = computed(() => isRuntimeNeedsConfiguration.value ? '智能体待配置' : '智能体启动中…')
 const placeholderText = computed(() => (
   isRuntimeNeedsConfiguration.value
-    ? (error.value || '请先配置 DeepSeek 官方 API Key 或网关 API Key。')
+    ? normalizeModelConfigMessage(error.value)
     : '正在准备会话环境,请稍候片刻。'
 ))
 const placeholderStateText = computed(() => (
   isRuntimeNeedsConfiguration.value ? '等待模型配置' : '自动就绪中,无需操作'
 ))
 const runtimeNeedsModelKey = ref(false)
-const inlineLlmCfg = ref({
-  [DEEPSEEK_API_KEY_FIELD]: '',
-  [DEEPSEEK_BASE_URL_FIELD]: DEEPSEEK_OFFICIAL_BASE_URL_DEFAULT,
-  [OVERSEAS_OPENAI_API_KEY_FIELD]: '',
-  [OVERSEAS_ANTHROPIC_API_KEY_FIELD]: '',
-  [DOMESTIC_API_KEY_FIELD]: '',
-  'ai.llm.default_model': LLM_DEFAULTS['ai.llm.default_model'],
-})
 const inlineLlmModalOpen = ref(false)
-const inlineLlmSaving = ref(false)
-const inlineLlmMessage = ref('')
-const inlineLlmMessageOk = ref(true)
-const inlineSettingsLoaded = ref(false)
 
 function loadBrowserLayoutPreference() {
   try {
@@ -326,7 +254,7 @@ async function loadRuntime() {
       return true
     }
     if (state === 'needs_configuration') {
-      error.value = result?.error || '请先配置 DeepSeek 官方 API Key 或网关 API Key。'
+      error.value = normalizeModelConfigMessage(result?.error)
       loading.value = false
       return false
     }
@@ -340,7 +268,7 @@ async function loadRuntime() {
         if (warm?.ok || warm?.state === 'ready') return await loadRuntime()
         if (warm?.state === 'needs_configuration') {
           lastRuntimeState.value = 'needs_configuration'
-          error.value = warm?.error || '请先配置 DeepSeek 官方 API Key 或网关 API Key。'
+          error.value = normalizeModelConfigMessage(warm?.error)
           loading.value = false
           return false
         }
@@ -400,100 +328,23 @@ function selectFallbackNav(item) {
   emit('nav-select', item.id)
 }
 
-function flattenSettings(source, prefix = '', target = {}) {
-  const value = source && typeof source === 'object' ? source : {}
-  for (const [key, item] of Object.entries(value)) {
-    const nextKey = prefix ? `${prefix}.${key}` : key
-    if (item && typeof item === 'object' && !Array.isArray(item)) flattenSettings(item, nextKey, target)
-    else target[nextKey] = item
-  }
-  return target
+function normalizeModelConfigMessage(message = '') {
+  const text = String(message || '').trim()
+  if (!text || /DeepSeek 官方 API Key|网关 API Key/.test(text)) return MISSING_LLM_PROVIDER_MESSAGE
+  return text
 }
 
-function applyInlineSettings(raw = {}) {
-  const flat = flattenSettings(raw)
-  for (const [key, value] of Object.entries(LLM_DEFAULTS)) {
-    if (!flat[key]) flat[key] = value
-  }
-  const providerValues = {}
-  for (const provider of LLM_BUILTIN_PROVIDERS) {
-    const configured = llmProviderConfigured(flat, provider)
-    providerValues[provider.apiKeyField] = configured ? LLM_MASKED_CREDENTIAL_VALUE : ''
-    if (provider.configuredField) providerValues[provider.configuredField] = configured
-  }
-  inlineLlmCfg.value = {
-    ...inlineLlmCfg.value,
-    ...providerValues,
-    [DEEPSEEK_API_KEY_FIELD]: providerValues[DEEPSEEK_API_KEY_FIELD] || (isDeepSeekConfigured(flat) ? LLM_MASKED_CREDENTIAL_VALUE : ''),
-    [DEEPSEEK_BASE_URL_FIELD]: flat[DEEPSEEK_BASE_URL_FIELD] || DEEPSEEK_OFFICIAL_BASE_URL_DEFAULT,
-    'ai.llm.default_model': flat['ai.llm.default_model'] || LLM_DEFAULTS['ai.llm.default_model'],
-    'ai.llm.deepseek_configured': Boolean(flat['ai.llm.deepseek_configured']),
-    'ai.llm.configured': Boolean(flat['ai.llm.configured']),
-  }
-}
-
-async function ensureInlineLlmSettingsLoaded() {
-  if (inlineSettingsLoaded.value || typeof window.cs?.getSettings !== 'function') return
-  try {
-    applyInlineSettings(await window.cs.getSettings())
-    inlineSettingsLoaded.value = true
-  } catch (err) {
-    console.warn('[agent] 读取模型配置状态失败:', err?.message || err)
-  }
-}
-
-function selectInputText(event) {
-  event?.target?.select?.()
-}
-
-async function openInlineLlmModal() {
-  await ensureInlineLlmSettingsLoaded()
-  inlineLlmMessage.value = ''
-  inlineLlmMessageOk.value = true
+function openInlineLlmModal() {
   inlineLlmModalOpen.value = true
 }
 
 function closeInlineLlmModal() {
-  if (inlineLlmSaving.value) return
   inlineLlmModalOpen.value = false
 }
 
-async function saveInlineLlmSettings() {
-  inlineLlmMessage.value = ''
-  inlineLlmMessageOk.value = true
-  const hasCredential = isDeepSeekConfigured(inlineLlmCfg.value) || isLlmConfigured(inlineLlmCfg.value)
-  if (!hasCredential) {
-    inlineLlmMessageOk.value = false
-    inlineLlmMessage.value = '请先填写 DeepSeek 官方 API Key 或任一森马网关 API Key。'
-    return
-  }
-  if (typeof window.cs?.patchSettings !== 'function') {
-    inlineLlmMessageOk.value = false
-    inlineLlmMessage.value = '当前环境不支持直接保存模型配置。'
-    return
-  }
-  inlineLlmSaving.value = true
-  try {
-    const patch = buildLlmSettingsPatch(inlineLlmCfg.value)
-    const result = await window.cs.patchSettings(patch)
-    clearWrittenLlmSettings(inlineLlmCfg.value, patch)
-    inlineSettingsLoaded.value = false
-    inlineLlmMessage.value = result?.agent_runtime_reload === 'busy'
-      ? '已保存；当前有运行中的智能体任务，结束后会使用新配置。'
-      : '已保存，正在启动智能体会话。'
-    inlineLlmMessageOk.value = true
-    if (result?.agent_runtime_reload !== 'busy') inlineLlmModalOpen.value = false
-    try {
-      await window.cs.agentApi('POST', '/agent/runtime/restart')
-    } catch { /* PATCH 可能已经安排重启；这里继续轮询状态 */ }
-    await new Promise((resolve) => setTimeout(resolve, 1200))
-    await loadRuntime()
-  } catch (err) {
-    inlineLlmMessageOk.value = false
-    inlineLlmMessage.value = err?.message || '保存失败'
-  } finally {
-    inlineLlmSaving.value = false
-  }
+function openFullLlmSettings() {
+  inlineLlmModalOpen.value = false
+  emit('open-settings', 'ai-llm')
 }
 
 function openDeepSeekPlatform() {
@@ -719,7 +570,7 @@ onMounted(() => {
         probeFailCount = 0
         webUrl.value = ''
         loading.value = false
-        error.value = st?.error || '请先配置 DeepSeek 官方 API Key 或网关 API Key。'
+        error.value = normalizeModelConfigMessage(st?.error)
         return
       }
       probeFailCount = 0
@@ -761,10 +612,6 @@ watch(() => [props.navItems, props.activeNav], () => {
 
 watch(showFallbackNav, (visible) => {
   if (visible) emit('rail-metrics', { width: 280, collapsed: false })
-}, { immediate: true })
-
-watch(isRuntimeNeedsConfiguration, (needs) => {
-  if (needs) void ensureInlineLlmSettingsLoaded()
 }, { immediate: true })
 
 // 智能体调用浏览器工具(浏览器操作画面)时自动弹出实时浏览器窗口
@@ -1168,23 +1015,21 @@ async function removeBrowserWindow(tabId) {
 }
 
 .inline-card-head div,
-.inline-field,
-.key-reset-guide {
+.provider-guide-row {
   min-width: 0;
   display: flex;
   flex-direction: column;
 }
 
 .inline-card-head strong,
-.key-reset-guide strong {
+.provider-guide-row strong {
   color: var(--text);
   font-size: 12px;
   font-weight: 760;
 }
 
 .inline-card-head span,
-.key-reset-guide span,
-.inline-advanced summary,
+.provider-guide-row span,
 .runtime-detail {
   color: var(--text3);
   font-size: 11px;
@@ -1196,72 +1041,14 @@ async function removeBrowserWindow(tabId) {
   gap: 5px;
 }
 
-.inline-fields {
+.provider-guide-list {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 12px;
+  gap: 10px;
 }
 
-.inline-field {
-  gap: 7px;
-}
-
-.inline-field > span {
-  color: var(--text2);
-  font-size: 12px;
-}
-
-.inline-input {
-  width: 100%;
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--text);
-  font-size: 13px;
-  padding: 10px 12px;
-  outline: none;
-  overflow-wrap: anywhere;
-}
-
-.inline-input:focus {
-  border-color: var(--orange);
-  background: var(--input-focus);
-}
-
-.inline-advanced {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--soft-fill);
-}
-
-.inline-advanced summary {
-  min-height: 34px;
-  padding: 9px 11px;
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-}
-
-.inline-advanced summary::-webkit-details-marker {
-  display: none;
-}
-
-.inline-advanced[open] {
-  padding-bottom: 11px;
-}
-
-.inline-advanced[open] summary {
-  color: var(--orange-text);
-}
-
-.inline-advanced .inline-field {
-  padding: 0 11px;
-}
-
-.key-reset-guide {
+.provider-guide-row {
   gap: 5px;
-  padding: 10px 11px;
+  padding: 11px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--soft-fill);
@@ -1273,25 +1060,6 @@ async function removeBrowserWindow(tabId) {
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-}
-
-.inline-llm-message {
-  min-width: 0;
-  font-size: 12px;
-  line-height: 1.45;
-  padding: 7px 10px;
-  border-radius: 7px;
-  overflow-wrap: anywhere;
-}
-
-.inline-llm-message.ok {
-  color: var(--green);
-  background: rgba(74, 222, 128, 0.1);
-}
-
-.inline-llm-message.err {
-  color: var(--red);
-  background: rgba(248, 113, 113, 0.1);
 }
 
 .runtime-detail {
@@ -1347,7 +1115,6 @@ async function removeBrowserWindow(tabId) {
     padding-top: 36px;
   }
   .inline-card-head,
-  .inline-fields,
   .inline-modal-head {
     grid-template-columns: 1fr;
   }
