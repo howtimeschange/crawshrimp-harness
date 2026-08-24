@@ -410,7 +410,7 @@
           <header class="aiv-panel-head">
             <div>
               <strong>AI 改图动作</strong>
-              <span>选择只表示本次操作范围；生视频会默认使用已选原图和保留 AI 图</span>
+              <span>选择只表示本次操作范围；生视频会默认使用已选原图，AI 图需手动选择</span>
             </div>
           </header>
           <div class="aiv-panel-body aiv-edit-scroll-body">
@@ -6542,7 +6542,7 @@ function syncWorkspaceVersionsFromReviewStyles(styles = reviewStyles) {
         operationType: asset.operationType,
         label: asset.label,
         meta: asset.meta,
-        selected: asset.status === 'approved',
+        selected: Boolean(asset.selected || asset.editSelected || asset.videoSelected),
         status: asset.status === 'generating' ? 'running' : asset.status,
         progress: asset.status === 'generating' ? 45 : 100,
         sourceAssetId: asset.sourceAssetId,
@@ -8457,7 +8457,7 @@ function resetVideoTaskDraftAssets() {
     syncHappyHorseModeFromAssetCount()
     return
   }
-  // 默认勾选第一步已选原图和第二步保留的 AI 图；其余素材保留为手动选择。
+  // 默认勾选第一步已选原图；AI 图即使已审核，也保留为手动选择。
   videoTaskDraft.assetIds = assets.filter(asset => asset.selectable && asset.selected).map(asset => asset.id)
   if (videoTaskDraft.provider === 'happyhorse' && videoTaskDraft.assetIds.length > 9) {
     videoTaskDraft.assetIds = videoTaskDraft.assetIds.slice(0, 9)

@@ -1522,10 +1522,8 @@ export function buildBalaVideoAssetPool({ reviewStyle = {}, materialStyle = null
   const styleCode = compact(reviewStyle?.styleCode || reviewStyle?.style_code || materialStyle?.styleCode)
   const output = []
   const seenPaths = new Set()
-  const selectedForVideo = (asset = {}, status = 'pending', taxonomy = {}) => (
+  const selectedForVideo = (asset = {}) => (
     Boolean(asset?.selected || asset?.editSelected || asset?.videoSelected)
-    || (taxonomy?.isAi && !asset?.deleted)
-    || status === 'approved'
   )
   const append = (asset, { source = false, folderHint = '' } = {}) => {
     const status = reviewAssetStatus(asset?.status)
@@ -1548,7 +1546,7 @@ export function buildBalaVideoAssetPool({ reviewStyle = {}, materialStyle = null
       businessKind: videoBusinessKind({ ...asset, kind: structuralKind, sourceType: taxonomy.sourceType }),
       displayKind: taxonomy.displayKind,
       status,
-      selected: selectedForVideo(asset, status, taxonomy),
+      selected: selectedForVideo(asset),
       selectable: true,
       path,
       sourcePath: compact(asset?.sourcePath || asset?.source_path),

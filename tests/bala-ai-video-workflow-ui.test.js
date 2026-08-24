@@ -2106,7 +2106,7 @@ test('workflow restores all persisted review batches and routes decisions throug
   assert.match(main, /list-bala-review-workspace-batches/)
 })
 
-test('video asset pool lets pending model detail and AI images be selected for video tasks', () => {
+test('video asset pool lets pending model detail and AI images be manually selected for video tasks', () => {
   assert.equal(typeof balaWorkflow.buildBalaVideoAssetPool, 'function')
   const assets = balaWorkflow.buildBalaVideoAssetPool({
     reviewStyle: {
@@ -2115,7 +2115,7 @@ test('video asset pool lets pending model detail and AI images be selected for v
         { id: 'approved-face', label: '正面', operationType: 'face_swap', status: 'approved', path: '/tmp/face.png', thumbnailUrl: 'http://127.0.0.1:18765/thumbnail/approved-face' },
         { id: 'pending-outfit', label: '侧面', operationType: 'outfit_swap', status: 'pending', path: '/tmp/outfit.png' },
         { id: 'pending-detail-ai', label: 'AI细节', kind: 'ai', operationType: 'background_swap', status: 'pending', path: '/tmp/ai-detail.png', sourcePath: '/workspace/208326102205/02_商品细节图/detail.jpg' },
-        { id: 'retry-pose', label: '背面', operationType: 'pose_swap', status: 'retry', path: '/tmp/pose.png' },
+        { id: 'retry-pose', label: '背面', operationType: 'pose_swap', status: 'retry', path: '/tmp/pose.png', videoSelected: true },
         { id: 'rejected-bg', label: '背景', operationType: 'background_swap', status: 'rejected', path: '/tmp/bg.png' },
       ],
       sourceAssets: [
@@ -2136,9 +2136,9 @@ test('video asset pool lets pending model detail and AI images be selected for v
     asset.selected,
     asset.selectable,
   ]), [
-    ['vasset-approved-face', 'ai', '模拍', 'AI·模拍', 'approved', true, true],
-    ['vasset-pending-outfit', 'ai', '模拍', 'AI·模拍', 'pending', true, true],
-    ['vasset-pending-detail-ai', 'ai', '素材', 'AI·细节', 'pending', true, true],
+    ['vasset-approved-face', 'ai', '模拍', 'AI·模拍', 'approved', false, true],
+    ['vasset-pending-outfit', 'ai', '模拍', 'AI·模拍', 'pending', false, true],
+    ['vasset-pending-detail-ai', 'ai', '素材', 'AI·细节', 'pending', false, true],
     ['vasset-retry-pose', 'ai', '模拍', 'AI·模拍', 'retry', true, true],
     ['vasset-208326102205-source-approved-origin', 'origin', '模拍', '模特图', 'approved', true, true],
     ['vasset-208326102205-source-pending-origin', 'origin', '模拍', '模特图', 'pending', false, true],
