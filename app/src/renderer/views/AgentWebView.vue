@@ -76,41 +76,65 @@
         >
           <header class="inline-modal-head">
             <div>
-              <strong id="inline-llm-modal-title">配置大模型 Provider</strong>
-              <span>当前对话需要至少一个可用 Provider；其它抓虾功能不受影响。</span>
+              <strong id="inline-llm-modal-title">配置大模型供应商</strong>
+              <span>当前对话需要至少一个可用供应商；其它抓虾功能不受影响。</span>
             </div>
-            <button class="placeholder-btn link" type="button" @click="openDeepSeekPlatform">
-              <IconExternalLink :size="15" :stroke-width="2.1" aria-hidden="true" />
-              <span>DeepSeek 平台</span>
-            </button>
           </header>
 
           <div class="inline-llm-card in-modal">
             <div class="inline-card-head">
               <div>
-                <strong>使用完整 Provider 配置</strong>
-                <span>设置页支持 DeepSeek 官方、森马网关，以及自定义 OpenAI/Anthropic 兼容供应商和模型。</span>
+                <strong>选择一种配置方式</strong>
+                <span>进入设置页后会打开对应的大模型配置入口。</span>
               </div>
             </div>
-            <div class="provider-guide-list" aria-label="大模型 Provider 配置说明">
+            <div class="provider-guide-list" aria-label="大模型供应商配置说明">
               <div class="provider-guide-row">
-                <strong>内置 Provider</strong>
-                <span>分别配置 API Key、Base URL 和可用模型，不再使用旧的共享 Key 入口。</span>
+                <div>
+                  <strong>DeepSeek 官方 API</strong>
+                  <span>适合新用户直接接入官方 Key；可先打开平台创建 Key，再进入配置弹窗粘贴保存。</span>
+                </div>
+                <div class="provider-guide-actions">
+                  <button class="placeholder-btn link" type="button" @click="openDeepSeekPlatform">
+                    <IconExternalLink :size="15" :stroke-width="2.1" aria-hidden="true" />
+                    <span>打开 DeepSeek 平台</span>
+                  </button>
+                  <button class="placeholder-btn primary" type="button" @click="openDeepSeekProviderSettings">
+                    <IconSettings :size="15" :stroke-width="2.1" aria-hidden="true" />
+                    <span>配置 DeepSeek 官方 API</span>
+                  </button>
+                </div>
               </div>
               <div class="provider-guide-row">
-                <strong>自定义 Provider</strong>
-                <span>添加供应商名称、协议类型、Base URL、API Key 和模型 ID 后即可保存。</span>
+                <div>
+                  <strong>森马 AI 网关</strong>
+                  <span>适合使用公司网关；进入大模型配置页后分别编辑海外 OpenAI、海外 Anthropic、国内 OpenAI。</span>
+                </div>
+                <div class="provider-guide-actions">
+                  <button class="placeholder-btn primary" type="button" @click="openSemirProviderSettings">
+                    <IconSettings :size="15" :stroke-width="2.1" aria-hidden="true" />
+                    <span>进入大模型配置页</span>
+                  </button>
+                </div>
               </div>
               <div class="provider-guide-row">
-                <strong>Key 重置</strong>
-                <span>到对应 Provider 弹窗粘贴新 Key 并保存；旧 Key 不会在页面回显。</span>
+                <div>
+                  <strong>自定义模型供应商</strong>
+                  <span>适合接入其它 OpenAI/Anthropic 兼容服务；进入设置页后会直接打开新增供应商弹窗。</span>
+                </div>
+                <div class="provider-guide-actions">
+                  <button class="placeholder-btn primary" type="button" @click="openCustomProviderSettings">
+                    <IconSettings :size="15" :stroke-width="2.1" aria-hidden="true" />
+                    <span>添加自定义供应商</span>
+                  </button>
+                </div>
               </div>
             </div>
             <div class="inline-form-actions">
               <button class="placeholder-btn" type="button" @click="closeInlineLlmModal">取消</button>
-              <button class="placeholder-btn primary" type="button" @click="openFullLlmSettings">
+              <button class="placeholder-btn primary" type="button" @click="openSemirProviderSettings">
                 <IconSettings :size="15" :stroke-width="2.1" aria-hidden="true" />
-                <span>去完整配置</span>
+                <span>进入大模型配置页</span>
               </button>
             </div>
           </div>
@@ -154,7 +178,7 @@ let pollTimer = null
 let tabPollTimer = null
 let warmStarted = false
 let recovering = false
-const MISSING_LLM_PROVIDER_MESSAGE = '请先配置任一可用的大模型 Provider。'
+const MISSING_LLM_PROVIDER_MESSAGE = '请先配置任一可用的大模型供应商。'
 
 const frameSrc = computed(() => {
   if (!webUrl.value) return ''
@@ -342,9 +366,29 @@ function closeInlineLlmModal() {
   inlineLlmModalOpen.value = false
 }
 
-function openFullLlmSettings() {
+function openLlmSettings(target = {}) {
   inlineLlmModalOpen.value = false
-  emit('open-settings', 'ai-llm')
+  emit('open-settings', {
+    panelId: 'ai-llm',
+    ...target,
+  })
+}
+
+function openDeepSeekProviderSettings() {
+  openLlmSettings({
+    action: 'open-llm-provider',
+    providerId: 'crawshrimp-deepseek-official',
+  })
+}
+
+function openSemirProviderSettings() {
+  openLlmSettings()
+}
+
+function openCustomProviderSettings() {
+  openLlmSettings({
+    action: 'new-llm-provider',
+  })
 }
 
 function openDeepSeekPlatform() {
@@ -1015,7 +1059,9 @@ async function removeBrowserWindow(tabId) {
 }
 
 .inline-card-head div,
-.provider-guide-row {
+.provider-guide-row,
+.provider-guide-row > div,
+.provider-guide-actions {
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -1029,7 +1075,7 @@ async function removeBrowserWindow(tabId) {
 }
 
 .inline-card-head span,
-.provider-guide-row span,
+.provider-guide-row > div > span,
 .runtime-detail {
   color: var(--text3);
   font-size: 11px;
@@ -1047,11 +1093,26 @@ async function removeBrowserWindow(tabId) {
 }
 
 .provider-guide-row {
-  gap: 5px;
-  padding: 11px 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--soft-fill);
+}
+
+.provider-guide-row > div {
+  gap: 5px;
+}
+
+.provider-guide-actions {
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .inline-form-actions {
@@ -1115,8 +1176,12 @@ async function removeBrowserWindow(tabId) {
     padding-top: 36px;
   }
   .inline-card-head,
-  .inline-modal-head {
+  .inline-modal-head,
+  .provider-guide-row {
     grid-template-columns: 1fr;
+  }
+  .provider-guide-actions {
+    justify-content: flex-start;
   }
   .inline-llm-modal-backdrop {
     padding: 12px;

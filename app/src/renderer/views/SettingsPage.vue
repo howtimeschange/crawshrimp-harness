@@ -989,6 +989,7 @@ const OFFICIAL_RELEASE_URL = 'https://github.com/howtimeschange/crawshrimp-harne
 const props = defineProps([
   'status',
   'focusPanelId',
+  'focusAction',
   'updateStatus',
   'updateActionBusy',
   'themePreference',
@@ -1654,6 +1655,16 @@ function focusPanel(panelId) {
   activePanelId.value = panelId
 }
 
+function applyFocusAction(action = null) {
+  if (!action || action.panelId !== 'ai-llm') return
+  focusPanel('ai-llm')
+  if (action.action === 'open-llm-provider') {
+    openLlmProviderModal(action.providerId || '')
+  } else if (action.action === 'new-llm-provider') {
+    openLlmProviderModal()
+  }
+}
+
 function selectInputText(event) {
   event?.target?.select?.()
 }
@@ -1945,13 +1956,18 @@ async function testNotify(channel) {
   }
 }
 
-onMounted(() => {
-  load()
+onMounted(async () => {
+  await load()
   focusPanel(props.focusPanelId)
+  applyFocusAction(props.focusAction)
 })
 
 watch(() => props.focusPanelId, panelId => {
   focusPanel(panelId)
+})
+
+watch(() => props.focusAction, action => {
+  applyFocusAction(action)
 })
 
 watch(activePanelId, panelId => {

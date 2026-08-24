@@ -204,6 +204,7 @@
             v-if="currentView === 'settings'"
             :status="status"
             :focus-panel-id="focusSettingsPanelId"
+            :focus-action="focusSettingsAction"
             :update-status="updateStatus"
             :update-action-busy="updateActionBusy"
             :theme-preference="themePreference"
@@ -285,6 +286,7 @@ const taskRunnerHandoffParams = ref({})
 const taskRunnerHandoffKey = ref(0)
 const scriptGroups = ref([])
 const focusSettingsPanelId = ref('')
+const focusSettingsAction = ref(null)
 const sidebarCollapsed = ref(readSidebarCollapsed(window.localStorage))
 const effectiveSidebarCollapsed = computed(() => !activeScript.value && sidebarCollapsed.value)
 const isMacTitlebar = /mac/i.test(String(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent))
@@ -403,8 +405,14 @@ function openTaskInstanceFromAgent(instanceUid) {
   currentView.value = 'task_center'
 }
 
-function openSettingsPanel(panelId) {
-  focusSettingsPanelId.value = panelId
+function openSettingsPanel(target) {
+  if (target && typeof target === 'object') {
+    focusSettingsPanelId.value = target.panelId || target.id || ''
+    focusSettingsAction.value = { ...target, nonce: Date.now() }
+  } else {
+    focusSettingsPanelId.value = target
+    focusSettingsAction.value = null
+  }
   currentView.value = 'settings'
   activeScript.value = null
   activeTaskId.value = null
