@@ -42,6 +42,7 @@ test('Crawshrimp settings exposes IM bots as a first-level group and embeds only
   assert.match(settings, /工作区范围已锁定/)
   assert.match(slots, /function openCrawshrimpImSettings\(/)
   assert.match(slots, /csImSettings/)
+  assert.match(slots, /\.hHd-Xa_settingsArea[^']*display: contents !important/)
   assert.match(slots, /\.VOzbGW_trigger/)
   assert.match(slots, /\.VOzbGW_navCell/)
   assert.match(slots, /\[role="tab"\]/)

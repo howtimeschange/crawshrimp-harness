@@ -96,6 +96,7 @@ window.__ModuleLoader__.load({
 
     const IM_SETTINGS_EMBED_CSS = [
       'html, body { overflow: hidden !important; }',
+      '.hHd-Xa_settingsArea { display: contents !important; }',
       '.VOzbGW_overlay { align-items: stretch !important; justify-content: stretch !important; }',
       '.VOzbGW_mask, .VOzbGW_nav, .VOzbGW_header { display: none !important; }',
       '.VOzbGW_panel { width: 100vw !important; max-width: none !important; height: 100vh !important; max-height: none !important; border-radius: 0 !important; box-shadow: none !important; }',
