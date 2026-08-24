@@ -2167,10 +2167,6 @@ async function resolveCloudPromptTemplatesForDesktop(libraryId, query = {}) {
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
-async function probeApiReady(timeoutMs = 800) {
-  return (await getBackendHealth(timeoutMs)).ok
-}
-
 function log(msg) {
   const ts = new Date().toLocaleTimeString('en', { hour12: false })
   const line = `[${ts}] ${msg}`
@@ -2280,8 +2276,8 @@ function getBackendHealth(timeoutMs = 800) {
   return requestBackendHealth({ http, port: apiPort, timeoutMs })
 }
 
-async function validateApiRuntime() {
-  const health = await getBackendHealth()
+async function validateApiRuntime(probeResult = null) {
+  const health = probeResult || await getBackendHealth(BACKEND_READY_PROBE_TIMEOUT_MS)
   if (!health.ok) return false
   const runtime = health.data?.runtime
   if (isCompatibleBackendRuntime(runtime)) return true
@@ -2323,8 +2319,9 @@ function sendStatus(key, value) {
 }
 
 async function prepareBackendEndpoint() {
-  if (await probeApiReady()) {
-    if (await validateApiRuntime()) return
+  const health = await getBackendHealth(BACKEND_READY_PROBE_TIMEOUT_MS)
+  if (health.ok) {
+    if (await validateApiRuntime(health)) return
     await switchApiEndpoint()
     return
   }
@@ -2342,7 +2339,7 @@ const backendController = createBackendController({
   log,
   sendStatus,
   probeReady: () => getBackendHealth(BACKEND_READY_PROBE_TIMEOUT_MS),
-  validateReady: () => validateApiRuntime(),
+  validateReady: (health) => validateApiRuntime(health),
   switchEndpoint: () => switchApiEndpoint(),
   startProcess: () => spawnBackendProcess(),
   stopProcess: (proc) => stopBackendProcess(proc),

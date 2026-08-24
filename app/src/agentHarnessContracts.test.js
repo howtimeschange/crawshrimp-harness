@@ -34,6 +34,8 @@ test('worker auto-continues text output budgets without restarting the runtime',
   assert.match(source, /status:\s*'interrupted'/)
   assert.match(source, /OUTPUT_BUDGET_REACHED/)
   assert.match(source, /resumable:\s*true/)
+  const continuation = source.match(/function continueRunAfterOutputBudget\(run\)\s*\{[\s\S]*?\n\}/)?.[0] || ''
+  assert.match(continuation, /sdk\.request\('session\/prompt',\s*\{[\s\S]*?internal:\s*true[\s\S]*?\},\s*30000\)/)
 })
 
 test('worker output protection defaults are long-form friendly and pressure-based', () => {
@@ -141,6 +143,8 @@ test('agent SSE consumers reconnect from the last persisted event id', () => {
   assert.match(productLayer, /streamGlobalAgentEvents\(lastEventSeq/)
   assert.match(agentHome, /lastEventSeq/)
   assert.match(agentHome, /streamAgentEvents\(props\.sessionId,\s*lastEventSeq/)
+  assert.match(agentHome, /function scheduleEventRebind\(\)/)
+  assert.match(agentHome, /onDone:\s*\(\)\s*=>\s*scheduleEventRebind\(\)/)
 })
 
 test('agent views present final output budget interruptions without calling them failures', () => {
@@ -163,6 +167,16 @@ test('staged DSH JSON-RPC runtime exposes session cancel for no-reload output bu
   assert.match(patcher, /rec\.handle\.agent\.cancel/)
   assert.match(patcher, /rec\.handle\.agent\.whenIdle/)
   assert.match(patcher, /sdkJsonrpcCancelPatched/)
+})
+
+test('staged DSH JSON-RPC runtime marks automatic continuations as internal plugin prompts', () => {
+  const patcher = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs'), 'utf8')
+  assert.match(patcher, /SDK_JSONRPC_INTERNAL_PROMPT_PATCH_MARKER/)
+  assert.match(patcher, /params\.internal === true/)
+  assert.match(patcher, /kind:\s*"plugin"/)
+  assert.match(patcher, /plugin:\s*"crawshrimp-output-continuation"/)
+  assert.match(patcher, /form:\s*"instructions"/)
+  assert.match(patcher, /sdkJsonrpcInternalPromptPatched/)
 })
 
 test('agent iframe reloads when runtime generation changes on the same web URL', () => {

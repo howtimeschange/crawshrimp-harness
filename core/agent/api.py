@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from core.atomic_file import atomic_write_text, remove_path_with_retry, retry_file_operation
 from core.agent import db, mcp_gateway
-from core.agent.service import AgentService
+from core.agent.service import AgentService, SSE_DISCONNECT
 
 router = APIRouter(prefix="/agent")
 
@@ -541,6 +541,8 @@ async def session_events(session_id: str, request: Request, after_seq: int = 0) 
                 except asyncio.TimeoutError:
                     yield ": keepalive\n\n"
                     continue
+                if message is SSE_DISCONNECT:
+                    break
                 message_seq = int(message.get("seq") or 0)
                 if message_seq <= cursor:
                     continue
@@ -587,6 +589,8 @@ async def agent_events(request: Request, after_seq: int = 0) -> StreamingRespons
                 except asyncio.TimeoutError:
                     yield ": keepalive\n\n"
                     continue
+                if message is SSE_DISCONNECT:
+                    break
                 message_seq = int(message.get("seq") or 0)
                 if message_seq <= cursor:
                     continue

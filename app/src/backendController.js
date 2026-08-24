@@ -28,12 +28,7 @@ function describeProcessStartup(proc) {
 
 function normalizeProbeResult(value) {
   if (value && typeof value === 'object') {
-    return {
-      ok: Boolean(value.ok),
-      statusCode: Number(value.statusCode || 0),
-      errorCode: String(value.errorCode || ''),
-      error: String(value.error || ''),
-    }
+    return { ...value, ok: Boolean(value.ok) }
   }
   return { ok: Boolean(value), statusCode: 0, errorCode: '', error: '' }
 }
@@ -142,7 +137,7 @@ function createBackendController(options) {
     const initiallyReady = initialProbeResult.ok
     assertActiveGeneration(ensureGeneration)
     if (initiallyReady) {
-      const runtimeValid = await validateReady()
+      const runtimeValid = await validateReady(initialProbeResult)
       assertActiveGeneration(ensureGeneration)
       if (runtimeValid) {
         await acceptReadyBackend(ensureGeneration)
@@ -192,7 +187,7 @@ function createBackendController(options) {
           const probeIsReady = probeResult.ok
           assertActiveGeneration(startupGeneration)
           if (probeIsReady) {
-            const runtimeValid = await validateReady()
+            const runtimeValid = await validateReady(probeResult)
             assertActiveGeneration(startupGeneration)
             if (runtimeValid) {
               await acceptReadyBackend(startupGeneration)

@@ -376,6 +376,7 @@ function continueRunAfterOutputBudget(run) {
   sdk.request('session/prompt', {
     sessionId: run.sessionId,
     contentBlocks: [{ type: 'text', text }],
+    internal: true,
   }, 30000).then((result) => {
     if (state.activeRun !== run) return
     if (result?.messageId) run.messageId = result.messageId

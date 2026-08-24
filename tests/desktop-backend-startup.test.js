@@ -59,7 +59,8 @@ test('desktop backend readiness uses lightweight health probe', () => {
 
   assert.match(main, /const \{ requestBackendHealth \} = require\('\.\/backendHealth'\)/)
   assert.match(main, /function getBackendHealth\(timeoutMs = 800\) \{\s*return requestBackendHealth\(\{ http, port: apiPort, timeoutMs \}\)\s*\}/)
-  assert.match(main, /async function probeApiReady\(timeoutMs = 800\) \{\s*return \(await getBackendHealth\(timeoutMs\)\)\.ok\s*\}/)
+  assert.match(main, /const health = await getBackendHealth\(BACKEND_READY_PROBE_TIMEOUT_MS\)\s*if \(health\.ok\) \{\s*if \(await validateApiRuntime\(health\)\) return/)
+  assert.match(main, /validateReady: \(health\) => validateApiRuntime\(health\)/)
   assert.match(backendHealth, /path: '\/health\?probe=1'/)
   assert.match(apiServer, /def health\(probe: bool = False\):\s*if probe:/)
 })

@@ -8,6 +8,7 @@ const LLM_PI_AI_PROVIDER_ORDER_PATCH_MARKER = 'crawshrimp-llm-pi-ai-provider-ord
 const OLD_SDK_JSONRPC_IMAGE_ADMISSION_PATCH_MARKER = 'crawshrimp-sdk-jsonrpc-image-admission-v1'
 const SDK_JSONRPC_IMAGE_ADMISSION_PATCH_MARKER = 'crawshrimp-sdk-jsonrpc-image-admission-v2'
 const SDK_JSONRPC_CANCEL_PATCH_MARKER = 'crawshrimp-sdk-jsonrpc-cancel-v1'
+const SDK_JSONRPC_INTERNAL_PROMPT_PATCH_MARKER = 'crawshrimp-sdk-jsonrpc-internal-prompt-v1'
 const OLD_DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER = 'crawshrimp-deepseek-multimodal-fallback-v1'
 const DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER = 'crawshrimp-deepseek-multimodal-fallback-v2'
 const OLD_DEEPSEEK_MULTIMODAL_AUDIT_PATCH_MARKER = 'crawshrimp-deepseek-multimodal-audit-v1'
@@ -42,15 +43,17 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const piAiProviderOrderResult = patchPiAiProviderOrder(runtimeRoot)
   const sdkJsonrpcImageAdmissionResult = patchSdkJsonrpcImageAdmission(runtimeRoot)
   const sdkJsonrpcCancelResult = patchSdkJsonrpcCancel(runtimeRoot)
+  const sdkJsonrpcInternalPromptResult = patchSdkJsonrpcInternalPrompt(runtimeRoot)
   const piAiDeepSeekMultimodalFallbackResult = patchPiAiDeepSeekMultimodalFallback(runtimeRoot)
   const hostApiProxyDeepSeekImageSelectionResult = patchHostApiProxyDeepSeekImageSelection(runtimeRoot)
   return {
-    patched: workspaceResult.patched || welcomeNoticeResult.patched || piAiProviderOrderResult.patched || sdkJsonrpcImageAdmissionResult.patched || sdkJsonrpcCancelResult.patched || piAiDeepSeekMultimodalFallbackResult.patched || hostApiProxyDeepSeekImageSelectionResult.patched,
+    patched: workspaceResult.patched || welcomeNoticeResult.patched || piAiProviderOrderResult.patched || sdkJsonrpcImageAdmissionResult.patched || sdkJsonrpcCancelResult.patched || sdkJsonrpcInternalPromptResult.patched || piAiDeepSeekMultimodalFallbackResult.patched || hostApiProxyDeepSeekImageSelectionResult.patched,
     workspaceEntry: workspaceResult.workspaceEntry,
     welcomeNoticeEntry: welcomeNoticeResult.welcomeNoticeEntry,
     piAiProviderOrderEntry: piAiProviderOrderResult.piAiProviderOrderEntry,
     sdkJsonrpcImageAdmissionEntry: sdkJsonrpcImageAdmissionResult.sdkJsonrpcImageAdmissionEntry,
     sdkJsonrpcCancelEntry: sdkJsonrpcCancelResult.sdkJsonrpcCancelEntry,
+    sdkJsonrpcInternalPromptEntry: sdkJsonrpcInternalPromptResult.sdkJsonrpcInternalPromptEntry,
     piAiDeepSeekMultimodalFallbackEntry: piAiDeepSeekMultimodalFallbackResult.piAiDeepSeekMultimodalFallbackEntry,
     hostApiProxyDeepSeekImageSelectionEntry: hostApiProxyDeepSeekImageSelectionResult.hostApiProxyDeepSeekImageSelectionEntry,
     workspacePatched: workspaceResult.patched,
@@ -58,6 +61,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
     piAiProviderOrderPatched: piAiProviderOrderResult.patched,
     sdkJsonrpcImageAdmissionPatched: sdkJsonrpcImageAdmissionResult.patched,
     sdkJsonrpcCancelPatched: sdkJsonrpcCancelResult.patched,
+    sdkJsonrpcInternalPromptPatched: sdkJsonrpcInternalPromptResult.patched,
     piAiDeepSeekMultimodalFallbackPatched: piAiDeepSeekMultimodalFallbackResult.patched,
     hostApiProxyDeepSeekImageSelectionPatched: hostApiProxyDeepSeekImageSelectionResult.patched,
   }
@@ -789,6 +793,36 @@ function patchSdkJsonrpcCancel(runtimeRoot) {
   return { patched: true, sdkJsonrpcCancelEntry }
 }
 
+function patchSdkJsonrpcInternalPrompt(runtimeRoot) {
+  const sdkJsonrpcInternalPromptEntry = join(
+    resolve(runtimeRoot),
+    'node_modules',
+    '@deepseek-ai',
+    'dsh-sdk-jsonrpc-server',
+    'lib',
+    'index.js',
+  )
+  let source = readFileSync(sdkJsonrpcInternalPromptEntry, 'utf8')
+  if (source.includes(SDK_JSONRPC_INTERNAL_PROMPT_PATCH_MARKER)) {
+    return { patched: false, sdkJsonrpcInternalPromptEntry }
+  }
+
+  source = replaceExact(
+    source,
+    '\t\t\tcontent: await durableSdkPromptContent(this.ctx, params.contentBlocks),\n\t\t\tsource: { kind: "user" }',
+    `\t\t\tcontent: await durableSdkPromptContent(this.ctx, params.contentBlocks),
+\t\t\t// ${SDK_JSONRPC_INTERNAL_PROMPT_PATCH_MARKER}: keep automatic output continuation out of user-authored history.
+\t\t\tsource: params.internal === true ? {
+\t\t\t\tkind: "plugin",
+\t\t\t\tplugin: "crawshrimp-output-continuation",
+\t\t\t\tform: "instructions"
+\t\t\t} : { kind: "user" }`,
+    'sdk-jsonrpc internal prompt source',
+  )
+  writeFileSync(sdkJsonrpcInternalPromptEntry, source, 'utf8')
+  return { patched: true, sdkJsonrpcInternalPromptEntry }
+}
+
 function replaceExact(source, needle, replacement, label) {
   const first = source.indexOf(needle)
   if (first < 0) throw new Error(`cannot patch ${label}: expected source not found`)
@@ -818,6 +852,7 @@ if (invokedPath && invokedPath === resolve(fileURLToPath(import.meta.url))) {
   console.log(`[patch-runtime-dependencies] pi-ai provider order ${result.piAiProviderOrderPatched ? 'applied' : 'already present'}`)
   console.log(`[patch-runtime-dependencies] sdk-jsonrpc image admission ${result.sdkJsonrpcImageAdmissionPatched ? 'applied' : 'already present'}`)
   console.log(`[patch-runtime-dependencies] sdk-jsonrpc cancel ${result.sdkJsonrpcCancelPatched ? 'applied' : 'already present'}`)
+  console.log(`[patch-runtime-dependencies] sdk-jsonrpc internal prompt ${result.sdkJsonrpcInternalPromptPatched ? 'applied' : 'already present'}`)
   console.log(`[patch-runtime-dependencies] pi-ai DeepSeek multimodal fallback ${result.piAiDeepSeekMultimodalFallbackPatched ? 'applied' : 'already present'}`)
   console.log(`[patch-runtime-dependencies] host-apiproxy DeepSeek image selection ${result.hostApiProxyDeepSeekImageSelectionPatched ? 'applied' : 'already present'}`)
 }

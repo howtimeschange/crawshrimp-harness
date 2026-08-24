@@ -1496,6 +1496,77 @@ def test_output_budget_interruption_keeps_single_stream_for_auto_continuation(mo
     asyncio.run(scenario())
 
 
+def test_non_budget_interruption_completes_partial_assistant_message(monkeypatch, tmp_path):
+    async def scenario():
+        from core.agent import service as service_module
+
+        db = _init_temp_agent_db(monkeypatch, tmp_path)
+        monkeypatch.setattr(service_module, "AGENT_DELTA_FLUSH_BYTES", 1, raising=False)
+        session_id = f"session-interrupted-{uuid.uuid4().hex[:10]}"
+        turn_id = f"turn-interrupted-{uuid.uuid4().hex[:10]}"
+        run_id = f"run-interrupted-{uuid.uuid4().hex[:10]}"
+        db.create_session(session_id, f"runtime-interrupted-{uuid.uuid4().hex[:10]}")
+        db.create_turn(turn_id, session_id, 1, f"{run_id}:user")
+        run = db.create_run(run_id, session_id, turn_id, "test", "test-model")
+        service = AgentService()
+        queue = service.subscribe(session_id)
+        try:
+            await service._project_event(session_id, run, {
+                "type": "assistant/chunk",
+                "data": {"chunk": {"type": "text-delta", "text": "保留下来的部分回答"}},
+            })
+            await service._project_event(session_id, run, {
+                "type": "turn/end",
+                "data": {"reason": {
+                    "kind": "aborted",
+                    "reason": {"kind": "user"},
+                }},
+            })
+
+            events = [await asyncio.wait_for(queue.get(), timeout=1) for _ in range(3)]
+            assert [event["event_type"] for event in events] == [
+                "assistant.delta", "assistant.completed", "run.failed",
+            ]
+            rows = db.list_messages(session_id)
+            assert len(rows) == 1
+            assert json.loads(rows[0]["content_json"])["text"] == "保留下来的部分回答"
+            assert rows[0]["status"] == "complete"
+        finally:
+            service.unsubscribe(session_id, queue)
+            await service._finalize_assistant_stream(run_id)
+
+    asyncio.run(scenario())
+
+
+def test_startup_recovery_completes_streaming_assistant_and_replays_terminal_events(monkeypatch, tmp_path):
+    db = _init_temp_agent_db(monkeypatch, tmp_path)
+    session_id = f"session-recovery-{uuid.uuid4().hex[:10]}"
+    runtime_session_id = f"runtime-recovery-{uuid.uuid4().hex[:10]}"
+    turn_id = f"turn-recovery-{uuid.uuid4().hex[:10]}"
+    run_id = f"run-recovery-{uuid.uuid4().hex[:10]}"
+    db.create_session(session_id, runtime_session_id)
+    db.create_turn(turn_id, session_id, 1, f"{run_id}:user")
+    db.create_run(run_id, session_id, turn_id, "test", "test-model")
+    db.update_session(session_id, status="running")
+    db.update_turn(turn_id, status="running")
+    db.update_run(run_id, status="running")
+    db.create_message(
+        f"{run_id}:assistant", session_id, turn_id, run_id,
+        "assistant", "text", {"text": "进程退出前已经生成的内容"}, status="streaming",
+    )
+
+    AgentService()._recover_on_startup()
+
+    assert db.get_run(run_id)["status"] == "interrupted"
+    assert db.get_turn(turn_id)["status"] == "interrupted"
+    assert db.get_session(session_id)["status"] == "idle"
+    message = next(row for row in db.list_messages(session_id) if row["message_id"] == f"{run_id}:assistant")
+    assert message["status"] == "complete"
+    assert message["completed_at"]
+    events = db.list_events_after(session_id, 0)
+    assert [event["event_type"] for event in events] == ["assistant.completed", "run.interrupted"]
+
+
 def test_sse_global_subscriber_is_removed_after_repeated_overflow(monkeypatch, tmp_path):
     async def scenario():
         from core.agent import service as service_module
@@ -1515,6 +1586,43 @@ def test_sse_global_subscriber_is_removed_after_repeated_overflow(monkeypatch, t
 
         assert queue not in service.global_subscribers
         assert service.sse_dropped_events == 2
+        assert queue.get_nowait() is service_module.SSE_DISCONNECT
+        assert queue.empty()
+
+    asyncio.run(scenario())
+
+
+def test_sse_overflow_disconnects_global_stream_for_cursor_replay(monkeypatch, tmp_path):
+    async def scenario():
+        from core.agent import api as api_module
+        from core.agent import service as service_module
+
+        db = _init_temp_agent_db(monkeypatch, tmp_path)
+        monkeypatch.setattr(service_module, "SSE_QUEUE_MAX_OVERFLOWS", 2, raising=False)
+        session_id = f"session-sse-stream-{uuid.uuid4().hex[:10]}"
+        db.create_session(session_id, f"runtime-sse-stream-{uuid.uuid4().hex[:10]}")
+        service = AgentService()
+        request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+        previous_service = api_module._service
+        api_module.set_agent_service(service)
+        stream = None
+        try:
+            response = await api_module.agent_events(request, after_seq=-1)
+            stream = response.body_iterator
+            first = await stream.__anext__()
+            assert b"event: cursor" in first if isinstance(first, bytes) else "event: cursor" in first
+            queue = next(iter(service.global_subscribers))
+            for _ in range(queue.maxsize):
+                queue.put_nowait({"seq": 0})
+            await service.broadcast(session_id, 0, "probe", {"n": 1})
+            await service.broadcast(session_id, 0, "probe", {"n": 2})
+
+            with pytest.raises(StopAsyncIteration):
+                await asyncio.wait_for(stream.__anext__(), timeout=1)
+        finally:
+            if stream is not None:
+                await stream.aclose()
+            api_module._service = previous_service
 
     asyncio.run(scenario())
 

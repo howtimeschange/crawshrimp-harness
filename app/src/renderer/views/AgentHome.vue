@@ -219,6 +219,7 @@ const messageListEl = ref(null)
 const activeRunId = ref('')
 const queuePosition = ref(0)
 let stopEvents = null
+let eventRebindTimer = null
 let localSeq = 0
 
 const TOOL_LABELS = {
@@ -298,6 +299,10 @@ function approvalSummary(m) {
 let lastEventSeq = 0
 
 function bindEvents() {
+  if (eventRebindTimer) {
+    clearTimeout(eventRebindTimer)
+    eventRebindTimer = null
+  }
   stopEvents?.()
   stopEvents = null
   if (!props.sessionId) return
@@ -314,12 +319,18 @@ function bindEvents() {
     onError: (error) => {
       console.warn('[agent] SSE 断开:', error?.message)
       pushMessage({ kind: 'notice', text: '事件流断开,3 秒后重连…' })
-      setTimeout(() => { if (props.sessionId) bindEvents() }, 3000)
+      scheduleEventRebind()
     },
-    onDone: () => {
-      console.warn('[agent] SSE 结束')
-    },
+    onDone: () => scheduleEventRebind(),
   })
+}
+
+function scheduleEventRebind() {
+  if (eventRebindTimer || !props.sessionId) return
+  eventRebindTimer = setTimeout(() => {
+    eventRebindTimer = null
+    if (props.sessionId) bindEvents()
+  }, 3000)
 }
 
 function handleEvent(event, data) {
@@ -640,6 +651,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopEvents?.()
+  if (eventRebindTimer) {
+    clearTimeout(eventRebindTimer)
+    eventRebindTimer = null
+  }
 })
 </script>
 

@@ -359,6 +359,7 @@ def _float_env(name: str, default: float, *, minimum: float = 0.0) -> float:
 AGENT_DELTA_FLUSH_INTERVAL_SECONDS = _float_env("CRAWSHRIMP_AGENT_DELTA_FLUSH_MS", 200.0, minimum=10.0) / 1000.0
 AGENT_DELTA_FLUSH_BYTES = _int_env("CRAWSHRIMP_AGENT_DELTA_FLUSH_BYTES", 1024)
 SSE_QUEUE_MAX_OVERFLOWS = _int_env("CRAWSHRIMP_AGENT_SSE_QUEUE_MAX_OVERFLOWS", 3)
+SSE_DISCONNECT = object()
 
 # 分级保护:按 Run 类型传给 worker。长文阈值只做最后保险,持续高速 delta 洪峰会先触发自动分段。
 BUDGET_PROFILES = {
@@ -860,8 +861,35 @@ class AgentService:
 
     def _recover_on_startup(self) -> None:
         for run in db.list_nonterminal_runs():
+            run_id = str(run["run_id"])
+            session_id = str(run["session_id"])
+            session = db.get_session(session_id) or {}
+            message = _get_message_by_id(f"{run_id}:assistant")
+            if message and message.get("status") == "streaming":
+                try:
+                    content = json.loads(message.get("content_json") or "{}")
+                    text = str(content.get("text") or "")
+                except (TypeError, ValueError):
+                    text = ""
+                db.update_message(message["message_id"], status="complete", completed_at=_now_iso())
+                if text:
+                    db.append_event(session_id, run_id, "assistant.completed", {
+                        "run_id": run_id,
+                        "text": text,
+                        "session_id": session_id,
+                        "runtime_session_id": session.get("runtime_session_id") or "",
+                    })
             db.update_run(run["run_id"], status="interrupted", finished_at=_now_iso(),
                           error_code="AGENT_DISPATCH_INTERRUPTED")
+            db.update_turn(run.get("turn_id") or "", status="interrupted", completed_at=_now_iso())
+            db.update_session(session_id, status="idle")
+            db.append_event(session_id, run_id, "run.interrupted", {
+                "run_id": run_id,
+                "status": "interrupted",
+                "error_code": "AGENT_DISPATCH_INTERRUPTED",
+                "session_id": session_id,
+                "runtime_session_id": session.get("runtime_session_id") or "",
+            })
         canceled = db.cancel_pending_approvals()
         if canceled:
             print(f"[agent] 启动恢复:取消 {canceled} 条 pending 审批")
@@ -907,7 +935,13 @@ class AgentService:
             if subs:
                 subs.discard(queue)
         self._sse_queue_overflows.pop(queue, None)
-        print(f"[agent] SSE {label} 订阅者连续 {overflow_count} 次不消费，已移除以保护核心事件循环", flush=True)
+        while True:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        queue.put_nowait(SSE_DISCONNECT)
+        print(f"[agent] SSE {label} 订阅者连续 {overflow_count} 次不消费，已断开以触发 cursor 补放", flush=True)
 
     def _fanout_sse_message(self, queue: asyncio.Queue, message: dict, *,
                             session_id: str = "", global_stream: bool = False) -> None:
@@ -1167,6 +1201,7 @@ class AgentService:
                 import traceback
                 traceback.print_exc()
                 try:
+                    await self._finalize_assistant_stream(item.get("run_id"), mark_complete=True)
                     db.update_run(item.get("run_id"), status="failed", finished_at=_now_iso(),
                                   error_code="INTERNAL_ERROR", error_message=str(exc)[:500])
                     db.update_turn(item.get("turn_id"), status="failed", completed_at=_now_iso())
@@ -1243,7 +1278,7 @@ class AgentService:
             output_budget_reached = status == "interrupted" and error_code == OUTPUT_BUDGET_ERROR_CODE
             await self._finalize_assistant_stream(
                 run_id,
-                mark_complete=status == "completed" or output_budget_reached,
+                mark_complete=True,
             )
             db.update_run(run_id, status=status, finished_at=_now_iso(),
                           dsh_message_id=result.get("messageId"),
@@ -1266,13 +1301,13 @@ class AgentService:
             if status == "completed":
                 await self._broadcast_run_artifacts(run_id, session_id)
         except AgentModelConfigurationError as exc:
-            await self._finalize_assistant_stream(run_id)
+            await self._finalize_assistant_stream(run_id, mark_complete=True)
             db.update_run(run_id, status="failed", finished_at=_now_iso(),
                           error_code="MODEL_CONFIGURATION_ERROR", error_message=str(exc)[:500])
             db.update_turn(turn_id, status="failed", completed_at=_now_iso())
             await self.broadcast(session_id, 0, "run.failed", {"run_id": run_id, "error": str(exc)[:300]})
         except Exception as exc:  # noqa: BLE001
-            await self._finalize_assistant_stream(run_id)
+            await self._finalize_assistant_stream(run_id, mark_complete=True)
             db.update_run(run_id, status="failed", finished_at=_now_iso(),
                           error_code="WORKER_ERROR", error_message=str(exc)[:500])
             db.update_turn(turn_id, status="failed", completed_at=_now_iso())
@@ -1736,7 +1771,7 @@ class AgentService:
                 await self.broadcast(session_id, 0, "run.completed", {"run_id": run["run_id"]})
                 await self._broadcast_run_artifacts(run["run_id"], session_id)
             else:
-                await self._finalize_assistant_stream(run["run_id"])
+                await self._finalize_assistant_stream(run["run_id"], mark_complete=True)
                 error_code = None
                 if isinstance(reason.get("error"), dict):
                     error_code = reason["error"].get("code")
@@ -1815,7 +1850,7 @@ class AgentService:
             if _is_output_budget_turn_end(reason):
                 await self._flush_assistant_delta(run_id)
                 return
-            await self._finalize_assistant_stream(run_id)
+            await self._finalize_assistant_stream(run_id, mark_complete=True)
             error_code = None
             if isinstance(reason.get("error"), dict):
                 error_code = reason["error"].get("code")
@@ -2016,6 +2051,7 @@ class AgentService:
             return {"ok": True, "status": run["status"], "idempotent": True}
         if self.active_run and self.active_run["run_id"] == run_id and self.worker:
             result = await self.worker.request("worker.cancel_active", {"runId": run_id}, timeout=15)
+            await self._finalize_assistant_stream(run_id, mark_complete=True)
             db.update_run(run_id, status="canceled", finished_at=_now_iso())
             db.update_turn(run.get("turn_id") or "", status="canceled", completed_at=_now_iso())
             await self.broadcast(run["session_id"], 0, "run.canceled", {"run_id": run_id})

@@ -477,6 +477,37 @@ test('ensureReady waits for total ready-backend outage duration before restart',
   }
 })
 
+test('ensureReady validates the exact successful probe without a second health request', async () => {
+  const health = {
+    ok: true,
+    statusCode: 200,
+    data: { runtime: { pid: 4321, data_dir: 'C:\\Crawshrimp' } },
+  }
+  let probeCount = 0
+  let validatedHealth = null
+
+  const controller = createBackendController({
+    log: () => {},
+    sendStatus: () => {},
+    probeReady: async () => {
+      probeCount += 1
+      return health
+    },
+    validateReady: async (probeResult) => {
+      validatedHealth = probeResult
+      return probeResult.data.runtime.pid === 4321
+    },
+    startProcess: () => {
+      throw new Error('a successful compatible probe must not launch another backend')
+    },
+  })
+
+  await controller.ensureReady()
+
+  assert.equal(probeCount, 1)
+  assert.deepEqual(validatedHealth, health)
+})
+
 test('ensureReady marks a previously ready backend degraded before restart threshold', async () => {
   let startCount = 0
   let probeOk = true
