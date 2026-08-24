@@ -225,10 +225,20 @@ test('agent runtime missing model keys still opens DSH and gates composer with c
 
 test('LLM provider settings save provider rows directly and keep the compact settings page', () => {
   const settings = readFileSync(resolve(appRoot, 'src/renderer/views/SettingsPage.vue'), 'utf8')
+  const llmSettings = readFileSync(resolve(appRoot, 'src/renderer/utils/llmSettings.mjs'), 'utf8')
+  const providerBlock = llmSettings.match(/export const LLM_BUILTIN_PROVIDERS = Object\.freeze\(\[\n([\s\S]*?)\n\]\)/)?.[1] || ''
+  const firstProvider = providerBlock.match(/\{\n([\s\S]*?)\n  \}/)?.[1] || ''
+  assert.match(firstProvider, /id: 'crawshrimp-deepseek-official'/)
   assert.match(settings, /保存 Provider/)
   assert.match(settings, /saveLlmProviderDraft/)
   assert.match(settings, /savePanel\('ai-llm', \{ silent: true \}\)/)
   assert.match(settings, /child\?\.id === 'ai-llm'[\s\S]*?isLlmConfigured\(cfg\.value\)/)
+  assert.match(settings, /llm-provider-logo/)
+  assert.match(settings, /brand-deepseek/)
+  assert.match(settings, /brand-semir/)
+  assert.match(settings, /llmProviderLogoText/)
+  assert.match(llmSettings, /brand: 'deepseek'/)
+  assert.match(llmSettings, /brand: 'semir'/)
   assert.match(settings, /保存并重启智能体/)
   assert.doesNotMatch(settings, /运行时路由说明/)
   assert.doesNotMatch(settings, /llm-route-note/)

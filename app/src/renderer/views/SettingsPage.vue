@@ -570,22 +570,31 @@
 
             <div class="llm-provider-list" aria-label="文本大模型 Provider 列表">
               <article v-for="provider in llmProviders" :key="provider.id" class="llm-provider-row">
-                <div class="llm-provider-main">
-                  <div class="llm-row-title">
-                    <strong>{{ provider.name }}</strong>
-                    <span :class="['key-pill', provider.configured ? 'on' : 'off']">
-                      {{ provider.configured ? '已配 Key' : '未配 Key' }}
-                    </span>
-                    <span class="key-pill neutral">{{ provider.compatibility }}</span>
-                    <span v-if="provider.isCustom" class="key-pill neutral">自定义</span>
-                    <span v-if="provider.isDefault" class="key-pill on">默认</span>
+                <div class="llm-provider-content">
+                  <div
+                    :class="['llm-provider-logo', `brand-${provider.brand}`]"
+                    :title="provider.name"
+                    aria-hidden="true"
+                  >
+                    <span>{{ provider.logoText }}</span>
                   </div>
-                  <p>{{ provider.baseUrl || '未填写 Base URL' }}</p>
-                  <div class="llm-model-preview">
-                    <span v-for="model in provider.previewModels" :key="model" class="chip">{{ model }}</span>
-                    <span v-if="provider.modelCount > provider.previewModels.length" class="chip muted">
-                      +{{ provider.modelCount - provider.previewModels.length }}
-                    </span>
+                  <div class="llm-provider-main">
+                    <div class="llm-row-title">
+                      <strong>{{ provider.name }}</strong>
+                      <span :class="['key-pill', provider.configured ? 'on' : 'off']">
+                        {{ provider.configured ? '已配 Key' : '未配 Key' }}
+                      </span>
+                      <span class="key-pill neutral">{{ provider.compatibility }}</span>
+                      <span v-if="provider.isCustom" class="key-pill neutral">自定义</span>
+                      <span v-if="provider.isDefault" class="key-pill on">默认</span>
+                    </div>
+                    <p>{{ provider.baseUrl || '未填写 Base URL' }}</p>
+                    <div class="llm-model-preview">
+                      <span v-for="model in provider.previewModels" :key="model" class="chip">{{ model }}</span>
+                      <span v-if="provider.modelCount > provider.previewModels.length" class="chip muted">
+                        +{{ provider.modelCount - provider.previewModels.length }}
+                      </span>
+                    </div>
                   </div>
                 </div>
                 <div class="llm-row-actions">
@@ -1267,6 +1276,8 @@ const llmProviders = computed(() => {
     return {
       id: provider.id,
       name: provider.name,
+      brand: provider.brand || 'custom',
+      logoText: llmProviderLogoText(provider),
       isCustom: false,
       compatibility: provider.compatibility,
       configured: llmProviderConfigured(cfg.value, provider),
@@ -1282,6 +1293,8 @@ const llmProviders = computed(() => {
     return {
       id: provider.id,
       name: provider.name,
+      brand: 'custom',
+      logoText: llmProviderLogoText(provider),
       isCustom: true,
       compatibility: provider.protocol === 'anthropic' ? 'Anthropic 兼容' : 'OpenAI 兼容',
       configured: Boolean(provider.configured),
@@ -1294,6 +1307,12 @@ const llmProviders = computed(() => {
   })
   return [...builtinRows, ...customRows]
 })
+
+function llmProviderLogoText(provider = {}) {
+  if (provider.brand === 'deepseek' || provider.id === 'crawshrimp-deepseek-official') return 'deepseek'
+  if (provider.brand === 'semir' || String(provider.name || '').includes('森马')) return 'SEMIR'
+  return Array.from(String(provider.name || 'AI').trim()).slice(0, 2).join('') || 'AI'
+}
 
 function isMaskedLlmCredential(value) {
   return String(value || '').includes(LLM_MASKED_CREDENTIAL_VALUE)
@@ -2562,6 +2581,57 @@ watch(activePanelId, panelId => {
   border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--bg3);
+}
+
+.llm-provider-content {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.llm-provider-logo {
+  width: 76px;
+  height: 44px;
+  flex: 0 0 76px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--soft-fill);
+  color: var(--text2);
+  overflow: hidden;
+}
+
+.llm-provider-logo span {
+  display: block;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.llm-provider-logo.brand-deepseek {
+  color: #8fb0ff;
+  border-color: rgba(112, 146, 255, 0.32);
+  background:
+    radial-gradient(circle at 22% 18%, rgba(143, 176, 255, 0.32), transparent 42%),
+    linear-gradient(135deg, rgba(40, 58, 132, 0.58), rgba(22, 25, 42, 0.92));
+}
+
+.llm-provider-logo.brand-semir {
+  color: #fff;
+  border-color: rgba(72, 108, 214, 0.42);
+  background: linear-gradient(135deg, #486cd6, #26449d);
+}
+
+.llm-provider-logo.brand-custom {
+  color: var(--orange-text);
+  border-color: rgba(var(--orange-rgb), 0.24);
+  background: var(--orange-bg);
 }
 
 .llm-provider-main {

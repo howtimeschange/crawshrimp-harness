@@ -53,8 +53,23 @@ export const DEEPSEEK_OFFICIAL_MODELS_UI = Object.freeze([
 
 export const LLM_BUILTIN_PROVIDERS = Object.freeze([
   {
+    id: 'crawshrimp-deepseek-official',
+    name: 'DeepSeek 官方',
+    brand: 'deepseek',
+    kind: 'builtin',
+    protocol: 'openai',
+    compatibility: 'OpenAI 兼容',
+    apiKeyField: DEEPSEEK_API_KEY_FIELD,
+    configuredField: 'ai.llm.deepseek_configured',
+    baseUrlField: DEEPSEEK_BASE_URL_FIELD,
+    defaultBaseUrl: DEEPSEEK_OFFICIAL_BASE_URL_DEFAULT,
+    models: DEEPSEEK_OFFICIAL_MODELS_UI,
+    officialUrl: DEEPSEEK_PLATFORM_URL,
+  },
+  {
     id: 'crawshrimp-overseas-openai',
     name: '森马海外 OpenAI',
+    brand: 'semir',
     kind: 'builtin',
     protocol: 'openai',
     compatibility: 'OpenAI 兼容',
@@ -68,6 +83,7 @@ export const LLM_BUILTIN_PROVIDERS = Object.freeze([
   {
     id: 'crawshrimp-overseas-anthropic',
     name: '森马海外 Anthropic',
+    brand: 'semir',
     kind: 'builtin',
     protocol: 'anthropic',
     compatibility: 'Anthropic 兼容',
@@ -81,6 +97,7 @@ export const LLM_BUILTIN_PROVIDERS = Object.freeze([
   {
     id: 'crawshrimp-domestic-openai',
     name: '森马国内 OpenAI',
+    brand: 'semir',
     kind: 'builtin',
     protocol: 'openai',
     compatibility: 'OpenAI 兼容',
@@ -90,19 +107,6 @@ export const LLM_BUILTIN_PROVIDERS = Object.freeze([
     baseUrlField: 'ai.llm.domestic_base_url',
     defaultBaseUrl: LLM_DEFAULTS['ai.llm.domestic_base_url'],
     models: DOMESTIC_OPENAI_MODELS,
-  },
-  {
-    id: 'crawshrimp-deepseek-official',
-    name: 'DeepSeek 官方',
-    kind: 'builtin',
-    protocol: 'openai',
-    compatibility: 'OpenAI 兼容',
-    apiKeyField: DEEPSEEK_API_KEY_FIELD,
-    configuredField: 'ai.llm.deepseek_configured',
-    baseUrlField: DEEPSEEK_BASE_URL_FIELD,
-    defaultBaseUrl: DEEPSEEK_OFFICIAL_BASE_URL_DEFAULT,
-    models: DEEPSEEK_OFFICIAL_MODELS_UI,
-    officialUrl: DEEPSEEK_PLATFORM_URL,
   },
 ])
 
