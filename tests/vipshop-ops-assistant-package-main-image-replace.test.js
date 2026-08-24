@@ -12,18 +12,20 @@ function jsonResponse(payload, status = 200) {
   }
 }
 
-async function loadExports(params = {}, fetchImpl = async () => jsonResponse({ code: '200', data: [] })) {
+async function loadExports(params = {}, fetchImpl = async () => jsonResponse({ code: '200', data: [] }), documentOverrides = {}, windowOverrides = {}) {
   const scriptPath = path.resolve('adapters/vipshop-ops-assistant/vipshop-package-main-image-replace.js')
   const source = fs.readFileSync(scriptPath, 'utf8')
   const exportsBox = {}
+  const documentBase = { body: { innerText: '' } }
   const context = {
     window: {
       __CRAWSHRIMP_PARAMS__: params,
       __CRAWSHRIMP_PHASE__: '__exports__',
       __CRAWSHRIMP_SHARED__: {},
       __CRAWSHRIMP_EXPORTS__: exportsBox,
+      ...windowOverrides,
     },
-    document: { body: { innerText: '' } },
+    document: { ...documentBase, ...documentOverrides },
     location: { href: 'https://nov-admin.vip.com/admin/index.html#/normal/normalMerchandise' },
     fetch: fetchImpl,
     URL,
@@ -457,6 +459,240 @@ test('verifies Vipshop readback image URLs across vpimg CDN host rewrites', asyn
     ),
     false,
   )
+})
+
+test('verifies Vipshop readback slots when saved URLs are rewritten', async () => {
+  const helpers = await loadExports()
+  const readbackProduct = product({
+    itemSkuAttr: [{
+      colourGSN: '20832610001501315',
+      squareImages: [
+        {
+          imageIndex: 1,
+          imageSize: '1200x1200',
+          imageUrl: 'http://a.vpimg4.com/upload/merchandise/pdcvis/104218/2026/0820/30/saved-main.jpg',
+        },
+        {
+          imageIndex: 50,
+          imageSize: '950x1200',
+          imageUrl: 'http://a.vpimg4.com/upload/merchandise/pdcvis/104218/2026/0820/116/saved-list.jpg',
+        },
+      ],
+    }],
+  })
+
+  assert.equal(helpers.verifyUploadRecordPersistedInDetail({
+    imageUrl: 'http://a.vpimg2.com/upload/merchandise/pdcvis/104218/2026/0820/61/upload-main.jpg',
+    imageIndex: 1,
+    usageKey: 'main_square',
+    asset: { targetGoodsCode: '20832610001501315' },
+  }, readbackProduct), true)
+  assert.equal(helpers.verifyUploadRecordPersistedInDetail({
+    imageUrl: 'http://a.vpimg2.com/upload/merchandise/pdcvis/104218/2026/0820/66/upload-list.jpg',
+    imageIndex: 50,
+    usageKey: 'list_image',
+    asset: { targetGoodsCode: '20832610001501315' },
+  }, readbackProduct), true)
+  assert.equal(helpers.verifyUploadRecordPersistedInDetail({
+    imageUrl: 'http://a.vpimg2.com/upload/merchandise/pdcvis/104218/2026/0820/66/upload-list.jpg',
+    imageIndex: 50,
+    usageKey: 'list_image',
+    asset: { targetGoodsCode: '20832610001500317' },
+  }, readbackProduct), false)
+})
+
+test('does not count unsaved PDC page state as Vipshop readback success', async () => {
+  const uploadUrl = 'http://a.vpimg2.com/upload/merchandise/pdcvis/104218/2026/0820/59/not-persisted.jpg'
+  const editable = {
+    info: {
+      vendorProductId: '2263980907443499008',
+      itemSkuAttr: [{
+        colourGSN: '20832610420530505',
+        squareMainImages: [{ imageIndex: 1, imageUrl: uploadUrl }],
+      }],
+    },
+    saveAndApprove() {},
+  }
+  const helpers = await loadExports({}, undefined, {
+    body: { innerText: '', textContent: '' },
+    querySelectorAll: () => [{ __vue__: editable }],
+  })
+
+  assert.equal(
+    helpers.verifyImageUrlInDetail(uploadUrl, {}, {
+      vendorProductId: '2263980907443499008',
+      job: { goodsCode: '20832610420530505' },
+    }),
+    false,
+  )
+})
+
+test('syncs Vipshop color bucket replacements into the composite page image array', async () => {
+  const helpers = await loadExports()
+  const newSquare = 'http://a.vpimg2.com/upload/merchandise/pdcvis/104218/2026/0820/59/new-square.jpg'
+  const newList = 'http://a.vpimg2.com/upload/merchandise/pdcvis/104218/2026/0820/190/new-list.jpg'
+  const color = {
+    colourGSN: '20832610420530505',
+    squareMainImages: [{ imageIndex: 1, index: 0, imageUrl: 'http://a.vpimg4.com/old-square.jpg' }],
+    squareImages: [],
+    listImages: [{ imageIndex: 50, index: 0, imageUrl: 'http://a.vpimg4.com/old-list.jpg' }],
+    listPics: [{ imageIndex: 50, index: 0, imageUrl: '' }],
+    $images: [
+      { imageIndex: 1, index: 0, imageUrl: 'http://a.vpimg4.com/old-square.jpg' },
+      { imageIndex: 50, index: 10, imageUrl: 'http://a.vpimg4.com/old-list.jpg' },
+    ],
+  }
+
+  helpers.applyMainSquareRecordsToColors([color], [{
+    imageUrl: newSquare,
+    asset: { targetGoodsCode: '20832610420530505', filename: 'main.jpg' },
+  }], '20832610420530505')
+  helpers.applyListImageRecordsToColors([color], [{
+    imageUrl: newList,
+    asset: { targetGoodsCode: '20832610420530505', filename: 'list.jpg' },
+  }], '20832610420530505')
+
+  assert.equal(color.squareMainImages[0].imageUrl, newSquare)
+  assert.equal(color.listImages[0].imageUrl, newList)
+  assert.equal(color.listPics[0].imageUrl, newList)
+  assert.equal(color.$images.find(item => item.imageIndex === 1).imageUrl, newSquare)
+  assert.equal(color.$images.find(item => item.imageIndex === 50).imageUrl, newList)
+})
+
+test('preflights Vipshop page-owned save payload before submitting live uploads', async () => {
+  const squareUrl = 'http://a.vpimg2.com/upload/merchandise/pdcvis/104218/2026/0820/59/new-square.jpg'
+  const listUrl = 'http://a.vpimg2.com/upload/merchandise/pdcvis/104218/2026/0820/190/new-list.jpg'
+  const detailModules = [
+    { name: 'joinedHorseRacing', value: '1' },
+    { name: '增值税特殊管理', value: '1' },
+    { name: '是否有防盗扣', value: '否' },
+    { name: '洗涤说明', value: '请根据产品面料特性进行清洗养护，具体方法可参考产品水洗唛/标签', washDescError: true },
+    { name: '活动卖点', value: '' },
+  ]
+  const customModule = {
+    $children: [],
+    $options: { name: 'custom-module', methods: {} },
+    custommodule: detailModules,
+    $forceUpdateCalled: 0,
+    $forceUpdate() {
+      this.$forceUpdateCalled += 1
+    },
+  }
+  const editable = {
+    $children: [],
+    $options: { name: 'goods-form', methods: {} },
+    info: {
+      vendorProductId: '2263980907443499008',
+      sn: '208326104205',
+      itemSkuAttr: [{
+        colourGSN: '20832610420530505',
+        sizeAttr: [],
+        squareMainImages: [{ imageIndex: 1, index: 0, imageUrl: squareUrl }],
+        listImages: [{ imageIndex: 50, index: 0, imageUrl: listUrl }],
+        detailImages: [],
+        list_5_7: [],
+        transparentImages: [],
+        hangTagWashingMarkImgs: { imgs: [] },
+        tagImage: { imgs: [] },
+      }],
+    },
+    editdata: {
+      itemDetailModules: detailModules,
+    },
+    opts: {},
+    saveAndApprove() {},
+    getSaveItemSkuAttr(productVo) {
+      return productVo.itemSkuAttr.map(color => ({
+        ...color,
+        squareImages: [...color.squareMainImages, ...color.listImages],
+        colourImages: [...color.detailImages, ...color.list_5_7, ...color.transparentImages],
+      }))
+    },
+    getSaveImages() {
+      return { itemImages: [], squareImages: [], giftImagesMap: null }
+    },
+    copySaveImages() {},
+  }
+  const helpers = await loadExports({}, undefined, {
+    body: { innerText: '', textContent: '' },
+    querySelectorAll: () => [{ __vue__: editable }, { __vue__: customModule }],
+  })
+
+  const preview = helpers.buildPdcSavePayloadPreview({
+    vendorProductId: '2263980907443499008',
+  }, [
+    { imageUrl: squareUrl },
+    { imageUrl: listUrl },
+  ])
+
+  assert.equal(preview.ok, true)
+  assert.equal(preview.expectedCount, 2)
+  assert.equal(preview.foundCount, 2)
+  assert.deepEqual(editable.editdata.itemDetailModules.map(item => item.name), ['joinedHorseRacing', '增值税特殊管理', '是否有防盗扣'])
+  assert.deepEqual(customModule.custommodule.map(item => item.name), ['joinedHorseRacing', '增值税特殊管理', '是否有防盗扣'])
+  assert.equal(customModule.$forceUpdateCalled, 1)
+  assert.deepEqual(plain(preview.itemDetailModules.removed.map(item => [item.name, item.reason])), [
+    ['洗涤说明', '未申请自定义模块'],
+    ['活动卖点', '模块名或内容为空'],
+  ])
+  assert.doesNotThrow(() => helpers.assertPdcSavePayloadContainsUploads({
+    vendorProductId: '2263980907443499008',
+  }, [
+    { imageUrl: squareUrl },
+    { imageUrl: listUrl },
+  ]))
+  assert.throws(
+    () => helpers.assertPdcSavePayloadContainsUploads({ vendorProductId: '2263980907443499008' }, [{ imageUrl: 'http://a.vpimg2.com/not-in-payload.jpg' }]),
+    /保存 payload 预检失败/,
+  )
+
+  const emptyPageHelpers = await loadExports({}, undefined, {
+    body: { innerText: '', textContent: '' },
+    querySelectorAll: () => [],
+  })
+  assert.throws(
+    () => emptyPageHelpers.assertPdcSavePayloadContainsUploads({ vendorProductId: '2263980907443499008' }, [{ imageUrl: squareUrl }]),
+    /PDC 编辑组件未进入可保存状态/,
+  )
+})
+
+test('sanitizes Vipshop custom detail modules that block save', async () => {
+  const helpers = await loadExports()
+  const result = helpers.sanitizePdcCustomDetailModules([
+    { name: 'joinedHorseRacing', value: '1' },
+    { name: '短视频url', value: 'https://example.com/video.mp4' },
+    { name: '商品名中心词', value: 'T恤' },
+    { name: '活动卖点', value: '' },
+    { name: '活动卖点', value: '舒适透气' },
+    { name: '活动卖点', value: '重复卖点' },
+    { name: '', value: '没有模块名' },
+    { name: '是否有防盗扣', value: '否' },
+  ])
+
+  assert.deepEqual(plain(result.modules.map(item => `${item.name}:${item.value}`)), [
+    'joinedHorseRacing:1',
+    '活动卖点:舒适透气',
+    '是否有防盗扣:否',
+  ])
+  assert.deepEqual(plain(result.removed.map(item => [item.name, item.reason])), [
+    ['短视频url', '未申请自定义模块'],
+    ['商品名中心词', '未申请自定义模块'],
+    ['活动卖点', '模块名或内容为空'],
+    ['活动卖点', '模块名重复'],
+    ['', '模块名或内容为空'],
+  ])
+})
+
+test('detects stale Vipshop PDC Vue state after hash navigation', async () => {
+  const helpers = await loadExports()
+  assert.equal(helpers.pdcEditStateMismatchReason(
+    { vendorProductId: '1038438858843860992' },
+    { vendorProductId: '5358235333758246912' },
+  ), '编辑页商品ID未切换完成：当前 1038438858843860992，目标 5358235333758246912')
+  assert.equal(helpers.pdcEditStateMismatchReason(
+    { vendorProductId: '5358235333758246912' },
+    { vendorProductId: '5358235333758246912' },
+  ), '')
 })
 
 test('matches Vipshop main/list image pairs named by full goods code and size suffix', async () => {

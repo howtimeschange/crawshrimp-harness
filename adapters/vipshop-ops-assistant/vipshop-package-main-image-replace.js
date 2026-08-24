@@ -61,6 +61,13 @@
   const VIPSHOP_SAVE_WAIT_MS = Math.max(2000, Number(params.vipshop_save_wait_ms || 6000) || 6000)
   const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif', 'tif', 'tiff'])
   const LIVE_AUTH_MESSAGE = '线上替换由 execute_mode=live 控制；本脚本会取消审核/撤回、上传图片、保存并提交审核。'
+  const PDC_FORBIDDEN_CUSTOM_DETAIL_MODULE_NAMES = new Set([
+    '搜索推荐',
+    '短视频URL',
+    '商品名中心词',
+    '副标题',
+    '洗涤说明',
+  ].map(normalizePdcCustomDetailModuleName))
 
   function compact(value) {
     return String(value == null ? '' : value).replace(/\s+/g, ' ').trim()
@@ -2704,7 +2711,9 @@
   }
 
   function collectVueInstances(limit = 1000) {
-    const roots = Array.from(document.querySelectorAll('*')).map(el => el.__vue__).filter(Boolean)
+    const roots = typeof document?.querySelectorAll === 'function'
+      ? Array.from(document.querySelectorAll('*')).map(el => el.__vue__).filter(Boolean)
+      : []
     const seen = new Set()
     const result = []
     const walk = vue => {
@@ -2750,6 +2759,13 @@
   function isEditableStatus(status) {
     const text = compact(status)
     return !text || ['11', '14'].includes(text)
+  }
+
+  function pdcEditStateMismatchReason(state = {}, context = {}) {
+    const actual = normalizeCode(state.vendorProductId)
+    const expected = normalizeCode(context.vendorProductId)
+    if (actual && expected && actual !== expected) return `编辑页商品ID未切换完成：当前 ${actual}，目标 ${expected}`
+    return ''
   }
 
   async function unpublishProduct(vendorProductId, vendorType = 1) {
@@ -3565,6 +3581,60 @@
     return (Array.isArray(images) ? images : []).map(item => ({ ...item }))
   }
 
+  function jsonClone(value, fallback = {}) {
+    try {
+      return JSON.parse(JSON.stringify(value ?? fallback))
+    } catch (error) {
+      return fallback
+    }
+  }
+
+  function imageUrlFromRecord(item) {
+    return compact(item?.imageUrl || item?.url || item?.src)
+  }
+
+  function syncCompositeImagesFromBuckets(color) {
+    if (!color || !Array.isArray(color.$images)) return
+    const buckets = [
+      'squareMainImages',
+      'squareImages',
+      'longMainImages',
+      'listImages',
+      'listPics',
+      'list_5_7',
+      'list_5_7_Pics',
+      'detailImages',
+      'detailPics',
+      'proDetailPics',
+      'transparentImages',
+      'bigPics',
+      'displayPics',
+      'smallPics',
+      'pcHotPics',
+      'phoneHotPics',
+      'beautyTransparentImages',
+    ]
+    const byIndex = new Map()
+    for (const key of buckets) {
+      for (const image of Array.isArray(color[key]) ? color[key] : []) {
+        const imageIndex = Number(image?.imageIndex)
+        if (Number.isFinite(imageIndex) && imageUrlFromRecord(image)) byIndex.set(imageIndex, { ...image })
+      }
+    }
+    if (!byIndex.size) return
+    const seen = new Set()
+    const next = color.$images.map(image => {
+      const imageIndex = Number(image?.imageIndex)
+      if (!Number.isFinite(imageIndex) || !byIndex.has(imageIndex)) return image
+      seen.add(imageIndex)
+      return { ...image, ...byIndex.get(imageIndex), imageIndex }
+    })
+    for (const [imageIndex, image] of byIndex.entries()) {
+      if (!seen.has(imageIndex)) next.push({ ...image, imageIndex })
+    }
+    replaceArrayContents(color.$images, next)
+  }
+
   function colorSquareImageArray(color) {
     if (!color) return []
     if (Array.isArray(color.squareMainImages)) return color.squareMainImages
@@ -3586,6 +3656,7 @@
       : replaceByImageIndex(target, replacements, allowedIndexes)
     replaceArrayContents(target, nextImages)
     syncSquareAliases(color)
+    syncCompositeImagesFromBuckets(color)
   }
 
   function colorListImageArray(color) {
@@ -3599,6 +3670,7 @@
   function syncListAliases(color) {
     if (!color || !Array.isArray(color.listImages) || !Array.isArray(color.listPics)) return
     if (color.listImages !== color.listPics) replaceArrayContents(color.listPics, color.listImages)
+    syncCompositeImagesFromBuckets(color)
   }
 
   function groupUploadRecordsByTargetGoodsCode(records = [], fallbackGoodsCode = '') {
@@ -3869,6 +3941,7 @@
         for (const color of detailTargetColors) {
           if (!Array.isArray(color.detailImages)) color.detailImages = []
           replaceArrayContents(color.detailImages, cloneImageList(anchored.images))
+          syncCompositeImagesFromBuckets(color)
         }
       } else {
         const current = editData.detailImages || []
@@ -4163,13 +4236,215 @@
     return true
   }
 
+  function pdcVueMethod(vue, name) {
+    if (typeof vue?.[name] === 'function') return vue[name].bind(vue)
+    if (typeof vue?.$options?.methods?.[name] === 'function') return vue.$options.methods[name].bind(vue)
+    return null
+  }
+
+  function normalizePdcCustomDetailModuleName(value) {
+    return compact(value)
+      .replace(/[（(].*?[）)]/g, '')
+      .replace(/[\s_./\\\-：:（）()]+/g, '')
+      .toUpperCase()
+  }
+
+  function pdcCustomDetailModuleName(module = {}) {
+    const value = [module.name, module.moduleName, module.title, module.label].find(item => item != null)
+    return compact(value)
+  }
+
+  function pdcCustomDetailModuleValue(module = {}) {
+    const value = [module.value, module.moduleValue, module.content, module.desc, module.text].find(item => item != null)
+    return compact(value)
+  }
+
+  function isForbiddenPdcCustomDetailModuleName(name) {
+    return PDC_FORBIDDEN_CUSTOM_DETAIL_MODULE_NAMES.has(normalizePdcCustomDetailModuleName(name))
+  }
+
+  function sanitizePdcCustomDetailModules(modules = []) {
+    const seen = new Set()
+    const kept = []
+    const removed = []
+    for (const module of Array.isArray(modules) ? modules : []) {
+      const name = pdcCustomDetailModuleName(module)
+      const value = pdcCustomDetailModuleValue(module)
+      const normalizedName = normalizePdcCustomDetailModuleName(name)
+      let reason = ''
+      if (!name || !value) reason = '模块名或内容为空'
+      else if (isForbiddenPdcCustomDetailModuleName(name)) reason = '未申请自定义模块'
+      else if (seen.has(normalizedName)) reason = '模块名重复'
+      if (reason) {
+        removed.push({ name, value, reason })
+        continue
+      }
+      if (module && typeof module === 'object') {
+        module.hasError = false
+        module.washDescError = false
+      }
+      seen.add(normalizedName)
+      kept.push(module)
+    }
+    return { modules: kept, removed }
+  }
+
+  function pdcCustomDetailModuleContainers(context = {}) {
+    const editable = findEditableProductVue(context.vendorProductId)
+    const root = findRootProductVue()
+    const containers = []
+    const add = (owner, ownerName, prop, object) => {
+      if (object && Array.isArray(object[prop])) containers.push({ owner, ownerName, prop, object, modules: object[prop] })
+    }
+    const editableData = editable?.$data || {}
+    add(editable, 'editable.editdata', 'itemDetailModules', editable?.editdata)
+    add(editable, 'editable.$data.editdata', 'itemDetailModules', editableData.editdata)
+    add(editable, 'editable.editData', 'itemDetailModules', editable?.editData)
+    add(editable, 'editable.$data.editData', 'itemDetailModules', editableData.editData)
+    add(editable, 'editable.info', 'itemDetailModules', editable?.info)
+    add(editable, 'editable.$data.info', 'itemDetailModules', editableData.info)
+    const rootData = root?.$data || {}
+    add(root, 'root.editData', 'itemDetailModules', root?.editData)
+    add(root, 'root.$data.editData', 'itemDetailModules', rootData.editData)
+    add(root, 'root.info', 'itemDetailModules', root?.info)
+    add(root, 'root.$data.info', 'itemDetailModules', rootData.info)
+    collectVueInstances().forEach((vue, index) => {
+      const name = vue?.$options?.name || `vue${index}`
+      const data = vue?.$data || {}
+      add(vue, `${name}.custommodule`, 'custommodule', vue)
+      add(vue, `${name}.$data.custommodule`, 'custommodule', data)
+      add(vue, `${name}.customModule`, 'customModule', vue)
+      add(vue, `${name}.$data.customModule`, 'customModule', data)
+    })
+    return containers
+  }
+
+  function sanitizePdcItemDetailModulesBeforeSave(context = {}) {
+    const containers = pdcCustomDetailModuleContainers(context)
+    const removed = []
+    const sources = []
+    for (const container of containers) {
+      const result = sanitizePdcCustomDetailModules(container.modules)
+      if (result.removed.length || result.modules.length !== container.modules.length) {
+        container.modules.splice(0, container.modules.length, ...result.modules)
+        container.object[container.prop] = container.modules
+      }
+      if (typeof container.owner?.$forceUpdate === 'function') container.owner.$forceUpdate()
+      removed.push(...result.removed.map(item => ({ ...item, source: container.ownerName })))
+      sources.push({
+        source: container.ownerName,
+        beforeCount: result.modules.length + result.removed.length,
+        afterCount: result.modules.length,
+      })
+    }
+    const remainingInvalid = []
+    for (const container of containers) {
+      sanitizePdcCustomDetailModules(container.modules).removed.forEach(item => {
+        remainingInvalid.push({ ...item, source: container.ownerName })
+      })
+    }
+    return {
+      ok: !remainingInvalid.length,
+      removed,
+      remainingInvalid,
+      sources,
+      currentModules: containers[0]?.modules?.map(module => ({
+        name: pdcCustomDetailModuleName(module),
+        value: pdcCustomDetailModuleValue(module),
+      })) || [],
+    }
+  }
+
+  function pdcSaveItemDetailModulesForPreview(context = {}) {
+    const containers = pdcCustomDetailModuleContainers(context)
+    const source = containers.find(container => /editdata|editData/i.test(container.ownerName)) || containers[0]
+    return jsonClone(source?.modules || [], [])
+  }
+
+  function buildPdcSavePayloadPreview(context, uploadRecords = []) {
+    const editable = findEditableProductVue(context.vendorProductId)
+    const root = findRootProductVue()
+    if (!editable && !root) return { ok: false, error: 'PDC 编辑组件未进入可保存状态' }
+    const detailModuleSanitize = sanitizePdcItemDetailModulesBeforeSave(context)
+    const info = editable?.info || editable?.$data?.info || root?.$data?.info || {}
+    const previewProduct = jsonClone(info, {})
+    previewProduct.itemDetailModules = pdcSaveItemDetailModulesForPreview(context)
+    const preview = {
+      product: previewProduct,
+      saveImages: null,
+      itemDetailModules: detailModuleSanitize,
+      errors: [],
+    }
+    if (!detailModuleSanitize.ok) {
+      preview.errors.push(`自定义模块仍存在无效项：${detailModuleSanitize.remainingInvalid.slice(0, 3).map(item => compact([item.name || '(空模块名)', item.reason].join(':'))).join('；')}`)
+    }
+    const getSaveItemSkuAttr = pdcVueMethod(editable, 'getSaveItemSkuAttr')
+    if (getSaveItemSkuAttr && Array.isArray(previewProduct.itemSkuAttr)) {
+      try {
+        previewProduct.itemSkuAttr = getSaveItemSkuAttr(previewProduct)
+      } catch (error) {
+        preview.errors.push(`getSaveItemSkuAttr失败：${String(error?.message || error)}`)
+      }
+    }
+    const getSaveImages = pdcVueMethod(editable, 'getSaveImages')
+    if (getSaveImages) {
+      try {
+        const saveImages = getSaveImages() || {}
+        preview.saveImages = saveImages
+        previewProduct.itemImages = saveImages.itemImages
+        previewProduct.squareImages = saveImages.squareImages
+        previewProduct.giftImagesMap = saveImages.giftImagesMap
+      } catch (error) {
+        preview.errors.push(`getSaveImages失败：${String(error?.message || error)}`)
+      }
+    }
+    const copySaveImages = pdcVueMethod(editable, 'copySaveImages')
+    if (copySaveImages) {
+      try {
+        copySaveImages(previewProduct)
+      } catch (error) {
+        preview.errors.push(`copySaveImages失败：${String(error?.message || error)}`)
+      }
+    }
+    const expectedUrls = (Array.isArray(uploadRecords) ? uploadRecords : [])
+      .map(record => compact(record?.imageUrl))
+      .filter(Boolean)
+    const missingUrls = expectedUrls.filter(url => !verifyImageUrlInDetail(url, preview))
+    return {
+      ok: !preview.errors.length && !missingUrls.length,
+      expectedCount: expectedUrls.length,
+      foundCount: expectedUrls.length - missingUrls.length,
+      missingUrls,
+      errors: preview.errors,
+      itemDetailModules: detailModuleSanitize,
+    }
+  }
+
+  function assertPdcSavePayloadContainsUploads(context, uploadRecords = []) {
+    const preview = buildPdcSavePayloadPreview(context, uploadRecords)
+    if (preview.error) {
+      throw new Error(`唯品会保存 payload 预检失败：${preview.error}`)
+    }
+    if (preview.errors?.length) {
+      throw new Error(`唯品会保存 payload 预检失败：${preview.errors.slice(0, 3).join('；')}`)
+    }
+    if (preview.missingUrls?.length) {
+      throw new Error(`唯品会保存 payload 预检失败：${preview.foundCount}/${preview.expectedCount} 个新图 URL 将进入保存，缺少 ${preview.missingUrls.length} 个`)
+    }
+    return preview
+  }
+
   function callSaveAndApprove(context) {
     const editable = findEditableProductVue(context.vendorProductId)
     if (!editable) throw new Error('PDC 编辑组件未进入可保存状态')
+    const detailModuleSanitize = sanitizePdcItemDetailModulesBeforeSave(context)
+    if (!detailModuleSanitize.ok) {
+      throw new Error(`唯品会保存前自定义模块仍存在无效项：${detailModuleSanitize.remainingInvalid.slice(0, 3).map(item => compact([item.name || '(空模块名)', item.reason].join(':'))).join('；')}`)
+    }
     editable.fromSaveAndApprove = true
     editable.__timeStart = +new Date()
-    if (typeof editable.saveAndApprove === 'function') editable.saveAndApprove()
-    else if (editable.$options?.methods?.saveAndApprove) editable.$options.methods.saveAndApprove.call(editable)
+    const saveAndApprove = pdcVueMethod(editable, 'saveAndApprove')
+    if (saveAndApprove) saveAndApprove()
     else throw new Error('PDC 编辑组件缺少 saveAndApprove 方法')
     return true
   }
@@ -4178,8 +4453,9 @@
     const editable = findEditableProductVue(context.vendorProductId)
     if (!editable) return false
     const preview = editable.editPreCheck?.previewData || editable.$data?.editPreCheck?.previewData || []
-    if (Array.isArray(preview) && preview.length && typeof editable.doSave === 'function') {
-      editable.doSave()
+    const doSave = pdcVueMethod(editable, 'doSave')
+    if (Array.isArray(preview) && preview.length && doSave) {
+      doSave()
       return true
     }
     return false
@@ -4255,16 +4531,75 @@
     }
   }
 
-  function verifyImageUrlInDetail(url, product, context = null) {
-    const text = JSON.stringify({
-      product: product || {},
-      pageState: context ? currentPdcStateSnapshotForVerify(context) : {},
-    })
+  function verifyImageUrlInDetail(url, product) {
+    const text = JSON.stringify(product || {})
     if (!url) return false
     if (text.includes(url)) return true
     const normalizedUrl = normalizeVipshopReadbackImageUrl(url)
     if (!normalizedUrl || normalizedUrl === url) return false
     return text.replace(/https?:\/\/a\.vpimg\d+\.com/gi, '').includes(normalizedUrl)
+  }
+
+  function vipshopPdcvisUploadBatchPrefix(url) {
+    const normalized = normalizeVipshopReadbackImageUrl(url)
+    const match = normalized.match(/\/upload\/merchandise\/pdcvis\/[^/]+\/\d{4}\/\d{4}\//i)
+    return match ? match[0] : ''
+  }
+
+  function readbackImageUrl(item = {}) {
+    return compact(item.imageUrl || item.url || item.src)
+  }
+
+  function readbackColorImages(color = {}) {
+    const lists = [
+      color.squareImages,
+      color.squareMainImages,
+      color.listImages,
+      color.listPics,
+      color.$images,
+      color.colourImages,
+      color.detailImages,
+      color.detailPics,
+      color.list_5_7,
+      color.list_5_7_Pics,
+    ]
+    const seen = new Set()
+    const result = []
+    for (const list of lists) {
+      for (const item of Array.isArray(list) ? list : []) {
+        const url = readbackImageUrl(item)
+        const key = `${item?.imageIndex || ''}:${url}`
+        if (!url || seen.has(key)) continue
+        seen.add(key)
+        result.push(item)
+      }
+    }
+    return result
+  }
+
+  function expectedReadbackImageSize(record = {}) {
+    if (record.usageKey === 'main_square') return '1200x1200'
+    if (record.usageKey === 'list_image') return '950x1200'
+    if (record.usageKey === 'package_micro_square') return '1200x1200'
+    return ''
+  }
+
+  function verifyUploadRecordPersistedInDetail(record = {}, product = {}) {
+    if (verifyImageUrlInDetail(record.imageUrl, product)) return true
+    const goodsCode = normalizeCode(record?.asset?.targetGoodsCode)
+    const color = goodsCode ? findTargetColor(product, goodsCode) : null
+    if (!color) return false
+    const expectedIndex = Number(record.imageIndex)
+    if (!Number.isFinite(expectedIndex)) return false
+    const batchPrefix = vipshopPdcvisUploadBatchPrefix(record.imageUrl)
+    if (!batchPrefix) return false
+    const expectedSize = expectedReadbackImageSize(record)
+    return readbackColorImages(color).some(item => {
+      const url = readbackImageUrl(item)
+      if (!url || Number(item?.imageIndex) !== expectedIndex) return false
+      if (expectedSize && compact(item?.imageSize) && compact(item.imageSize) !== expectedSize) return false
+      return normalizeVipshopReadbackImageUrl(url).includes(batchPrefix)
+    })
   }
 
   function buildJobContexts(parsed, merchandiseResult, assetFiles, rawParams = params) {
@@ -4470,6 +4805,7 @@
       buildJobPlanRows,
       statusLabel,
       hasScope,
+      pdcEditStateMismatchReason,
       isSupportedExecutionOrigin,
       semirLoginWaitMessage,
       isSemirLoginTimeoutText,
@@ -4478,6 +4814,13 @@
       isSemirCloudLoginPageVisible,
       normalizeVipshopReadbackImageUrl,
       verifyImageUrlInDetail,
+      vipshopPdcvisUploadBatchPrefix,
+      verifyUploadRecordPersistedInDetail,
+      normalizePdcCustomDetailModuleName,
+      sanitizePdcCustomDetailModules,
+      sanitizePdcItemDetailModulesBeforeSave,
+      buildPdcSavePayloadPreview,
+      assertPdcSavePayloadContainsUploads,
       applyMainSquareRecordsToColors,
       applyListImageRecordsToColors,
       applyPackageMicroSquareRecordsToColors,
@@ -4791,6 +5134,17 @@
       if (!state.rootFound) {
         return advanceLiveJob(buildLiveContextRows(context, 'PDC页面加载失败', '等待编辑页 Vue 状态超时'), shared)
       }
+      const mismatchReason = pdcEditStateMismatchReason(state, context)
+      if (mismatchReason && attempts < 30) {
+        return reloadPage('process_live_job', VIPSHOP_PAGE_WAIT_MS, {
+          ...shared,
+          pdc_wait_attempts: attempts + 1,
+          current_store: mismatchReason,
+        })
+      }
+      if (mismatchReason) {
+        return advanceLiveJob(buildLiveContextRows(context, 'PDC页面加载失败', mismatchReason), shared)
+      }
       const latestDetail = await queryProductDetail(context.vendorProductId, context.vendorType)
       const latestStatus = compact(latestDetail.status || state.status)
       if (!isEditableStatus(latestStatus) && !shared.current_unpublished) {
@@ -4949,6 +5303,7 @@
           anchors: shared.current_detail_ocr_anchors || {},
           existingDetailImages: shared.current_detail_existing_images || [],
         })
+        const savePayloadPreview = assertPdcSavePayloadContainsUploads(context, result.uploadRecords)
         callSaveAndApprove(context)
         clickVisibleAlertConfirm()
         const rows = result.uploadRecords.map(record => {
@@ -5010,6 +5365,12 @@
           live_rows: [...(Array.isArray(shared.live_rows) ? shared.live_rows : []), ...rows, ...skippedRows],
           live_verify_attempts: 0,
           apply_result: result.applyResult,
+          save_payload_preview: {
+            expectedCount: savePayloadPreview.expectedCount,
+            foundCount: savePayloadPreview.foundCount,
+            removedInvalidItemDetailModules: savePayloadPreview.itemDetailModules?.removed || [],
+            currentItemDetailModules: savePayloadPreview.itemDetailModules?.currentModules || [],
+          },
           current_store: `保存提交读回：${context.vendorProductId}`,
         })
       } catch (error) {
@@ -5027,26 +5388,30 @@
       clickVisibleAlertConfirm()
       const product = await queryProductDetail(context.vendorProductId, context.vendorType)
       const uploads = Array.isArray(shared.current_live_uploads) ? shared.current_live_uploads : []
-      const missingUrls = uploads.map(record => record.imageUrl).filter(url => !verifyImageUrlInDetail(url, product, context))
+      const missingRecords = uploads.filter(record => !verifyUploadRecordPersistedInDetail(record, product))
       const status = compact(product.status)
       const submitted = ['12', '13'].includes(status)
-      if (!missingUrls.length && !submitted && attempts >= 3 && !shared.publish_fallback_called && params.allow_publish_fallback !== false) {
-        await publishProduct(context.vendorProductId, context.vendorType, params.operator_id || '')
+      if (!missingRecords.length && !submitted && attempts >= 3 && !shared.publish_fallback_called && params.allow_publish_fallback !== false) {
+        try {
+          await publishProduct(context.vendorProductId, context.vendorType, params.operator_id || '')
+        } catch (error) {
+          if (!/已提交审核|审核通过/.test(compact(error?.message || error))) throw error
+        }
         return nextPhase('verify_live_job', VIPSHOP_SAVE_WAIT_MS, {
           ...shared,
           publish_fallback_called: true,
           live_verify_attempts: attempts + 1,
         })
       }
-      if ((missingUrls.length || !submitted) && attempts < 20) {
+      if ((missingRecords.length || !submitted) && attempts < 20) {
         return nextPhase('verify_live_job', 1500, { ...shared, live_verify_attempts: attempts + 1 })
       }
       const rows = buildLiveContextRows(
         context,
-        !missingUrls.length && submitted ? '保存并提交审核成功' : '保存读回异常',
+        !missingRecords.length && submitted ? '保存并提交审核成功' : '保存读回异常',
         compact([
           `读回状态=${statusLabel(status)}`,
-          missingUrls.length ? `未在详情读回中找到 ${missingUrls.length} 个新图URL` : `已读回 ${uploads.length} 个新图URL`,
+          missingRecords.length ? `未在详情读回中找到 ${missingRecords.length} 个目标图位新图` : `已读回 ${uploads.length} 个目标图位新图`,
           shared.publish_fallback_called ? '已调用提交审核兜底接口' : '',
         ].filter(Boolean).join('；')),
       )
