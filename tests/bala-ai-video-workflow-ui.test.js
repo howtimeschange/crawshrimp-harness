@@ -231,7 +231,7 @@ test('material batch recovery includes restored AI result versions and relinks n
   assert.equal(groups[0].detailPhotos[0].versions[0].imageUrl, '/image/detail-ai')
 })
 
-test('restored material groups dedupe legacy paths and reselect AI-named files', () => {
+test('restored material groups dedupe legacy paths without reselecting AI-named files', () => {
   const restored = balaWorkflow.mergeBalaMaterialGroups([], [{
     styleCode: '208326108104',
     modelPhotos: [
@@ -243,7 +243,7 @@ test('restored material groups dedupe legacy paths and reselect AI-named files',
   }])
 
   assert.equal(restored[0].modelPhotos.length, 2)
-  assert.equal(restored[0].modelPhotos.find(asset => asset.name === 'o-AI(2).png')?.selected, true)
+  assert.equal(restored[0].modelPhotos.find(asset => asset.name === 'o-AI(2).png')?.selected, false)
 })
 
 test('workspace polling ignores hidden duplicate batch files and stays stable after the first render', () => {
@@ -357,7 +357,7 @@ test('workspace snapshot restore normalizes cached material groups before render
   assert.match(replaceSource, /styleWorkspaces\.splice\(0, styleWorkspaces\.length, \.\.\.normalizedGroups\)/)
 })
 
-test('AI-named material is selected and sorted first while duplicate filenames collapse across source folders', () => {
+test('AI-named material is not auto-selected while duplicate filenames collapse across source folders', () => {
   const groups = normalizeBalaMaterialGroups({
     batch: {
       status: 'pending_selection',
@@ -372,7 +372,7 @@ test('AI-named material is selected and sorted first while duplicate filenames c
     },
   })
 
-  assert.equal(groups[0].modelPhotos.find(asset => asset.filename === 'lookAI-result.jpg')?.selected, true)
+  assert.equal(groups[0].modelPhotos.find(asset => asset.filename === 'lookAI-result.jpg')?.selected, false)
   assert.equal(groups[0].modelPhotos.length + groups[0].detailPhotos.length, 2)
   assert.equal(balaWorkflow.sortBalaMaterialAssets([
     { filename: 'z.jpg', selected: false },
@@ -466,7 +466,7 @@ test('AI video workflow restores downloaded Excel rows into material groups with
   assert.equal(rowOnlyGroups.length, 1)
   assert.equal(rowOnlyGroups[0].modelPhotos.length, 1)
   assert.equal(rowOnlyGroups[0].modelPhotos[0].path, downloadedRow.本地文件)
-  assert.equal(rowOnlyGroups[0].modelPhotos[0].selected, true)
+  assert.equal(rowOnlyGroups[0].modelPhotos[0].selected, false)
 
   const groupsWithBatch = normalizeBalaMaterialGroups({
     batch: {
