@@ -1905,12 +1905,22 @@
                     <option v-for="model in configuredVideoPromptModels" :key="model.value" :value="model.value">{{ model.label }}</option>
                   </select>
                   <button
+                    v-if="!videoPromptWriterBusy"
                     type="button"
                     class="aiv-ghost small"
                     :disabled="!canGenerateVideoTaskPrompt"
                     @click="generateVideoTaskPrompt"
                   >
-                    {{ videoPromptWriterBusy ? '生成中' : '一键写 Prompt' }}
+                    一键写 Prompt
+                  </button>
+                  <button
+                    v-else
+                    type="button"
+                    class="aiv-ghost small danger"
+                    aria-label="取消当前 Prompt 生成"
+                    @click="cancelVideoTaskPromptGeneration"
+                  >
+                    取消
                   </button>
                 </div>
               </div>
@@ -1920,7 +1930,16 @@
                 aria-label="视频 Prompt"
                 :placeholder="videoTaskDraft.provider === 'qn' ? '生意管家页面生成可不填写 Prompt' : '描述服装、场景、动作和镜头要求'"
               ></textarea>
-              <small v-if="videoPromptWriterStatus" class="aiv-video-prompt-status">{{ videoPromptWriterStatus }}</small>
+              <div v-if="videoPromptWriterBusy" class="aiv-video-prompt-loading" role="status" aria-live="polite" aria-label="Prompt 生成中">
+                <span class="aiv-video-prompt-loading-dot" aria-hidden="true"></span>
+                <span class="aiv-video-prompt-loading-window" aria-hidden="true">
+                  <span class="aiv-video-prompt-loading-track">
+                    <span v-for="message in videoPromptWriterLoadingMessages" :key="message">{{ message }}</span>
+                    <span aria-hidden="true">{{ videoPromptWriterLoadingMessages[0] }}</span>
+                  </span>
+                </span>
+              </div>
+              <small v-else-if="videoPromptWriterStatus" class="aiv-video-prompt-status">{{ videoPromptWriterStatus }}</small>
             </div>
 
             <div :class="['aiv-field', { 'aiv-field-invalid': !videoTaskDraftRequirement('output')?.complete }]">
@@ -2240,6 +2259,7 @@ const selectedAiImageModelId = ref('')
 const selectedVideoPromptModelId = ref('')
 const videoPromptWriterBusy = ref(false)
 const videoPromptWriterStatus = ref('')
+let videoPromptWriterRequestToken = 0
 const modelLibraryOpen = ref(false)
 const templateLibraryOpen = ref(false)
 const videoTaskDialogOpen = ref(false)
@@ -2290,6 +2310,13 @@ const SEEDANCE_RATIOS = ['16:9', '9:16', '1:1', '3:4', '4:3', '21:9', 'adaptive'
 const HAPPYHORSE_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '4:5', '5:4', '9:21', '21:9']
 const KLING_RATIOS = ['16:9', '9:16', '1:1']
 const BAILIAN_VIDEO_PROVIDERS = ['happyhorse', 'kling-v3', 'kling-omni', 'pixverse-motioncontrol']
+const videoPromptWriterLoadingMessages = Object.freeze([
+  '模型思考中',
+  '解析图片穿搭中',
+  '生成种草文案中',
+  '整理分镜节奏中',
+  '回填 Prompt 中',
+])
 
 /** 简写按钮卡：与 AI 生视频工作台同风格，侧栏三列紧凑展示 */
 const videoTaskProviderOptions = [
@@ -2371,7 +2398,7 @@ const styleCodes = ref('208326102205\n208326105214\n208326108104')
 const cloudPath = ref('巴拉营运BU-商品//巴拉货控/02 产品上新模块/2-2 巴拉产品上新/')
 const materialPackageName = ref('')
 const AI_ACTION_PROMPT_DEFAULTS = {
-  face_swap: '只替换脸部为所选模特；保留原始背景/场景、构图、姿势、道具、服装版型和颜色；无文字、无水印。',
+  face_swap: '只替换脸部五官与脸部皮肤软过渡区域；保留原始背景/场景、构图、姿势、头身比例、肩颈连接、发际线、耳朵、道具、服装版型和颜色；以原图为唯一光照模板，保留原脸光影遮罩和曝光层级，脸部色温、亮度、阴影、局部锐度、颗粒和景深匹配脖颈、耳朵、手部皮肤；不得继承参考头像棚拍柔光或磨皮质感；无文字、无水印。',
   background_swap: '',
   outfit_swap: '仅替换服装商品；保留原人物脸部、姿势、背景、构图和光线，服装按参考图保持版型、颜色、图案和材质。',
   pose_swap: '',
@@ -2383,7 +2410,7 @@ const AI_ACTION_PROMPT_LABELS = {
   pose_swap: '姿势 Prompt',
 }
 const AI_ACTION_PROMPT_PLACEHOLDERS = {
-  face_swap: '可选，例如：只替换脸部，保留原背景、姿势、构图和服装细节',
+  face_swap: '可选，例如：保持头部大小和头身比例，脸部边缘自然融入发际线、耳朵和脖颈阴影',
   background_swap: '例如：干净明亮的儿童服装棚拍场景，柔和自然光，背景简洁高级',
   outfit_swap: '可选，例如：衣服贴合身体姿势，保留原背景和人物表情，无文字、无水印',
   pose_swap: '例如：让模特自然侧身站立，双手轻松放在身体两侧，保持服装展示清晰',
@@ -5215,6 +5242,26 @@ function sameDeletedVersion(asset, target) {
   return Boolean((targetId && (asset.id === targetId || assetId === targetId)) || (targetPath && assetPath === targetPath))
 }
 
+function aiArchiveIdentityKeys(asset = {}) {
+  return [
+    ['job', asset?.jobUid || asset?.job_uid],
+    ['run', asset?.runUid || asset?.run_uid],
+    ['remote', asset?.remoteAssetId || asset?.remote_asset_id],
+    ['asset', asset?.id],
+    ['url', asset?.imageUrl || asset?.image_url],
+  ].map(([prefix, value]) => {
+    const text = String(value || '').replace(/^vasset-/, '').trim()
+    return text ? `${prefix}:${text}` : ''
+  }).filter(Boolean)
+}
+
+function sameAiArchiveAsset(asset, target) {
+  if (!asset || !target) return false
+  if (sameDeletedVersion(asset, target)) return true
+  const left = new Set(aiArchiveIdentityKeys(asset))
+  return aiArchiveIdentityKeys(target).some(key => left.has(key))
+}
+
 function workspaceArchivedPathForVersion(style = {}, version = {}) {
   const styleCode = String(style?.styleCode || '').trim()
   const targetDir = aiResultDirectoryForStyle(styleCode)
@@ -5230,7 +5277,27 @@ function reviewAssetsForGeneratedVersion(styleCode = '', version = {}) {
   return reviewStyles
     .filter(reviewStyle => !styleCode || reviewStyle.styleCode === styleCode)
     .flatMap(reviewStyle => reviewStyle.assets || [])
-    .filter(asset => asset.kind === 'ai' && sameDeletedVersion(asset, version))
+    .filter(asset => asset.kind === 'ai' && sameAiArchiveAsset(asset, version))
+}
+
+function archivedWorkspacePathForAiAsset(asset = {}, styleCode = '') {
+  const targetDir = aiResultDirectoryForStyle(styleCode)
+  if (!targetDir) return ''
+  const candidates = [
+    ...reviewStyles
+      .filter(reviewStyle => !styleCode || reviewStyle.styleCode === styleCode)
+      .flatMap(reviewStyle => reviewStyle.assets || []),
+    ...styleWorkspaces
+      .filter(style => !styleCode || style.styleCode === styleCode)
+      .flatMap(style => workspaceImageSources(style))
+      .flatMap(source => source?.versions || []),
+  ]
+  for (const candidate of candidates) {
+    if (!candidate || candidate.deleted || !sameAiArchiveAsset(candidate, asset)) continue
+    const archivedPath = String(candidate.path || candidate.previewPath || '').trim()
+    if (archivedPath && pathInsideDirectory(archivedPath, targetDir)) return archivedPath
+  }
+  return ''
 }
 
 function resolveDeletableVersionPath(style = {}, source = {}, version = {}) {
@@ -6573,6 +6640,8 @@ async function archiveReviewAssetToWorkspace(asset = {}, styleCode = '') {
   if (!targetDir) return ''
   const existingPath = String(asset.path || asset.previewPath || '').trim()
   if (pathInsideDirectory(existingPath, targetDir)) return existingPath
+  const archivedPath = archivedWorkspacePathForAiAsset(asset, styleCode)
+  if (archivedPath) return archivedPath
   const jobUid = String(asset.jobUid || asset.job_uid || '').trim()
   if (!jobUid) return ''
   const remoteSource = absoluteApiUrl(asset.imageUrl || asset.image_url)
@@ -8166,11 +8235,17 @@ function editPromptText(operationType, instruction = '') {
   const prefixes = {
     face_swap: [
       '请基于输入的童装商品模拍图进行真实电商照片级局部换脸编辑。',
-      '编辑范围只限人物脸部区域：替换脸部五官、年龄气质和表情；不要重绘整张图。',
+      '编辑范围只限人物脸部五官与脸部皮肤的软过渡区域；不要重绘整张图，不要替换身体、头发主体、脖子、耳朵、手脚或服装。',
       '必须保留原始背景/场景、地面/墙面/天空、道具/椅子/台座、身体姿态、主体构图、拍摄角度、裁切比例、光线阴影、童装商品、版型、颜色、图案、材质和穿搭关系。',
-      '参考所选巴拉 AI 模特头像素材，让新脸自然贴合原图角度、光线、肤色和清晰度。',
+      '严格锁定原图人物的头部大小、头身比例、肩颈连接、下巴位置、发际线轮廓、耳朵位置、视线方向和相机透视；生成后脸不能变大、变小、漂浮、前凸或像贴片。',
+      '所选巴拉 AI 模特头像素材只作为五官身份、年龄气质和表情参考；不得继承参考头像的棚拍柔光、磨皮、曝光、肤色或眼部高光。',
+      '以原图为唯一光照模板：新脸的色温、亮度、明暗分布、鼻梁/眼窝/脸颊/下巴投影、头发投影、下颌到脖颈阴影、局部锐度、颗粒感和景深必须与原图脸部周围、脖颈、耳朵、手部皮肤一致。',
+      '保留原脸区域已有的光影遮罩和曝光层级：额头、刘海下方、眼窝、鼻侧、嘴角、脸颊、下巴到脖颈的暗部不能被抹平；新脸不能比原图脖颈、耳朵或手部更亮、更白、更干净。',
+      '如果原图脸部因低头、刘海、室内暖光或景深而偏暗、偏暖或柔焦，必须保留这种欠曝、暖色偏和柔焦，禁止自动补光、美颜、统一提亮皮肤或强化眼白/牙齿高光。',
+      '禁止把新脸做成均匀柔光、棚拍证件照、过亮过白、过度锐化或眼睛高光过强；保留真实儿童照片的轻微阴影、皮肤纹理、局部不对称和运动/景深模糊。',
+      '脸部边缘必须与原图头发、耳朵、脖颈和脸颊阴影柔和融合；避免蜡像感、塑料皮肤、过度磨皮或一眼 AI 感。',
       '禁止替换背景或场景，禁止新增海边、户外、树木、天空、道具、文字、水印、Logo、吊牌、合格证或多余人物。',
-      '输出应尽量与原图除脸部外保持一致，真实摄影质感，不要拼贴感。',
+      '输出应尽量与原图除脸部外像同一张照片，真实摄影质感，不要拼贴感。',
     ].join('\n'),
     background_swap: [
       '请基于输入的童装商品模拍图进行真实电商照片级局部换背景编辑。',
@@ -8474,10 +8549,27 @@ function resetVideoTaskDraftAssets() {
   syncHappyHorseModeFromAssetCount()
 }
 
+function resetVideoPromptWriterFeedback({ cancelActive = true, status = '' } = {}) {
+  if (cancelActive && videoPromptWriterBusy.value) {
+    videoPromptWriterRequestToken += 1
+    videoPromptWriterBusy.value = false
+  }
+  videoPromptWriterStatus.value = status
+}
+
+function cancelVideoTaskPromptGeneration(options = {}) {
+  const silent = Boolean(options?.silent)
+  if (videoPromptWriterBusy.value) {
+    videoPromptWriterRequestToken += 1
+    videoPromptWriterBusy.value = false
+  }
+  videoPromptWriterStatus.value = silent ? '' : '已取消本次 Prompt 生成，返回结果会自动舍弃'
+}
+
 function openVideoTaskDialog(styleCode = '', sourceTask = null, mode = 'new') {
   lastFocusedElement.value = document.activeElement
   videoTaskDraftError.value = ''
-  videoPromptWriterStatus.value = ''
+  cancelVideoTaskPromptGeneration({ silent: true })
   ensureVideoPromptModelSelected()
   videoTaskAssetFilter.value = 'selected'
   videoTaskKindFilter.value = 'all'
@@ -8544,13 +8636,13 @@ function selectVideoTaskProvider(provider) {
   const next = String(provider || '').trim()
   if (!next || next === videoTaskDraft.provider) return
   videoTaskDraft.provider = next
-  videoPromptWriterStatus.value = ''
+  resetVideoPromptWriterFeedback()
   handleVideoProviderChange()
 }
 
 function selectVideoTaskStyle(styleCode) {
   videoTaskDraftError.value = ''
-  videoPromptWriterStatus.value = ''
+  resetVideoPromptWriterFeedback()
   videoTaskDraft.styleCode = String(styleCode || '').trim()
   resetVideoTaskAssetRenderLimit()
   resetVideoTaskDraftAssets()
@@ -8599,7 +8691,7 @@ function moveVideoTaskAssetTab(direction) {
 function toggleVideoTaskDraftAsset(asset) {
   if (!asset?.selectable) return
   videoTaskDraftError.value = ''
-  videoPromptWriterStatus.value = ''
+  resetVideoPromptWriterFeedback()
   if (!providerUsesLocalImages(videoTaskDraft.provider, videoTaskDraft.happyhorseMode)) {
     videoTaskDraftError.value = `${providerLabel(videoTaskDraft.provider)} 当前不使用本地图片素材`
     return
@@ -8642,7 +8734,7 @@ function videoTaskAssetLimitForProvider(provider = videoTaskDraft.provider) {
 
 function selectFilteredVideoTaskAssets() {
   videoTaskDraftError.value = ''
-  videoPromptWriterStatus.value = ''
+  resetVideoPromptWriterFeedback()
   if (!providerUsesLocalImages(videoTaskDraft.provider, videoTaskDraft.happyhorseMode)) {
     videoTaskDraftError.value = `${providerLabel(videoTaskDraft.provider)} 当前不使用本地图片素材`
     return
@@ -8669,7 +8761,7 @@ function selectFilteredVideoTaskAssets() {
 
 function clearFilteredVideoTaskAssets() {
   videoTaskDraftError.value = ''
-  videoPromptWriterStatus.value = ''
+  resetVideoPromptWriterFeedback()
   const filteredIds = new Set(filteredVideoTaskSelectableAssets.value.map(asset => asset.id).filter(Boolean))
   if (!filteredIds.size) return
   videoTaskDraft.assetIds = videoTaskDraft.assetIds.filter(id => !filteredIds.has(id))
@@ -8678,7 +8770,8 @@ function clearFilteredVideoTaskAssets() {
 
 async function generateVideoTaskPrompt() {
   videoTaskDraftError.value = ''
-  videoPromptWriterStatus.value = ''
+  resetVideoPromptWriterFeedback({ cancelActive: false })
+  if (videoPromptWriterBusy.value) return
   if (!ensureVideoPromptModelSelected()) {
     videoTaskDraftError.value = '请先在设置里配置文本大模型网关或 DeepSeek 官方 Key'
     return
@@ -8692,23 +8785,25 @@ async function generateVideoTaskPrompt() {
     videoTaskDraftError.value = '当前环境不支持一键写 Prompt'
     return
   }
+  const requestToken = ++videoPromptWriterRequestToken
   videoPromptWriterBusy.value = true
-  videoPromptWriterStatus.value = '生成中'
   try {
     const result = await window.cs.generateBalaVideoPrompt({
       model_id: selectedVideoPromptModelId.value,
       image_paths: imagePaths,
       template_prompt: BALA_VIDEO_PROMPT_TEMPLATE,
     })
+    if (requestToken !== videoPromptWriterRequestToken) return
     const prompt = String(result?.prompt || '').trim()
     if (!prompt) throw new Error('模型未返回视频 Prompt')
     videoTaskDraft.prompt = prompt
     videoPromptWriterStatus.value = `已写入 Prompt · ${result?.resolved_model_id || result?.model_id || selectedVideoPromptModelId.value} · ${result?.image_count || imagePaths.length} 张图`
   } catch (error) {
+    if (requestToken !== videoPromptWriterRequestToken) return
     videoPromptWriterStatus.value = ''
     videoTaskDraftError.value = error?.message || String(error)
   } finally {
-    videoPromptWriterBusy.value = false
+    if (requestToken === videoPromptWriterRequestToken) videoPromptWriterBusy.value = false
   }
 }
 
@@ -8770,6 +8865,7 @@ function createVideoTaskFromDraft() {
   videoStageState.error = ''
   videoStageState.message = currentTask ? `${nextTask.styleCode} 视频任务已更新，需重新预检。` : `${nextTask.styleCode} 视频任务已创建，下一步可提交预检。`
   editingVideoTaskId.value = ''
+  cancelVideoTaskPromptGeneration({ silent: true })
   videoTaskDialogOpen.value = false
 }
 
@@ -9095,6 +9191,7 @@ function closeTemplateLibrary() {
 }
 
 function closeVideoTaskDialog() {
+  cancelVideoTaskPromptGeneration({ silent: true })
   videoTaskDialogOpen.value = false
   editingVideoTaskId.value = ''
   videoTaskDraftError.value = ''
@@ -9243,6 +9340,7 @@ watch([displayedVideoTaskAssets, () => videoTaskDialogOpen.value], async ([, ope
 })
 
 onBeforeUnmount(() => {
+  cancelVideoTaskPromptGeneration({ silent: true })
   resetMaterialPoll()
   resetAiPoll()
   aiReviewPollToken += 1
@@ -10060,10 +10158,96 @@ function localFileUrl(path) {
   white-space: nowrap;
 }
 
+.aiv-video-prompt-loading {
+  min-width: 0;
+  min-height: 22px;
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.aiv-video-prompt-loading-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--orange);
+  box-shadow: 0 0 0 3px rgba(var(--orange-rgb), 0.14);
+  animation: aiv-video-prompt-pulse 1.2s ease-in-out infinite;
+}
+
+.aiv-video-prompt-loading-window {
+  height: 18px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.aiv-video-prompt-loading-track {
+  display: grid;
+  animation: aiv-video-prompt-roll 6s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+
+.aiv-video-prompt-loading-track span {
+  height: 18px;
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .aiv-video-prompt-status {
   color: var(--text3);
   font-size: 11px;
   line-height: 1.35;
+}
+
+@keyframes aiv-video-prompt-roll {
+  0%,
+  13% {
+    transform: translateY(0);
+  }
+  18%,
+  31% {
+    transform: translateY(-18px);
+  }
+  36%,
+  49% {
+    transform: translateY(-36px);
+  }
+  54%,
+  67% {
+    transform: translateY(-54px);
+  }
+  72%,
+  85% {
+    transform: translateY(-72px);
+  }
+  90%,
+  100% {
+    transform: translateY(-90px);
+  }
+}
+
+@keyframes aiv-video-prompt-pulse {
+  0%,
+  100% {
+    opacity: .45;
+    transform: scale(.86);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aiv-video-prompt-loading-dot,
+  .aiv-video-prompt-loading-track {
+    animation: none;
+  }
 }
 
 .aiv-directory-picker {

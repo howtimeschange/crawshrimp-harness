@@ -1808,7 +1808,7 @@ test('precise image edit modal keeps the same operation boundaries as batch AI e
   assert.match(openSource, /const assetPrompt = previewAssetPrompt\(asset, operationType\)/)
   assert.doesNotMatch(openSource, /asset\?\.meta \|\| aiPrompt\.value/)
 
-  assert.match(promptSource, /face_swap:[\s\S]*编辑范围只限人物脸部区域[\s\S]*禁止替换背景或场景/)
+  assert.match(promptSource, /face_swap:[\s\S]*软过渡区域[\s\S]*头身比例[\s\S]*保留原脸区域已有的光影遮罩[\s\S]*禁止自动补光[\s\S]*脸部边缘必须与原图头发、耳朵、脖颈和脸颊阴影柔和融合[\s\S]*禁止替换背景或场景/)
   assert.match(promptSource, /background_swap:[\s\S]*编辑范围只限背景\/场景[\s\S]*禁止改脸、换衣服、改变姿势/)
   assert.match(promptSource, /outfit_swap:[\s\S]*编辑范围只限服装商品区域[\s\S]*禁止换脸、替换背景、改变姿势/)
   assert.match(promptSource, /pose_swap:[\s\S]*编辑范围以人物身体姿态为主[\s\S]*禁止换脸、换衣服、替换背景/)

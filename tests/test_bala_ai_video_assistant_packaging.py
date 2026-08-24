@@ -118,6 +118,9 @@ class BalaAiVideoAssistantPackagingTests(unittest.TestCase):
         self.assertEqual(
             model_ids,
             [
+                "deepseek-official-v4-flash",
+                "deepseek-official-v4-pro",
+                "deepseek-official-v4-flash-vision-exp",
                 "gpt-5.6-sol",
                 "gpt-5.6-terra",
                 "gpt-5.6-luna",
@@ -128,6 +131,7 @@ class BalaAiVideoAssistantPackagingTests(unittest.TestCase):
                 "gemini-3.5-flash",
                 "qwen3.8-max-preview",
                 "qwen3.7-plus",
+                "deepseek-v4-flash",
                 "deepseek-v4-pro",
                 "glm-5.2",
                 "kimi-k2.7-code",
@@ -824,7 +828,13 @@ class BalaAiVideoAssistantPackagingTests(unittest.TestCase):
                 self.assertEqual(row["背景Prompt"], "")
                 job = data_sink.get_ai_image_job(row["AI任务UID"])
                 self.assertIsNotNone(job)
-                self.assertIn("编辑范围只限人物脸部区域", job["prompt"])
+                self.assertIn("编辑范围只限人物脸部五官与脸部皮肤的软过渡区域", job["prompt"])
+                self.assertIn("严格锁定原图人物的头部大小、头身比例", job["prompt"])
+                self.assertIn("发际线轮廓、耳朵位置、视线方向和相机透视", job["prompt"])
+                self.assertIn("保留第一张原脸区域已有的光影遮罩和曝光层级", job["prompt"])
+                self.assertIn("禁止自动补光、美颜、统一提亮皮肤", job["prompt"])
+                self.assertIn("脸部边缘必须与原图头发、耳朵、脖颈和脸颊阴影柔和融合", job["prompt"])
+                self.assertIn("避免蜡像感、塑料皮肤、过度磨皮或一眼 AI 感", job["prompt"])
                 self.assertIn("禁止替换背景或场景", job["prompt"])
                 self.assertIn("补充要求（不得改变上述只换脸范围，不得替换背景/场景）", job["prompt"])
                 self.assertNotIn("马尔代夫", job["prompt"])

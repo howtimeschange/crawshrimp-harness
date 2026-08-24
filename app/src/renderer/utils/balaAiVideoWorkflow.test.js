@@ -81,6 +81,35 @@ test('AI-named recalled materials are not selected until the operator chooses th
   assert.equal(balaWorkflow.summarizeBalaMaterialGroups(groups).selectedCount, 0)
 })
 
+test('video asset pool dedupes by content hash but keeps AI assets manually selected', () => {
+  const assets = balaWorkflow.buildBalaVideoAssetPool({
+    reviewStyle: {
+      styleCode: '208326103208',
+      assets: [
+        {
+          id: 'ai-a',
+          sourceType: 'model',
+          status: 'approved',
+          path: '/workspace/208326103208/03_AI图/260510bala6811-1-AI.jpg',
+          contentHash: 'same-hash',
+        },
+        {
+          id: 'ai-b',
+          sourceType: 'model',
+          status: 'approved',
+          path: '/workspace/208326103208/03_AI图/260510bala6811-2-AI.jpg',
+          cloudFilehash: 'same-hash',
+        },
+      ],
+    },
+  })
+
+  assert.equal(assets.length, 1)
+  assert.equal(assets[0].isAi, true)
+  assert.equal(assets[0].contentHash, 'same-hash')
+  assert.equal(assets[0].selected, false)
+})
+
 test('workspace snapshots preserve explicit AI-version selection state', () => {
   const styleWorkspaces = [{
     styleCode: '208326103208',

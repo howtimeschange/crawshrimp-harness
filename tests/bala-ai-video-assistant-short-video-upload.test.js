@@ -73,6 +73,19 @@ function inputRow(overrides = {}) {
   }
 }
 
+test('short video upload validates title limits by visible characters', async () => {
+  const helpers = await loadExports()
+
+  assert.equal(helpers.visibleLength('👧'.repeat(30)), 30)
+  const parsed = helpers.normalizeJobs({
+    input_file: { rows: [inputRow({ 逛逛标题: '👧'.repeat(30), 搜推标题: '童装'.repeat(10) })] },
+    video_override_path: '/Users/test/6ec7e3d213229297.mp4',
+  })
+
+  assert.equal(parsed.jobs.length, 1)
+  assert.equal(parsed.invalidRows.length, 0)
+})
+
 test('short video upload parses the reference template and Shanghai schedule', async () => {
   const helpers = await loadExports()
   const parsed = helpers.normalizeJobs({
@@ -279,7 +292,7 @@ test('short video upload stops the batch when the publisher shows Session expire
         querySelector() { return null },
       },
       location: {
-        href: 'https://huodong.taobao.com/wow/z/guang/gg_publish/gg-video?ugc_scene=pc_newcreator_video&pageType=video&site=guangguang',
+        href: 'https://huodong.taobao.com/wow/z/guang/gg_publish/gg-video?contentType=video&ugc_scene=pc_newcreator_video&pageType=video&site=guangguang',
       },
     },
   })
@@ -369,7 +382,7 @@ test('short video upload regression covers all three publish target surfaces', a
     },
     contextExtra: {
       location: {
-        href: 'https://huodong.taobao.com/wow/z/guang/gg_publish/gg-video?ugc_scene=pc_newcreator_video&pageType=video&site=guangguang',
+        href: 'https://huodong.taobao.com/wow/z/guang/gg_publish/gg-video?contentType=video&ugc_scene=pc_newcreator_video&pageType=video&site=guangguang',
       },
     },
   })
@@ -481,7 +494,7 @@ test('short video upload reopens the Guang publisher for each live job', async (
     },
     contextExtra: {
       location: {
-        href: 'https://huodong.taobao.com/wow/z/guang/gg_publish/gg-video?ugc_scene=pc_newcreator_video&pageType=video&site=guangguang',
+        href: 'https://huodong.taobao.com/wow/z/guang/gg_publish/gg-video?contentType=video&ugc_scene=pc_newcreator_video&pageType=video&site=guangguang',
         reload() {
           reloads += 1
         },

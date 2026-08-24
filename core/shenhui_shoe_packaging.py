@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import tempfile
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -452,10 +453,17 @@ SHOE_MAIN_TEMPLATE_CATEGORY_SLUGS: dict[str, str] = {
     "休闲": "leisure",
 }
 SHOE_POSE_MULTI_MODEL_ID = "multi-model"
-SHOE_LABEL_OCR_MODEL = SHOE_POSE_MULTI_MODEL_ID
+SHOE_LABEL_OCR_MODEL = "gpt-5.6-terra"
 SHOE_POSE_DEFAULT_MODEL = SHOE_POSE_MULTI_MODEL_ID
 SHOE_OFFICIAL_DEEPSEEK_VISION_MODEL = "deepseek-official-v4-flash-vision-exp"
 SHOE_POSE_DEFAULT_FALLBACK_MODELS: tuple[str, ...] = ()
+SHOE_LABEL_OCR_DEFAULT_MODEL_CHAIN: tuple[str, ...] = (
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.6-sol",
+    "deepseek-official-v4-flash-vision-exp",
+    "gemini-3.5-flash",
+)
 SHOE_FALLBACK_MODEL_LIMIT = 5
 SHOE_POSE_MODEL_CANDIDATES = (
     "deepseek-official-v4-flash-vision-exp",
@@ -618,7 +626,8 @@ def _shoe_label_model_ids(
 ) -> list[str]:
     text = _text(model_id) or SHOE_LABEL_OCR_MODEL
     if _is_auto_shoe_model_id(text):
-        return _shoe_append_fallback_model_ids([], config, fallback_model_ids)
+        selected = _shoe_append_fallback_model_ids([], config, fallback_model_ids)
+        return selected or list(SHOE_LABEL_OCR_DEFAULT_MODEL_CHAIN)
     return _shoe_append_fallback_model_ids([text], config, fallback_model_ids)
 
 
@@ -1780,12 +1789,22 @@ def _apply_selection_quality_rules(
                 f"yq2 完整鞋底已纠正：{previous_yq2} -> {replacement}"
             )
 
+    def valid_pose3_vertical_span(pose: _BinaryPoseFeature) -> bool:
+        if pose.bounding_coverage <= 0.12:
+            return True
+        profile = _binary_pose_third_densities(pose)
+        if not profile:
+            return True
+        _column_densities, row_densities = profile
+        return min(row_densities[0], row_densities[2]) >= 0.10
+
     def valid_pose3(pose: _BinaryPoseFeature | None) -> bool:
         max_aspect = 0.95 if _text(category) == "婴童" else 0.82
         return bool(
             pose
             and 0.45 <= pose.aspect_ratio <= max_aspect
-            and pose.bounding_coverage <= 0.12
+            and pose.bounding_coverage <= 0.16
+            and valid_pose3_vertical_span(pose)
         )
 
     if len(wpz) >= 3:
@@ -1803,8 +1822,9 @@ def _apply_selection_quality_rules(
             return bool(
                 pose
                 and 0.48 <= pose.aspect_ratio <= 0.82
-                and 0.055 <= pose.bounding_coverage <= 0.13
+                and 0.055 <= pose.bounding_coverage <= 0.16
                 and 235.0 <= pose.background_luma < SHOE_WHITE_BACKGROUND_LUMA
+                and valid_pose3_vertical_span(pose)
                 and _is_complete_main_shoe_candidate(pose)
             )
 
@@ -2357,6 +2377,164 @@ def _apply_selection_quality_rules(
             <= SHOE_MAIN_SLOT_DUPLICATE_MAX_DISTANCE
         )
 
+    def safe_pose_distance(
+        first: _BinaryPoseFeature,
+        second: _BinaryPoseFeature,
+    ) -> float:
+        if first.mask is None or second.mask is None:
+            return float("inf")
+        return _binary_pose_distance(first, second)
+
+    def collect_background_variant_pairs() -> tuple[
+        list[tuple[str, _BinaryPoseFeature]],
+        list[tuple[str, _BinaryPoseFeature]],
+        list[dict[str, Any]],
+    ]:
+        groups: dict[str, list[tuple[str, _BinaryPoseFeature]]] = {}
+        gray_variants: list[tuple[str, _BinaryPoseFeature]] = []
+        white_variants: list[tuple[str, _BinaryPoseFeature]] = []
+        for filename in entries_by_name:
+            current_feature = feature_for(filename)
+            if not current_feature:
+                continue
+            groups.setdefault(_copy_variant_key(filename), []).append(
+                (filename, current_feature)
+            )
+            if current_feature.background_luma < SHOE_WHITE_BACKGROUND_LUMA:
+                gray_variants.append((filename, current_feature))
+            else:
+                white_variants.append((filename, current_feature))
+
+        paired_groups: list[dict[str, Any]] = []
+        paired_names: set[tuple[str, str]] = set()
+        for key, variants in groups.items():
+            gray = [
+                item
+                for item in variants
+                if item[1].background_luma < SHOE_WHITE_BACKGROUND_LUMA
+            ]
+            white = [
+                item
+                for item in variants
+                if item[1].background_luma >= SHOE_WHITE_BACKGROUND_LUMA
+            ]
+            if not gray or not white:
+                continue
+            gray_name, gray_feature = min(
+                gray,
+                key=lambda item: (abs(item[1].background_luma - 242.0), item[0].lower()),
+            )
+            white_name, white_feature = max(
+                white,
+                key=lambda item: (item[1].background_luma, item[0].lower()),
+            )
+            paired_groups.append({
+                "key": key,
+                "gray_name": gray_name,
+                "gray_feature": gray_feature,
+                "white_name": white_name,
+                "white_feature": white_feature,
+            })
+            paired_names.add((gray_name, white_name))
+
+        used_white_names = {
+            white_name
+            for _gray_name, white_name in paired_names
+        }
+        for gray_name, gray_feature in gray_variants:
+            nearest_white = min(
+                (
+                    (white_name, white_feature, safe_pose_distance(gray_feature, white_feature))
+                    for white_name, white_feature in white_variants
+                    if (gray_name, white_name) not in paired_names
+                    and white_name not in used_white_names
+                ),
+                key=lambda item: (item[2], item[0].lower()),
+                default=None,
+            )
+            if nearest_white is None or nearest_white[2] > SHOE_BACKGROUND_PAIR_MAX_DISTANCE:
+                continue
+            white_name, white_feature, _distance = nearest_white
+            paired_groups.append({
+                "key": f"{gray_name}\0{white_name}",
+                "gray_name": gray_name,
+                "gray_feature": gray_feature,
+                "white_name": white_name,
+                "white_feature": white_feature,
+            })
+            paired_names.add((gray_name, white_name))
+            used_white_names.add(white_name)
+
+        return gray_variants, white_variants, paired_groups
+
+    gray_variants, white_variants, paired_groups = collect_background_variant_pairs()
+
+    def gray_pair_for_white(
+        white_name: str,
+    ) -> tuple[str, _BinaryPoseFeature] | None:
+        white_feature = feature_for(white_name)
+        if (
+            not white_name
+            or not white_feature
+            or white_feature.background_luma < SHOE_WHITE_BACKGROUND_LUMA
+        ):
+            return None
+        paired = next(
+            (
+                (group["gray_name"], group["gray_feature"])
+                for group in paired_groups
+                if group["white_name"] == white_name
+            ),
+            None,
+        )
+        if paired:
+            return paired
+        nearest = min(
+            (
+                (gray_name, gray_feature, safe_pose_distance(gray_feature, white_feature))
+                for gray_name, gray_feature in gray_variants
+            ),
+            key=lambda item: (item[2], item[0].lower()),
+            default=None,
+        )
+        if nearest and nearest[2] <= SHOE_BACKGROUND_PAIR_MAX_DISTANCE:
+            return nearest[0], nearest[1]
+        return None
+
+    def prefer_gray_background_for_standard_main_slots() -> None:
+        for index in range(1, min(4, len(wpz)) + 1):
+            current_tmz = _text(ruled.get(f"tmz{index}"))
+            current_wpz = _text(wpz[index - 1])
+            selected_names = [
+                name
+                for name in (current_tmz, current_wpz)
+                if name
+            ]
+            for selected_name in selected_names:
+                gray_pair = gray_pair_for_white(selected_name)
+                if not gray_pair:
+                    continue
+                gray_name, gray_feature = gray_pair
+                occupied_elsewhere = {
+                    main_slot_name(other_index)
+                    for other_index in range(1, 6)
+                    if other_index != index
+                }
+                if gray_name in occupied_elsewhere:
+                    continue
+                if not valid_main_pose_candidate(index, gray_name, gray_feature):
+                    continue
+                previous_tmz = current_tmz or current_wpz
+                previous_wpz = current_wpz
+                if previous_tmz == gray_name and previous_wpz == gray_name:
+                    break
+                set_main_slot(index, gray_name)
+                corrections.append(
+                    f"主图{index}/wpz{index} 已改用同姿势灰底原图："
+                    f"{previous_tmz or previous_wpz} -> {gray_name}"
+                )
+                break
+
     def best_main_pose_replacement(
         index: int,
         *,
@@ -2385,8 +2563,13 @@ def _apply_selection_quality_rules(
             ),
         )
 
-    def repair_main_slot_duplicates(*, include_pose5: bool = False) -> None:
+    def repair_main_slot_duplicates(
+        *,
+        include_pose5: bool = False,
+        locked_indices: set[int] | None = None,
+    ) -> None:
         max_index = 5 if include_pose5 else 4
+        locked = locked_indices or set()
         while True:
             current = {
                 index: main_slot_name(index)
@@ -2415,6 +2598,8 @@ def _apply_selection_quality_rules(
             }
             repair_options: list[tuple[float, int, str, _BinaryPoseFeature]] = []
             for index in duplicate_pair:
+                if index in locked:
+                    continue
                 current_name = current.get(index, "")
                 current_feature = feature_for(current_name)
                 forbidden = set(used_names)
@@ -2460,13 +2645,25 @@ def _apply_selection_quality_rules(
                     f"{previous} -> {replacement_name}"
                 )
                 continue
+            clear_candidates = [
+                index
+                for index in duplicate_pair
+                if index not in locked
+            ]
+            if not clear_candidates:
+                return
             clear_index = (
+                first_index
+                if second_index == 5 and 5 in locked and first_index in clear_candidates
+                else
                 5
                 if second_index == 5 and first_index in {1, 2}
                 else first_index
                 if second_index == 5
                 else second_index
             )
+            if clear_index in locked:
+                clear_index = clear_candidates[-1]
             previous = current.get(clear_index, "")
             set_main_slot(clear_index, "")
             corrections.append(
@@ -2474,94 +2671,13 @@ def _apply_selection_quality_rules(
                 f"{previous}"
             )
 
+    prefer_gray_background_for_standard_main_slots()
+    repair_main_slot_duplicates(include_pose5=False)
+    prefer_gray_background_for_standard_main_slots()
     repair_main_slot_duplicates(include_pose5=False)
 
     if len(wpz) < 5:
         return ruled, corrections
-
-    groups: dict[str, list[tuple[str, _BinaryPoseFeature]]] = {}
-    gray_variants: list[tuple[str, _BinaryPoseFeature]] = []
-    white_variants: list[tuple[str, _BinaryPoseFeature]] = []
-    for filename in entries_by_name:
-        current_feature = feature_for(filename)
-        if not current_feature:
-            continue
-        groups.setdefault(_copy_variant_key(filename), []).append(
-            (filename, current_feature)
-        )
-        if current_feature.background_luma < SHOE_WHITE_BACKGROUND_LUMA:
-            gray_variants.append((filename, current_feature))
-        else:
-            white_variants.append((filename, current_feature))
-
-    paired_groups: list[dict[str, Any]] = []
-    paired_names: set[tuple[str, str]] = set()
-    for key, variants in groups.items():
-        gray = [
-            item
-            for item in variants
-            if item[1].background_luma < SHOE_WHITE_BACKGROUND_LUMA
-        ]
-        white = [
-            item
-            for item in variants
-            if item[1].background_luma >= SHOE_WHITE_BACKGROUND_LUMA
-        ]
-        if not gray or not white:
-            continue
-        gray_name, gray_feature = min(
-            gray,
-            key=lambda item: (abs(item[1].background_luma - 242.0), item[0].lower()),
-        )
-        white_name, white_feature = max(
-            white,
-            key=lambda item: (item[1].background_luma, item[0].lower()),
-        )
-        paired_groups.append({
-            "key": key,
-            "gray_name": gray_name,
-            "gray_feature": gray_feature,
-            "white_name": white_name,
-            "white_feature": white_feature,
-        })
-        paired_names.add((gray_name, white_name))
-
-    used_white_names = {
-        white_name
-        for _gray_name, white_name in paired_names
-    }
-
-    def safe_pose_distance(
-        first: _BinaryPoseFeature,
-        second: _BinaryPoseFeature,
-    ) -> float:
-        if first.mask is None or second.mask is None:
-            return float("inf")
-        return _binary_pose_distance(first, second)
-
-    for gray_name, gray_feature in gray_variants:
-        nearest_white = min(
-            (
-                (white_name, white_feature, safe_pose_distance(gray_feature, white_feature))
-                for white_name, white_feature in white_variants
-                if (gray_name, white_name) not in paired_names
-                and white_name not in used_white_names
-            ),
-            key=lambda item: (item[2], item[0].lower()),
-            default=None,
-        )
-        if nearest_white is None or nearest_white[2] > SHOE_BACKGROUND_PAIR_MAX_DISTANCE:
-            continue
-        white_name, white_feature, _distance = nearest_white
-        paired_groups.append({
-            "key": f"{gray_name}\0{white_name}",
-            "gray_name": gray_name,
-            "gray_feature": gray_feature,
-            "white_name": white_name,
-            "white_feature": white_feature,
-        })
-        paired_names.add((gray_name, white_name))
-        used_white_names.add(white_name)
 
     rule = SHOE_POSE5_FEATURE_RULES.get(_text(category))
     if not rule:
@@ -2745,7 +2861,7 @@ def _apply_selection_quality_rules(
                 f"{ruled['tmz5']} / {wpz[4]}"
             )
         repair_pose4_if_reused_by_pose5()
-        repair_main_slot_duplicates(include_pose5=True)
+        repair_main_slot_duplicates(include_pose5=True, locked_indices={5})
         return ruled, corrections
 
     current_tmz5_feature = feature_for(current_tmz5)
@@ -3524,7 +3640,11 @@ def _create_label_preview(source: Path, target: Path) -> None:
 def _default_analyze_color_label(**kwargs) -> dict[str, Any]:
     color_code = kwargs["color_code"]
     style_code = kwargs["style_code"]
-    model_id = _text(kwargs.get("label_model_id")) or SHOE_LABEL_OCR_MODEL
+    model_id = (
+        _text(kwargs.get("label_model_id"))
+        or _text(kwargs.get("model_id"))
+        or SHOE_LABEL_OCR_MODEL
+    )
     config = kwargs.get("config")
     model_ids = _shoe_label_model_ids(
         model_id,
@@ -4317,12 +4437,12 @@ def prepare_shoe_packages(
                         )
                     except ShoeSelectionError as exc:
                         label_payload = None
-                        label_warning = f"鞋盒标签 OCR 失败，已跳过 tmq.jpg：{exc}"
+                        label_warning = f"鞋盒标签 OCR 失败，tmq.jpg 已使用本地几何框选款号：{exc}"
                         slots["_label_warning"] = label_warning
                         log(f"[warn] {style_code}-{color_code} {label_warning}")
                     if label_payload is not None:
                         if not isinstance(label_payload, dict):
-                            label_warning = "鞋盒标签 OCR 结果不是对象，已跳过 tmq.jpg"
+                            label_warning = "鞋盒标签 OCR 结果不是对象，tmq.jpg 已使用本地几何框选款号"
                             slots["_label_warning"] = label_warning
                             log(f"[warn] {style_code}-{color_code} {label_warning}")
                         else:
@@ -4346,6 +4466,19 @@ def prepare_shoe_packages(
                             slots["product_name"] = _text(label_payload.get("product_name"))
                             slots["label_bbox"] = label_payload.get("label_bbox")
                             slots["style_code_bbox"] = label_payload.get("style_code_bbox")
+                            if not slots["style_code_bbox"]:
+                                bbox_warning = (
+                                    "鞋盒标签 OCR 未返回款号文字坐标，"
+                                    "tmq.jpg 已使用本地几何框选款号"
+                                )
+                                existing_warning = _text(slots.get("_label_warning"))
+                                label_warning = (
+                                    f"{existing_warning}；{bbox_warning}"
+                                    if existing_warning
+                                    else bbox_warning
+                                )
+                                slots["_label_warning"] = label_warning
+                                log(f"[warn] {style_code}-{color_code} {bbox_warning}")
 
             slots["shoe_category"] = category
             slots["shoe_category_source"] = category_source
@@ -4382,7 +4515,7 @@ def prepare_shoe_packages(
                 "color": color_name,
                 "slot": "鞋盒OCR",
                 "warning": _text(slots.get("_label_warning")),
-                "action": "已降级",
+                "action": "已本地框选",
                 "download_result": "已完成",
             }
             for color_name, slots in selections_by_color.items()
@@ -4600,7 +4733,7 @@ def prepare_shoe_packages(
                             label_bbox=selections_by_color[color_name].get("label_bbox"),
                             style_code_bbox=selections_by_color[color_name].get("style_code_bbox"),
                             style_code=style_code,
-                            require_style_code_bbox=bool(label_analyzer),
+                            require_style_code_bbox=False,
                         )
                     except ShoeSelectionError as exc:
                         report_rows.append(_skipped_slot_report_row(
@@ -4624,12 +4757,20 @@ def prepare_shoe_packages(
                             "云盘路径": _text(box_entry["row"].get("云盘路径")),
                             "规则槽位": "tmq",
                             "输出文件名": tmq_target.name,
-                            "处理动作": "鞋盒标签裁切并框选款号",
+                            "处理动作": (
+                                "鞋盒标签裁切并框选款号"
+                                if selections_by_color[color_name].get("style_code_bbox")
+                                else "鞋盒标签裁切并本地框选款号"
+                            ),
                             "下载结果": "已下载",
                             "本地文件": str(tmq_target),
                             "规则告警": "",
                             "品类来源": selections_by_color[color_name].get("shoe_category_source") or "",
-                            "备注": "460x460",
+                            "备注": (
+                                "460x460"
+                                if selections_by_color[color_name].get("style_code_bbox")
+                                else "460x460；OCR 未返回款号框，已使用本地框选"
+                            ),
                         })
             report_progress(
                 "复制命名完成",
