@@ -321,9 +321,14 @@ window.__ModuleLoader__.load({
       '.cs-nav-toggle { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary)); font-size: 12.5px; }',
       '.cs-nav-toggle .cs-nav-icon { font-size: 16px; transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1); }',
       '.cs-nav-toggle[aria-expanded="true"] .cs-nav-icon { transform: rotate(180deg); }',
+      '.cs-nav-parent.cs-nav-active { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); font-weight: 600; }',
+      '.cs-nav-child { padding-left: 24px; font-size: 13px; }',
+      '.cs-nav-chevron { margin-left: auto; color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary)); line-height: 1; transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1); }',
+      '.cs-nav-parent[aria-expanded="true"] .cs-nav-chevron { transform: rotate(90deg); }',
       '.hHd-Xa_collapsed [data-crawshrimp-nav-main] .cs-nav-label, .hHd-Xa_collapsed [data-crawshrimp-nav-bottom] .cs-nav-label { display: none; }',
       '.hHd-Xa_collapsed .cs-nav-item { justify-content: center; padding: 7px 0; }',
       '.hHd-Xa_collapsed .cs-nav-icon { font-size: 17px; }',
+      '.hHd-Xa_collapsed .cs-nav-chevron { display: none; }',
       '@media (prefers-reduced-motion: reduce) { .cs-nav-item, .cs-nav-toggle .cs-nav-icon { transition: none; } }',
       // 7) 选中/强调色随抓虾橙
       '::selection { background: rgba(255, 107, 43, 0.25); }',
@@ -349,7 +354,7 @@ window.__ModuleLoader__.load({
     }
 
     // ---- 抓虾菜单注入 DSH 侧边栏(主菜单 + 底部菜单) ----
-    const MAIN_NAV_IDS = ['scripts', 'agent_script_review', 'ai_image', 'task_center', 'ai_video_generation', 'ai_video', 'local_prompt_library', 'files']
+    const MAIN_NAV_IDS = ['scripts', 'agent_script_review', 'ai_image', 'task_center', 'ai_video_generation', 'ai_workflows', 'local_prompt_library', 'files']
     const BOTTOM_NAV_IDS = ['settings']
     const MAIN_VISIBLE_DEFAULT = 3
 
@@ -359,6 +364,9 @@ window.__ModuleLoader__.load({
     let railMetricsForceQueued = false
     let railResizeObserver = null
     let railResizeTarget = null
+    let lastNavItems = []
+    let lastNavActiveId = ''
+    const expandedNavGroupIds = new Set(['ai_workflows'])
 
     function currentRailTarget() {
       const rail = document.querySelector('.hHd-Xa_root')
@@ -374,10 +382,30 @@ window.__ModuleLoader__.load({
       return width
     }
 
+    function navChildren(item) {
+      return Array.isArray(item && item.children) ? item.children.filter((child) => child && child.id) : []
+    }
+
+    function navItemActive(item, activeId) {
+      return item && (item.id === activeId || navChildren(item).some((child) => child.id === activeId))
+    }
+
     function updateNavButton(btn, item, activeId) {
       if (!btn || !item) return
       if (btn.dataset.csNavItemId !== item.id) btn.dataset.csNavItemId = item.id
-      btn.classList.toggle('cs-nav-active', item.id === activeId)
+      const children = navChildren(item)
+      const isGroup = children.length > 0
+      const isChild = Boolean(item.__parentId)
+      btn.classList.toggle('cs-nav-parent', isGroup)
+      btn.classList.toggle('cs-nav-child', isChild)
+      btn.classList.toggle('cs-nav-active', navItemActive(item, activeId))
+      if (isGroup) {
+        btn.dataset.csNavGroup = '1'
+        btn.setAttribute('aria-expanded', String(expandedNavGroupIds.has(item.id)))
+      } else {
+        delete btn.dataset.csNavGroup
+        btn.removeAttribute('aria-expanded')
+      }
       if (btn.title !== (item.label || '')) btn.title = item.label || ''
       let icon = btn.querySelector(':scope > .cs-nav-icon')
       if (!icon) {
@@ -394,6 +422,15 @@ window.__ModuleLoader__.load({
       }
       const labelText = item.label || item.id
       if (label.textContent !== labelText) label.textContent = labelText
+      let chevron = btn.querySelector(':scope > .cs-nav-chevron')
+      if (isGroup && !chevron) {
+        chevron = document.createElement('span')
+        chevron.className = 'cs-nav-chevron'
+        chevron.setAttribute('aria-hidden', 'true')
+        btn.appendChild(chevron)
+      }
+      if (isGroup && chevron && chevron.textContent !== '›') chevron.textContent = '›'
+      if (!isGroup && chevron) chevron.remove()
     }
 
     function makeNavButton(item, activeId) {
@@ -402,6 +439,13 @@ window.__ModuleLoader__.load({
       btn.className = 'cs-nav-item'
       updateNavButton(btn, item, activeId)
       btn.addEventListener('click', () => {
+        if (btn.dataset.csNavGroup === '1') {
+          const id = btn.dataset.csNavItemId
+          if (expandedNavGroupIds.has(id)) expandedNavGroupIds.delete(id)
+          else expandedNavGroupIds.add(id)
+          renderNav(lastNavItems, lastNavActiveId)
+          return
+        }
         // 携带 max(当前宽, 历史最大宽):折叠动画中点菜单也不会压到菜单栏
         const width = Math.max(currentRailWidth(), lastMaxRailWidth)
         postToShell({ __crawshrimp: 'nav-click', id: btn.dataset.csNavItemId, railWidth: width })
@@ -443,7 +487,13 @@ window.__ModuleLoader__.load({
 
     function renderGroup(host, items, activeId, collapsible) {
       const expanded = host.dataset.expanded === '1'
-      const visible = collapsible && !expanded ? items.slice(0, MAIN_VISIBLE_DEFAULT) : items
+      const baseVisible = collapsible && !expanded ? items.slice(0, MAIN_VISIBLE_DEFAULT) : items
+      const visible = []
+      for (const item of baseVisible) {
+        visible.push(item)
+        if (!navChildren(item).length || !expandedNavGroupIds.has(item.id)) continue
+        for (const child of navChildren(item)) visible.push({ ...child, __parentId: item.id })
+      }
       const visibleIds = new Set(visible.map((item) => item.id))
       let toggle = host.querySelector(':scope > .cs-nav-toggle')
       for (const item of visible) {
@@ -467,6 +517,8 @@ window.__ModuleLoader__.load({
     function renderNav(items, activeId) {
       const rail = document.querySelector('.hHd-Xa_root')
       if (!rail) return
+      lastNavItems = items || []
+      lastNavActiveId = activeId || ''
       const byId = new Map((items || []).map((item) => [item.id, item]))
       const mainItems = MAIN_NAV_IDS.map((id) => byId.get(id)).filter(Boolean)
       const bottomItems = BOTTOM_NAV_IDS.map((id) => byId.get(id)).filter(Boolean)

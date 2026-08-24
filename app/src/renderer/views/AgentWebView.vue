@@ -19,16 +19,46 @@
               <span>模型待配置</span>
             </div>
             <nav class="fallback-nav-list">
-              <button
-                v-for="item in props.navItems"
-                :key="item.id"
-                type="button"
-                :class="['fallback-nav-item', { active: item.id === props.activeNav }]"
-                @click="selectFallbackNav(item)"
-              >
-                <span class="fallback-nav-icon" aria-hidden="true">{{ item.icon }}</span>
-                <span>{{ item.label }}</span>
-              </button>
+              <template v-for="item in props.navItems" :key="item.id">
+                <div
+                  v-if="item.children?.length"
+                  :class="['fallback-nav-group', { active: isFallbackNavGroupActive(item), open: isFallbackNavGroupExpanded(item) }]"
+                >
+                  <button
+                    type="button"
+                    class="fallback-nav-item fallback-nav-group-btn"
+                    :class="{ active: isFallbackNavGroupActive(item) }"
+                    :aria-expanded="isFallbackNavGroupExpanded(item)"
+                    :aria-controls="`fallback-${item.id}-children`"
+                    @click="toggleFallbackNavGroup(item)"
+                  >
+                    <span class="fallback-nav-icon" aria-hidden="true">{{ item.icon }}</span>
+                    <span>{{ item.label }}</span>
+                    <span class="fallback-nav-chevron" aria-hidden="true">›</span>
+                  </button>
+                  <div v-if="isFallbackNavGroupExpanded(item)" :id="`fallback-${item.id}-children`" class="fallback-nav-children">
+                    <button
+                      v-for="child in item.children"
+                      :key="child.id"
+                      type="button"
+                      :class="['fallback-nav-item', 'fallback-nav-child', { active: child.id === props.activeNav }]"
+                      @click="selectFallbackNav(child)"
+                    >
+                      <span class="fallback-nav-icon" aria-hidden="true">{{ child.icon }}</span>
+                      <span>{{ child.label }}</span>
+                    </button>
+                  </div>
+                </div>
+                <button
+                  v-else
+                  type="button"
+                  :class="['fallback-nav-item', { active: item.id === props.activeNav }]"
+                  @click="selectFallbackNav(item)"
+                >
+                  <span class="fallback-nav-icon" aria-hidden="true">{{ item.icon }}</span>
+                  <span>{{ item.label }}</span>
+                </button>
+              </template>
             </nav>
           </aside>
           <section class="web-placeholder">
@@ -212,6 +242,7 @@ const browserToggleTitle = computed(() => {
 })
 const isRuntimeNeedsConfiguration = computed(() => lastRuntimeState.value === 'needs_configuration')
 const showFallbackNav = computed(() => Boolean(isRuntimeNeedsConfiguration.value && !webUrl.value && props.navItems?.length))
+const expandedFallbackNavGroupIds = ref(new Set(['ai_workflows']))
 const placeholderIcon = computed(() => isRuntimeNeedsConfiguration.value ? '钥' : '…')
 const placeholderTitle = computed(() => isRuntimeNeedsConfiguration.value ? '智能体待配置' : '智能体启动中…')
 const placeholderText = computed(() => (
@@ -356,6 +387,22 @@ function selectFallbackNav(item) {
   emit('nav-select', item.id)
 }
 
+function isFallbackNavGroupActive(item = {}) {
+  return Boolean(item?.children?.some(child => child.id === props.activeNav))
+}
+
+function isFallbackNavGroupExpanded(item = {}) {
+  return expandedFallbackNavGroupIds.value.has(item?.id)
+}
+
+function toggleFallbackNavGroup(item = {}) {
+  if (!item?.id || !item?.children?.length) return
+  const next = new Set(expandedFallbackNavGroupIds.value)
+  if (next.has(item.id)) next.delete(item.id)
+  else next.add(item.id)
+  expandedFallbackNavGroupIds.value = next
+}
+
 function normalizeModelConfigMessage(message = '') {
   const text = String(message || '').trim()
   if (!text || /DeepSeek 官方 API Key|网关 API Key/.test(text)) return MISSING_LLM_PROVIDER_MESSAGE
@@ -419,9 +466,22 @@ function pushTheme() {
 function pushNav() {
   postToFrame({
     __crawshrimp: 'nav',
-    items: (props.navItems || []).map((item) => ({ id: item.id, icon: item.icon, label: item.label })),
+    items: serializeShellNavItems(props.navItems || []),
     active: props.activeNav,
   })
+}
+
+function serializeShellNavItems(items = []) {
+  return (items || []).map((item) => {
+    const normalized = {
+      id: String(item?.id || ''),
+      icon: String(item?.icon || ''),
+      label: String(item?.label || item?.id || ''),
+    }
+    const children = serializeShellNavItems(item?.children || []).filter(child => child.id)
+    if (children.length) normalized.children = children
+    return normalized
+  }).filter(item => item.id)
 }
 
 function normalizedAppVersionLabel() {
@@ -903,6 +963,12 @@ async function removeBrowserWindow(tabId) {
   gap: 4px;
 }
 
+.fallback-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
 .fallback-nav-item {
   width: 100%;
   min-height: 38px;
@@ -928,6 +994,35 @@ async function removeBrowserWindow(tabId) {
   background: var(--orange-bg);
   border-color: rgba(var(--orange-rgb), 0.22);
   color: var(--orange-text);
+}
+
+.fallback-nav-group-btn.active {
+  background: var(--soft-fill-hover);
+  color: var(--text);
+}
+
+.fallback-nav-chevron {
+  margin-left: auto;
+  color: var(--text3);
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+.fallback-nav-group.open .fallback-nav-chevron {
+  transform: rotate(90deg);
+}
+
+.fallback-nav-children {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 18px;
+}
+
+.fallback-nav-child {
+  min-height: 34px;
+  padding-left: 9px;
+  font-size: 12.5px;
 }
 
 .fallback-nav-icon {

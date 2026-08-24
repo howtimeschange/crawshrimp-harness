@@ -640,7 +640,7 @@ class AiImageServiceTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(len(attempts), 2)
         self.assertEqual(Path(result["path"]).read_bytes(), PNG_1X1)
-        sleep.assert_called_once_with(0.25)
+        sleep.assert_called_once_with(ai_image_service.DOWNLOAD_CACHE_RETRY_DELAYS_SECONDS[0])
 
     def test_materialize_remote_image_can_cache_stale_persisted_result_url(self):
         result = ai_image_service.materialize_remote_image(

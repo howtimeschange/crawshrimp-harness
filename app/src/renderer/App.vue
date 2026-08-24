@@ -2,7 +2,7 @@
   <div
     class="layout"
     :class="{
-      'layout-ai-image': currentView === 'ai_image' || currentView === 'ai_video' || currentView === 'ai_video_generation',
+      'layout-ai-image': currentView === 'ai_image' || currentView === 'ai_video' || currentView === 'ai_video_generation' || currentView === 'buyer_show_workflow',
       'sidebar-collapsed': effectiveSidebarCollapsed,
       'has-script-sidebar': activeScript,
       'titlebar-macos': isMacTitlebar,
@@ -192,6 +192,13 @@
               @open-settings="openSettingsPanel"
             />
           </KeepAlive>
+          <!-- AI 买家秀工作流 -->
+          <KeepAlive>
+            <BuyerShowWorkflow
+              v-if="currentView === 'buyer_show_workflow'"
+              @open-settings="openSettingsPanel"
+            />
+          </KeepAlive>
           <!-- 提示词库 -->
           <LocalPromptLibrary
             v-if="currentView === 'local_prompt_library'"
@@ -243,6 +250,7 @@ import TaskInstanceRunner from './views/TaskInstanceRunner.vue'
 import AiImageWorkbench from './views/AiImageWorkbench.vue'
 import AiVideoGenerationWorkbench from './views/AiVideoGenerationWorkbench.vue'
 import AiVideoWorkflow from './views/AiVideoWorkflow.vue'
+import BuyerShowWorkflow from './views/BuyerShowWorkflow.vue'
 import LocalPromptLibrary from './views/LocalPromptLibrary.vue'
 import DataFiles   from './views/DataFiles.vue'
 import SettingsPage from './views/SettingsPage.vue'
@@ -331,7 +339,15 @@ const navItems = [
   { id: 'task_center', icon: '📋', label: '任务中心' },
   { id: 'ai_image', icon: '🎨', label: 'AI 生图' },
   { id: 'ai_video_generation', icon: '🎬', label: 'AI 生视频' },
-  { id: 'ai_video', icon: '🎞️', label: 'AI 视频工作流' },
+  {
+    id: 'ai_workflows',
+    icon: '🤖',
+    label: 'AI 工作流',
+    children: [
+      { id: 'ai_video', icon: '🎞️', label: 'AI 视频工作流' },
+      { id: 'buyer_show_workflow', icon: '🛍️', label: 'AI 买家秀工作流' },
+    ],
+  },
   { id: 'local_prompt_library', icon: '💬', label: '提示词库' },
   { id: 'files',    icon: '📁', label: '数据文件' },
   { id: 'settings', icon: '⚙️', label: '设置' },
@@ -355,9 +371,18 @@ function shouldClearActiveScriptForNav(item) {
   return Boolean(activeScript.value) && item.id !== currentView.value
 }
 
+function findNavItemById(navId) {
+  for (const item of navItems) {
+    if (item.id === navId) return item
+    const child = item.children?.find((candidate) => candidate.id === navId)
+    if (child) return child
+  }
+  return null
+}
+
 // 智能体会话侧边栏内菜单点击 → 切换内容区(左侧栏不动)
 function onAgentNavSelect(navId) {
-  const item = navItems.find((it) => it.id === navId)
+  const item = findNavItemById(navId)
   if (item) selectNav(item)
 }
 

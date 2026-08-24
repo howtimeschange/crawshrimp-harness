@@ -43,6 +43,7 @@ from core import script_favorites
 from core import bala_ai_model_library
 from core import bala_ai_video_materials
 from core import bala_ai_video_review
+from core import buyer_show_service
 from core.agent import db as agent_db
 from core.agent import api as agent_api
 from core.agent.service import AgentService
@@ -122,6 +123,7 @@ RUNTIME_CLEANUP_TASKS = {
     ("semir-cloud-drive", "shein_image_package_download"),
     ("semir-cloud-drive", "tmall_material_match_buy"),
     ("semir-cloud-drive", "tmall_material_new_624"),
+    ("semir-cloud-drive", "buyer_show_ai_generate"),
     ("bala-ai-video-assistant", "semir_video_material_prepare"),
     ("bala-ai-video-assistant", "bala_ai_face_background_generate"),
     ("shenhui-new-arrival", "prepare_upload_package"),
@@ -4964,6 +4966,17 @@ def _finalize_semir_cloud_drive_outputs(
                 exported_files=exported_files,
                 run_params=run_params,
                 runtime_artifact_dir=runtime_artifact_dir,
+                log=log,
+            )
+
+        if task_id == "buyer_show_ai_generate":
+            return buyer_show_service.finalize_buyer_show_outputs(
+                data_rows=data_rows,
+                runtime_files=runtime_files,
+                exported_files=exported_files,
+                run_params=run_params,
+                runtime_artifact_dir=runtime_artifact_dir,
+                settings=_resolve_one_xm_settings(),
                 log=log,
             )
 
