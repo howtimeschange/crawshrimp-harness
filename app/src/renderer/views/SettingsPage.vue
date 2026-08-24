@@ -955,7 +955,7 @@
 </template>
 
 <script setup>
-import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineComponent, h, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { IconExternalLink } from '@tabler/icons-vue'
 import {
   AI_VIDEO_CONNECTION_DEFAULTS,
@@ -1061,6 +1061,8 @@ async function onAgentClearData() {
 
 const cfg = ref({})
 const savedCfg = ref({})
+const settingsLoaded = ref(false)
+const pendingFocusAction = ref(null)
 
 const activeGroupId = ref('appearance')
 const activePanelId = ref('appearance-theme')
@@ -1629,6 +1631,7 @@ async function load() {
   const flat = normalizedSettings(await window.cs.getSettings() || {})
   cfg.value = { ...flat }
   savedCfg.value = { ...flat }
+  settingsLoaded.value = true
   await loadCloudStatus()
 }
 
@@ -1655,9 +1658,19 @@ function focusPanel(panelId) {
   activePanelId.value = panelId
 }
 
-function applyFocusAction(action = null) {
+function queueFocusAction(action = null) {
   if (!action || action.panelId !== 'ai-llm') return
+  pendingFocusAction.value = action
   focusPanel('ai-llm')
+  flushFocusAction()
+}
+
+async function flushFocusAction() {
+  if (!settingsLoaded.value || !pendingFocusAction.value) return
+  await nextTick()
+  if (activePanelId.value !== 'ai-llm') return
+  const action = pendingFocusAction.value
+  pendingFocusAction.value = null
   if (action.action === 'open-llm-provider') {
     openLlmProviderModal(action.providerId || '')
   } else if (action.action === 'new-llm-provider') {
@@ -1959,7 +1972,7 @@ async function testNotify(channel) {
 onMounted(async () => {
   await load()
   focusPanel(props.focusPanelId)
-  applyFocusAction(props.focusAction)
+  queueFocusAction(props.focusAction)
 })
 
 watch(() => props.focusPanelId, panelId => {
@@ -1967,12 +1980,13 @@ watch(() => props.focusPanelId, panelId => {
 })
 
 watch(() => props.focusAction, action => {
-  applyFocusAction(action)
+  queueFocusAction(action)
 })
 
 watch(activePanelId, panelId => {
   if (panelId === 'cloud-approval') loadCloudStatus()
   if (panelId === 'ai-agent') refreshAgentRuntime()
+  if (panelId === 'ai-llm') flushFocusAction()
 })
 </script>
 

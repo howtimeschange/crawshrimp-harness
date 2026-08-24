@@ -235,7 +235,7 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, provide, ref } from 'vue'
 import ScriptList  from './views/ScriptList.vue'
 import TaskRunner  from './views/TaskRunner.vue'
 import TaskCenter  from './views/TaskCenter.vue'
@@ -347,7 +347,10 @@ function selectNav(item) {
   }
   currentView.value = item.id
   activeInstanceUid.value = ''
-  if (item.id !== 'settings') focusSettingsPanelId.value = ''
+  if (item.id !== 'settings') {
+    focusSettingsPanelId.value = ''
+    focusSettingsAction.value = null
+  }
 }
 
 function shouldClearActiveScriptForNav(item) {
@@ -406,17 +409,27 @@ function openTaskInstanceFromAgent(instanceUid) {
 }
 
 function openSettingsPanel(target) {
+  const panelId = target && typeof target === 'object'
+    ? target.panelId || target.id || ''
+    : target
+  const action = target && typeof target === 'object'
+    ? { ...target, panelId, nonce: Date.now() }
+    : null
   if (target && typeof target === 'object') {
-    focusSettingsPanelId.value = target.panelId || target.id || ''
-    focusSettingsAction.value = { ...target, nonce: Date.now() }
+    focusSettingsPanelId.value = panelId
   } else {
-    focusSettingsPanelId.value = target
-    focusSettingsAction.value = null
+    focusSettingsPanelId.value = panelId
   }
+  focusSettingsAction.value = null
   currentView.value = 'settings'
   activeScript.value = null
   activeTaskId.value = null
   activeInstanceUid.value = ''
+  if (action) {
+    nextTick(() => {
+      focusSettingsAction.value = action
+    })
+  }
 }
 
 async function loadScriptGroups(options = {}) {
@@ -647,7 +660,6 @@ onUnmounted(() => {
 })
 
 // Expose to children via provide
-import { provide } from 'vue'
 provide('scriptGroups', scriptGroups)
 provide('loadScriptGroups', loadScriptGroups)
 provide('repairCoreService', repairCoreService)
