@@ -4,7 +4,7 @@
 // - stdio NDJSON JSON-RPC 2.0(protocol_version: 1)与 FastAPI 通信;
 // - 懒启动 DSH runtime(Electron-as-Node + dsh-jsonrpc-agent);
 // - 转发 Harness 会话事件(harness.notification);
-// - 全局单 Active Run;取消 = 终止 runtime generation;
+// - 全局单 Active Run;取消、预算和绝对超时只取消当前 Session,共享 runtime/IM Host 保持常驻;
 // - stdout 仅 NDJSON JSON-RPC,诊断走 stderr。
 //
 // 关键经验(P0 spike):
@@ -273,14 +273,16 @@ function attachRunEventHandlers(run) {
         run.outputBudgetReached = true
         run.outputBudgetMessage = outputExceeded
         notifyHarness(run.runId, event)
-        cancelRuntimeSession(run, outputExceeded)
+        cancelOutputBudgetRun(run, outputExceeded)
         return
       }
       const exceeded = budgetName()
       if (exceeded) {
         notifyHarness(run.runId, event)
-        finishRun({ status: 'failed', reason: { kind: 'error', error: { code: 'BUDGET_EXCEEDED', message: exceeded } }, messageId: run.messageId, lastSeq: run.lastSeq })
-        stopRuntime()  // 中断模型继续执行
+        cancelActiveRuntimeSession(run, `BUDGET_EXCEEDED:${exceeded}`).finally(() => {
+          if (state.activeRun !== run) return
+          finishRun({ status: 'failed', reason: { kind: 'error', error: { code: 'BUDGET_EXCEEDED', message: exceeded } }, messageId: run.messageId, lastSeq: run.lastSeq })
+        })
         return
       }
       notifyHarness(run.runId, event)
@@ -322,31 +324,37 @@ function settleRun(run) {
   finishRun({ status, reason, messageId: run.messageId, lastSeq: run.lastSeq })
 }
 
-function cancelRuntimeSession(run, message) {
+function cancelActiveRuntimeSession(run, reason) {
   const sdk = state.runtime?.sdk
-  if (!sdk || run.cancelRequested) return
+  if (!sdk || !run || state.activeRun !== run) return Promise.resolve({ ok: false, canceled: false })
+  if (run.cancelRequested) return run.cancelPromise || Promise.resolve({ ok: true, canceled: true })
   run.cancelRequested = true
-  run.outputBudgetSegments += 1
-  sdk.request('session/cancel', {
+  run.cancelPromise = sdk.request('session/cancel', {
     sessionId: run.sessionId,
-    reason: `OUTPUT_BUDGET_REACHED:${message}`,
+    reason: String(reason || 'canceled'),
     keepInbox: true,
-  }, 30000).catch((error) => {
-    console.error(`[worker] run ${run.runId} 输出预算取消失败: ${error.message}`)
-    if (state.activeRun === run) {
-      finishRun({
-        status: 'interrupted',
-        reason: {
-          kind: 'interrupted',
-          error: { code: 'OUTPUT_BUDGET_REACHED', message },
-          resumable: true,
-          auto_continued: run.outputBudgetSegments,
-        },
-        messageId: run.messageId,
-        lastSeq: run.lastSeq,
-      })
-      stopRuntime()
-    }
+  }, 30000).then((result) => ({ ok: true, canceled: true, result })).catch((error) => {
+    console.error(`[worker] run ${run.runId} Session 取消失败: ${error.message}`)
+    return { ok: false, canceled: false, error }
+  })
+  return run.cancelPromise
+}
+
+function cancelOutputBudgetRun(run, message) {
+  run.outputBudgetSegments += 1
+  cancelActiveRuntimeSession(run, `OUTPUT_BUDGET_REACHED:${message}`).then((result) => {
+    if (result.ok || state.activeRun !== run) return
+    finishRun({
+      status: 'interrupted',
+      reason: {
+        kind: 'interrupted',
+        error: { code: 'OUTPUT_BUDGET_REACHED', message },
+        resumable: true,
+        auto_continued: run.outputBudgetSegments,
+      },
+      messageId: run.messageId,
+      lastSeq: run.lastSeq,
+    })
   })
 }
 
@@ -362,6 +370,7 @@ function continueRunAfterOutputBudget(run) {
   run.outputBudgetReached = false
   run.outputBudgetMessage = ''
   run.cancelRequested = false
+  run.cancelPromise = null
   run.sawTurnEnd = false
   run.sawIdle = false
   run.turnEndReason = null
@@ -484,14 +493,16 @@ async function startRun(params) {
   const run = {
     runId, sessionId,
     messageId: null, sawTurnEnd: false, sawIdle: false, turnEndReason: null, lastSeq: 0,
-    outputBudgetReached: false, outputBudgetMessage: '', outputBudgetSegments: 0, cancelRequested: false,
+    outputBudgetReached: false, outputBudgetMessage: '', outputBudgetSegments: 0, cancelRequested: false, cancelPromise: null,
     outputDeltaTimes: [],
     budget, counters: { steps: 0, toolCalls: 0, observe: 0, act: 0, textDeltas: 0, outputChars: 0 },
     resolve: null,
     timer: setTimeout(() => {
       console.error(`[worker] run ${runId} 超过 ${RUN_ABSOLUTE_TIMEOUT_MS}ms 绝对上限,终止`)
-      stopRuntime()
-      finishRun({ status: 'failed', reason: { kind: 'error', error: { code: 'RUN_TIMEOUT' } }, lastSeq: run.lastSeq })
+      cancelActiveRuntimeSession(run, 'RUN_TIMEOUT').finally(() => {
+        if (state.activeRun !== run) return
+        finishRun({ status: 'failed', reason: { kind: 'error', error: { code: 'RUN_TIMEOUT' } }, lastSeq: run.lastSeq })
+      })
     }, RUN_ABSOLUTE_TIMEOUT_MS),
   }
   const done = new Promise((resolve) => { run.resolve = resolve })
@@ -535,9 +546,11 @@ async function startRun(params) {
 function cancelActiveRun() {
   const run = state.activeRun
   if (run) {
-    finishRun({ status: 'canceled', reason: { kind: 'aborted', reason: { kind: 'user' } }, messageId: run.messageId, lastSeq: run.lastSeq })
+    cancelActiveRuntimeSession(run, 'session/cancel:user').finally(() => {
+      if (state.activeRun !== run) return
+      finishRun({ status: 'canceled', reason: { kind: 'aborted', reason: { kind: 'user' } }, messageId: run.messageId, lastSeq: run.lastSeq })
+    })
   }
-  stopRuntime()
   return { ok: true, canceled: Boolean(run) }
 }
 

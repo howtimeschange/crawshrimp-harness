@@ -5,10 +5,11 @@ const test = require('node:test')
 
 const appRoot = resolve(__dirname, '..')
 
-test('worker absolute timeout stops the runtime before reporting failure', () => {
+test('worker absolute timeout cancels only the active Session and keeps the IM Host alive', () => {
   const source = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/worker.mjs'), 'utf8')
   const timeoutBody = source.match(/timer:\s*setTimeout\(\(\)\s*=>\s*\{([\s\S]*?)\},\s*RUN_ABSOLUTE_TIMEOUT_MS\)/)?.[1] || ''
-  assert.match(timeoutBody, /stopRuntime\(\)/)
+  assert.match(timeoutBody, /cancelActiveRuntimeSession\(run,/)
+  assert.doesNotMatch(timeoutBody, /stopRuntime\(\)/)
   assert.match(timeoutBody, /RUN_TIMEOUT/)
 })
 

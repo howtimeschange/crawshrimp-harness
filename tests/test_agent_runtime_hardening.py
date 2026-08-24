@@ -61,6 +61,27 @@ def test_native_approval_is_agent_service_method():
     assert callable(service._ds_native_approval)
 
 
+def test_agent_service_starts_shared_runtime_host_with_core_and_stops_it_on_shutdown(tmp_path, monkeypatch):
+    monkeypatch.setenv("CRAWSHRIMP_DATA", str(tmp_path))
+    service = AgentService()
+    service._recover_on_startup = Mock()
+    service._queue_loop = AsyncMock()
+    service._start_mcp_server = AsyncMock()
+    service.start_generation = AsyncMock(return_value=True)
+    service._stop_worker = AsyncMock()
+    service._stop_mcp_server = AsyncMock()
+
+    async def scenario():
+        await service.start()
+        await asyncio.sleep(0)
+        service.start_generation.assert_awaited_once_with()
+        assert service._runtime_startup_task is not None
+        await service.stop()
+        assert service._runtime_startup_task is None
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize(("url", "prefix", "matches"), [
     ("https://example.com/orders", "https://example.com", True),
     ("https://example.com:443/orders/1", "https://example.com/orders", True),

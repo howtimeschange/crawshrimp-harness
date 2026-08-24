@@ -562,6 +562,9 @@ class AgentService:
         self.active_run: Optional[dict] = None          # run 行
         self.active_run_task: Optional[asyncio.Task] = None
         self.queue_task: Optional[asyncio.Task] = None
+        # DSH also hosts long-lived IM channel connections. Start it with the
+        # core service, but never hold FastAPI startup on the runtime boot path.
+        self._runtime_startup_task: Optional[asyncio.Task] = None
 
         self.approval_waits: dict[str, asyncio.Future] = {}
         self._approval_slots = asyncio.Semaphore(APPROVAL_MAX_CONCURRENCY)
@@ -802,6 +805,7 @@ class AgentService:
         (data_root / "agent" / "runtime-workdir").mkdir(parents=True, exist_ok=True)
         mcp_gateway.ctx.workspace_root = data_root / "agent" / "workspace"
         await self._start_mcp_server()
+        self._runtime_startup_task = asyncio.create_task(self.start_generation())
 
     async def _start_mcp_server(self) -> None:
         import os as _os
@@ -845,6 +849,15 @@ class AgentService:
             self._mcp_socket = None
 
     async def stop(self) -> None:
+        runtime_startup_task = self._runtime_startup_task
+        self._runtime_startup_task = None
+        if runtime_startup_task is not None:
+            if not runtime_startup_task.done():
+                runtime_startup_task.cancel()
+            try:
+                await runtime_startup_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
         if self.queue_task:
             self.queue_task.cancel()
             self.queue_task = None
@@ -1533,6 +1546,10 @@ class AgentService:
             # 后台探测真实监听端口并回写 self.web_port,前端 iframe 才能加载正确地址。
             asyncio.get_running_loop().create_task(self._settle_web_port(self.web_port))
             return True
+        except asyncio.CancelledError:
+            await worker.stop()
+            self.runtime_state = "stopped"
+            raise
         except Exception as exc:  # noqa: BLE001
             self.runtime_error = str(exc)
             self.runtime_error_code = "WORKER_ERROR"

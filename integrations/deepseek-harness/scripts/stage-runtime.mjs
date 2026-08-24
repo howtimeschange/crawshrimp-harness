@@ -66,6 +66,9 @@ const REQUIRED_STAGE_FILES = [
   'node_modules/crawshrimp-slots/lib/client.js',
   'node_modules/crawshrimp-product-bridge/package.json',
   'node_modules/crawshrimp-product-bridge/lib/index.js',
+  'node_modules/@xmanrui/dsh-im/package.json',
+  'node_modules/@xmanrui/dsh-im/lib/index.js',
+  'node_modules/@xmanrui/dsh-im/lib/client.js',
   'node_modules/@deepseek-ai/dsh-cmdline/package.json',
   'node_modules/@deepseek-ai/dsh-web-app/package.json',
   'node_modules/@deepseek-ai/dsh-web-app/lib/startup.js',
@@ -343,10 +346,12 @@ async function verifyWebSurface() {
       const browseEntry = '"id":"@deepseek-ai/dsh-client-ui-directory-picker-browse"'
       const nativeEntry = '"id":"@deepseek-ai/dsh-client-ui-directory-picker-native"'
       const slotsEntry = '"id":"crawshrimp-slots"'
+      const imEntry = '"id":"@xmanrui/dsh-im"'
       if (html.includes(browseEntry)) throw new Error('browse picker client entry unexpectedly active in HTML')
       if (html.includes(nativeEntry)) throw new Error('native picker client entry unexpectedly active in HTML')
       if (!html.includes(slotsEntry)) throw new Error('crawshrimp-slots client entry missing from HTML')
-      console.log(${JSON.stringify(profile.label)} + ' web surface: HTTP ' + response.status + ', Crawshrimp slots active, upstream picker absent')
+      if (!html.includes(imEntry)) throw new Error('@xmanrui/dsh-im client entry missing from HTML')
+      console.log(${JSON.stringify(profile.label)} + ' web surface: HTTP ' + response.status + ', Crawshrimp slots active, upstream picker absent; dsh-im active')
       return
     } catch (error) {
       lastError = error

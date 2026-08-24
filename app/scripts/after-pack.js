@@ -65,6 +65,8 @@ const REQUIRED_DEEPSEEK_HARNESS_FILES = [
   'node_modules/@deepseek-ai/dsh-session-persistence-jsonl/package.json',
   'node_modules/@crawshrimp/launcher/index.js',
   'node_modules/crawshrimp-slots/lib/client.js',
+  'node_modules/@xmanrui/dsh-im/lib/index.js',
+  'node_modules/@xmanrui/dsh-im/lib/client.js',
   'node_modules/@deepseek-ai/dsh-web-app/package.json',
   'node_modules/@deepseek-ai/dsh-host-webserver/package.json',
   'spike.cordis.yml',

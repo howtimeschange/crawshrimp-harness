@@ -1,6 +1,32 @@
 - id: crawshrimp-product-bridge
   name: 'crawshrimp-product-bridge'
 
+- id: xmanrui-dsh-im
+  name: '@xmanrui/dsh-im'
+  config:
+      language: zh
+      rpcAuthority: loopback
+      feishu:
+        workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+      weixin:
+        workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+      dingtalk:
+        workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+      wecom:
+        workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+      qq:
+        workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+      slack:
+        workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+      telegram:
+        workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+      discord:
+        workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+      whatsapp:
+        workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+      office:
+        workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+
 - id: crawshrimp-slots
   name: 'crawshrimp-slots'
 

@@ -86,6 +86,58 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function crawshrimpImSettingsEnabled() {
+      try {
+        return new URLSearchParams(window.location.search || '').get('csImSettings') === '1'
+      } catch (error) {
+        return false
+      }
+    }
+
+    const IM_SETTINGS_EMBED_CSS = [
+      'html, body { overflow: hidden !important; }',
+      '.VOzbGW_overlay { align-items: stretch !important; justify-content: stretch !important; }',
+      '.VOzbGW_mask, .VOzbGW_nav, .VOzbGW_header { display: none !important; }',
+      '.VOzbGW_panel { width: 100vw !important; max-width: none !important; height: 100vh !important; max-height: none !important; border-radius: 0 !important; box-shadow: none !important; }',
+      '.VOzbGW_content { width: 100% !important; min-width: 0 !important; }',
+      '.VOzbGW_options { padding: 22px 24px 30px !important; }',
+      '.dim-page { max-width: none !important; }',
+      '.dim-workspaceEdit { display: none !important; }',
+    ].join('\n')
+
+    function injectImSettingsEmbedCss() {
+      const tagId = 'crawshrimp-slots/im-settings-embed'
+      if (document.querySelector(`style[data-plugin-css="${tagId}"]`)) return
+      const tag = document.createElement('style')
+      tag.dataset.plugin = 'crawshrimp-slots'
+      tag.dataset.pluginCss = tagId
+      tag.textContent = IM_SETTINGS_EMBED_CSS
+      document.head.appendChild(tag)
+    }
+
+    function openCrawshrimpImSettings() {
+      if (!crawshrimpImSettingsEnabled() || typeof document === 'undefined') return false
+      injectImSettingsEmbedCss()
+
+      let overlay = document.querySelector('.VOzbGW_overlay')
+      if (!overlay) {
+        const trigger = document.querySelector('.VOzbGW_trigger')
+        trigger?.click?.()
+        overlay = document.querySelector('.VOzbGW_overlay')
+      }
+      if (!overlay) return false
+
+      const pluginNav = [...overlay.querySelectorAll('.VOzbGW_navCell')]
+        .find((button) => /^(plugins|插件)$/i.test(String(button.textContent || '').trim()))
+      if (pluginNav && pluginNav.getAttribute('aria-current') !== 'true') pluginNav.click()
+
+      const imTab = [...overlay.querySelectorAll('[role="tab"]')]
+        .find((button) => /^IM\s*(?:机器人|bots?)$/i.test(String(button.textContent || '').trim()))
+      if (imTab && imTab.getAttribute('aria-selected') !== 'true') imTab.click()
+      document.documentElement.dataset.csImSettings = '1'
+      return Boolean(imTab)
+    }
+
     let workspaceDirectoryPickSeq = 0
     const pendingWorkspaceDirectoryPicks = new Map()
 
@@ -1409,6 +1461,7 @@ window.__ModuleLoader__.load({
       registerCrawshrimpDirectoryFlow(ctx)
       ctx.theme.overrideTokens('crawshrimp', CRAWSHRIMP_TOKENS)
       injectBrandCss()
+      openCrawshrimpImSettings()
       // 浏览器标题:去 DeepSeek(DocumentTitle 组件会在会话切换后重新拼后缀,需持续兜底)
       normalizeDocumentTitle()
       setInterval(normalizeDocumentTitle, 1000)
@@ -1450,6 +1503,7 @@ window.__ModuleLoader__.load({
         mountUnifiedButtons()
         installLlmConfigGate()
         publishCurrentSession(ctx)
+        openCrawshrimpImSettings()
       }, 1000)
       // 页面/会话重载后向 shell 请求重放产物媒体(iframe 重载期间到达的事件会丢失)
       try {

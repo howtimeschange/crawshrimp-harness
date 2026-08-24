@@ -327,11 +327,39 @@ def main() -> int:
     # 抓虾产品桥(方案 §12.7):产品层审批接入 DSH 原生审批交互
     merged["crawshrimp-product-bridge"] = {"id": "crawshrimp-product-bridge", "name": "crawshrimp-product-bridge",
                                            "disabled": None, "config_lines": []}
+    # 固定版 IM 插件：九种 IM + AI Office。产品桥必须先于它启动，才能在
+    # 插件发起 Host RPC/工具执行前安装工作区、会话、文件与审批边界。
+    merged["xmanrui-dsh-im"] = {"id": "xmanrui-dsh-im", "name": "@xmanrui/dsh-im",
+                                "disabled": None,
+                                "config_lines": _cfg_from_text("""config:
+  language: zh
+  rpcAuthority: loopback
+  feishu:
+    workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+  weixin:
+    workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+  dingtalk:
+    workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+  wecom:
+    workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+  qq:
+    workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+  slack:
+    workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+  telegram:
+    workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+  discord:
+    workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+  whatsapp:
+    workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+  office:
+    workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+""")}
     launcher_args = "['--host', '127.0.0.1', '--port', String(process.env.CRAWSHRIMP_WEB_PORT || 3090), '--no-open']"
     merged["launcher"] = {"id": "launcher", "name": "@crawshrimp/launcher",
                           "disabled": None,
                           "config_lines": _cfg_from_text(f"config:\n  args: !!js |\n    {launcher_args}\n")}
-    for new_id in ("launcher", "sdk-jsonrpc-server", "mcp-crawshrimp", "crawshrimp-slots", "crawshrimp-product-bridge"):
+    for new_id in ("launcher", "sdk-jsonrpc-server", "mcp-crawshrimp", "crawshrimp-slots", "xmanrui-dsh-im", "crawshrimp-product-bridge"):
         if new_id in merged and new_id not in order:
             order.insert(0, new_id)
     # stdout 专供 SDK JSON-RPC 协议帧:web-runtime 不得打印 URL 行(worker 视非 JSON 行为协议错误)

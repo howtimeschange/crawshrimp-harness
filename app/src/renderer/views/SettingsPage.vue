@@ -757,6 +757,44 @@
           </div>
         </section>
 
+        <section v-else-if="activePanelId === 'im-bots'" key="im-bots" class="panel im-panel">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">IM机器人</p>
+              <h3>机器人接入</h3>
+            </div>
+            <span :class="['badge', agentRuntime.state === 'ready' ? 'on' : 'neutral']">
+              {{ agentRuntime.state === 'ready' ? '服务常驻' : agentRuntimeLabel }}
+            </span>
+          </div>
+
+          <div class="im-safety-strip" aria-label="IM 安全策略">
+            <span><i aria-hidden="true"></i>仅接受渠道可信用户</span>
+            <span><i aria-hidden="true"></i>工作区范围已锁定</span>
+            <span><i aria-hidden="true"></i>远程审批默认关闭</span>
+          </div>
+
+          <div v-if="imSettingsUrl" class="im-settings-shell">
+            <iframe
+              ref="imSettingsFrame"
+              :key="imSettingsUrl"
+              class="im-settings-frame"
+              :src="imSettingsUrl"
+              title="抓虾 IM机器人设置"
+              allow="clipboard-read; clipboard-write"
+              @load="onImSettingsFrameLoad"
+            />
+          </div>
+          <div v-else class="im-runtime-placeholder">
+            <strong>正在启动 IM 常驻服务</strong>
+            <p>IM机器人随抓虾核心服务启动；首次准备运行时可能需要一些时间。</p>
+            <button class="btn-orange" type="button" :disabled="Boolean(agentBusy)" @click="onAgentRestartRuntime">
+              {{ agentBusy === 'runtime' ? '启动中…' : '重新启动 IM 服务' }}
+            </button>
+            <p v-if="agentRuntime.error" class="inline-msg err">{{ agentRuntime.error }}</p>
+          </div>
+        </section>
+
         <section v-else-if="activePanelId === 'cloud-approval'" key="cloud-approval" class="panel">
           <div class="panel-head">
             <div>
@@ -1002,6 +1040,7 @@ const emit = defineEmits(['runtime-refresh', 'check-update', 'theme-change'])
 const agentRuntime = ref({ state: 'unknown', generation: 0, model: '', web_url: '', api_key_configured: false, error: '' })
 const agentBusy = ref('')
 const agentNotice = ref('')
+const imSettingsFrame = ref(null)
 const agentRuntimeLabel = computed(() => {
   const state = String(agentRuntime.value?.state || '')
   if (state === 'ready') return '就绪'
@@ -1010,6 +1049,27 @@ const agentRuntimeLabel = computed(() => {
   if (state === 'stopped') return '已停止'
   return '启动中'
 })
+const imSettingsUrl = computed(() => {
+  const raw = String(agentRuntime.value?.web_url || '').trim()
+  if (!raw || agentRuntime.value?.state !== 'ready') return ''
+  try {
+    const url = new URL(raw)
+    url.searchParams.set('csImSettings', '1')
+    return url.href
+  } catch {
+    return ''
+  }
+})
+
+function onImSettingsFrameLoad(event) {
+  const frameWindow = event?.target?.contentWindow || imSettingsFrame.value?.contentWindow
+  if (!frameWindow || !imSettingsUrl.value) return
+  try {
+    frameWindow.postMessage({ __crawshrimp: 'theme', theme: props.effectiveTheme }, new URL(imSettingsUrl.value).origin)
+  } catch {
+    // Runtime may have restarted between iframe load and message delivery.
+  }
+}
 
 async function refreshAgentRuntime() {
   try {
@@ -1196,6 +1256,13 @@ const menuGroups = [
       { id: 'ai-video', label: '视频模型', statusKeys: aiVideoKeyFields },
       { id: 'ai-agent', label: '智能体', statusKeys: [] },
     ],
+  },
+  {
+    id: 'im',
+    icon: '●',
+    label: 'IM机器人',
+    desc: '微信 / 飞书 / 钉钉 / 更多',
+    children: [{ id: 'im-bots', label: '机器人接入' }],
   },
   {
     id: 'cloud',
@@ -1969,6 +2036,7 @@ async function testNotify(channel) {
 
 onMounted(async () => {
   await load()
+  if (activePanelId.value === 'im-bots') await refreshAgentRuntime()
 })
 
 watch(() => props.focusPanelId, panelId => {
@@ -1977,7 +2045,11 @@ watch(() => props.focusPanelId, panelId => {
 
 watch(activePanelId, panelId => {
   if (panelId === 'cloud-approval') loadCloudStatus()
-  if (panelId === 'ai-agent') refreshAgentRuntime()
+  if (panelId === 'ai-agent' || panelId === 'im-bots') refreshAgentRuntime()
+})
+
+watch(() => props.effectiveTheme, () => {
+  if (activePanelId.value === 'im-bots') onImSettingsFrameLoad()
 })
 </script>
 
@@ -2222,6 +2294,79 @@ watch(activePanelId, panelId => {
 .btn-danger { border: 1px solid var(--red); color: var(--red); background: transparent; font-size: 13px; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
 .btn-danger:hover { background: rgba(248, 113, 113, 0.12); }
 .btn-danger:disabled { opacity: 0.6; cursor: default; }
+
+.im-panel {
+  min-height: min(860px, calc(100vh - 132px));
+}
+
+.im-safety-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text2);
+  background: var(--bg3);
+  font-size: 12px;
+}
+
+.im-safety-strip span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.im-safety-strip i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 12%, transparent);
+}
+
+.im-settings-shell {
+  flex: 1;
+  min-height: 640px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.im-settings-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 640px;
+  border: 0;
+  background: var(--bg);
+}
+
+.im-runtime-placeholder {
+  flex: 1;
+  min-height: 420px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 10px;
+  padding: 28px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--text2);
+  background: var(--bg3);
+}
+
+.im-runtime-placeholder strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.im-runtime-placeholder p {
+  margin: 0;
+  line-height: 1.6;
+}
 
 .panel-head {
   display: flex;
