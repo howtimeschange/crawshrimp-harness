@@ -2959,8 +2959,7 @@ watch(activePanelId, panelId => {
 }
 
 .input,
-.select,
-.textarea {
+.select {
   width: 100%;
   min-width: 0;
   background: var(--bg);
@@ -2978,6 +2977,16 @@ watch(activePanelId, panelId => {
 }
 
 .textarea {
+  width: 100%;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
   min-height: 132px;
   resize: vertical;
   line-height: 1.45;
@@ -2985,7 +2994,11 @@ watch(activePanelId, panelId => {
 }
 
 .input:focus,
-.select:focus,
+.select:focus {
+  border-color: var(--orange);
+  background: var(--input-focus);
+}
+
 .textarea:focus {
   border-color: var(--orange);
   background: var(--input-focus);

@@ -140,7 +140,7 @@ class LlmGatewayTests(unittest.TestCase):
     def test_runtime_environment_key_can_be_used_without_persisting_it_in_config(self):
         config = self.config()
         config["ai"]["llm"]["api_key"] = ""
-        with patch.dict(os.environ, {"CRAWSHRIMP_LLM_API_KEY": "runtime-only-key"}):
+        with patch.dict(os.environ, {"CRAWSHRIMP_LLM_API_KEY": "runtime-only-key"}, clear=True):
             route = llm_gateway.route_for_model("qwen3.8-max-preview", config)
         self.assertEqual(route.api_key, "runtime-only-key")
 
