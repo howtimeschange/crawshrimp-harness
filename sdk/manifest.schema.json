@@ -77,7 +77,8 @@
             "file_excel",
             "file_images",
             "file_zip",
-            "file_pdf"
+            "file_pdf",
+            "model_chain"
           ]
         },
         "label": { "type": "string" },
@@ -98,6 +99,11 @@
         "options": {
           "type": "array",
           "items": { "$ref": "#/definitions/option" }
+        },
+        "default_model": { "type": "object" },
+        "fallback_models": {
+          "type": "array",
+          "items": { "type": "object" }
         },
         "include_file_listing": { "type": "boolean" },
         "visible_when": {

@@ -1,10 +1,22 @@
 import contextlib
+import importlib.util
 import io
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from scripts import cloud_approval_dry_run
+
+def _load_cloud_approval_dry_run():
+    module_path = Path(__file__).resolve().parents[1] / "scripts" / "cloud_approval_dry_run.py"
+    spec = importlib.util.spec_from_file_location("cloud_approval_dry_run", module_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+cloud_approval_dry_run = _load_cloud_approval_dry_run()
 
 
 class CloudApprovalDryRunTests(unittest.TestCase):
