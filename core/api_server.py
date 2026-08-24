@@ -2319,6 +2319,63 @@ def _rewrite_summary_excel_local_paths(
                 workbook.close()
 
 
+def _rewrite_summary_excel_row_columns(
+    exported_files: list,
+    data_rows: list,
+    log,
+    *,
+    context: str,
+    columns: tuple[str, ...],
+) -> None:
+    rows = [row for row in (data_rows or []) if isinstance(row, dict)]
+    if not rows or not columns:
+        return
+    wanted = {str(column or "").strip() for column in columns if str(column or "").strip()}
+    if not wanted:
+        return
+    try:
+        from openpyxl import load_workbook
+    except Exception as exc:
+        raise RuntimeError(f"openpyxl 不可用，无法刷新{context}结果表字段") from exc
+
+    for raw_path in exported_files or []:
+        path = Path(str(raw_path or "")).expanduser()
+        if path.suffix.lower() != ".xlsx" or not path.is_file():
+            continue
+        workbook = None
+        try:
+            workbook = load_workbook(path)
+            changed = False
+            for sheet in workbook.worksheets:
+                header_row = 0
+                column_map: dict[str, int] = {}
+                for row_index in range(1, min(sheet.max_row, 3) + 1):
+                    current_map: dict[str, int] = {}
+                    for column_index in range(1, sheet.max_column + 1):
+                        header = str(sheet.cell(row=row_index, column=column_index).value or "").strip()
+                        if header in wanted:
+                            current_map[header] = column_index
+                    if current_map:
+                        header_row = row_index
+                        column_map = current_map
+                        break
+                if not header_row or not column_map:
+                    continue
+                for offset, row in enumerate(rows, start=1):
+                    for column_name, column_index in column_map.items():
+                        if column_name in row:
+                            sheet.cell(row=header_row + offset, column=column_index).value = str(row.get(column_name) or "")
+                changed = True
+            if changed:
+                workbook.save(path)
+                log(f"{context} Excel columns refreshed: {path}")
+        except Exception as exc:
+            raise RuntimeError(f"{context}结果表字段刷新失败: {path}: {exc}") from exc
+        finally:
+            if workbook is not None:
+                workbook.close()
+
+
 def _rewrite_bala_material_summary_excels(exported_files: list, data_rows: list, log) -> None:
     _rewrite_summary_excel_local_paths(
         exported_files,
@@ -2335,6 +2392,58 @@ def _rewrite_shenhui_shoe_summary_excels(exported_files: list, data_rows: list, 
         log,
         context="Shenhui shoe package",
     )
+    _rewrite_summary_excel_row_columns(
+        exported_files,
+        data_rows,
+        log,
+        context="Shenhui shoe package",
+        columns=(
+            "输入款号",
+            "颜色",
+            "原文件名",
+            "云盘路径",
+            "规则槽位",
+            "输出文件名",
+            "处理动作",
+            "下载结果",
+            "压缩结果",
+            "规则告警",
+            "品类来源",
+            "备注",
+        ),
+    )
+
+
+def _try_rewrite_shenhui_package_summary_excels(
+    exported_files: list,
+    data_rows: list,
+    log,
+    *,
+    include_compression: bool = False,
+) -> None:
+    try:
+        _rewrite_summary_excel_local_paths(
+            exported_files,
+            data_rows,
+            log,
+            context="Shenhui package",
+        )
+    except Exception as exc:
+        if log:
+            log(f"[warn] Shenhui package Excel paths refresh skipped: {exc}")
+    if not include_compression:
+        return
+    try:
+        _rewrite_summary_excel_row_columns(
+            exported_files,
+            data_rows,
+            log,
+            context="Shenhui package",
+            columns=("压缩结果",),
+        )
+    except Exception as exc:
+        if log:
+            log(f"[warn] Shenhui package Excel compression column refresh skipped: {exc}")
 
 
 def _rewrite_rows_under_moved_directory(
@@ -3472,20 +3581,47 @@ def _prepare_shenhui_shoe_package_rows(
     progress=None,
 ) -> list[dict]:
     output_root = Path(runtime_artifact_dir) / "shoe-packages"
+    fallback_model_ids = [
+        str(run_params.get(f"fallback_model_{index}") or "").strip()
+        for index in range(1, 6)
+        if str(run_params.get(f"fallback_model_{index}") or "").strip()
+    ]
+    if not fallback_model_ids:
+        fallback_model_ids = (
+            run_params.get("fallback_model_ids")
+            or run_params.get("fallback_models")
+            or ""
+        )
     category_file = run_params.get("shoe_category_file")
     shoe_categories = None
     if isinstance(category_file, dict) and (
         category_file.get("path") or category_file.get("rows")
     ):
-        shoe_categories = shenhui_shoe_packaging.parse_shoe_category_rows(
-            category_file.get("rows")
+        category_rows = category_file.get("rows")
+        has_category_value = (
+            isinstance(category_rows, list)
+            and any(
+                str(row.get("品类") or "").strip()
+                for row in category_rows
+                if isinstance(row, dict)
+            )
         )
-        log(f"鞋品品类 Excel 已读取 {len(shoe_categories)} 个款号")
-    report_rows, package_roots = shenhui_shoe_packaging.prepare_shoe_packages(
+        if isinstance(category_rows, list) and not has_category_value:
+            log("鞋品品类 Excel 未填写品类，后续使用模型兜底识别品类")
+        else:
+            shoe_categories = shenhui_shoe_packaging.parse_shoe_category_rows(
+                category_rows
+            )
+            log(f"鞋品品类 Excel 已读取 {len(shoe_categories)} 个款号")
+    report_rows, package_roots = shenhui_shoe_packaging.prepare_shoe_packages_skip_failed_styles(
         data_rows=data_rows,
         output_root=output_root,
         model_id=str(run_params.get("model_id") or shenhui_shoe_packaging.SHOE_POSE_DEFAULT_MODEL).strip()
         or shenhui_shoe_packaging.SHOE_POSE_DEFAULT_MODEL,
+        fallback_model_ids=fallback_model_ids,
+        label_model_id=str(run_params.get("label_model_id") or "").strip(),
+        label_fallback_model_ids=run_params.get("label_fallback_model_ids")
+        or fallback_model_ids,
         shoe_categories=shoe_categories,
         analyze_color_label=(
             False
@@ -3500,6 +3636,712 @@ def _prepare_shenhui_shoe_package_rows(
         for key in sorted(package_roots)
     ]
     return report_rows
+
+
+_SHENHUI_LABEL_TILE_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+_SHENHUI_LABEL_TILE_PDF_SUFFIXES = {".pdf"}
+_SHENHUI_NEW_ARRIVAL_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+_SHENHUI_SHOE_FALLBACK_MATERIAL_SUFFIXES = _SHENHUI_NEW_ARRIVAL_IMAGE_SUFFIXES | {".pdf"}
+_SHENHUI_NEW_ARRIVAL_SINGLE_IMAGE_THRESHOLD_BYTES = 30 * 1024 * 1024
+_SHENHUI_NEW_ARRIVAL_STYLE_PACKAGE_THRESHOLD_BYTES = 1024 * 1024 * 1024
+_SHENHUI_NEW_ARRIVAL_JPEG_QUALITIES = (95, 92, 90, 88)
+_SHENHUI_NEW_ARRIVAL_WEBP_QUALITIES = (95, 92, 90, 88)
+
+
+def _append_shenhui_label_tile_note(row: dict, note: str) -> None:
+    clean_note = str(note or "").strip()
+    if not clean_note:
+        return
+    existing = str(row.get("备注") or "").strip()
+    row["备注"] = f"{existing}；{clean_note}" if existing else clean_note
+
+
+def _shenhui_label_tile_temp_path(path: Path, marker: str) -> Path:
+    suffix = path.suffix or ".tmp"
+    return _ensure_unique_local_path(path.with_name(f".{path.stem}.{marker}{suffix}"))
+
+
+def _replace_with_temp_if_smaller(path: Path, temp_path: Path, before_size: int) -> int:
+    if not temp_path.is_file():
+        return before_size
+    after_size = temp_path.stat().st_size
+    if after_size <= 0 or after_size >= before_size:
+        temp_path.unlink(missing_ok=True)
+        return before_size
+    try:
+        shutil.copystat(path, temp_path, follow_symlinks=True)
+    except Exception:
+        logger.debug("Failed to copy file stat before compression replace %s", path, exc_info=True)
+    temp_path.replace(path)
+    return after_size
+
+
+def _jpeg_image_for_high_quality_save(image):
+    from PIL import Image
+
+    if image.mode in {"RGB", "L", "CMYK"}:
+        return image
+    if image.mode in {"RGBA", "LA"} or "transparency" in getattr(image, "info", {}):
+        rgba = image.convert("RGBA")
+        background = Image.new("RGB", rgba.size, "white")
+        background.paste(rgba, mask=rgba.split()[-1])
+        return background
+    return image.convert("RGB")
+
+
+def _compress_shenhui_label_tile_image_if_beneficial(path: Path, log) -> tuple[str, int, int]:
+    before_size = path.stat().st_size
+    suffix = path.suffix.lower()
+    temp_paths: list[Path] = []
+
+    try:
+        from PIL import Image
+    except Exception as exc:
+        if log:
+            log(f"[warn] 深绘下载图片压缩跳过，Pillow 不可用：{exc}")
+        return "", before_size, before_size
+
+    try:
+        with Image.open(path) as source:
+            source.load()
+            icc_profile = source.info.get("icc_profile")
+            exif = source.info.get("exif")
+
+            def save_candidate(marker: str, image, format_name: str, **save_kwargs) -> None:
+                temp_path = _shenhui_label_tile_temp_path(path, marker)
+                kwargs = {"optimize": True, **save_kwargs}
+                if icc_profile:
+                    kwargs["icc_profile"] = icc_profile
+                if exif and format_name.upper() == "JPEG":
+                    kwargs["exif"] = exif
+                image.save(temp_path, format=format_name, **kwargs)
+                temp_paths.append(temp_path)
+
+            if suffix in {".jpg", ".jpeg"}:
+                jpeg_image = _jpeg_image_for_high_quality_save(source)
+                if source.format == "JPEG" and jpeg_image is source:
+                    try:
+                        save_candidate("keep", jpeg_image, "JPEG", quality="keep", subsampling="keep")
+                    except Exception:
+                        logger.debug("Failed to optimize JPEG with kept quantization %s", path, exc_info=True)
+                save_candidate("q95", jpeg_image, "JPEG", quality=95)
+            elif suffix == ".png":
+                save_candidate("png", source, "PNG", compress_level=9)
+            elif suffix == ".webp":
+                webp_image = source if source.mode in {"RGB", "RGBA"} else source.convert("RGB")
+                save_candidate("webp", webp_image, "WEBP", quality=95, method=6)
+    except Exception:
+        for temp_path in temp_paths:
+            temp_path.unlink(missing_ok=True)
+        logger.debug("Failed to compress shenhui label tile image %s", path, exc_info=True)
+        return "", before_size, before_size
+
+    best_temp = None
+    best_size = before_size
+    for temp_path in temp_paths:
+        if not temp_path.is_file():
+            continue
+        size = temp_path.stat().st_size
+        if 0 < size < best_size:
+            if best_temp and best_temp != temp_path:
+                best_temp.unlink(missing_ok=True)
+            best_temp = temp_path
+            best_size = size
+        else:
+            temp_path.unlink(missing_ok=True)
+
+    if not best_temp:
+        return "", before_size, before_size
+
+    after_size = _replace_with_temp_if_smaller(path, best_temp, before_size)
+    if after_size >= before_size:
+        return "", before_size, before_size
+    note = f"已压缩：{_format_mb(before_size)} -> {_format_mb(after_size)}"
+    if log:
+        log(f"Shenhui label/tile image compressed: {path} ({note})")
+    return note, before_size, after_size
+
+
+def _compress_shenhui_label_tile_pdf_if_beneficial(path: Path, log) -> tuple[str, int, int]:
+    before_size = path.stat().st_size
+    temp_path = _shenhui_label_tile_temp_path(path, "pdf")
+    doc = None
+    try:
+        import fitz
+
+        doc = fitz.open(str(path))
+        if getattr(doc, "needs_pass", False):
+            doc.close()
+            return "", before_size, before_size
+        try:
+            doc.save(
+                str(temp_path),
+                garbage=4,
+                clean=True,
+                deflate=True,
+                deflate_images=True,
+                deflate_fonts=True,
+                use_objstms=1,
+            )
+        except TypeError:
+            doc.save(str(temp_path), garbage=4, clean=True, deflate=True)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        logger.debug("Failed to compress shenhui label tile PDF %s", path, exc_info=True)
+        return "", before_size, before_size
+    finally:
+        try:
+            if doc is not None:
+                doc.close()
+        except Exception:
+            logger.debug("Failed to close PDF after compression %s", path, exc_info=True)
+
+    after_size = _replace_with_temp_if_smaller(path, temp_path, before_size)
+    if after_size >= before_size:
+        return "", before_size, before_size
+    note = f"已压缩PDF：{_format_mb(before_size)} -> {_format_mb(after_size)}"
+    if log:
+        log(f"Shenhui label/tile PDF compressed: {path} ({note})")
+    return note, before_size, after_size
+
+
+def _compress_shenhui_label_tile_file_if_beneficial(path: Path, log) -> tuple[str, int, int]:
+    if not path.is_file():
+        return "", 0, 0
+    suffix = path.suffix.lower()
+    if suffix in _SHENHUI_LABEL_TILE_IMAGE_SUFFIXES:
+        return _compress_shenhui_label_tile_image_if_beneficial(path, log)
+    if suffix in _SHENHUI_LABEL_TILE_PDF_SUFFIXES:
+        return _compress_shenhui_label_tile_pdf_if_beneficial(path, log)
+    size = path.stat().st_size
+    return "", size, size
+
+
+def _shenhui_new_arrival_path_key(path: Path) -> str:
+    return str(path.expanduser().resolve(strict=False))
+
+
+def _shenhui_new_arrival_rows_by_local_path(data_rows: list) -> dict[str, list[dict]]:
+    rows_by_path: dict[str, list[dict]] = {}
+    for row in data_rows or []:
+        if not isinstance(row, dict):
+            continue
+        raw_path = str(row.get("本地文件") or "").strip()
+        if not raw_path:
+            continue
+        rows_by_path.setdefault(
+            _shenhui_new_arrival_path_key(Path(raw_path)),
+            [],
+        ).append(row)
+    return rows_by_path
+
+
+def _shenhui_new_arrival_style_total_bytes(style_dir: Path) -> int:
+    total = 0
+    for file_path in style_dir.rglob("*"):
+        if not file_path.is_file():
+            continue
+        try:
+            total += file_path.stat().st_size
+        except OSError:
+            logger.debug("Failed to stat Shenhui package file %s", file_path, exc_info=True)
+    return total
+
+
+def _save_shenhui_new_arrival_candidate(
+    *,
+    source_info: dict,
+    path: Path,
+    marker: str,
+    image,
+    format_name: str,
+    temp_paths: list[Path],
+    **save_kwargs,
+) -> None:
+    temp_path = _shenhui_label_tile_temp_path(path, marker)
+    kwargs = {"optimize": True, **save_kwargs}
+    icc_profile = source_info.get("icc_profile")
+    if icc_profile:
+        kwargs["icc_profile"] = icc_profile
+    image.save(temp_path, format=format_name, **kwargs)
+    temp_paths.append(temp_path)
+
+
+def _compress_shenhui_new_arrival_image(
+    path: Path,
+    log,
+    *,
+    target_bytes: Optional[int] = None,
+) -> tuple[bool, int, int, str]:
+    before_size = path.stat().st_size
+    suffix = path.suffix.lower()
+    temp_paths: list[Path] = []
+
+    try:
+        from PIL import Image, ImageOps
+    except Exception as exc:
+        return False, before_size, before_size, f"压缩失败：Pillow 不可用（{exc}）"
+
+    try:
+        with Image.open(path) as opened:
+            source_info = {
+                "format": str(opened.format or "").upper(),
+                "icc_profile": opened.info.get("icc_profile"),
+            }
+            image = ImageOps.exif_transpose(opened)
+            image.load()
+            if suffix in {".jpg", ".jpeg"}:
+                jpeg_image = _jpeg_image_for_high_quality_save(image)
+                for quality in _SHENHUI_NEW_ARRIVAL_JPEG_QUALITIES:
+                    _save_shenhui_new_arrival_candidate(
+                        source_info=source_info,
+                        path=path,
+                        marker=f"q{quality}",
+                        image=jpeg_image,
+                        format_name="JPEG",
+                        temp_paths=temp_paths,
+                        quality=quality,
+                        progressive=True,
+                    )
+            elif suffix == ".png":
+                _save_shenhui_new_arrival_candidate(
+                    source_info=source_info,
+                    path=path,
+                    marker="png",
+                    image=image,
+                    format_name="PNG",
+                    temp_paths=temp_paths,
+                    compress_level=9,
+                )
+            elif suffix == ".webp":
+                webp_image = image if image.mode in {"RGB", "RGBA"} else image.convert("RGB")
+                for quality in _SHENHUI_NEW_ARRIVAL_WEBP_QUALITIES:
+                    _save_shenhui_new_arrival_candidate(
+                        source_info=source_info,
+                        path=path,
+                        marker=f"webp{quality}",
+                        image=webp_image,
+                        format_name="WEBP",
+                        temp_paths=temp_paths,
+                        quality=quality,
+                        method=6,
+                    )
+            else:
+                return False, before_size, before_size, "压缩跳过：非支持图片格式"
+    except Exception as exc:
+        for temp_path in temp_paths:
+            temp_path.unlink(missing_ok=True)
+        logger.debug("Failed to compress Shenhui new-arrival image %s", path, exc_info=True)
+        return False, before_size, before_size, f"压缩失败：{exc}"
+
+    candidates: list[tuple[int, int, Path]] = []
+    for order, temp_path in enumerate(temp_paths):
+        if not temp_path.is_file():
+            continue
+        size = temp_path.stat().st_size
+        if 0 < size < before_size:
+            candidates.append((order, size, temp_path))
+        else:
+            temp_path.unlink(missing_ok=True)
+
+    if not candidates:
+        return False, before_size, before_size, f"已尝试高质量压缩，未生成更小文件（原始 {_format_mb(before_size)}）"
+
+    best_order, best_size, best_temp = min(candidates, key=lambda item: item[1])
+    if target_bytes:
+        under_target = [item for item in candidates if item[1] <= target_bytes]
+        if under_target:
+            best_order, best_size, best_temp = min(under_target, key=lambda item: item[0])
+    else:
+        best_order, best_size, best_temp = min(candidates, key=lambda item: item[0])
+
+    for order, _size, temp_path in candidates:
+        if order != best_order:
+            temp_path.unlink(missing_ok=True)
+
+    after_size = _replace_with_temp_if_smaller(path, best_temp, before_size)
+    if after_size >= before_size:
+        return False, before_size, before_size, f"已尝试高质量压缩，未生成更小文件（原始 {_format_mb(before_size)}）"
+    if log:
+        log(
+            "Shenhui new-arrival image compressed: "
+            f"{path} ({_format_mb(before_size)} -> {_format_mb(after_size)})"
+        )
+    return True, before_size, after_size, f"{_format_mb(before_size)} -> {_format_mb(after_size)}"
+
+
+def _compress_shenhui_new_arrival_style_dirs(
+    style_dirs: list[Path],
+    data_rows: list,
+    log,
+) -> dict[str, int]:
+    rows_by_path = _shenhui_new_arrival_rows_by_local_path(data_rows)
+    changed_rows = 0
+    compressed_count = 0
+    triggered_count = 0
+    saved_bytes = 0
+
+    for raw_style_dir in style_dirs or []:
+        style_dir = Path(raw_style_dir)
+        if not style_dir.is_dir():
+            continue
+        image_paths = [
+            path
+            for path in sorted(style_dir.rglob("*"))
+            if path.is_file() and path.suffix.lower() in _SHENHUI_NEW_ARRIVAL_IMAGE_SUFFIXES
+        ]
+        if not image_paths:
+            continue
+
+        try:
+            image_sizes = {path: path.stat().st_size for path in image_paths}
+        except OSError:
+            image_sizes = {}
+            for path in image_paths:
+                try:
+                    image_sizes[path] = path.stat().st_size
+                except OSError:
+                    logger.debug("Failed to stat Shenhui package image %s", path, exc_info=True)
+        style_total = _shenhui_new_arrival_style_total_bytes(style_dir)
+        package_over_limit = style_total > _SHENHUI_NEW_ARRIVAL_STYLE_PACKAGE_THRESHOLD_BYTES
+        single_over_limit = {
+            path
+            for path, size in image_sizes.items()
+            if size > _SHENHUI_NEW_ARRIVAL_SINGLE_IMAGE_THRESHOLD_BYTES
+        }
+        if not single_over_limit and not package_over_limit:
+            continue
+
+        remaining_package_excess = max(
+            0,
+            style_total - _SHENHUI_NEW_ARRIVAL_STYLE_PACKAGE_THRESHOLD_BYTES,
+        )
+        for path in sorted(image_paths, key=lambda item: image_sizes.get(item, 0), reverse=True):
+            if not path.is_file():
+                continue
+            reasons: list[str] = []
+            target_bytes = None
+            if path in single_over_limit:
+                reasons.append(f"单图超过{_format_mb(_SHENHUI_NEW_ARRIVAL_SINGLE_IMAGE_THRESHOLD_BYTES)}")
+                target_bytes = _SHENHUI_NEW_ARRIVAL_SINGLE_IMAGE_THRESHOLD_BYTES
+            if package_over_limit and remaining_package_excess > 0:
+                reasons.append(
+                    f"单款总图包超过{_format_mb(_SHENHUI_NEW_ARRIVAL_STYLE_PACKAGE_THRESHOLD_BYTES)}"
+                )
+                package_target = max(1, image_sizes.get(path, 0) - remaining_package_excess)
+                target_bytes = min(target_bytes, package_target) if target_bytes else package_target
+            if not reasons:
+                continue
+            triggered_count += 1
+            reason = "、".join(reasons)
+            compressed, before_size, after_size, detail = _compress_shenhui_new_arrival_image(
+                path,
+                log,
+                target_bytes=target_bytes,
+            )
+            if compressed:
+                compressed_count += 1
+                current_saved_bytes = max(0, before_size - after_size)
+                saved_bytes += current_saved_bytes
+                if package_over_limit and "单款总图包超过" in reason:
+                    remaining_package_excess = max(0, remaining_package_excess - current_saved_bytes)
+                status = f"已压缩（{reason}）：{detail}"
+            else:
+                status = f"已触发压缩（{reason}），{detail}"
+            for row in rows_by_path.get(_shenhui_new_arrival_path_key(path), []):
+                row["压缩结果"] = status
+                changed_rows += 1
+
+    if triggered_count and log:
+        log(
+            "Shenhui new-arrival package compression finished: "
+            f"triggered={triggered_count}, compressed={compressed_count}, saved={_format_mb(saved_bytes)}"
+        )
+    return {
+        "triggered": triggered_count,
+        "compressed": compressed_count,
+        "changed_rows": changed_rows,
+        "saved_bytes": saved_bytes,
+    }
+
+
+def _finalize_shenhui_label_tile_download_outputs(
+    data_rows: list,
+    runtime_files: list,
+    exported_files: list,
+    run_params: dict,
+    runtime_artifact_dir: str,
+    log,
+) -> list[str]:
+    runtime_dir = Path(runtime_artifact_dir)
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    fallback_refs = [
+        str(path)
+        for path in [*(runtime_files or []), *(exported_files or [])]
+        if str(path or "").strip()
+    ]
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    package_base = _safe_local_name(
+        run_params.get("package_name") or f"深绘吊牌洗唛平铺图_{timestamp}",
+        f"深绘吊牌洗唛平铺图_{timestamp}",
+    )
+    package_root = _ensure_unique_local_dir(runtime_dir / package_base)
+
+    successful_rows: list[tuple[dict, Path]] = []
+    for row in data_rows or []:
+        if not isinstance(row, dict):
+            continue
+        local_path = Path(str(row.get("本地文件") or "")).expanduser()
+        if str(row.get("下载结果") or "").strip() != "已下载" or not local_path.is_file():
+            continue
+        successful_rows.append((row, local_path))
+
+    if successful_rows:
+        compressed_count = 0
+        saved_bytes = 0
+        for row, local_path in successful_rows:
+            group_code = _safe_local_name(
+                row.get("__shenhui_group_code") or row.get("输入款号") or row.get("输入编码") or "未分类",
+                "未分类",
+            )
+            clean_filename = _safe_local_name(
+                row.get("__package_filename") or row.get("文件名") or local_path.name,
+                local_path.name,
+            )
+            target = package_root / group_code / clean_filename
+            relocated = _relocate_runtime_file_to_unique_target(local_path, target, runtime_dir)
+            compression_note, before_size, after_size = _compress_shenhui_label_tile_file_if_beneficial(relocated, log)
+            if compression_note:
+                _append_shenhui_label_tile_note(row, compression_note)
+                compressed_count += 1
+                saved_bytes += max(0, before_size - after_size)
+            row["本地文件"] = str(relocated)
+        if compressed_count:
+            log(f"Shenhui label/tile files compressed: {compressed_count}, saved {_format_mb(saved_bytes)}")
+
+    export_folder = str(run_params.get("export_folder") or "").strip()
+    target_root = (
+        _expand_user_configured_local_path(export_folder)
+        if export_folder
+        else _default_output_root_for_runtime(runtime_dir, exported_files)
+    )
+    target_root.mkdir(parents=True, exist_ok=True)
+
+    final_refs: list[str] = []
+    if successful_rows and package_root.exists():
+        external_dir = _move_dir_to_unique_target(package_root, target_root / package_root.name)
+        _rewrite_rows_under_moved_directory(data_rows, package_root, external_dir)
+        _rewrite_summary_excel_local_paths(
+            exported_files,
+            data_rows,
+            log,
+            context="Shenhui label tile download",
+        )
+        _rewrite_summary_excel_row_columns(
+            exported_files,
+            data_rows,
+            log,
+            context="Shenhui label tile download",
+            columns=("备注",),
+        )
+        final_refs.append(str(external_dir))
+        for file_path in exported_files or []:
+            source = Path(str(file_path or "")).expanduser()
+            if not source.is_file():
+                continue
+            copied = _copy_file_to_unique_target(source, external_dir / source.name)
+            final_refs.append(str(copied))
+        log(f"Shenhui label/tile download folder moved to output folder: {external_dir}")
+    else:
+        if package_root.exists():
+            shutil.rmtree(package_root, ignore_errors=True)
+        for file_path in exported_files or []:
+            source = Path(str(file_path or "")).expanduser()
+            if not source.is_file():
+                continue
+            copied = _copy_file_to_unique_target(source, target_root / source.name)
+            final_refs.append(str(copied))
+
+    _cleanup_shenhui_runtime_artifacts(runtime_files, package_root, None)
+    _cleanup_runtime_artifact_dir(str(runtime_dir), preserve_paths=final_refs)
+    return final_refs or fallback_refs
+
+
+def _append_shenhui_shoe_fallback_note(row: dict, note: str) -> None:
+    row["规则告警"] = _append_note(row.get("规则告警"), note)
+    row["备注"] = _append_note(row.get("备注"), "识别未完成时已保留原始下载素材")
+    row["处理动作"] = "原素材兜底导出"
+
+
+def _fallback_shenhui_shoe_filename(row: dict, local_path: Path) -> str:
+    return _safe_local_name(
+        row.get("__shoe_original_filename")
+        or row.get("原文件名")
+        or row.get("__package_filename")
+        or row.get("文件名")
+        or local_path.name,
+        local_path.name,
+    )
+
+
+def _fallback_export_shenhui_shoe_downloaded_materials(
+    *,
+    data_rows: list,
+    runtime_files: list,
+    runtime_dir: Path,
+    target_root: Path,
+    log,
+    fallback_rows: Optional[list] = None,
+) -> list[str]:
+    rows = data_rows if isinstance(data_rows, list) else []
+    candidates: list[tuple[dict, Path]] = []
+    seen_paths: set[Path] = set()
+
+    def add_row_candidate(row: dict) -> None:
+        if not isinstance(row, dict):
+            return
+        if str(row.get("下载结果") or "").strip() != "已下载":
+            return
+        local_text = str(row.get("本地文件") or "").strip()
+        if not local_text:
+            return
+        local_path = Path(local_text).expanduser()
+        if not local_path.is_file():
+            return
+        if local_path.suffix.lower() not in _SHENHUI_SHOE_FALLBACK_MATERIAL_SUFFIXES:
+            return
+        key = local_path.resolve(strict=False)
+        if key in seen_paths:
+            return
+        candidates.append((row, local_path))
+        seen_paths.add(key)
+
+    for row in rows:
+        add_row_candidate(row)
+
+    if not candidates and isinstance(fallback_rows, list):
+        for fallback_row in fallback_rows:
+            if not isinstance(fallback_row, dict):
+                continue
+            row = dict(fallback_row)
+            rows.append(row)
+            add_row_candidate(row)
+
+    for raw_path in runtime_files or []:
+        path_text = str(raw_path or "").strip()
+        if not path_text:
+            continue
+        local_path = Path(path_text).expanduser()
+        if not local_path.is_file():
+            continue
+        if local_path.suffix.lower() not in _SHENHUI_SHOE_FALLBACK_MATERIAL_SUFFIXES:
+            continue
+        key = local_path.resolve(strict=False)
+        if key in seen_paths:
+            continue
+        row = {
+            "输入款号": "未分类",
+            "颜色": "",
+            "原文件名": local_path.name,
+            "云盘路径": "",
+            "规则槽位": "原始素材",
+            "输出文件名": local_path.name,
+            "处理动作": "原素材兜底导出",
+            "下载结果": "已下载",
+            "本地文件": str(local_path),
+            "规则告警": "任务停止或识别失败，未完成鞋品整理",
+            "品类来源": "",
+            "备注": "未获取完整下载记录，仅导出已落地文件",
+        }
+        rows.append(row)
+        candidates.append((row, local_path))
+        seen_paths.add(key)
+
+    if not candidates:
+        return []
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    package_root = _ensure_unique_local_dir(target_root / f"深绘鞋品已下载素材_{timestamp}")
+    note = "鞋品整理未生成正式图包，已导出原始下载素材"
+    relocated_by_source: dict[Path, Path] = {}
+    final_refs: list[str] = []
+
+    for row, local_path in candidates:
+        source_key = local_path.resolve(strict=False)
+        relocated = relocated_by_source.get(source_key)
+        if relocated is None or not relocated.exists():
+            style_code = _safe_local_name(
+                row.get("__shenhui_group_code") or row.get("输入款号") or row.get("输入编码") or "未分类",
+                "未分类",
+            )
+            color_code = _safe_local_name(
+                row.get("__shoe_color_code") or row.get("颜色") or "未识别颜色",
+                "未识别颜色",
+            )
+            filename = _fallback_shenhui_shoe_filename(row, local_path)
+            target = package_root / style_code / color_code / filename
+            relocated = _relocate_runtime_file_to_unique_target(local_path, target, runtime_dir)
+            relocated_by_source[source_key] = relocated
+        row["本地文件"] = str(relocated)
+        row["输出文件名"] = str(row.get("输出文件名") or relocated.name)
+        row["规则槽位"] = str(row.get("规则槽位") or "原始素材")
+        _append_shenhui_shoe_fallback_note(row, note)
+
+    final_refs.append(str(package_root))
+    log(f"Shenhui shoe fallback raw material folder exported: {package_root}")
+    return final_refs
+
+
+def _write_shenhui_shoe_fallback_summary_excel(
+    *,
+    target_root: Path,
+    data_rows: list,
+    log,
+) -> str:
+    rows = [row for row in (data_rows or []) if isinstance(row, dict)]
+    if not rows:
+        return ""
+    try:
+        from openpyxl import Workbook
+    except Exception as exc:
+        log(f"[warn] openpyxl 不可用，无法生成鞋品兜底结果表: {exc}")
+        return ""
+
+    base_columns = [
+        "输入款号",
+        "颜色",
+        "原文件名",
+        "云盘路径",
+        "规则槽位",
+        "输出文件名",
+        "处理动作",
+        "下载结果",
+        "本地文件",
+        "压缩结果",
+        "规则告警",
+        "品类来源",
+        "备注",
+    ]
+    extra_columns: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in base_columns and key not in extra_columns and not str(key).startswith("__"):
+                extra_columns.append(str(key))
+    columns = [*base_columns, *extra_columns]
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    output_path = _ensure_unique_local_path(target_root / f"深绘鞋品上新图包整理结果_{timestamp}.xlsx")
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "结果"
+    sheet.append(columns)
+    for row in rows:
+        sheet.append([row.get(column, "") for column in columns])
+    workbook.save(output_path)
+    workbook.close()
+    log(f"Shenhui shoe fallback Excel exported: {output_path}")
+    return str(output_path)
 
 
 def _finalize_shenhui_new_arrival_outputs(
@@ -3548,8 +4390,36 @@ def _finalize_shenhui_new_arrival_outputs(
                 package_path,
                 relocated,
             )
+            _compress_shenhui_new_arrival_style_dirs(
+                [relocated],
+                data_rows,
+                log,
+            )
             final_refs.append(str(relocated))
             log(f"Shenhui shoe package moved to output folder: {relocated}")
+
+        if export_folder and not final_refs:
+            final_refs.extend(
+                _fallback_export_shenhui_shoe_downloaded_materials(
+                    data_rows=data_rows,
+                    runtime_files=runtime_files,
+                    runtime_dir=runtime_dir,
+                    target_root=target_root,
+                    log=log,
+                    fallback_rows=run_params.get("__shenhui_shoe_download_rows_for_fallback"),
+                )
+            )
+            if final_refs and not any(
+                Path(str(path or "")).expanduser().suffix.lower() == ".xlsx"
+                for path in exported_files or []
+            ):
+                fallback_excel = _write_shenhui_shoe_fallback_summary_excel(
+                    target_root=target_root,
+                    data_rows=data_rows,
+                    log=log,
+                )
+                if fallback_excel:
+                    exported_files = [*(exported_files or []), fallback_excel]
 
         _rewrite_shenhui_shoe_summary_excels(exported_files, data_rows, log)
         for file_path in exported_files or []:
@@ -3557,14 +4427,31 @@ def _finalize_shenhui_new_arrival_outputs(
             if not source.is_file():
                 continue
             if export_folder:
-                copied = _copy_file_to_unique_target(source, target_root / source.name)
-                final_refs.append(str(copied))
+                try:
+                    already_in_target = source.resolve(strict=False).parent == target_root.resolve(strict=False)
+                except Exception:
+                    already_in_target = False
+                if already_in_target:
+                    final_refs.append(str(source))
+                else:
+                    copied = _copy_file_to_unique_target(source, target_root / source.name)
+                    final_refs.append(str(copied))
             else:
                 final_refs.append(str(source))
 
         _cleanup_shenhui_runtime_artifacts(runtime_files, None, None)
         _cleanup_runtime_artifact_dir(str(runtime_dir), preserve_paths=final_refs)
         return final_refs
+
+    if task_id == "batch_label_tile_download":
+        return _finalize_shenhui_label_tile_download_outputs(
+            data_rows=data_rows,
+            runtime_files=runtime_files,
+            exported_files=exported_files,
+            run_params=run_params,
+            runtime_artifact_dir=runtime_artifact_dir,
+            log=log,
+        )
 
     if task_id != "prepare_upload_package":
         return [str(path) for path in (runtime_files or []) + (exported_files or []) if str(path or "").strip()]
@@ -3591,6 +4478,7 @@ def _finalize_shenhui_new_arrival_outputs(
         successful_rows.append((row, local_path))
 
     style_zip_paths = []
+    compression_changed_rows = 0
     if successful_rows:
         finalize_started_at = time.monotonic()
         pdf_rows = []
@@ -3658,6 +4546,26 @@ def _finalize_shenhui_new_arrival_outputs(
                 f"{time.monotonic() - pdf_started_at:.1f}s"
             )
 
+        style_dirs = [
+            path
+            for path in sorted(package_root.iterdir())
+            if path.is_dir() and not path.name.startswith("_")
+        ] if package_root.exists() else []
+        compression_summary = _compress_shenhui_new_arrival_style_dirs(
+            style_dirs,
+            data_rows,
+            log,
+        )
+        compression_changed_rows = compression_summary.get("changed_rows", 0)
+        if compression_changed_rows:
+            _rewrite_summary_excel_row_columns(
+                exported_files,
+                data_rows,
+                log,
+                context="Shenhui package",
+                columns=("压缩结果",),
+            )
+
         if auto_zip_package:
             zip_started_at = time.monotonic()
             style_zip_dir = _ensure_unique_local_dir(runtime_dir / f"{package_root.name}_deepdraw_zips")
@@ -3701,6 +4609,13 @@ def _finalize_shenhui_new_arrival_outputs(
                 log(f"Shenhui style ZIPs copied to export folder: {target_root}")
         elif successful_rows and package_root.exists():
             external_dir = _move_dir_to_unique_target(package_root, target_root / package_root.name)
+            _rewrite_rows_under_moved_directory(data_rows, package_root, external_dir)
+            _try_rewrite_shenhui_package_summary_excels(
+                exported_files,
+                data_rows,
+                log,
+                include_compression=bool(compression_changed_rows),
+            )
             external_refs.append(str(external_dir))
             log(f"Shenhui package folder copied to export folder: {external_dir}")
 
@@ -3728,6 +4643,13 @@ def _finalize_shenhui_new_arrival_outputs(
         target_root = _default_output_root_for_runtime(runtime_dir, exported_files)
         target_root.mkdir(parents=True, exist_ok=True)
         external_dir = _move_dir_to_unique_target(package_root, target_root / package_root.name)
+        _rewrite_rows_under_moved_directory(data_rows, package_root, external_dir)
+        _try_rewrite_shenhui_package_summary_excels(
+            exported_files,
+            data_rows,
+            log,
+            include_compression=bool(compression_changed_rows),
+        )
         log(f"Shenhui package folder moved to default output folder: {external_dir}")
         final_refs = [str(external_dir), *exported_refs]
 
@@ -6988,6 +7910,39 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
             log(f"[warn] 短视频任务异常中断，已导出缓存结果 {len(cached_rows)} 行")
             return cached_rows, finalized_files
 
+        def recover_shenhui_shoe_partial_rows(current_rows) -> list[dict]:
+            rows = [row for row in (current_rows or []) if isinstance(row, dict)]
+            if rows or (adapter_id, task_id) != ("shenhui-new-arrival", "prepare_shoe_upload_package"):
+                return rows
+            cached_shared = {}
+            if run_control and isinstance(run_control.get('shared_progress'), dict):
+                cached_shared.update(run_control.get('shared_progress') or {})
+            runner_shared = getattr(runner, 'last_runtime_shared', None) if runner else None
+            if isinstance(runner_shared, dict):
+                cached_shared.update(runner_shared)
+            cached_rows = [
+                dict(row)
+                for row in (cached_shared.get("result_rows") or [])
+                if isinstance(row, dict)
+            ]
+            if cached_rows:
+                log(f"[warn] 鞋品任务中断，从阶段缓存恢复 {len(cached_rows)} 行下载记录用于导出")
+            return cached_rows
+
+        async def export_shenhui_shoe_partial_rows_on_error(error_message: str) -> tuple[list[dict], list[str]]:
+            if (adapter_id, task_id) != ("shenhui-new-arrival", "prepare_shoe_upload_package") or not runner:
+                return [], []
+            if not str(run_params.get("export_folder") or "").strip():
+                return [], []
+            recovered_rows = recover_shenhui_shoe_partial_rows(data)
+            recovered_rows = _apply_final_export_guards(adapter_id, task_id, recovered_rows)
+            runtime_files = list(getattr(runner, 'runtime_output_files', []) or [])
+            exported_files = await export_outputs(recovered_rows)
+            finalized_files = await finalize_output_files(recovered_rows, runtime_files, exported_files)
+            if finalized_files:
+                log(f"[warn] 鞋品任务异常中断，已导出已下载素材/结果表: {error_message}")
+            return recovered_rows, finalized_files
+
         # 可选登录检测：若 manifest 配置了 auth.check_script，则最多等 5 分钟
         if not task.skip_auth and m.auth and m.auth.check_script:
             try:
@@ -7125,6 +8080,11 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
             raw_count = len(data)
         if (adapter_id, task_id) == ("shenhui-new-arrival", "prepare_shoe_upload_package"):
             await wait_for_control({"records": len(data), "phase": "鞋品姿势识别与命名"})
+            run_params["__shenhui_shoe_download_rows_for_fallback"] = [
+                dict(row)
+                for row in (data or [])
+                if isinstance(row, dict)
+            ]
             event_loop = asyncio.get_running_loop()
 
             def report_shoe_organize_progress(progress_payload):
@@ -7310,6 +8270,8 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
     except RunAbortedError as e:
         err = e.reason or str(e)
         data = list(e.partial_data or data or [])
+        if 'recover_shenhui_shoe_partial_rows' in locals():
+            data = recover_shenhui_shoe_partial_rows(data)
         raw_count = len(data)
         data = _apply_final_export_guards(adapter_id, task_id, data)
         if adapter_id == 'tiktok-ops-assistant' and task_id == 'creator_video_download':
@@ -7376,6 +8338,8 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
             run_control['stop_requested'] = False
             run_control['resume_event'].set()
             run_control['pause_logged'] = False
+        if 'recover_shenhui_shoe_partial_rows' in locals():
+            data = recover_shenhui_shoe_partial_rows(data)
         raw_count = len(data)
         data = _apply_final_export_guards(adapter_id, task_id, data)
         if adapter_id == 'tiktok-ops-assistant' and task_id == 'creator_video_download':
@@ -7440,6 +8404,14 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
                     output_files = recovered_files
             except Exception as export_error:
                 log(f"[warn] 短视频异常收尾导出失败: {export_error}")
+        if (adapter_id, task_id) == ("shenhui-new-arrival", "prepare_shoe_upload_package") and 'export_shenhui_shoe_partial_rows_on_error' in locals():
+            try:
+                recovered_rows, recovered_files = await export_shenhui_shoe_partial_rows_on_error(err)
+                if recovered_files:
+                    data = recovered_rows
+                    output_files = recovered_files
+            except Exception as export_error:
+                log(f"[warn] 鞋品异常收尾导出失败: {export_error}")
 
         data_sink.fail_run(run_id, err, records_count=len(data), output_files=output_files)
         error_status = {
