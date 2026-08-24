@@ -70,6 +70,60 @@ SUPPORTED_MODELS = (
 )
 DEFAULT_MODEL = "deepseek-official-v4-flash"
 GATEWAY_FALLBACK_MODEL = "gpt-5.6-terra"
+BUILTIN_LLM_PROVIDERS = (
+    {
+        "id": "crawshrimp-overseas-openai",
+        "display_name": "抓虾-海外 OpenAI",
+        "protocol": "openai",
+        "api": "openai-completions",
+        "base_url_key": "overseas_openai_base_url",
+        "base_url_env": "CRAWSHRIMP_OVERSEAS_OPENAI_BASE_URL",
+        "base_url_default": OVERSEAS_OPENAI_BASE_URL,
+        "api_key_key": "overseas_openai_api_key",
+        "api_key_env": "CRAWSHRIMP_OVERSEAS_OPENAI_API_KEY",
+        "models": OVERSEAS_OPENAI_MODELS,
+        "legacy_gateway": True,
+    },
+    {
+        "id": "crawshrimp-overseas-anthropic",
+        "display_name": "抓虾-海外 Anthropic",
+        "protocol": "anthropic",
+        "api": "anthropic-messages",
+        "base_url_key": "overseas_anthropic_base_url",
+        "base_url_env": "CRAWSHRIMP_OVERSEAS_ANTHROPIC_BASE_URL",
+        "base_url_default": OVERSEAS_ANTHROPIC_BASE_URL,
+        "api_key_key": "overseas_anthropic_api_key",
+        "api_key_env": "CRAWSHRIMP_OVERSEAS_ANTHROPIC_API_KEY",
+        "models": OVERSEAS_ANTHROPIC_MODELS,
+        "legacy_gateway": True,
+    },
+    {
+        "id": "crawshrimp-domestic-openai",
+        "display_name": "抓虾-国内 OpenAI 兼容",
+        "protocol": "openai",
+        "api": "openai-completions",
+        "base_url_key": "domestic_base_url",
+        "base_url_env": "CRAWSHRIMP_DOMESTIC_OPENAI_BASE_URL",
+        "base_url_default": DOMESTIC_OPENAI_BASE_URL,
+        "api_key_key": "domestic_api_key",
+        "api_key_env": "CRAWSHRIMP_DOMESTIC_OPENAI_API_KEY",
+        "models": DOMESTIC_OPENAI_MODELS,
+        "legacy_gateway": True,
+    },
+    {
+        "id": "crawshrimp-deepseek-official",
+        "display_name": "DeepSeek 官方",
+        "protocol": "openai",
+        "api": "openai-completions",
+        "base_url_key": "deepseek_base_url",
+        "base_url_env": "CRAWSHRIMP_DEEPSEEK_BASE_URL",
+        "base_url_default": DEEPSEEK_OFFICIAL_BASE_URL,
+        "api_key_key": "deepseek_api_key",
+        "api_key_env": "CRAWSHRIMP_DEEPSEEK_API_KEY",
+        "models": DEEPSEEK_OFFICIAL_MODELS,
+        "official_deepseek": True,
+    },
+)
 GUANG_TITLE_MIN_CHARS = 24
 GUANG_TITLE_MAX_CHARS = 30
 RECOMMEND_TITLE_MIN_CHARS = 16
@@ -131,41 +185,215 @@ def _llm_settings(config: dict | None = None) -> dict:
     return llm if isinstance(llm, dict) else {}
 
 
+def _provider_by_id(provider_id: str) -> dict | None:
+    selected = _compact(provider_id)
+    for provider in BUILTIN_LLM_PROVIDERS:
+        if provider["id"] == selected:
+            return provider
+    return None
+
+
+def _provider_for_builtin_model(model_id: str) -> dict | None:
+    selected = _compact(model_id)
+    for provider in BUILTIN_LLM_PROVIDERS:
+        if selected in provider["models"]:
+            return provider
+    return None
+
+
+def _key_for_builtin_provider(provider: dict, llm: dict) -> str:
+    env_value = _compact(os.environ.get(str(provider.get("api_key_env") or "")))
+    if env_value:
+        return env_value
+    value = _compact(llm.get(str(provider.get("api_key_key") or "")))
+    if value:
+        return value
+    if provider.get("legacy_gateway"):
+        return _compact(os.environ.get("CRAWSHRIMP_LLM_API_KEY")) or _compact(llm.get("api_key"))
+    return ""
+
+
 def gateway_api_key_configured(config: dict | None = None) -> bool:
     llm = _llm_settings(config)
-    return bool(_compact(os.environ.get("CRAWSHRIMP_LLM_API_KEY")) or _compact(llm.get("api_key")))
+    return any(
+        _key_for_builtin_provider(provider, llm)
+        for provider in BUILTIN_LLM_PROVIDERS
+        if provider.get("legacy_gateway")
+    )
 
 
 def deepseek_api_key_configured(config: dict | None = None) -> bool:
     llm = _llm_settings(config)
-    return bool(
-        _compact(os.environ.get("CRAWSHRIMP_DEEPSEEK_API_KEY"))
-        or _compact(llm.get("deepseek_api_key"))
-    )
+    provider = _provider_by_id("crawshrimp-deepseek-official")
+    return bool(_key_for_builtin_provider(provider or {}, llm))
+
+
+def any_llm_api_key_configured(config: dict | None = None) -> bool:
+    if gateway_api_key_configured(config) or deepseek_api_key_configured(config):
+        return True
+    return any(provider.get("configured") for provider in custom_llm_providers(config, include_secrets=False))
+
+
+def _normalize_protocol(value: Any) -> str:
+    return "anthropic" if _compact(value).lower() == "anthropic" else "openai"
+
+
+def _normalize_custom_models(value: Any) -> list[dict[str, Any]]:
+    raw = value if isinstance(value, list) else []
+    models: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw:
+        if isinstance(item, str):
+            model = {"id": item}
+        elif isinstance(item, dict):
+            model = dict(item)
+        else:
+            continue
+        model_id = _compact(model.get("id") or model.get("value"))
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        models.append({
+            "id": model_id,
+            "label": _compact(model.get("label") or model.get("name")) or model_id,
+            "context_window": int(model.get("context_window") or model.get("contextWindow") or 64000),
+            "max_output_tokens": int(model.get("max_output_tokens") or model.get("maxTokens") or 8192),
+            "supports_tools": bool(model.get("supports_tools", model.get("supportsTools", True))),
+            "input_modalities": list(model.get("input_modalities") or model.get("input") or ["text"]),
+        })
+    return models
+
+
+def custom_llm_providers(config: dict | None = None, *, include_secrets: bool = True) -> list[dict[str, Any]]:
+    llm = _llm_settings(config)
+    raw = llm.get("custom_providers")
+    providers: list[dict[str, Any]] = []
+    if not isinstance(raw, list):
+        return providers
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        provider_id = _compact(item.get("id"))
+        name = _compact(item.get("name") or item.get("displayName") or provider_id)
+        base_url = _compact(item.get("base_url") or item.get("baseURL"))
+        models = _normalize_custom_models(item.get("models"))
+        if not provider_id or not name or not models:
+            continue
+        provider = {
+            "id": provider_id,
+            "name": name,
+            "protocol": _normalize_protocol(item.get("protocol") or item.get("api")),
+            "base_url": base_url,
+            "models": models,
+            "configured": bool(_compact(item.get("api_key") or item.get("apiKey"))),
+        }
+        if include_secrets:
+            provider["api_key"] = _compact(item.get("api_key") or item.get("apiKey"))
+        providers.append(provider)
+    return providers
+
+
+def _custom_provider_for_model(model_id: str, config: dict | None = None) -> dict | None:
+    selected = _compact(model_id)
+    for provider in custom_llm_providers(config):
+        if any(model.get("id") == selected for model in provider.get("models") or []):
+            return provider
+    return None
+
+
+def all_supported_model_ids(config: dict | None = None) -> tuple[str, ...]:
+    custom = [
+        model["id"]
+        for provider in custom_llm_providers(config, include_secrets=False)
+        for model in provider.get("models") or []
+    ]
+    return (*SUPPORTED_MODELS, *tuple(mid for mid in custom if mid not in SUPPORTED_MODELS))
+
+
+def custom_provider_key_env(provider_id: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", _compact(provider_id)).strip("_").upper()
+    return f"CRAWSHRIMP_CUSTOM_LLM_KEY_{slug or 'PROVIDER'}"
+
+
+def custom_providers_runtime_payload(config: dict | None = None) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    payload: list[dict[str, Any]] = []
+    env: dict[str, str] = {}
+    for provider in custom_llm_providers(config):
+        api_key = _compact(provider.get("api_key"))
+        base_url = _compact(provider.get("base_url"))
+        if not api_key or not base_url:
+            continue
+        env_key = custom_provider_key_env(str(provider["id"]))
+        env[env_key] = api_key
+        payload.append({
+            "id": provider["id"],
+            "displayName": provider["name"],
+            "apiKeyEnv": env_key,
+            "api": "anthropic-messages" if provider["protocol"] == "anthropic" else "openai-completions",
+            "baseURL": base_url,
+            "models": [
+                {
+                    "id": model["id"],
+                    "contextWindow": int(model.get("context_window") or 64000),
+                    "maxTokens": int(model.get("max_output_tokens") or 8192),
+                    "input": list(model.get("input_modalities") or ["text"]),
+                }
+                for model in provider.get("models") or []
+                if model.get("id")
+            ],
+        })
+    return payload, env
 
 
 def model_has_configured_key(model_id: str, config: dict | None = None) -> bool:
     selected = _compact(model_id)
-    if selected in DEEPSEEK_OFFICIAL_MODELS:
-        return deepseek_api_key_configured(config)
-    if (
-        selected in OVERSEAS_OPENAI_MODELS
-        or selected in OVERSEAS_ANTHROPIC_MODELS
-        or selected in DOMESTIC_OPENAI_MODELS
-    ):
-        return gateway_api_key_configured(config)
+    cfg = config if isinstance(config, dict) else load_config()
+    llm = _llm_settings(cfg)
+    provider = _provider_for_builtin_model(selected)
+    if provider and _key_for_builtin_provider(provider, llm):
+        return True
+    custom = _custom_provider_for_model(selected, cfg)
+    if custom:
+        return bool(_compact(custom.get("api_key")) and _compact(custom.get("base_url")))
+    if provider:
+        return False
     return False
+
+
+def custom_provider_for_configured_model(model_id: str, config: dict | None = None) -> dict | None:
+    custom = _custom_provider_for_model(model_id, config)
+    if not custom:
+        return None
+    if _compact(custom.get("api_key")) and _compact(custom.get("base_url")):
+        return custom
+    return None
+
+
+def builtin_provider_has_configured_key(model_id: str, config: dict | None = None) -> bool:
+    selected = _compact(model_id)
+    cfg = config if isinstance(config, dict) else load_config()
+    provider = _provider_for_builtin_model(selected)
+    if not provider:
+        return False
+    llm = _llm_settings(cfg)
+    return bool(_key_for_builtin_provider(provider, llm))
 
 
 def select_default_model(config: dict | None = None) -> str:
     cfg = config if isinstance(config, dict) else load_config()
     llm = _llm_settings(cfg)
     configured = _compact(llm.get("default_model")) or DEFAULT_MODEL
-    if configured not in SUPPORTED_MODELS:
+    supported = all_supported_model_ids(cfg)
+    if configured not in supported:
         configured = DEFAULT_MODEL
     if model_has_configured_key(configured, cfg):
         return configured
-    for candidate in (DEFAULT_MODEL, GATEWAY_FALLBACK_MODEL):
+    custom_candidates = [
+        model["id"]
+        for provider in custom_llm_providers(cfg)
+        for model in provider.get("models") or []
+    ]
+    for candidate in (DEFAULT_MODEL, GATEWAY_FALLBACK_MODEL, *custom_candidates, *SUPPORTED_MODELS):
         if candidate != configured and model_has_configured_key(candidate, cfg):
             return candidate
     return configured
@@ -175,12 +403,17 @@ def route_for_model(model_id: str, config: dict | None = None) -> LlmRoute:
     cfg = config if isinstance(config, dict) else load_config()
     llm = _llm_settings(cfg)
     selected = _compact(model_id) or select_default_model(cfg)
-    if selected not in SUPPORTED_MODELS:
+    if selected not in all_supported_model_ids(cfg):
         raise LlmConfigurationError(f"不支持的文本模型：{selected}")
 
-    if selected in DEEPSEEK_OFFICIAL_MODELS:
+    provider = _provider_for_builtin_model(selected)
+    custom = None
+    if provider and not _key_for_builtin_provider(provider, llm):
+        custom = custom_provider_for_configured_model(selected, cfg)
+
+    if provider and provider.get("official_deepseek") and not custom:
         # DeepSeek 原生接入:独立 Key 与 Base URL(官方 API,不走公司网关)
-        ds_key = _compact(os.environ.get("CRAWSHRIMP_DEEPSEEK_API_KEY")) or _compact(llm.get("deepseek_api_key"))
+        ds_key = _key_for_builtin_provider(provider, llm)
         if not ds_key:
             raise LlmConfigurationError("DeepSeek 原生模型需要独立 API Key,请在设置 → AI 能力 → 文本大模型中配置")
         return LlmRoute(
@@ -190,30 +423,31 @@ def route_for_model(model_id: str, config: dict | None = None) -> LlmRoute:
             api_key=ds_key,
         )
 
-    api_key = _compact(os.environ.get("CRAWSHRIMP_LLM_API_KEY")) or _compact(llm.get("api_key"))
-    if not api_key:
-        raise LlmConfigurationError("请先在设置 → AI 能力 → 文本大模型中配置 API Key")
+    if provider and not custom:
+        api_key = _key_for_builtin_provider(provider, llm)
+        if not api_key:
+            raise LlmConfigurationError("请先在设置 → AI 能力 → 文本大模型中配置对应 Provider 的 API Key")
+        return LlmRoute(
+            model_id=selected,
+            protocol=str(provider["protocol"]),
+            base_url=_compact(llm.get(str(provider["base_url_key"]))) or str(provider["base_url_default"]),
+            api_key=api_key,
+        )
 
-    if selected in OVERSEAS_ANTHROPIC_MODELS:
+    custom = custom or _custom_provider_for_model(selected, cfg)
+    if custom:
+        api_key = _compact(custom.get("api_key"))
+        if not api_key:
+            raise LlmConfigurationError("请先在设置 → AI 能力 → 文本大模型中配置自定义 Provider 的 API Key")
+        if not _compact(custom.get("base_url")):
+            raise LlmConfigurationError("自定义 Provider 的 Base URL 不能为空")
         return LlmRoute(
             model_id=selected,
-            protocol="anthropic",
-            base_url=_compact(llm.get("overseas_anthropic_base_url")) or OVERSEAS_ANTHROPIC_BASE_URL,
+            protocol=str(custom.get("protocol") or "openai"),
+            base_url=str(custom.get("base_url")),
             api_key=api_key,
         )
-    if selected in DOMESTIC_OPENAI_MODELS:
-        return LlmRoute(
-            model_id=selected,
-            protocol="openai",
-            base_url=_compact(llm.get("domestic_base_url")) or DOMESTIC_OPENAI_BASE_URL,
-            api_key=api_key,
-        )
-    return LlmRoute(
-        model_id=selected,
-        protocol="openai",
-        base_url=_compact(llm.get("overseas_openai_base_url")) or OVERSEAS_OPENAI_BASE_URL,
-        api_key=api_key,
-    )
+    raise LlmConfigurationError(f"不支持的文本模型：{selected}")
 
 
 def _endpoint(base_url: str, suffix: str) -> str:

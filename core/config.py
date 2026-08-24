@@ -45,12 +45,16 @@ DEFAULT_CONFIG = {
         },
         "llm": {
             "api_key": "",
+            "overseas_openai_api_key": "",
+            "overseas_anthropic_api_key": "",
+            "domestic_api_key": "",
             "deepseek_api_key": "",
             "overseas_openai_base_url": "https://ai-aigw.semir.com/overseas-openai-vip/v1",
             "overseas_anthropic_base_url": "https://ai-aigw.semir.com/overseas-anthropic-vip",
             "domestic_base_url": "https://ai-aigw.semir.com/bailian-codingplan/v1",
             "deepseek_base_url": "https://api.deepseek.com",
             "default_model": "deepseek-official-v4-flash",
+            "custom_providers": [],
         },
     },
     "cloud_approval": {

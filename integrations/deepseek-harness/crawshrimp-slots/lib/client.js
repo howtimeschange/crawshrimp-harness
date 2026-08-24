@@ -78,6 +78,14 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function llmConfigRequired() {
+      try {
+        return new URLSearchParams(window.location.search || '').get('csNeedsModelKey') === '1'
+      } catch (error) {
+        return false
+      }
+    }
+
     let workspaceDirectoryPickSeq = 0
     const pendingWorkspaceDirectoryPicks = new Map()
 
@@ -642,6 +650,8 @@ window.__ModuleLoader__.load({
       '.uV2eYG_add[data-cs-tooltip]:hover::after, .uV2eYG_add[data-cs-tooltip]:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }',
       '[data-cs-composer-tooltip-shield="1"] [role="tooltip"] { display: none !important; }',
       '[role="tooltip"][data-cs-suppressed-tooltip="1"] { display: none !important; }',
+      '[data-cs-llm-config-required="1"] .wSkVaW_composerSeat { cursor: pointer; }',
+      '[data-cs-llm-config-required="1"] .wSkVaW_composerSeat textarea, [data-cs-llm-config-required="1"] .wSkVaW_composerSeat [contenteditable="true"] { cursor: pointer; }',
       '@media (prefers-reduced-motion: reduce) { .cs-attach-btn { transition: none; } }',
       '@media (prefers-reduced-motion: reduce) { .uV2eYG_add[data-cs-tooltip]::after { transition: none; } }',
     ].join('\n')
@@ -1062,6 +1072,45 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function isAllowedNoKeyComposerControl(target) {
+      return !!(target && typeof target.closest === 'function' && target.closest(
+        '.cs-attach-btn, .uV2eYG_add[data-cs-upload-button="1"], .uV2eYG_add.cs-cmd-at-btn',
+      ))
+    }
+
+    function isComposerActivationTarget(target) {
+      if (!target || typeof target.closest !== 'function') return false
+      const composer = target.closest('.wSkVaW_composerSeat')
+      if (!composer) return false
+      if (isAllowedNoKeyComposerControl(target)) return false
+      return true
+    }
+
+    function requestLlmConfigFromComposer(event) {
+      if (!llmConfigRequired()) return
+      if (!isComposerActivationTarget(event.target)) return
+      event.preventDefault()
+      event.stopPropagation()
+      event.stopImmediatePropagation?.()
+      postToShell({ __crawshrimp: 'llm-config-request', source: 'composer' })
+    }
+
+    function installLlmConfigGate() {
+      if (typeof document === 'undefined' || !document.documentElement) return
+      if (!llmConfigRequired()) return
+      document.documentElement.dataset.csLlmConfigRequired = '1'
+      injectAttachCss()
+      if (document.__csLlmConfigGate) return
+      document.__csLlmConfigGate = true
+      for (const type of ['pointerdown', 'click', 'keydown', 'beforeinput', 'paste']) {
+        document.addEventListener(type, requestLlmConfigFromComposer, true)
+      }
+      document.addEventListener('focusin', (event) => {
+        if (!llmConfigRequired() || !isComposerActivationTarget(event.target)) return
+        postToShell({ __crawshrimp: 'llm-config-request', source: 'composer' })
+      }, true)
+    }
+
     function mountAttachmentCapture() {
       if (typeof document === 'undefined' || !document.documentElement?.dataset) return
       installNativeDropOverlayFixups()
@@ -1287,6 +1336,7 @@ window.__ModuleLoader__.load({
       setInterval(() => {
         mountAttachmentCapture()
         mountUnifiedButtons()
+        installLlmConfigGate()
         publishCurrentSession(ctx)
       }, 1000)
       // 页面/会话重载后向 shell 请求重放产物媒体(iframe 重载期间到达的事件会丢失)

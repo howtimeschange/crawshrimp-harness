@@ -117,6 +117,26 @@ class LlmGatewayTests(unittest.TestCase):
         self.assertEqual(route.model_id, "gpt-5.6-terra")
         self.assertEqual(route.api_key, "unit-key")
 
+    def test_custom_provider_can_supply_duplicate_builtin_model_when_builtin_key_is_missing(self):
+        config = self.config()
+        config["ai"]["llm"]["api_key"] = ""
+        config["ai"]["llm"]["default_model"] = "deepseek-official-v4-flash"
+        config["ai"]["llm"]["custom_providers"] = [{
+            "id": "custom-1xm",
+            "name": "1xm",
+            "protocol": "openai",
+            "base_url": "https://api.1xm.ai/v1",
+            "api_key": "custom-1xm-key",
+            "models": [{"id": "gpt-5.6-luna"}],
+        }]
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(llm_gateway.select_default_model(config), "gpt-5.6-luna")
+            route = llm_gateway.route_for_model("gpt-5.6-luna", config)
+
+        self.assertEqual(route.model_id, "gpt-5.6-luna")
+        self.assertEqual(route.base_url, "https://api.1xm.ai/v1")
+        self.assertEqual(route.api_key, "custom-1xm-key")
+
     def test_runtime_environment_key_can_be_used_without_persisting_it_in_config(self):
         config = self.config()
         config["ai"]["llm"]["api_key"] = ""

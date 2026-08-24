@@ -911,8 +911,9 @@ def test_runtime_status_repairs_and_reports_drifted_web_port(monkeypatch, tmp_pa
     assert service._web_port_verified is True
 
 
-def test_runtime_status_without_any_model_key_reports_needs_configuration(monkeypatch):
+def test_runtime_status_without_any_model_key_keeps_runtime_startable(monkeypatch):
     service = AgentService()
+    service.runtime_state = "stopped"
     monkeypatch.setattr("core.agent.service.load_config", lambda: {"ai": {"llm": {
         "api_key": "",
         "deepseek_api_key": "",
@@ -923,9 +924,9 @@ def test_runtime_status_without_any_model_key_reports_needs_configuration(monkey
 
     status = service.runtime_status()
 
-    assert status["state"] == "needs_configuration"
+    assert status["state"] == "stopped"
     assert status["api_key_configured"] is False
-    assert "API Key" in status["error"]
+    assert status["error"] == ""
 
 
 def test_orphan_cleanup_preserves_live_parent_and_terminates_true_orphan(tmp_path, monkeypatch):
@@ -1905,6 +1906,11 @@ def test_agent_start_generation_overwrites_stale_dsh_default_model_settings_with
 def test_agent_start_generation_falls_back_from_unkeyed_gateway_model_to_deepseek(tmp_path, monkeypatch):
     from core.agent import service as service_mod
 
+    monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_OVERSEAS_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_OVERSEAS_ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DOMESTIC_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
     calls, _harness_root, _data_root = _patch_agent_generation_runtime(
         monkeypatch,
         service_mod,
@@ -1926,9 +1932,55 @@ def test_agent_start_generation_falls_back_from_unkeyed_gateway_model_to_deepsee
     assert service_mod.os.environ["CRAWSHRIMP_AGENT_MODEL"] == "deepseek-v4-flash"
 
 
-def test_agent_start_generation_missing_all_model_keys_does_not_launch_worker(tmp_path, monkeypatch):
+def test_agent_start_generation_uses_custom_provider_for_duplicate_builtin_model(tmp_path, monkeypatch):
     from core.agent import service as service_mod
 
+    monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_OVERSEAS_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_OVERSEAS_ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DOMESTIC_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
+    calls, _harness_root, _data_root = _patch_agent_generation_runtime(
+        monkeypatch,
+        service_mod,
+        tmp_path,
+        {"ai": {"llm": {
+            "api_key": "",
+            "deepseek_api_key": "",
+            "default_model": "deepseek-official-v4-flash",
+            "custom_providers": [{
+                "id": "custom-1xm",
+                "name": "1xm",
+                "protocol": "openai",
+                "base_url": "https://api.1xm.ai/v1",
+                "api_key": "custom-key",
+                "models": [{"id": "gpt-5.6-luna"}],
+            }],
+        }}},
+    )
+    service = service_mod.AgentService()
+    service.mcp_port = 18965
+
+    assert asyncio.run(service.start_generation())
+
+    assert service.runtime_state == "ready"
+    assert service.runtime_error == ""
+    assert calls["worker.start_generation"]["params"]["provider"] == "custom-1xm"
+    assert calls["worker.start_generation"]["params"]["model"] == "gpt-5.6-luna"
+    assert service_mod.os.environ["CRAWSHRIMP_AGENT_PROVIDER"] == "custom-1xm"
+    assert service_mod.os.environ["CRAWSHRIMP_AGENT_MODEL"] == "gpt-5.6-luna"
+    assert service_mod.os.environ["CRAWSHRIMP_CUSTOM_LLM_KEY_CUSTOM_1XM"] == "custom-key"
+    assert service_mod.os.environ.get("CRAWSHRIMP_LLM_CONFIG_REQUIRED") != "1"
+
+
+def test_agent_start_generation_missing_all_model_keys_launches_config_gate_runtime(tmp_path, monkeypatch):
+    from core.agent import service as service_mod
+
+    monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_OVERSEAS_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_OVERSEAS_ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DOMESTIC_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
     calls, _harness_root, _data_root = _patch_agent_generation_runtime(
         monkeypatch,
         service_mod,
@@ -1942,9 +1994,11 @@ def test_agent_start_generation_missing_all_model_keys_does_not_launch_worker(tm
     service = service_mod.AgentService()
     service.mcp_port = 18965
 
-    assert not asyncio.run(service.start_generation())
+    assert asyncio.run(service.start_generation())
 
-    assert "started" not in calls
-    assert service.runtime_state == "needs_configuration"
-    assert "API Key" in service.runtime_error
+    assert "started" in calls
+    assert service.runtime_state == "ready"
+    assert service.runtime_error == ""
+    assert os.environ["CRAWSHRIMP_LLM_CONFIG_REQUIRED"] == "1"
+    assert os.environ["CRAWSHRIMP_LLM_CONFIG_PLACEHOLDER_KEY"] == "cs-config-required-placeholder"
     assert service.crash_budget == []

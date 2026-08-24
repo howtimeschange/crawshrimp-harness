@@ -112,6 +112,25 @@ class AiVideoGenerationSecurityApiTests(unittest.TestCase):
         self.assertNotIn("configured", llm)
         self.assertNotIn("deepseek_configured", llm)
 
+    def test_settings_response_marks_custom_llm_provider_configured_without_exposing_key(self):
+        patch_config({
+            "ai.llm.custom_providers": [{
+                "id": "custom-1xm",
+                "name": "1xm",
+                "protocol": "openai",
+                "base_url": "https://api.1xm.ai/v1",
+                "api_key": "custom-secret",
+                "models": [{"id": "gpt-5.6-luna"}],
+            }],
+        })
+
+        llm = api_server.get_settings()["ai"]["llm"]
+
+        self.assertEqual(llm["configured"], True)
+        self.assertEqual(llm["custom_providers"][0]["configured"], True)
+        self.assertNotIn("api_key", llm["custom_providers"][0])
+        self.assertNotIn("custom-secret", json.dumps(llm, ensure_ascii=False))
+
     def test_llm_settings_write_restarts_idle_agent_runtime_without_exposing_key(self):
         class FakeLoop:
             def is_closed(self):

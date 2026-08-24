@@ -158,13 +158,14 @@ CRAWSHRIMP_LLM_CONFIG = """config:
     (() => {
       const hasGatewayKey = Boolean(String(process.env.CRAWSHRIMP_LLM_API_KEY ?? '').trim())
       const hasDeepSeekKey = Boolean(String(process.env.CRAWSHRIMP_DEEPSEEK_API_KEY ?? '').trim())
+      const requiresLlmConfig = String(process.env.CRAWSHRIMP_LLM_CONFIG_REQUIRED ?? '') === '1'
       const providers = {}
-      if (hasDeepSeekKey) {
+      if (hasDeepSeekKey || requiresLlmConfig) {
         providers['crawshrimp-deepseek-official'] = {
           displayName: 'DeepSeek 官方',
-          apiKeyEnv: 'CRAWSHRIMP_DEEPSEEK_API_KEY',
+          apiKeyEnv: requiresLlmConfig && !hasDeepSeekKey ? 'CRAWSHRIMP_LLM_CONFIG_PLACEHOLDER_KEY' : 'CRAWSHRIMP_DEEPSEEK_API_KEY',
           api: 'openai-completions',
-          baseURL: process.env.CRAWSHRIMP_DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com',
+          baseURL: requiresLlmConfig && !hasDeepSeekKey ? 'http://127.0.0.1:9' : (process.env.CRAWSHRIMP_DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com'),
           reasoning: 'high',
           models: [
             { id: 'deepseek-v4-flash', contextWindow: 128000, maxTokens: 8192, input: ['text'], reasoningEfforts: { off: null, low: 'low', high: 'high', max: 'max' } },
@@ -211,6 +212,23 @@ CRAWSHRIMP_LLM_CONFIG = """config:
             ],
           },
         })
+      }
+      try {
+        const customProviders = JSON.parse(process.env.CRAWSHRIMP_LLM_PROVIDERS_JSON || '[]')
+        if (Array.isArray(customProviders)) {
+          for (const provider of customProviders) {
+            if (!provider || !provider.id || !provider.apiKeyEnv || !provider.baseURL || !Array.isArray(provider.models)) continue
+            providers[String(provider.id)] = {
+              displayName: String(provider.displayName || provider.id),
+              apiKeyEnv: String(provider.apiKeyEnv),
+              api: provider.api === 'anthropic-messages' ? 'anthropic-messages' : 'openai-completions',
+              baseURL: String(provider.baseURL),
+              models: provider.models,
+            }
+          }
+        }
+      } catch (error) {
+        // Ignore malformed custom provider payloads; built-in providers still work.
       }
       return providers
     })()

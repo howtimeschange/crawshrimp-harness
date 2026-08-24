@@ -18,6 +18,9 @@ from core.llm_gateway import (
     OVERSEAS_OPENAI_BASE_URL,
     OVERSEAS_OPENAI_MODELS,
     DEFAULT_MODEL,
+    builtin_provider_has_configured_key,
+    custom_provider_for_configured_model,
+    custom_llm_providers,
     deepseek_official_real_model,
     model_has_configured_key,
     select_default_model,
@@ -69,7 +72,18 @@ AGENT_PERSONA = """你是抓虾智能体。
 
 
 def model_capabilities(model_id: str) -> dict[str, Any]:
-    return dict(MODEL_CAPABILITIES.get(model_id, _CONSERVATIVE))
+    if model_id in MODEL_CAPABILITIES:
+        return dict(MODEL_CAPABILITIES[model_id])
+    for provider in custom_llm_providers(include_secrets=False):
+        for model in provider.get("models") or []:
+            if model.get("id") == model_id:
+                return {
+                    "context_window": model.get("context_window", _CONSERVATIVE["context_window"]),
+                    "max_output_tokens": model.get("max_output_tokens", _CONSERVATIVE["max_output_tokens"]),
+                    "supports_tools": model.get("supports_tools", True),
+                    "input_modalities": model.get("input_modalities", ["text"]),
+                }
+    return dict(_CONSERVATIVE)
 
 
 def agent_capable_model_ids() -> list[str]:
@@ -81,7 +95,19 @@ def agent_capable_model_ids() -> list[str]:
         mid for mid, cap in MODEL_CAPABILITIES.items()
         if cap.get("supports_tools") and mid not in AGENT_MODEL_DISPLAY_ORDER
     ]
-    return ordered + extras
+    custom = []
+    for provider in custom_llm_providers(include_secrets=False):
+        for model in provider.get("models") or []:
+            model_id = str(model.get("id") or "").strip()
+            if (
+                model_id
+                and model.get("supports_tools", True)
+                and model_id not in ordered
+                and model_id not in extras
+                and model_id not in custom
+            ):
+                custom.append(model_id)
+    return ordered + extras + custom
 
 
 def _route_models(model_ids: tuple[str, ...]) -> list[dict[str, Any]]:
@@ -252,11 +278,19 @@ def _indent(text: str, spaces: int) -> str:
     return "\n".join(pad + line if line.strip() else line for line in text.splitlines())
 
 
-def resolve_provider_for_model(model_id: str) -> str:
+def resolve_provider_for_model(model_id: str, config: Optional[dict] = None) -> str:
+    custom = custom_provider_for_configured_model(model_id, config)
+    if custom and not builtin_provider_has_configured_key(model_id, config):
+        return str(custom.get("id") or "")
     if model_id in OVERSEAS_ANTHROPIC_MODELS:
         return "crawshrimp-overseas-anthropic"
     if model_id in DOMESTIC_OPENAI_MODELS:
         return "crawshrimp-domestic-openai"
     if model_id in DEEPSEEK_OFFICIAL_MODELS:
         return "crawshrimp-deepseek-official"
+    if custom:
+        return str(custom.get("id") or "")
+    for provider in custom_llm_providers(config, include_secrets=False):
+        if any(model.get("id") == model_id for model in provider.get("models") or []):
+            return str(provider.get("id") or "")
     return "crawshrimp-overseas-openai"

@@ -21,7 +21,10 @@ from core.agent import mcp_gateway
 from core.agent.redaction import REDACTED, redact_text as _redact_secret_text, redact_value
 from core.agent.cordis_config import build_cordis_yaml, resolve_provider_for_model, model_capabilities
 from core.llm_gateway import (
+    BUILTIN_LLM_PROVIDERS,
     DEFAULT_MODEL,
+    any_llm_api_key_configured,
+    custom_providers_runtime_payload,
     deepseek_api_key_configured,
     deepseek_official_real_model,
     gateway_api_key_configured,
@@ -424,7 +427,7 @@ def _resolve_configured_generation_model(
     if not requested_model or not model_capabilities(requested_model).get("supports_tools"):
         requested_model = select_default_model(cfg)
     if model_has_configured_key(requested_model, cfg):
-        return requested_model, resolve_provider_for_model(requested_model)
+        return requested_model, resolve_provider_for_model(requested_model, cfg)
 
     fallback_model = select_default_model(cfg)
     if (
@@ -432,9 +435,9 @@ def _resolve_configured_generation_model(
         and model_capabilities(fallback_model).get("supports_tools")
         and model_has_configured_key(fallback_model, cfg)
     ):
-        return fallback_model, resolve_provider_for_model(fallback_model)
+        return fallback_model, resolve_provider_for_model(fallback_model, cfg)
 
-    provider_label = str(provider_id or resolve_provider_for_model(requested_model) or "").strip()
+    provider_label = str(provider_id or resolve_provider_for_model(requested_model, cfg) or "").strip()
     raise AgentModelConfigurationError(
         f"智能体模型 {requested_model}({provider_label}) 没有可用 API Key；"
         "请配置 DeepSeek 官方 API Key，或配置网关 API Key 后再使用海外/国内网关模型。"
@@ -1180,7 +1183,7 @@ class AgentService:
                 model_id = session["model_id"]
         if not model_capabilities(model_id).get("supports_tools"):
             model_id = select_default_model(cfg)
-        return model_id, resolve_provider_for_model(model_id)
+        return model_id, resolve_provider_for_model(model_id, cfg)
 
     def note_model_changed(self, session_id: str, model_id: str) -> None:
         """会话模型切换后,下一 Run 前重启 generation(Worker 不变量:不混用模型)。"""
@@ -1391,18 +1394,41 @@ class AgentService:
         llm = (cfg.get("ai") or {}).get("llm") or {}
         if model_id is None:
             model_id, provider_id = self._resolve_model()
+        config_required_mode = False
         try:
             model_id, provider_id = _resolve_configured_generation_model(cfg, provider_id, model_id)
         except AgentModelConfigurationError as exc:
-            self.runtime_error = str(exc)
-            self.runtime_error_code = "MODEL_CONFIGURATION"
-            self.runtime_state = "needs_configuration"
-            return False
+            if not any_llm_api_key_configured(cfg):
+                config_required_mode = True
+                model_id = select_default_model(cfg)
+                provider_id = resolve_provider_for_model(model_id, cfg)
+            else:
+                self.runtime_error = str(exc)
+                self.runtime_error_code = "MODEL_CONFIGURATION"
+                self.runtime_state = "needs_configuration"
+                return False
         runtime_model_id = deepseek_official_real_model(model_id)
 
-        api_key = os.environ.get("CRAWSHRIMP_LLM_API_KEY", "").strip() or str(llm.get("api_key") or "").strip()
-        if api_key:
-            os.environ["CRAWSHRIMP_LLM_API_KEY"] = api_key
+        if config_required_mode:
+            os.environ["CRAWSHRIMP_LLM_CONFIG_REQUIRED"] = "1"
+            os.environ["CRAWSHRIMP_LLM_CONFIG_PLACEHOLDER_KEY"] = "cs-config-required-placeholder"
+        else:
+            os.environ.pop("CRAWSHRIMP_LLM_CONFIG_REQUIRED", None)
+            os.environ.pop("CRAWSHRIMP_LLM_CONFIG_PLACEHOLDER_KEY", None)
+
+        legacy_gateway_key = os.environ.get("CRAWSHRIMP_LLM_API_KEY", "").strip() or str(llm.get("api_key") or "").strip()
+        if legacy_gateway_key:
+            os.environ["CRAWSHRIMP_LLM_API_KEY"] = legacy_gateway_key
+        for provider in BUILTIN_LLM_PROVIDERS:
+            env_key = str(provider.get("api_key_env") or "")
+            cfg_key = str(provider.get("api_key_key") or "")
+            if not env_key or not cfg_key:
+                continue
+            value = os.environ.get(env_key, "").strip() or str(llm.get(cfg_key) or "").strip()
+            if not value and provider.get("legacy_gateway"):
+                value = legacy_gateway_key
+            if value:
+                os.environ[env_key] = value
         os.environ["CRAWSHRIMP_AGENT_PROVIDER"] = provider_id
         os.environ["CRAWSHRIMP_AGENT_MODEL"] = runtime_model_id
 
@@ -1432,6 +1458,10 @@ class AgentService:
         ds_key = os.environ.get("CRAWSHRIMP_DEEPSEEK_API_KEY", "").strip() or str(base.get("deepseek_api_key") or "").strip()
         if ds_key:
             os.environ["CRAWSHRIMP_DEEPSEEK_API_KEY"] = ds_key
+        custom_providers, custom_env = custom_providers_runtime_payload(cfg)
+        for key, value in custom_env.items():
+            os.environ[key] = value
+        os.environ["CRAWSHRIMP_LLM_PROVIDERS_JSON"] = json.dumps(custom_providers, ensure_ascii=False)
 
         data_root = _data_root()
         agent_dir = data_root / "agent"
@@ -1590,17 +1620,15 @@ class AgentService:
         candidate_web_url = f"http://127.0.0.1:{candidate_web_port}/" if candidate_web_port else ""
         gateway_key_configured = gateway_api_key_configured(cfg)
         deepseek_key_configured = deepseek_api_key_configured(cfg)
+        any_key_configured = any_llm_api_key_configured(cfg)
         display_state = self.runtime_state
         display_error = self.runtime_error
-        if not (gateway_key_configured or deepseek_key_configured) and display_state in ("stopped", "needs_configuration"):
-            display_state = "needs_configuration"
-            display_error = display_error or "请先配置 DeepSeek 官方 API Key 或网关 API Key。"
         return {
             "enabled": _os.environ.get("CRAWSHRIMP_AGENT_ENABLED", "1") not in ("0", "false", "no"),
             "state": display_state,
             "generation": self.generation,
             "model": select_default_model(cfg),
-            "api_key_configured": gateway_key_configured or deepseek_key_configured,
+            "api_key_configured": any_key_configured,
             "gateway_api_key_configured": gateway_key_configured,
             "deepseek_api_key_configured": deepseek_key_configured,
             "active_run": ((self.active_run or next(iter(self.active_runs_by_runtime.values()), {}))

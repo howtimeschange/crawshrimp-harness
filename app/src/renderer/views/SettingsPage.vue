@@ -547,7 +547,7 @@
           </div>
         </section>
 
-<section v-else-if="activePanelId === 'ai-llm'" key="ai-llm" class="panel">
+        <section v-else-if="activePanelId === 'ai-llm'" key="ai-llm" class="panel">
           <div class="panel-head">
             <div>
               <p class="panel-kicker">AI 文本与多模态</p>
@@ -558,91 +558,62 @@
             </span>
           </div>
 
-          <div class="panel-layout">
-            <div class="form-stack">
-              <!-- 两个配置源左右分栏:森马网关 / DeepSeek 官方 -->
-              <div class="llm-provider-grid">
-                <section class="llm-provider-card">
-                  <h4 class="llm-provider-title">森马网关</h4>
-                  <p class="llm-provider-sub">海外 OpenAI / 海外 Anthropic / 国内 OpenAI 三个兼容网关,共用同一个 Key。</p>
-                  <div class="field">
-                    <label>共享 API Key</label>
-                    <input
-                      v-model="cfg[LLM_API_KEY_FIELD]"
-                      class="input"
-                      type="password"
-                      autocomplete="new-password"
-                      placeholder="输入网关 API Key"
-                      @focus="selectInputText"
-                    />
-                    <p class="field-hint">保存后只显示“已配置”，不会把密钥读回页面。</p>
-                  </div>
-                  <div class="field">
-                    <label>海外 OpenAI 兼容 Base URL</label>
-                    <input v-model="cfg['ai.llm.overseas_openai_base_url']" class="input" />
-                    <p class="field-hint">GPT 与 Gemini 模型使用此地址。</p>
-                  </div>
-                  <div class="field">
-                    <label>海外 Anthropic 兼容 Base URL</label>
-                    <input v-model="cfg['ai.llm.overseas_anthropic_base_url']" class="input" />
-                    <p class="field-hint">Claude 模型使用此地址。</p>
-                  </div>
-                  <div class="field">
-                    <label>国内 OpenAI 兼容 Base URL</label>
-                    <input v-model="cfg['ai.llm.domestic_base_url']" class="input" />
-                    <p class="field-hint">Qwen、DeepSeek、GLM 与 Kimi 模型使用此地址。</p>
-                  </div>
-                  <div class="field">
-                    <label>默认模型</label>
-                    <select v-model="cfg['ai.llm.default_model']" class="select">
-                      <option v-for="model in LLM_MODELS" :key="model.value" :value="model.value">
-                        {{ model.label }}
-                      </option>
-                    </select>
-                    <p class="field-hint">适配器与智能体的默认选择；运行时只展示已配置 Key 的模型路由。</p>
-                  </div>
-                </section>
-                <section class="llm-provider-card ds">
-                  <h4 class="llm-provider-title">DeepSeek 官方 · 原生接入</h4>
-                  <p class="llm-provider-sub">直达 api.deepseek.com,不经过森马网关;官方 Key 覆盖文本与视觉模型。</p>
-                  <div class="field">
-                    <label>DeepSeek 官方 API Key</label>
-                    <input
-                      v-model="cfg[DEEPSEEK_API_KEY_FIELD]"
-                      class="input"
-                      type="password"
-                      autocomplete="new-password"
-                      placeholder="sk-..."
-                      @focus="selectInputText"
-                    />
-                    <p class="field-hint">只用于官方模型,与森马网关 Key 互不影响;留空则官方模型不可用。</p>
-                  </div>
-                  <div class="field">
-                    <label>DeepSeek 官方 Base URL</label>
-                    <input v-model="cfg['ai.llm.deepseek_base_url']" class="input" />
-                    <p class="field-hint">默认 https://api.deepseek.com(官方文档:api-docs.deepseek.com)。</p>
-                  </div>
-                  <div class="field">
-                    <label>官方模型</label>
-                    <div class="llm-model-chips">
-                      <span v-for="model in DEEPSEEK_OFFICIAL_MODELS_UI" :key="model.value" class="chip">{{ model.value }}</span>
-                    </div>
-                    <p class="field-hint">在智能体会话的模型切换中选择后即走官方接入。</p>
-                  </div>
-                </section>
-              </div>
-              <PanelActions panel-id="ai-llm" @save="savePanel('ai-llm')" />
+          <div class="form-stack">
+            <div class="llm-list-toolbar">
+              <p>
+                每个 Provider 独立保存 API Key 与 Base URL；已配置的旧森马共享 Key 会自动作为三条森马网关的默认 Key 兜底。
+              </p>
+              <button class="btn-orange compact" type="button" @click="openLlmProviderModal()">
+                添加 Provider
+              </button>
             </div>
-            <div class="side-note">
-              <strong>运行时路由</strong>
-              <div class="key-states">
-                <span :class="['key-pill', isLlmConfigured(cfg) ? 'on' : 'off']">森马网关</span>
-                <span :class="['key-pill', isDeepSeekConfigured(cfg) ? 'on' : 'off']">DS 官方</span>
-                <span class="key-pill neutral">OPENAI</span>
-                <span class="key-pill neutral">ANTHROPIC</span>
-              </div>
-              <p>适配器只提交模型 ID、商品标题和图片；Base URL 与密钥由本机后端在运行时读取，不进入任务参数、Excel 或日志。</p>
+
+            <div class="llm-provider-list" aria-label="文本大模型 Provider 列表">
+              <article v-for="provider in llmProviders" :key="provider.id" class="llm-provider-row">
+                <div class="llm-provider-main">
+                  <div class="llm-row-title">
+                    <strong>{{ provider.name }}</strong>
+                    <span :class="['key-pill', provider.configured ? 'on' : 'off']">
+                      {{ provider.configured ? '已配 Key' : '未配 Key' }}
+                    </span>
+                    <span class="key-pill neutral">{{ provider.compatibility }}</span>
+                    <span v-if="provider.isCustom" class="key-pill neutral">自定义</span>
+                    <span v-if="provider.isDefault" class="key-pill on">默认</span>
+                  </div>
+                  <p>{{ provider.baseUrl || '未填写 Base URL' }}</p>
+                  <div class="llm-model-preview">
+                    <span v-for="model in provider.previewModels" :key="model" class="chip">{{ model }}</span>
+                    <span v-if="provider.modelCount > provider.previewModels.length" class="chip muted">
+                      +{{ provider.modelCount - provider.previewModels.length }}
+                    </span>
+                  </div>
+                </div>
+                <div class="llm-row-actions">
+                  <span class="llm-row-meta">{{ provider.modelCount }} 个模型</span>
+                  <button
+                    v-if="!provider.isDefault && provider.firstModel"
+                    class="btn-ghost compact"
+                    type="button"
+                    @click="setLlmDefaultModel(provider.firstModel)"
+                  >
+                    设为默认
+                  </button>
+                  <button class="btn-ghost compact" type="button" @click="openLlmProviderModal(provider.id)">
+                    编辑
+                  </button>
+                  <button
+                    v-if="provider.isCustom"
+                    class="btn-danger compact"
+                    type="button"
+                    @click="removeCustomLlmProvider(provider.id)"
+                  >
+                    删除
+                  </button>
+                </div>
+              </article>
             </div>
+
+            <PanelActions panel-id="ai-llm" @save="savePanel('ai-llm')" />
           </div>
         </section>
 
@@ -872,11 +843,111 @@
         </Transition>
       </main>
     </div>
+
+    <Teleport to="body">
+      <div v-if="llmProviderModal.open" class="settings-modal-backdrop" @click.self="closeLlmProviderModal">
+        <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="llm-provider-modal-title">
+          <header class="settings-modal-head">
+            <div>
+              <p class="panel-kicker">{{ llmProviderModal.isNew ? '新增 Provider' : '编辑 Provider' }}</p>
+              <h3 id="llm-provider-modal-title">{{ llmProviderDraft.name || '自定义 Provider' }}</h3>
+            </div>
+            <button class="btn-ghost compact" type="button" @click="closeLlmProviderModal">关闭</button>
+          </header>
+
+          <div class="settings-modal-body">
+            <div class="split-fields">
+              <div class="field">
+                <label>Provider 名称</label>
+                <input
+                  v-model="llmProviderDraft.name"
+                  class="input"
+                  :readonly="llmProviderModal.isBuiltin"
+                  placeholder="例如：OpenRouter / 内部 Claude 网关"
+                />
+              </div>
+              <div class="field">
+                <label>兼容协议</label>
+                <select v-model="llmProviderDraft.protocol" class="select" :disabled="llmProviderModal.isBuiltin">
+                  <option value="openai">OpenAI 兼容</option>
+                  <option value="anthropic">Anthropic 兼容</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Base URL</label>
+              <input v-model="llmProviderDraft.baseUrl" class="input" placeholder="https://api.example.com/v1" />
+            </div>
+
+            <div class="field">
+              <label>API Key</label>
+              <input
+                v-model="llmProviderDraft.apiKey"
+                class="input"
+                type="password"
+                autocomplete="new-password"
+                placeholder="留空保持当前 Key；输入新值会覆盖"
+                @focus="selectInputText"
+              />
+              <p class="field-hint">保存后立即落盘，页面只显示“已配 Key”，不会把真实密钥读回设置页。</p>
+            </div>
+
+            <div v-if="llmProviderModal.isBuiltin" class="field">
+              <label>模型</label>
+              <div class="llm-model-chips">
+                <span v-for="model in llmProviderDraft.modelIds" :key="model" class="chip">{{ model }}</span>
+              </div>
+            </div>
+
+            <div v-else class="field">
+              <label>模型 ID</label>
+              <textarea
+                v-model="llmProviderDraft.modelsText"
+                class="textarea"
+                rows="7"
+                placeholder="每行一个模型 ID，例如：&#10;gpt-5.5&#10;claude-sonnet-5"
+              ></textarea>
+              <p class="field-hint">自定义模型默认按“支持工具 + 文本输入”的保守能力注册；需要视觉能力时后续可继续扩展这里。</p>
+            </div>
+
+            <section
+              v-if="llmProviderModal.providerId === 'crawshrimp-deepseek-official'"
+              class="key-reset-guide"
+              aria-label="重置 DeepSeek API Key 教程"
+            >
+              <div class="llm-provider-head">
+                <strong>重置或更换 Key</strong>
+                <button class="inline-link-btn" type="button" @click="openDeepSeekPlatform">
+                  <IconExternalLink :size="14" :stroke-width="2.1" aria-hidden="true" />
+                  <span>获取 Key</span>
+                </button>
+              </div>
+              <ol>
+                <li>在 DeepSeek 官方平台创建新的 API Key。</li>
+                <li>回到这里，把新 Key 粘贴到“API Key”。</li>
+                <li>点击“保存 Provider”；旧 Key 会被覆盖，保存后只显示“已配 Key”。</li>
+              </ol>
+            </section>
+
+            <p v-if="llmProviderModal.error" class="inline-msg err">{{ llmProviderModal.error }}</p>
+          </div>
+
+          <footer class="settings-modal-actions">
+            <button class="btn-ghost" type="button" :disabled="llmProviderModal.saving" @click="closeLlmProviderModal">取消</button>
+            <button class="btn-orange" type="button" :disabled="llmProviderModal.saving" @click="applyLlmProviderDraft">
+              {{ llmProviderModal.saving ? '保存中...' : '保存 Provider' }}
+            </button>
+          </footer>
+        </section>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup>
 import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue'
+import { IconExternalLink } from '@tabler/icons-vue'
 import {
   AI_VIDEO_CONNECTION_DEFAULTS,
   AI_VIDEO_CREDENTIAL_FIELDS,
@@ -888,16 +959,20 @@ import {
 } from '../utils/aiVideoSettings.mjs'
 import {
   LLM_API_KEY_FIELD,
-  DEEPSEEK_API_KEY_FIELD,
-  DEEPSEEK_OFFICIAL_MODELS_UI,
+  LLM_BUILTIN_PROVIDERS,
+  LLM_CREDENTIAL_FIELDS,
+  LLM_CUSTOM_PROVIDERS_FIELD,
+  DEEPSEEK_PLATFORM_URL,
   LLM_DEFAULTS,
   LLM_MASKED_CREDENTIAL_VALUE,
-  LLM_MODELS,
   LLM_PANEL_FIELDS,
   buildLlmSettingsPatch,
   clearWrittenLlmSettings,
-  isDeepSeekConfigured,
   isLlmConfigured,
+  llmProviderConfigured,
+  normalizeCustomLlmProviders,
+  normalizeLlmProtocol,
+  parseLlmModelsText,
 } from '../utils/llmSettings.mjs'
 
 const OFFICIAL_RELEASE_URL = 'https://github.com/howtimeschange/crawshrimp-harness/releases/latest'
@@ -1018,13 +1093,32 @@ const aiVideoKeyFields = [
   'ai.video.bailian_api_key',
   'ai.video.bailian_upload_api_key',
 ]
-const llmKeyFields = [LLM_API_KEY_FIELD, DEEPSEEK_API_KEY_FIELD]
+const llmKeyFields = LLM_BUILTIN_PROVIDERS.map(provider => provider.apiKeyField)
 const aiVideoConnectionHints = {
   'ai.video.seedance_base_url': `默认：${AI_VIDEO_CONNECTION_DEFAULTS['ai.video.seedance_base_url']}；森马网关可填 https://ai-aigw.semir.com/doubao-seedance/api/v3。`,
   'ai.video.bailian_region': `默认：${AI_VIDEO_CONNECTION_DEFAULTS['ai.video.bailian_region']}；输入新值才会覆盖。`,
   'ai.video.bailian_base_url': `默认：${AI_VIDEO_CONNECTION_DEFAULTS['ai.video.bailian_base_url']}；有业务空间 ID 时会按空间和区域自动生成 endpoint。`,
   'ai.video.bailian_uploads_url': `默认：${AI_VIDEO_CONNECTION_DEFAULTS['ai.video.bailian_uploads_url']}；仅用于本地素材临时 OSS 上传。`,
 }
+
+const llmProviderModal = reactive({
+  open: false,
+  isNew: false,
+  isBuiltin: false,
+  providerId: '',
+  error: '',
+  saving: false,
+})
+const llmProviderDraft = reactive({
+  id: '',
+  name: '',
+  protocol: 'openai',
+  baseUrl: '',
+  apiKey: '',
+  modelsText: '',
+  modelIds: [],
+  configured: false,
+})
 
 const saveState = reactive({})
 
@@ -1165,6 +1259,261 @@ const cloudAddressHint = computed(() => {
   return errorMessage
 })
 const cloudAddressHintOk = computed(() => Boolean(cloudStatus.value?.service_reachable))
+const customLlmProviders = computed(() => normalizeCustomLlmProviders(cfg.value[LLM_CUSTOM_PROVIDERS_FIELD]))
+const llmProviders = computed(() => {
+  const defaultModel = String(cfg.value['ai.llm.default_model'] || '').trim()
+  const builtinRows = LLM_BUILTIN_PROVIDERS.map((provider) => {
+    const modelIds = provider.models.map(model => model.value || model.id).filter(Boolean)
+    return {
+      id: provider.id,
+      name: provider.name,
+      isCustom: false,
+      compatibility: provider.compatibility,
+      configured: llmProviderConfigured(cfg.value, provider),
+      baseUrl: cfg.value[provider.baseUrlField] || provider.defaultBaseUrl,
+      modelCount: modelIds.length,
+      previewModels: modelIds.slice(0, 3),
+      firstModel: modelIds[0] || '',
+      isDefault: modelIds.includes(defaultModel),
+    }
+  })
+  const customRows = customLlmProviders.value.map((provider) => {
+    const modelIds = provider.models.map(model => model.id).filter(Boolean)
+    return {
+      id: provider.id,
+      name: provider.name,
+      isCustom: true,
+      compatibility: provider.protocol === 'anthropic' ? 'Anthropic 兼容' : 'OpenAI 兼容',
+      configured: Boolean(provider.configured),
+      baseUrl: provider.base_url,
+      modelCount: modelIds.length,
+      previewModels: modelIds.slice(0, 3),
+      firstModel: modelIds[0] || '',
+      isDefault: modelIds.includes(defaultModel),
+    }
+  })
+  return [...builtinRows, ...customRows]
+})
+
+function isMaskedLlmCredential(value) {
+  return String(value || '').includes(LLM_MASKED_CREDENTIAL_VALUE)
+}
+
+function llmProviderModelIds(provider) {
+  if (!provider) return []
+  if (provider.kind === 'builtin' || provider.baseUrlField) {
+    return provider.models.map(model => model.value || model.id).filter(Boolean)
+  }
+  return normalizeCustomLlmProviders([provider])[0]?.models.map(model => model.id) || []
+}
+
+function firstAvailableLlmModel() {
+  for (const provider of LLM_BUILTIN_PROVIDERS) {
+    const model = llmProviderModelIds(provider)[0]
+    if (model) return model
+  }
+  for (const provider of customLlmProviders.value) {
+    const model = llmProviderModelIds(provider)[0]
+    if (model) return model
+  }
+  return LLM_DEFAULTS['ai.llm.default_model']
+}
+
+async function setLlmDefaultModel(modelId) {
+  const value = String(modelId || '').trim()
+  if (!value) return
+  const previousCfg = clonePlain(cfg.value)
+  cfg.value['ai.llm.default_model'] = value
+  try {
+    await persistLlmPanelChange(previousCfg, '默认模型已保存')
+  } catch {
+    // Error state is shown next to the LLM save action.
+  }
+}
+
+function slugifyLlmProviderId(value) {
+  const slug = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+  return slug ? `custom-${slug}` : `custom-${Date.now().toString(36)}`
+}
+
+function openLlmProviderModal(providerId = '') {
+  const builtin = LLM_BUILTIN_PROVIDERS.find(provider => provider.id === providerId)
+  const custom = customLlmProviders.value.find(provider => provider.id === providerId)
+  llmProviderModal.open = true
+  llmProviderModal.isNew = !providerId
+  llmProviderModal.isBuiltin = Boolean(builtin)
+  llmProviderModal.providerId = providerId || ''
+  llmProviderModal.error = ''
+  if (builtin) {
+    const configured = llmProviderConfigured(cfg.value, builtin)
+    const modelIds = llmProviderModelIds(builtin)
+    Object.assign(llmProviderDraft, {
+      id: builtin.id,
+      name: builtin.name,
+      protocol: builtin.protocol,
+      baseUrl: cfg.value[builtin.baseUrlField] || builtin.defaultBaseUrl,
+      apiKey: cfg.value[builtin.apiKeyField] || (configured ? LLM_MASKED_CREDENTIAL_VALUE : ''),
+      modelsText: modelIds.join('\n'),
+      modelIds,
+      configured,
+    })
+    return
+  }
+  if (custom) {
+    const modelIds = llmProviderModelIds(custom)
+    Object.assign(llmProviderDraft, {
+      id: custom.id,
+      name: custom.name,
+      protocol: normalizeLlmProtocol(custom.protocol),
+      baseUrl: custom.base_url || '',
+      apiKey: custom.api_key || (custom.configured ? LLM_MASKED_CREDENTIAL_VALUE : ''),
+      modelsText: modelIds.join('\n'),
+      modelIds,
+      configured: Boolean(custom.configured),
+    })
+    return
+  }
+  Object.assign(llmProviderDraft, {
+    id: '',
+    name: '',
+    protocol: 'openai',
+    baseUrl: '',
+    apiKey: '',
+    modelsText: '',
+    modelIds: [],
+    configured: false,
+  })
+}
+
+function closeLlmProviderModal(options = {}) {
+  if (llmProviderModal.saving && !options.force) return
+  llmProviderModal.open = false
+  llmProviderModal.error = ''
+}
+
+async function applyLlmProviderDraft() {
+  if (llmProviderModal.saving) return
+  llmProviderModal.error = ''
+  const name = String(llmProviderDraft.name || '').trim()
+  const protocol = normalizeLlmProtocol(llmProviderDraft.protocol)
+  const baseUrl = String(llmProviderDraft.baseUrl || '').trim()
+  const apiKey = String(llmProviderDraft.apiKey || '').trim()
+  if (!name) {
+    llmProviderModal.error = '请填写 Provider 名称。'
+    return
+  }
+  if (!baseUrl) {
+    llmProviderModal.error = '请填写 Base URL。'
+    return
+  }
+  const previousCfg = clonePlain(cfg.value)
+  const builtin = LLM_BUILTIN_PROVIDERS.find(provider => provider.id === llmProviderDraft.id)
+  if (builtin) {
+    cfg.value[builtin.baseUrlField] = baseUrl
+    if (apiKey) cfg.value[builtin.apiKeyField] = apiKey
+    if (apiKey && !isMaskedLlmCredential(apiKey)) cfg.value[builtin.configuredField] = true
+    await saveLlmProviderDraft(previousCfg)
+    return
+  }
+
+  const models = parseLlmModelsText(llmProviderDraft.modelsText)
+  if (!models.length) {
+    llmProviderModal.error = '请至少填写一个模型 ID。'
+    return
+  }
+  const existingId = String(llmProviderDraft.id || '').trim()
+  const providerId = existingId || slugifyLlmProviderId(name)
+  const reserved = new Set(LLM_BUILTIN_PROVIDERS.map(provider => provider.id))
+  if (reserved.has(providerId)) {
+    llmProviderModal.error = '这个 Provider 标识与内置 Provider 冲突，请换一个名称。'
+    return
+  }
+  const providers = normalizeCustomLlmProviders(cfg.value[LLM_CUSTOM_PROVIDERS_FIELD])
+  const duplicate = providers.some(provider => provider.id === providerId && provider.id !== llmProviderModal.providerId)
+  if (duplicate) {
+    llmProviderModal.error = '这个 Provider 已存在，请换一个名称。'
+    return
+  }
+  const nextProvider = {
+    id: providerId,
+    name,
+    protocol,
+    base_url: baseUrl,
+    api_key: apiKey,
+    configured: Boolean(llmProviderDraft.configured) || isMaskedLlmCredential(apiKey) || Boolean(apiKey),
+    models,
+  }
+  const next = providers.filter(provider => provider.id !== llmProviderModal.providerId)
+  next.push(nextProvider)
+  cfg.value[LLM_CUSTOM_PROVIDERS_FIELD] = next
+  if (!cfg.value['ai.llm.default_model']) cfg.value['ai.llm.default_model'] = models[0].id
+  await saveLlmProviderDraft(previousCfg)
+}
+
+async function saveLlmProviderDraft(previousCfg) {
+  llmProviderModal.saving = true
+  try {
+    await persistLlmPanelChange(previousCfg, 'Provider 已保存')
+    closeLlmProviderModal({ force: true })
+  } catch (error) {
+    llmProviderModal.error = error?.message || 'Provider 保存失败'
+  } finally {
+    llmProviderModal.saving = false
+  }
+}
+
+async function persistLlmPanelChange(previousCfg, successMessage) {
+  try {
+    const result = await savePanel('ai-llm', { silent: true })
+    const state = ensureSaveState('ai-llm')
+    state.err = false
+    state.msg = llmRuntimeSaveMessage(result, successMessage)
+    return result
+  } catch (error) {
+    cfg.value = clonePlain(previousCfg)
+    const state = ensureSaveState('ai-llm')
+    state.err = true
+    state.msg = error?.message || '保存失败'
+    throw error
+  }
+}
+
+function clonePlain(value) {
+  return JSON.parse(JSON.stringify(value || {}))
+}
+
+function llmRuntimeSaveMessage(result, fallback = '已保存') {
+  if (result?.agent_runtime_reload === 'restarted') return `${fallback}，智能体运行时已同步重启`
+  if (result?.agent_runtime_reload === 'scheduled') return `${fallback}，智能体运行时正在重启`
+  if (result?.agent_runtime_reload === 'busy') return `${fallback}，当前有运行中的智能体任务，结束后请重启运行时`
+  if (result?.agent_runtime_reload === 'failed') {
+    return `${fallback}，智能体运行时重启失败:${result?.agent_runtime_error || '未知错误'}`
+  }
+  if (result?.restart_required) return `${fallback}，重启应用后生效`
+  return fallback
+}
+
+async function removeCustomLlmProvider(providerId) {
+  const provider = customLlmProviders.value.find(item => item.id === providerId)
+  if (!provider) return
+  if (!window.confirm(`确定删除 Provider「${provider.name}」吗？`)) return
+  const previousCfg = clonePlain(cfg.value)
+  const removedModelIds = new Set(llmProviderModelIds(provider))
+  cfg.value[LLM_CUSTOM_PROVIDERS_FIELD] = customLlmProviders.value.filter(item => item.id !== providerId)
+  if (removedModelIds.has(String(cfg.value['ai.llm.default_model'] || ''))) {
+    cfg.value['ai.llm.default_model'] = firstAvailableLlmModel()
+  }
+  try {
+    await persistLlmPanelChange(previousCfg, 'Provider 已删除')
+  } catch {
+    // Error state is shown next to the LLM save action.
+  }
+}
 
 function ensureSaveState(panelId) {
   if (!saveState[panelId]) {
@@ -1198,7 +1547,7 @@ const PanelActions = defineComponent({
           disabled: panelSaving(componentProps.panelId),
           onClick: () => emitAction('save'),
         },
-        panelSaving(componentProps.panelId) ? '保存中...' : '保存此项',
+        panelSaveButtonLabel(componentProps.panelId),
       ),
       panelMsg(componentProps.panelId)
         ? h('span', {
@@ -1208,6 +1557,12 @@ const PanelActions = defineComponent({
     ])
   },
 })
+
+function panelSaveButtonLabel(panelId) {
+  if (panelSaving(panelId)) return '保存中...'
+  if (panelId === 'ai-llm') return '保存并重启智能体'
+  return '保存此项'
+}
 
 function flattenSettings(source, prefix = '', target = {}) {
   const value = source && typeof source === 'object' ? source : {}
@@ -1228,8 +1583,17 @@ function normalizedSettings(raw) {
   for (const [key, value] of Object.entries(LLM_DEFAULTS)) {
     if (!flat[key]) flat[key] = value
   }
-  flat[LLM_API_KEY_FIELD] = isLlmConfigured(flat) ? LLM_MASKED_CREDENTIAL_VALUE : ''
-  flat[DEEPSEEK_API_KEY_FIELD] = isDeepSeekConfigured(flat) ? LLM_MASKED_CREDENTIAL_VALUE : ''
+  flat[LLM_API_KEY_FIELD] = flat['ai.llm.configured'] ? LLM_MASKED_CREDENTIAL_VALUE : ''
+  for (const provider of LLM_BUILTIN_PROVIDERS) {
+    const configured = llmProviderConfigured(flat, provider)
+    flat[provider.apiKeyField] = configured ? LLM_MASKED_CREDENTIAL_VALUE : ''
+    if (provider.configuredField) flat[provider.configuredField] = configured
+  }
+  flat[LLM_CUSTOM_PROVIDERS_FIELD] = normalizeCustomLlmProviders(flat[LLM_CUSTOM_PROVIDERS_FIELD])
+    .map(provider => ({
+      ...provider,
+      api_key: provider.configured ? LLM_MASKED_CREDENTIAL_VALUE : '',
+    }))
   // Provider connection fields are write-only. Never retain a value returned
   // by an older backend, and never synthesize defaults that could overwrite it.
   for (const key of AI_VIDEO_WRITE_ONLY_FIELDS) flat[key] = ''
@@ -1277,8 +1641,9 @@ function selectInputText(event) {
 
 function isFieldConfigured(key) {
   if (aiVideoKeyFields.includes(key)) return isAiVideoCredentialConfigured(cfg.value, key)
-  if (key === LLM_API_KEY_FIELD) return isLlmConfigured(cfg.value)
-  if (key === DEEPSEEK_API_KEY_FIELD) return isDeepSeekConfigured(cfg.value)
+  const llmProvider = LLM_BUILTIN_PROVIDERS.find(provider => provider.apiKeyField === key)
+  if (llmProvider) return llmProviderConfigured(cfg.value, llmProvider)
+  if (LLM_CREDENTIAL_FIELDS.includes(key)) return isLlmConfigured(cfg.value)
   return String(cfg.value[key] || '').trim().length > 0
 }
 
@@ -1296,6 +1661,7 @@ function hasAnyFieldConfigured(keys) {
 }
 
 function isMenuChildConfigured(child) {
+  if (child?.id === 'ai-llm') return isLlmConfigured(cfg.value)
   if (Array.isArray(child?.statusKeys)) return hasAnyFieldConfigured(child.statusKeys)
   return isFieldConfigured(child?.statusKey)
 }
@@ -1531,6 +1897,15 @@ function openManualDownload() {
   if (updateStatus.value.manualDownloadUrl === OFFICIAL_RELEASE_URL) {
     window.cs.openExternalUrl(updateStatus.value.manualDownloadUrl)
   }
+}
+
+function openDeepSeekPlatform() {
+  if (typeof window.cs?.openExternalUrl !== 'function') return
+  window.cs.openExternalUrl(DEEPSEEK_PLATFORM_URL).catch((error) => {
+    const state = ensureSaveState('ai-llm')
+    state.err = true
+    state.msg = error?.message || '无法打开 DeepSeek 官方平台'
+  })
 }
 
 async function testNotify(channel) {
@@ -2123,44 +2498,131 @@ watch(activePanelId, panelId => {
   min-width: 0;
 }
 
-/* 文本大模型:两个配置源左右分栏 */
-.llm-provider-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  align-items: start;
-}
-
-.llm-provider-card {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg2);
-  padding: 14px 16px;
+.llm-provider-head {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   min-width: 0;
 }
 
-.llm-provider-card.ds {
-  border-color: var(--orange-dim);
-  background: color-mix(in srgb, var(--bg2) 96%, var(--orange) 4%);
-}
-
-.llm-provider-title {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text);
-}
-
-.llm-provider-card.ds .llm-provider-title { color: var(--orange-text); }
-
-.llm-provider-sub {
-  margin: -6px 0 0;
+.inline-link-btn {
+  flex: 0 0 auto;
+  min-height: 30px;
+  border: 1px solid color-mix(in srgb, var(--orange) 58%, var(--border-strong));
+  border-radius: 8px;
+  background: var(--orange-bg);
+  color: var(--orange-text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 10px;
   font-size: 12px;
-  line-height: 1.55;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.inline-link-btn:hover {
+  background: rgba(var(--orange-rgb), 0.15);
+}
+
+.llm-list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--soft-fill);
+}
+
+.llm-list-toolbar p {
+  margin: 0;
   color: var(--text3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.llm-provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.llm-provider-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  min-height: 92px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg3);
+}
+
+.llm-provider-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.llm-row-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+
+.llm-row-title strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.llm-provider-main p {
+  margin: 0;
+  color: var(--text3);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.llm-model-preview {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.llm-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 300px;
+}
+
+.llm-row-meta {
+  width: 100%;
+  color: var(--text3);
+  font-size: 11px;
+  text-align: right;
+}
+
+.btn-orange.compact,
+.btn-ghost.compact,
+.btn-danger.compact {
+  min-height: 30px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  font-size: 12px;
 }
 
 .llm-model-chips { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -2175,8 +2637,106 @@ watch(activePanelId, panelId => {
   font-family: var(--font-mono, ui-monospace, monospace);
 }
 
-@media (max-width: 1080px) {
-  .llm-provider-grid { grid-template-columns: 1fr; }
+.llm-model-preview .chip,
+.llm-model-chips .chip.muted {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text2);
+  background: var(--soft-fill);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.llm-model-preview .chip.muted {
+  color: var(--text3);
+  font-family: inherit;
+}
+
+.key-reset-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--soft-fill);
+}
+
+.key-reset-guide strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.key-reset-guide ol {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.key-reset-guide li {
+  padding-left: 2px;
+  overflow-wrap: anywhere;
+}
+
+.settings-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(10px);
+}
+
+.settings-modal {
+  width: min(680px, calc(100vw - 36px));
+  max-height: min(760px, calc(100vh - 36px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg2);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.36);
+}
+
+.settings-modal-head,
+.settings-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-modal-head h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.settings-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px;
+}
+
+.settings-modal-actions {
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
 }
 
 .field {
@@ -2294,7 +2854,8 @@ watch(activePanelId, panelId => {
 }
 
 .input,
-.select {
+.select,
+.textarea {
   width: 100%;
   min-width: 0;
   background: var(--bg);
@@ -2311,8 +2872,16 @@ watch(activePanelId, panelId => {
   cursor: pointer;
 }
 
+.textarea {
+  min-height: 132px;
+  resize: vertical;
+  line-height: 1.45;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+}
+
 .input:focus,
-.select:focus {
+.select:focus,
+.textarea:focus {
   border-color: var(--orange);
   background: var(--input-focus);
 }
@@ -2647,6 +3216,7 @@ watch(activePanelId, panelId => {
 .settings-panel-enter-active .field,
 .settings-panel-enter-active .side-note,
 .settings-panel-enter-active .guide-block,
+.settings-panel-enter-active .llm-provider-row,
 .settings-panel-enter-active :deep(.panel-actions) {
   animation: panel-item-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
@@ -2697,6 +3267,7 @@ watch(activePanelId, panelId => {
   .settings-panel-enter-active .field,
   .settings-panel-enter-active .side-note,
   .settings-panel-enter-active .guide-block,
+  .settings-panel-enter-active .llm-provider-row,
   .settings-panel-enter-active :deep(.panel-actions) {
     animation: none;
     transition: none;
@@ -2730,6 +3301,30 @@ watch(activePanelId, panelId => {
   .status-grid,
   .split-fields {
     grid-template-columns: 1fr;
+  }
+
+  .llm-list-toolbar,
+  .llm-provider-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .llm-list-toolbar {
+    display: grid;
+  }
+
+  .llm-row-actions {
+    justify-content: flex-start;
+    max-width: none;
+  }
+
+  .llm-row-meta {
+    width: auto;
+    text-align: left;
+  }
+
+  .settings-modal-backdrop {
+    padding: 12px;
   }
 }
 </style>
