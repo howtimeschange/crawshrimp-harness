@@ -68,12 +68,26 @@ function notifyWorkerStatus(status, extra = {}) {
 
 function extractEventText(data) {
   if (!data || typeof data !== 'object') return ''
+  const chunk = data.chunk && typeof data.chunk === 'object' ? data.chunk : null
+  if (chunk) {
+    if (chunk.type === 'text-delta') return String(chunk.text || '')
+    if (chunk.type === 'block-end' && chunk.block && typeof chunk.block === 'object') {
+      return String(chunk.block.text || '')
+    }
+  }
   if (typeof data.text === 'string') return data.text
   const content = data.message && Array.isArray(data.message.content) ? data.message.content : null
   if (!content) return ''
   return content.map((block) => (
     block && typeof block === 'object' && typeof block.text === 'string' ? block.text : ''
   )).join('')
+}
+
+function extractEventDeltaText(data) {
+  if (!data || typeof data !== 'object') return ''
+  const chunk = data.chunk && typeof data.chunk === 'object' ? data.chunk : null
+  if (!chunk || chunk.type !== 'text-delta') return ''
+  return String(chunk.text || '')
 }
 
 function compactHarnessEvent(event) {
@@ -246,6 +260,22 @@ function attachRunEventHandlers(run) {
         if (name.includes('browser_observe')) run.counters.observe += 1
         if (name.includes('browser_act')) run.counters.act += 1
       }
+      if (type === 'assistant/chunk') {
+        const text = extractEventDeltaText(event.data || {})
+        if (text) recordAssistantOutput(run, text)
+      }
+      if (type === 'assistant/message') {
+        const text = extractEventText(event.data || {})
+        if (text) run.counters.outputChars = Math.max(run.counters.outputChars, text.length)
+      }
+      const outputExceeded = run.outputBudgetReached ? '' : outputBudgetName()
+      if (outputExceeded) {
+        run.outputBudgetReached = true
+        run.outputBudgetMessage = outputExceeded
+        notifyHarness(run.runId, event)
+        cancelRuntimeSession(run, outputExceeded)
+        return
+      }
       const exceeded = budgetName()
       if (exceeded) {
         notifyHarness(run.runId, event)
@@ -270,6 +300,21 @@ function attachRunEventHandlers(run) {
 
 function settleRun(run) {
   const reason = run.turnEndReason
+  if (run.outputBudgetReached) {
+    if (continueRunAfterOutputBudget(run)) return
+    finishRun({
+      status: 'interrupted',
+      reason: {
+        kind: 'interrupted',
+        error: { code: 'OUTPUT_BUDGET_REACHED', message: run.outputBudgetMessage || '输出长度预算已触达' },
+        resumable: true,
+        auto_continued: run.outputBudgetSegments,
+      },
+      messageId: run.messageId,
+      lastSeq: run.lastSeq,
+    })
+    return
+  }
   const kind = reason?.kind ?? 'error'
   const status = kind === 'completed' ? 'completed'
     : kind === 'aborted' ? 'canceled'
@@ -277,7 +322,99 @@ function settleRun(run) {
   finishRun({ status, reason, messageId: run.messageId, lastSeq: run.lastSeq })
 }
 
-const DEFAULT_BUDGET = { maxSteps: 60, maxToolCalls: 80, maxObserve: 40, maxAct: 50, wallclockMs: 30 * 60 * 1000 }
+function cancelRuntimeSession(run, message) {
+  const sdk = state.runtime?.sdk
+  if (!sdk || run.cancelRequested) return
+  run.cancelRequested = true
+  run.outputBudgetSegments += 1
+  sdk.request('session/cancel', {
+    sessionId: run.sessionId,
+    reason: `OUTPUT_BUDGET_REACHED:${message}`,
+    keepInbox: true,
+  }, 30000).catch((error) => {
+    console.error(`[worker] run ${run.runId} 输出预算取消失败: ${error.message}`)
+    if (state.activeRun === run) {
+      finishRun({
+        status: 'interrupted',
+        reason: {
+          kind: 'interrupted',
+          error: { code: 'OUTPUT_BUDGET_REACHED', message },
+          resumable: true,
+          auto_continued: run.outputBudgetSegments,
+        },
+        messageId: run.messageId,
+        lastSeq: run.lastSeq,
+      })
+      stopRuntime()
+    }
+  })
+}
+
+function continueRunAfterOutputBudget(run) {
+  const sdk = state.runtime?.sdk
+  if (!sdk || run.outputBudgetSegments >= run.budget.maxOutputSegments) {
+    if (run.outputBudgetSegments >= run.budget.maxOutputSegments) {
+      run.outputBudgetMessage = `内容已自动分段 ${run.outputBudgetSegments} 次,达到单轮安全上限`
+    }
+    return false
+  }
+  const segment = run.outputBudgetSegments + 1
+  run.outputBudgetReached = false
+  run.outputBudgetMessage = ''
+  run.cancelRequested = false
+  run.sawTurnEnd = false
+  run.sawIdle = false
+  run.turnEndReason = null
+  run.counters.textDeltas = 0
+  run.counters.outputChars = 0
+  run.outputDeltaTimes = []
+  const text = [
+    '系统为保持核心稳定,刚才临时暂停了超长输出。',
+    `请从上一段回答中断的位置继续写第 ${segment} 段,只输出后续内容,不要重复已经写过的内容。`,
+    '如果内容已经完整,请用一句话自然收尾。',
+  ].join('\n')
+  sdk.request('session/prompt', {
+    sessionId: run.sessionId,
+    contentBlocks: [{ type: 'text', text }],
+  }, 30000).then((result) => {
+    if (state.activeRun !== run) return
+    if (result?.messageId) run.messageId = result.messageId
+    notifyHarness(run.runId, {
+      type: 'agent/inbox/spliced',
+      data: { messageId: run.messageId, sessionId: run.sessionId, internal: true, outputBudgetSegment: segment },
+      seq: run.lastSeq,
+    })
+  }).catch((error) => {
+    console.error(`[worker] run ${run.runId} 自动续写失败: ${error.message}`)
+    if (state.activeRun !== run) return
+    finishRun({
+      status: 'interrupted',
+      reason: {
+        kind: 'interrupted',
+        error: { code: 'OUTPUT_BUDGET_REACHED', message: error.message },
+        resumable: true,
+        auto_continued: run.outputBudgetSegments,
+      },
+      messageId: run.messageId,
+      lastSeq: run.lastSeq,
+    })
+  })
+  return true
+}
+
+const DEFAULT_BUDGET = {
+  maxSteps: 60,
+  maxToolCalls: 80,
+  maxObserve: 40,
+  maxAct: 50,
+  maxTextDeltas: Number(process.env.CRAWSHRIMP_AGENT_MAX_TEXT_DELTAS || 12000),
+  maxOutputChars: Number(process.env.CRAWSHRIMP_AGENT_MAX_OUTPUT_CHARS || 240000),
+  maxOutputSegments: Number(process.env.CRAWSHRIMP_AGENT_MAX_OUTPUT_SEGMENTS || 6),
+  minOutputDeltasBeforePause: Number(process.env.CRAWSHRIMP_AGENT_MIN_OUTPUT_DELTAS_BEFORE_PAUSE || 2500),
+  maxTextDeltaRatePerSecond: Number(process.env.CRAWSHRIMP_AGENT_MAX_TEXT_DELTA_RATE_PER_SECOND || 32),
+  outputRateWindowMs: Number(process.env.CRAWSHRIMP_AGENT_OUTPUT_RATE_WINDOW_MS || 10000),
+  wallclockMs: 30 * 60 * 1000,
+}
 
 function normalizeBudget(budget) {
   const b = { ...DEFAULT_BUDGET, ...(budget || {}) }
@@ -293,6 +430,40 @@ function budgetName() {
   if (run.counters.toolCalls >= b.maxToolCalls) return `工具调用预算耗尽(${b.maxToolCalls})`
   if (run.counters.observe >= b.maxObserve) return `页面观察预算耗尽(${b.maxObserve})`
   if (run.counters.act >= b.maxAct) return `页面操作预算耗尽(${b.maxAct})`
+  return ''
+}
+
+function recordAssistantOutput(run, text) {
+  run.counters.textDeltas += 1
+  run.counters.outputChars += text.length
+  const windowMs = Math.max(1000, Number(run.budget.outputRateWindowMs) || DEFAULT_BUDGET.outputRateWindowMs)
+  const times = Array.isArray(run.outputDeltaTimes) ? run.outputDeltaTimes : (run.outputDeltaTimes = [])
+  const now = Date.now()
+  times.push(now)
+  const cutoff = now - windowMs
+  while (times.length && times[0] < cutoff) times.shift()
+}
+
+function outputPressureName(run, b) {
+  const maxRate = Number(b.maxTextDeltaRatePerSecond) || DEFAULT_BUDGET.maxTextDeltaRatePerSecond
+  const windowMs = Math.max(1000, Number(b.outputRateWindowMs) || DEFAULT_BUDGET.outputRateWindowMs)
+  const minDeltas = Math.max(1, Number(b.minOutputDeltasBeforePause) || DEFAULT_BUDGET.minOutputDeltasBeforePause)
+  if (run.counters.textDeltas < minDeltas) return ''
+  const times = Array.isArray(run.outputDeltaTimes) ? run.outputDeltaTimes : []
+  const minSamples = Math.max(2, Math.ceil(maxRate * (windowMs / 1000)))
+  if (times.length < minSamples) return ''
+  const rate = times.length * 1000 / windowMs
+  return `文本输出速率过高(${rate.toFixed(1)}/s>${maxRate}/s,${Math.round(windowMs / 1000)}s窗口)`
+}
+
+function outputBudgetName() {
+  const run = state.activeRun
+  if (!run) return ''
+  const b = run.budget
+  const pressureExceeded = outputPressureName(run, b)
+  if (pressureExceeded) return pressureExceeded
+  if (run.counters.outputChars >= b.maxOutputChars) return `输出长度预算耗尽(${b.maxOutputChars})`
+  if (run.counters.textDeltas >= b.maxTextDeltas) return `文本增量预算耗尽(${b.maxTextDeltas})`
   return ''
 }
 
@@ -312,7 +483,9 @@ async function startRun(params) {
   const run = {
     runId, sessionId,
     messageId: null, sawTurnEnd: false, sawIdle: false, turnEndReason: null, lastSeq: 0,
-    budget, counters: { steps: 0, toolCalls: 0, observe: 0, act: 0 },
+    outputBudgetReached: false, outputBudgetMessage: '', outputBudgetSegments: 0, cancelRequested: false,
+    outputDeltaTimes: [],
+    budget, counters: { steps: 0, toolCalls: 0, observe: 0, act: 0, textDeltas: 0, outputChars: 0 },
     resolve: null,
     timer: setTimeout(() => {
       console.error(`[worker] run ${runId} 超过 ${RUN_ABSOLUTE_TIMEOUT_MS}ms 绝对上限,终止`)

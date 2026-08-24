@@ -18,10 +18,21 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from core import data_sink
+from core import runtime_paths
 from core.agent import mcp_gateway
 from core.agent import worker as worker_mod
 from core.agent.service import AgentService, _cleanup_orphan_runtimes, _pick_free_port, _reserve_free_port
 from core.agent.worker import AgentWorker, WORKER_STREAM_LIMIT_BYTES, WorkerProtocolError, resolve_node_executable
+
+
+def _init_temp_agent_db(monkeypatch, tmp_path):
+    monkeypatch.setenv("CRAWSHRIMP_DATA", str(tmp_path))
+    monkeypatch.setattr(runtime_paths, "_runtime_data_root", None, raising=False)
+    monkeypatch.setattr(runtime_paths, "_runtime_data_key", None, raising=False)
+    runtime_paths.reset_runtime_data_root_cache()
+    from core.agent import db
+    db.init_agent_db()
+    return db
 
 
 def test_development_node_runtime_prefers_real_electron_executable(tmp_path, monkeypatch):
@@ -1337,6 +1348,183 @@ def test_broadcast_uses_persisted_event_sequence_and_advances_cursor():
         assert db.get_session(session_id)["last_event_seq"] == message["seq"]
 
     asyncio.run(scenario())
+
+
+def test_assistant_text_deltas_are_batched_before_persisting(monkeypatch, tmp_path):
+    async def scenario():
+        from core.agent import service as service_module
+
+        db = _init_temp_agent_db(monkeypatch, tmp_path)
+        monkeypatch.setattr(service_module, "AGENT_DELTA_FLUSH_BYTES", 64, raising=False)
+        monkeypatch.setattr(service_module, "AGENT_DELTA_FLUSH_INTERVAL_SECONDS", 60, raising=False)
+        session_id = f"session-stream-{uuid.uuid4().hex[:10]}"
+        turn_id = f"turn-stream-{uuid.uuid4().hex[:10]}"
+        run_id = f"run-stream-{uuid.uuid4().hex[:10]}"
+        db.create_session(session_id, f"runtime-stream-{uuid.uuid4().hex[:10]}")
+        db.create_turn(turn_id, session_id, 1, f"{run_id}:user")
+        run = db.create_run(run_id, session_id, turn_id, "test", "test-model")
+        service = AgentService()
+        queue = service.subscribe(session_id)
+        try:
+            await service._project_event(session_id, run, {
+                "type": "assistant/chunk",
+                "data": {"chunk": {"type": "text-delta", "text": "你"}},
+            })
+            await service._project_event(session_id, run, {
+                "type": "assistant/chunk",
+                "data": {"chunk": {"type": "text-delta", "text": "好"}},
+            })
+
+            assert queue.empty()
+            assert db.list_messages(session_id) == []
+
+            await service._flush_assistant_delta(run_id)
+            message = await asyncio.wait_for(queue.get(), timeout=1)
+            assert message["event_type"] == "assistant.delta"
+            assert message["payload"]["delta"] == "你好"
+            rows = db.list_messages(session_id)
+            assert len(rows) == 1
+            assert json.loads(rows[0]["content_json"])["text"] == "你好"
+            assert rows[0]["status"] == "streaming"
+
+            await service._project_event(session_id, run, {
+                "type": "assistant/message",
+                "data": {"message": {"role": "assistant", "content": [
+                    {"type": "text", "text": "你好，完成"}
+                ]}},
+            })
+            completed = await asyncio.wait_for(queue.get(), timeout=1)
+            assert completed["event_type"] == "assistant.completed"
+            assert completed["payload"]["text"] == "你好，完成"
+            rows = db.list_messages(session_id)
+            assert len(rows) == 1
+            assert json.loads(rows[0]["content_json"])["text"] == "你好，完成"
+            assert rows[0]["status"] == "complete"
+        finally:
+            service.unsubscribe(session_id, queue)
+            await service._finalize_assistant_stream(run_id)
+
+    asyncio.run(scenario())
+
+
+def test_output_budget_profiles_are_long_form_friendly_and_pressure_based():
+    from core.agent import service as service_module
+
+    source = Path(service_module.__file__).read_text(encoding="utf-8")
+    assert '"CRAWSHRIMP_AGENT_MAX_TEXT_DELTAS", 12000' in source
+    assert '"CRAWSHRIMP_AGENT_MAX_OUTPUT_CHARS", 240000' in source
+    assert '"CRAWSHRIMP_AGENT_BROWSER_MAX_TEXT_DELTAS", 20000' in source
+    assert '"CRAWSHRIMP_AGENT_BROWSER_MAX_OUTPUT_CHARS", 480000' in source
+    assert '"CRAWSHRIMP_AGENT_MAX_OUTPUT_SEGMENTS", 6' in source
+    assert '"CRAWSHRIMP_AGENT_MAX_TEXT_DELTA_RATE_PER_SECOND", 32.0' in source
+
+    default_budget = service_module.BUDGET_PROFILES["default"]
+    browser_budget = service_module.BUDGET_PROFILES["browser"]
+
+    for budget in (default_budget, browser_budget):
+        assert budget["maxOutputSegments"] > 0
+        assert budget["minOutputDeltasBeforePause"] > 0
+        assert budget["maxTextDeltaRatePerSecond"] > 0
+        assert budget["outputRateWindowMs"] >= 1000
+
+
+def test_output_budget_interruption_keeps_single_stream_for_auto_continuation(monkeypatch, tmp_path):
+    async def scenario():
+        from core.agent import service as service_module
+
+        db = _init_temp_agent_db(monkeypatch, tmp_path)
+        monkeypatch.setattr(service_module, "AGENT_DELTA_FLUSH_INTERVAL_SECONDS", 60, raising=False)
+        session_id = f"session-budget-{uuid.uuid4().hex[:10]}"
+        turn_id = f"turn-budget-{uuid.uuid4().hex[:10]}"
+        run_id = f"run-budget-{uuid.uuid4().hex[:10]}"
+        db.create_session(session_id, f"runtime-budget-{uuid.uuid4().hex[:10]}")
+        db.create_turn(turn_id, session_id, 1, f"{run_id}:user")
+        run = db.create_run(run_id, session_id, turn_id, "test", "test-model")
+        service = AgentService()
+        queue = service.subscribe(session_id)
+        try:
+            await service._project_event(session_id, run, {
+                "type": "assistant/chunk",
+                "data": {"chunk": {"type": "text-delta", "text": "第一段"}},
+            })
+            await service._project_event(session_id, run, {
+                "type": "assistant/message",
+                "data": {
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": "第一段"}]},
+                    "interrupted": True,
+                },
+            })
+            delta = await asyncio.wait_for(queue.get(), timeout=1)
+            assert delta["event_type"] == "assistant.delta"
+            assert delta["payload"]["delta"] == "第一段"
+            assert queue.empty()
+            rows = db.list_messages(session_id)
+            assert len(rows) == 1
+            assert json.loads(rows[0]["content_json"])["text"] == "第一段"
+            assert rows[0]["status"] == "streaming"
+
+            await service._project_event(session_id, run, {
+                "type": "turn/end",
+                "data": {"reason": {
+                    "kind": "aborted",
+                    "reason": {"kind": "hook", "reason": "OUTPUT_BUDGET_REACHED:文本增量预算耗尽"},
+                }},
+            })
+            assert queue.empty()
+
+            await service._project_event(session_id, run, {
+                "type": "assistant/chunk",
+                "data": {"chunk": {"type": "text-delta", "text": "第二段"}},
+            })
+            await service._project_event(session_id, run, {
+                "type": "assistant/message",
+                "data": {"message": {"role": "assistant", "content": [
+                    {"type": "text", "text": "第二段"}
+                ]}},
+            })
+            completed = await asyncio.wait_for(queue.get(), timeout=1)
+            assert completed["event_type"] == "assistant.completed"
+            assert completed["payload"]["text"] == "第一段第二段"
+            rows = db.list_messages(session_id)
+            assert len(rows) == 1
+            assert json.loads(rows[0]["content_json"])["text"] == "第一段第二段"
+            assert rows[0]["status"] == "complete"
+        finally:
+            service.unsubscribe(session_id, queue)
+            await service._finalize_assistant_stream(run_id)
+
+    asyncio.run(scenario())
+
+
+def test_sse_global_subscriber_is_removed_after_repeated_overflow(monkeypatch, tmp_path):
+    async def scenario():
+        from core.agent import service as service_module
+
+        db = _init_temp_agent_db(monkeypatch, tmp_path)
+        monkeypatch.setattr(service_module, "SSE_QUEUE_MAX_OVERFLOWS", 2, raising=False)
+        session_id = f"session-sse-{uuid.uuid4().hex[:10]}"
+        db.create_session(session_id, f"runtime-sse-{uuid.uuid4().hex[:10]}")
+        service = AgentService()
+        queue = service.subscribe_all()
+        for _ in range(queue.maxsize):
+            queue.put_nowait({"seq": 0})
+
+        await service.broadcast(session_id, 0, "probe", {"n": 1})
+        assert queue in service.global_subscribers
+        await service.broadcast(session_id, 0, "probe", {"n": 2})
+
+        assert queue not in service.global_subscribers
+        assert service.sse_dropped_events == 2
+
+    asyncio.run(scenario())
+
+
+def test_subprocess_output_decoder_falls_back_to_local_encoding(monkeypatch):
+    import locale
+    from core.agent.mcp_gateway import _decode_subprocess_output
+
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda _do_setlocale=False: "gbk")
+    assert _decode_subprocess_output("中文".encode("gbk")) == "中文"
 
 
 def test_dsh_model_catalog_declares_vision_without_widening_text_only_models():

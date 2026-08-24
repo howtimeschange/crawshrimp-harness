@@ -101,6 +101,8 @@ const IS_DEV   = !app.isPackaged
 const CLOUD_APPROVAL_APP_ENV = IS_DEV ? 'development' : 'production'
 const BACKEND_STARTUP_ATTEMPTS = process.platform === 'win32' ? 60 : 20
 const BACKEND_LAUNCH_RETRIES = process.platform === 'win32' ? 3 : 2
+const BACKEND_READY_PROBE_TIMEOUT_MS = Number(process.env.CRAWSHRIMP_BACKEND_READY_PROBE_TIMEOUT_MS || (process.platform === 'win32' ? 1500 : 1000))
+const BACKEND_READY_RESTART_UNAVAILABLE_MS = Number(process.env.CRAWSHRIMP_BACKEND_READY_RESTART_UNAVAILABLE_MS || 10 * 60 * 1000)
 const BACKEND_STOP_GRACE_MS = 7000
 const BACKEND_INSTANCE_ID = crypto.randomUUID()
 const AI_VIDEO_CAPABILITY_SECRET = crypto.randomBytes(32).toString('hex')
@@ -2339,7 +2341,7 @@ async function prepareBackendEndpoint() {
 const backendController = createBackendController({
   log,
   sendStatus,
-  probeReady: () => probeApiReady(),
+  probeReady: () => getBackendHealth(BACKEND_READY_PROBE_TIMEOUT_MS),
   validateReady: () => validateApiRuntime(),
   switchEndpoint: () => switchApiEndpoint(),
   startProcess: () => spawnBackendProcess(),
@@ -2348,6 +2350,7 @@ const backendController = createBackendController({
   attempts: BACKEND_STARTUP_ATTEMPTS,
   launchRetries: BACKEND_LAUNCH_RETRIES,
   retryDelayMs: 1200,
+  restartProbeUnavailableMs: BACKEND_READY_RESTART_UNAVAILABLE_MS,
 })
 
 const restartBackend = createSingleFlightRecovery(async () => {

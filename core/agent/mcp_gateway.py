@@ -1189,6 +1189,20 @@ def tool_fs_write(path: str, content: str) -> dict:
     return _ok({"path": str(p), "size": len(text.encode("utf-8")), "message": "已写入(经审批授权)"})
 
 
+def _decode_subprocess_output(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    data = bytes(value)
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        import locale
+        encoding = locale.getpreferredencoding(False) or "utf-8"
+        return data.decode(encoding, errors="replace")
+
+
 def tool_fs_exec(command: str, timeout_ms: int = 60000) -> dict:
     """执行本机命令(用户已授权全局访问;命令执行经审批卡授权,审计保留)。"""
     guard = _require_run()
@@ -1212,15 +1226,15 @@ def tool_fs_exec(command: str, timeout_ms: int = 60000) -> dict:
     except (TypeError, ValueError):
         return _failed("INVALID_PARAMETERS", f"timeout_ms 非法: {timeout_ms}")
     try:
-        proc = _sp.run(cmd, shell=True, capture_output=True, text=True, timeout=limit / 1000,
+        proc = _sp.run(cmd, shell=True, capture_output=True, timeout=limit / 1000,
                        start_new_session=True)
     except _sp.TimeoutExpired:
         return _failed("TIMEOUT", f"命令超时({limit}ms)")
     except Exception as exc:  # noqa: BLE001
         return _failed("EXEC_FAILED", str(exc))
     return _ok({"exit_code": proc.returncode,
-                "stdout": (proc.stdout or "")[-20000:],
-                "stderr": (proc.stderr or "")[-8000:]})
+                "stdout": _decode_subprocess_output(proc.stdout)[-20000:],
+                "stderr": _decode_subprocess_output(proc.stderr)[-8000:]})
 
 
 def tool_attachment_read(attachment_id: str, max_chars: int = 12000) -> dict:
@@ -1579,9 +1593,11 @@ def _run_git(args: list, cwd: Optional[Path] = None, timeout: int = 180) -> tupl
     try:
         result = subprocess.run(
             ["git", *args], cwd=str(cwd) if cwd else None,
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, timeout=timeout,
         )
-        output = (result.stdout or "").strip() + ("\n" + (result.stderr or "").strip() if result.stderr else "")
+        stdout = _decode_subprocess_output(result.stdout).strip()
+        stderr = _decode_subprocess_output(result.stderr).strip()
+        output = stdout + ("\n" + stderr if stderr else "")
         return result.returncode == 0, output[:4000]
     except Exception as exc:  # noqa: BLE001
         return False, str(exc)

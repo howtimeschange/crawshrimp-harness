@@ -26,6 +26,28 @@ function describeProcessStartup(proc) {
   return output.split('\n').map(line => line.trim()).filter(Boolean).slice(-8).join(' | ')
 }
 
+function normalizeProbeResult(value) {
+  if (value && typeof value === 'object') {
+    return {
+      ok: Boolean(value.ok),
+      statusCode: Number(value.statusCode || 0),
+      errorCode: String(value.errorCode || ''),
+      error: String(value.error || ''),
+    }
+  }
+  return { ok: Boolean(value), statusCode: 0, errorCode: '', error: '' }
+}
+
+function describeProbeResult(result) {
+  if (!result) return 'unknown'
+  if (result.ok) return 'ok'
+  const parts = []
+  if (result.errorCode) parts.push(result.errorCode)
+  if (result.statusCode) parts.push(`HTTP ${result.statusCode}`)
+  if (result.error) parts.push(result.error)
+  return parts.join(' ') || 'not ready'
+}
+
 function createBackendController(options) {
   const probeReady = options.probeReady
   const startProcess = options.startProcess
@@ -38,6 +60,7 @@ function createBackendController(options) {
   const launchRetries = Math.max(0, Number(options.launchRetries || 0))
   const retryDelayMs = Math.max(1, Number(options.retryDelayMs || intervalMs))
   const restartProbeFailures = Math.max(1, Number(options.restartProbeFailures || 3))
+  const restartProbeUnavailableMs = Math.max(1, Number(options.restartProbeUnavailableMs || 10 * 60 * 1000))
   const stopProcess = options.stopProcess || (() => {})
 
   let backendProcess = null
@@ -47,6 +70,7 @@ function createBackendController(options) {
   let currentProcessWasReady = false
   let state = 'starting'
   let consecutiveProbeFailures = 0
+  let readyBackendFirstMissedAt = 0
   let validateTolerated = 0
   const MAX_VALIDATE_TOLERANCE = 4
   let lastError = ''
@@ -108,12 +132,14 @@ function createBackendController(options) {
       startupFailure = null
       lastError = ''
       consecutiveProbeFailures = 0
+      readyBackendFirstMissedAt = 0
       validateTolerated = 0
       sendStatus('api', true)
       setState('ready')
     }
 
-    const initiallyReady = await probeReady()
+    const initialProbeResult = normalizeProbeResult(await probeReady())
+    const initiallyReady = initialProbeResult.ok
     assertActiveGeneration(ensureGeneration)
     if (initiallyReady) {
       const runtimeValid = await validateReady()
@@ -162,7 +188,8 @@ function createBackendController(options) {
 
         for (let attempt = 0; attempt < attempts; attempt += 1) {
           assertActiveGeneration(startupGeneration)
-          const probeIsReady = await probeReady()
+          const probeResult = normalizeProbeResult(await probeReady())
+          const probeIsReady = probeResult.ok
           assertActiveGeneration(startupGeneration)
           if (probeIsReady) {
             const runtimeValid = await validateReady()
@@ -198,6 +225,10 @@ function createBackendController(options) {
             endpointSwitched = true
             break
           }
+          if (hadReadyBackend) {
+            if (!readyBackendFirstMissedAt) readyBackendFirstMissedAt = Date.now()
+            log(`[api] ready backend probe failed ${attempt + 1}/${attempts}: ${describeProbeResult(probeResult)}`)
+          }
           if (startupFailure) break
           await sleep(intervalMs)
           assertActiveGeneration(startupGeneration)
@@ -215,11 +246,13 @@ function createBackendController(options) {
 
         if (hadReadyBackend) {
           consecutiveProbeFailures += 1
-          if (consecutiveProbeFailures < restartProbeFailures) {
+          const unavailableForMs = readyBackendFirstMissedAt ? Date.now() - readyBackendFirstMissedAt : 0
+          if (consecutiveProbeFailures < restartProbeFailures || unavailableForMs < restartProbeUnavailableMs) {
+            log(`[api] ready backend still unavailable for ${unavailableForMs}ms after ${consecutiveProbeFailures} probe rounds; keeping existing process`)
             markNotReady('degraded')
             throw startupFailure
           }
-          log(`[api] ready backend missed ${consecutiveProbeFailures} consecutive probes; restarting`)
+          log(`[api] ready backend missed ${consecutiveProbeFailures} probe rounds over ${unavailableForMs}ms; restarting`)
           markNotReady('restarting')
         }
 
@@ -302,6 +335,7 @@ function createBackendController(options) {
     ready = false
     currentProcessWasReady = false
     consecutiveProbeFailures = 0
+    readyBackendFirstMissedAt = 0
     if (proc) stopProcess(proc)
     sendStatus('api', false)
     setState('stopped')

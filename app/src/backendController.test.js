@@ -429,6 +429,54 @@ test('ensureReady does not stop a previously ready backend during transient prob
   assert.deepEqual(stopped, [])
 })
 
+test('ensureReady waits for total ready-backend outage duration before restart', async () => {
+  let startCount = 0
+  let outage = false
+  let now = 1000
+  const stopped = []
+  const logs = []
+  const originalNow = Date.now
+  Date.now = () => now
+
+  const controller = createBackendController({
+    log: (line) => logs.push(line),
+    sendStatus: () => {},
+    probeReady: async () => {
+      if (outage) {
+        now += 600
+        return { ok: false, errorCode: 'ETIMEDOUT', error: 'timeout' }
+      }
+      return startCount > 0
+    },
+    startProcess: () => {
+      startCount += 1
+      const proc = new EventEmitter()
+      proc.pid = 4100 + startCount
+      return proc
+    },
+    stopProcess: (proc) => stopped.push(proc.pid),
+    intervalMs: 1,
+    attempts: 1,
+    restartProbeFailures: 1,
+    restartProbeUnavailableMs: 1000,
+  })
+
+  try {
+    await controller.ensureReady()
+    outage = true
+
+    await assert.rejects(controller.ensureReady(), /API server startup timeout/)
+    assert.deepEqual(stopped, [])
+    assert.ok(logs.some(line => line.includes('ETIMEDOUT') && line.includes('timeout')))
+
+    await assert.rejects(controller.ensureReady(), /API server startup timeout/)
+    assert.deepEqual(stopped, [4101])
+    assert.ok(logs.some(line => line.includes('probe rounds over')))
+  } finally {
+    Date.now = originalNow
+  }
+})
+
 test('ensureReady marks a previously ready backend degraded before restart threshold', async () => {
   let startCount = 0
   let probeOk = true

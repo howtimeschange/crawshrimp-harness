@@ -7,6 +7,7 @@ const WELCOME_NOTICE_PATCH_MARKER = 'crawshrimp-disable-dsh-welcome-notice-v1'
 const LLM_PI_AI_PROVIDER_ORDER_PATCH_MARKER = 'crawshrimp-llm-pi-ai-provider-order-v1'
 const OLD_SDK_JSONRPC_IMAGE_ADMISSION_PATCH_MARKER = 'crawshrimp-sdk-jsonrpc-image-admission-v1'
 const SDK_JSONRPC_IMAGE_ADMISSION_PATCH_MARKER = 'crawshrimp-sdk-jsonrpc-image-admission-v2'
+const SDK_JSONRPC_CANCEL_PATCH_MARKER = 'crawshrimp-sdk-jsonrpc-cancel-v1'
 const OLD_DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER = 'crawshrimp-deepseek-multimodal-fallback-v1'
 const DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER = 'crawshrimp-deepseek-multimodal-fallback-v2'
 const OLD_DEEPSEEK_MULTIMODAL_AUDIT_PATCH_MARKER = 'crawshrimp-deepseek-multimodal-audit-v1'
@@ -40,20 +41,23 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const welcomeNoticeResult = patchWelcomeNotice(runtimeRoot)
   const piAiProviderOrderResult = patchPiAiProviderOrder(runtimeRoot)
   const sdkJsonrpcImageAdmissionResult = patchSdkJsonrpcImageAdmission(runtimeRoot)
+  const sdkJsonrpcCancelResult = patchSdkJsonrpcCancel(runtimeRoot)
   const piAiDeepSeekMultimodalFallbackResult = patchPiAiDeepSeekMultimodalFallback(runtimeRoot)
   const hostApiProxyDeepSeekImageSelectionResult = patchHostApiProxyDeepSeekImageSelection(runtimeRoot)
   return {
-    patched: workspaceResult.patched || welcomeNoticeResult.patched || piAiProviderOrderResult.patched || sdkJsonrpcImageAdmissionResult.patched || piAiDeepSeekMultimodalFallbackResult.patched || hostApiProxyDeepSeekImageSelectionResult.patched,
+    patched: workspaceResult.patched || welcomeNoticeResult.patched || piAiProviderOrderResult.patched || sdkJsonrpcImageAdmissionResult.patched || sdkJsonrpcCancelResult.patched || piAiDeepSeekMultimodalFallbackResult.patched || hostApiProxyDeepSeekImageSelectionResult.patched,
     workspaceEntry: workspaceResult.workspaceEntry,
     welcomeNoticeEntry: welcomeNoticeResult.welcomeNoticeEntry,
     piAiProviderOrderEntry: piAiProviderOrderResult.piAiProviderOrderEntry,
     sdkJsonrpcImageAdmissionEntry: sdkJsonrpcImageAdmissionResult.sdkJsonrpcImageAdmissionEntry,
+    sdkJsonrpcCancelEntry: sdkJsonrpcCancelResult.sdkJsonrpcCancelEntry,
     piAiDeepSeekMultimodalFallbackEntry: piAiDeepSeekMultimodalFallbackResult.piAiDeepSeekMultimodalFallbackEntry,
     hostApiProxyDeepSeekImageSelectionEntry: hostApiProxyDeepSeekImageSelectionResult.hostApiProxyDeepSeekImageSelectionEntry,
     workspacePatched: workspaceResult.patched,
     welcomeNoticePatched: welcomeNoticeResult.patched,
     piAiProviderOrderPatched: piAiProviderOrderResult.patched,
     sdkJsonrpcImageAdmissionPatched: sdkJsonrpcImageAdmissionResult.patched,
+    sdkJsonrpcCancelPatched: sdkJsonrpcCancelResult.patched,
     piAiDeepSeekMultimodalFallbackPatched: piAiDeepSeekMultimodalFallbackResult.patched,
     hostApiProxyDeepSeekImageSelectionPatched: hostApiProxyDeepSeekImageSelectionResult.patched,
   }
@@ -735,6 +739,56 @@ async function durableSdkPromptContent(ctx, content) {
   return { patched: true, sdkJsonrpcImageAdmissionEntry }
 }
 
+function patchSdkJsonrpcCancel(runtimeRoot) {
+  const sdkJsonrpcCancelEntry = join(
+    resolve(runtimeRoot),
+    'node_modules',
+    '@deepseek-ai',
+    'dsh-sdk-jsonrpc-server',
+    'lib',
+    'index.js',
+  )
+  let source = readFileSync(sdkJsonrpcCancelEntry, 'utf8')
+  if (source.includes(SDK_JSONRPC_CANCEL_PATCH_MARKER)) {
+    return { patched: false, sdkJsonrpcCancelEntry }
+  }
+
+  source = replaceExact(
+    source,
+    '\tasync prompt(params) {\n\t\tconst rec = await this.getOrCreateSession(params.sessionId);\n\t\tif (this.ctx.agents.get(rec.handle.agent.id) !== rec.handle.agent) throw new Error(`session agent was disposed outside the server: ${params.sessionId}`);\n\t\tconst message = createUserMessage({\n\t\t\tcontent: await durableSdkPromptContent(this.ctx, params.contentBlocks),\n\t\t\tsource: { kind: "user" }\n\t\t});\n\t\trec.handle.agent.followup(message);\n\t\treturn { messageId: message.id };\n\t}\n',
+    `\tasync prompt(params) {
+\t\tconst rec = await this.getOrCreateSession(params.sessionId);
+\t\tif (this.ctx.agents.get(rec.handle.agent.id) !== rec.handle.agent) throw new Error(\`session agent was disposed outside the server: \${params.sessionId}\`);
+\t\tconst message = createUserMessage({
+\t\t\tcontent: await durableSdkPromptContent(this.ctx, params.contentBlocks),
+\t\t\tsource: { kind: "user" }
+\t\t});
+\t\trec.handle.agent.followup(message);
+\t\treturn { messageId: message.id };
+\t}
+\t// ${SDK_JSONRPC_CANCEL_PATCH_MARKER}: abort one SDK-owned session without tearing down the web runtime.
+\tasync cancel(params) {
+\t\tconst pending = this.sessionCreations.get(params.sessionId);
+\t\tconst rec = this.sessions.get(params.sessionId) ?? (pending ? await pending : void 0);
+\t\tif (rec === void 0) return { accepted: false, reason: "session-not-found" };
+\t\tif (this.ctx.agents.get(rec.handle.agent.id) !== rec.handle.agent) throw new Error(\`session agent was disposed outside the server: \${params.sessionId}\`);
+\t\trec.handle.agent.cancel({ kind: "hook", reason: String(params.reason || "sdk-cancel") }, { keepInbox: params.keepInbox === true });
+\t\tawait rec.handle.agent.whenIdle();
+\t\treturn { accepted: true };
+\t}
+`,
+    'sdk-jsonrpc cancel method',
+  )
+  source = replaceExact(
+    source,
+    '\t\t\tcase "session/prompt": return this.prompt(params);\n\t\t\tcase "shutdown": return this.shutdown();',
+    '\t\t\tcase "session/prompt": return this.prompt(params);\n\t\t\tcase "session/cancel": return this.cancel(params);\n\t\t\tcase "shutdown": return this.shutdown();',
+    'sdk-jsonrpc cancel dispatch',
+  )
+  writeFileSync(sdkJsonrpcCancelEntry, source, 'utf8')
+  return { patched: true, sdkJsonrpcCancelEntry }
+}
+
 function replaceExact(source, needle, replacement, label) {
   const first = source.indexOf(needle)
   if (first < 0) throw new Error(`cannot patch ${label}: expected source not found`)
@@ -763,6 +817,7 @@ if (invokedPath && invokedPath === resolve(fileURLToPath(import.meta.url))) {
   console.log(`[patch-runtime-dependencies] welcome notice removal ${result.welcomeNoticePatched ? 'applied' : 'already present'}`)
   console.log(`[patch-runtime-dependencies] pi-ai provider order ${result.piAiProviderOrderPatched ? 'applied' : 'already present'}`)
   console.log(`[patch-runtime-dependencies] sdk-jsonrpc image admission ${result.sdkJsonrpcImageAdmissionPatched ? 'applied' : 'already present'}`)
+  console.log(`[patch-runtime-dependencies] sdk-jsonrpc cancel ${result.sdkJsonrpcCancelPatched ? 'applied' : 'already present'}`)
   console.log(`[patch-runtime-dependencies] pi-ai DeepSeek multimodal fallback ${result.piAiDeepSeekMultimodalFallbackPatched ? 'applied' : 'already present'}`)
   console.log(`[patch-runtime-dependencies] host-apiproxy DeepSeek image selection ${result.hostApiProxyDeepSeekImageSelectionPatched ? 'applied' : 'already present'}`)
 }

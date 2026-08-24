@@ -12,6 +12,41 @@ test('worker absolute timeout stops the runtime before reporting failure', () =>
   assert.match(timeoutBody, /RUN_TIMEOUT/)
 })
 
+test('worker auto-continues text output budgets without restarting the runtime', () => {
+  const source = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/worker.mjs'), 'utf8')
+  assert.match(source, /maxTextDeltas/)
+  assert.match(source, /maxOutputChars/)
+  assert.match(source, /maxOutputSegments/)
+  assert.match(source, /minOutputDeltasBeforePause/)
+  assert.match(source, /maxTextDeltaRatePerSecond/)
+  assert.match(source, /outputRateWindowMs/)
+  assert.match(source, /outputDeltaTimes/)
+  assert.match(source, /function extractEventDeltaText\(data\)/)
+  assert.match(source, /function recordAssistantOutput\(run, text\)/)
+  assert.match(source, /outputChars \+= text\.length/)
+  assert.match(source, /文本输出速率过高/)
+  assert.match(source, /function outputBudgetName\(\)/)
+  assert.match(source, /文本增量预算耗尽/)
+  assert.match(source, /输出长度预算耗尽/)
+  assert.match(source, /session\/cancel/)
+  assert.match(source, /function continueRunAfterOutputBudget\(run\)/)
+  assert.match(source, /只输出后续内容,不要重复已经写过的内容/)
+  assert.match(source, /status:\s*'interrupted'/)
+  assert.match(source, /OUTPUT_BUDGET_REACHED/)
+  assert.match(source, /resumable:\s*true/)
+})
+
+test('worker output protection defaults are long-form friendly and pressure-based', () => {
+  const source = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/worker.mjs'), 'utf8')
+  assert.match(source, /CRAWSHRIMP_AGENT_MAX_TEXT_DELTAS \|\| 12000/)
+  assert.match(source, /CRAWSHRIMP_AGENT_MAX_OUTPUT_CHARS \|\| 240000/)
+  assert.match(source, /CRAWSHRIMP_AGENT_MAX_OUTPUT_SEGMENTS \|\| 6/)
+  assert.match(source, /CRAWSHRIMP_AGENT_MIN_OUTPUT_DELTAS_BEFORE_PAUSE \|\| 2500/)
+  assert.match(source, /CRAWSHRIMP_AGENT_MAX_TEXT_DELTA_RATE_PER_SECOND \|\| 32/)
+  assert.match(source, /CRAWSHRIMP_AGENT_OUTPUT_RATE_WINDOW_MS \|\| 10000/)
+  assert.match(source, /outputPressureName\(run, b\)/)
+})
+
 test('worker keeps every mutable DSH runtime path under CRAWSHRIMP_DATA', () => {
   const source = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/worker.mjs'), 'utf8')
   assert.match(source, /DSH_HOME:\s*process\.env\.DSH_HOME\s*\|\|\s*`\$\{state\.dataRoot\}\/agent\/dsh-home`/)
@@ -106,6 +141,28 @@ test('agent SSE consumers reconnect from the last persisted event id', () => {
   assert.match(productLayer, /streamGlobalAgentEvents\(lastEventSeq/)
   assert.match(agentHome, /lastEventSeq/)
   assert.match(agentHome, /streamAgentEvents\(props\.sessionId,\s*lastEventSeq/)
+})
+
+test('agent views present final output budget interruptions without calling them failures', () => {
+  const productLayer = readFileSync(resolve(appRoot, 'src/renderer/components/agent/AgentProductLayer.vue'), 'utf8')
+  const agentHome = readFileSync(resolve(appRoot, 'src/renderer/views/AgentHome.vue'), 'utf8')
+  assert.match(agentHome, /case 'run\.interrupted'/)
+  assert.match(productLayer, /case 'run\.interrupted'/)
+  assert.match(agentHome, /OUTPUT_BUDGET_REACHED/)
+  assert.match(productLayer, /OUTPUT_BUDGET_REACHED/)
+  assert.match(agentHome, /已自动分段输出/)
+  assert.match(productLayer, /已自动分段输出/)
+  assert.doesNotMatch(agentHome.match(/case 'run\.interrupted':[\s\S]*?break/)?.[0] || '', /运行失败/)
+  assert.doesNotMatch(productLayer.match(/case 'run\.interrupted':[\s\S]*?break/)?.[0] || '', /运行失败/)
+})
+
+test('staged DSH JSON-RPC runtime exposes session cancel for no-reload output budgets', () => {
+  const patcher = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs'), 'utf8')
+  assert.match(patcher, /SDK_JSONRPC_CANCEL_PATCH_MARKER/)
+  assert.match(patcher, /session\/cancel/)
+  assert.match(patcher, /rec\.handle\.agent\.cancel/)
+  assert.match(patcher, /rec\.handle\.agent\.whenIdle/)
+  assert.match(patcher, /sdkJsonrpcCancelPatched/)
 })
 
 test('agent iframe reloads when runtime generation changes on the same web URL', () => {

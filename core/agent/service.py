@@ -177,6 +177,20 @@ def _process_is_alive(pid: int) -> bool:
         return False
 
 
+def _decode_process_output(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    data = bytes(value)
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        import locale
+        encoding = locale.getpreferredencoding(False) or "utf-8"
+        return data.decode(encoding, errors="replace")
+
+
 def _cleanup_orphan_runtimes(data_root: str) -> None:
     """清理本 data 目录的孤儿 worker/harness 进程(后端被强杀后的残留)。
 
@@ -256,12 +270,12 @@ Get-CimInstance Win32_Process |
         out = _subprocess.run(
             ["powershell", "-NoProfile", "-Command", script],
             capture_output=True,
-            text=True,
             timeout=15,
             env=env,
-        ).stdout.strip()
+        ).stdout
     except Exception:  # noqa: BLE001
         return
+    out = _decode_process_output(out).strip()
     if not out:
         return
     try:
@@ -292,12 +306,77 @@ def _remove_owned_tree(path: Path) -> None:
 FILTERED_EVENT_TYPES = {"request/header", "request/context"}
 
 RUN_FINAL_STATUSES = {"completed", "failed", "canceled", "interrupted"}
+OUTPUT_BUDGET_ERROR_CODE = "OUTPUT_BUDGET_REACHED"
+OUTPUT_BUDGET_NOTICE = "内容较长，已自动分段输出并达到单轮安全上限。当前内容已保留；如需更多内容，可缩小范围或发送“继续”。"
 
-# 分级预算(方案 §11):按 Run 类型;worker 侧计数执行
+
+def _result_reason(result: dict) -> dict:
+    reason = result.get("reason") if isinstance(result, dict) else None
+    return reason if isinstance(reason, dict) else {}
+
+
+def _result_error_code(result: dict) -> Optional[str]:
+    error = _result_reason(result).get("error")
+    if not isinstance(error, dict):
+        return None
+    code = str(error.get("code") or "").strip()
+    return code or None
+
+
+def _result_error_message(result: dict) -> Optional[str]:
+    error = _result_reason(result).get("error")
+    if not isinstance(error, dict):
+        return None
+    message = str(error.get("message") or "").strip()
+    return message or None
+
+
+def _is_output_budget_turn_end(reason: dict) -> bool:
+    if not isinstance(reason, dict) or reason.get("kind") != "aborted":
+        return False
+    cancel_reason = reason.get("reason")
+    if not isinstance(cancel_reason, dict) or cancel_reason.get("kind") != "hook":
+        return False
+    return OUTPUT_BUDGET_ERROR_CODE in str(cancel_reason.get("reason") or "")
+
+
+def _int_env(name: str, default: int, *, minimum: int = 1) -> int:
+    try:
+        value = int(str(os.environ.get(name, "")).strip() or default)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, value)
+
+
+def _float_env(name: str, default: float, *, minimum: float = 0.0) -> float:
+    try:
+        value = float(str(os.environ.get(name, "")).strip() or default)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, value)
+
+
+AGENT_DELTA_FLUSH_INTERVAL_SECONDS = _float_env("CRAWSHRIMP_AGENT_DELTA_FLUSH_MS", 200.0, minimum=10.0) / 1000.0
+AGENT_DELTA_FLUSH_BYTES = _int_env("CRAWSHRIMP_AGENT_DELTA_FLUSH_BYTES", 1024)
+SSE_QUEUE_MAX_OVERFLOWS = _int_env("CRAWSHRIMP_AGENT_SSE_QUEUE_MAX_OVERFLOWS", 3)
+
+# 分级保护:按 Run 类型传给 worker。长文阈值只做最后保险,持续高速 delta 洪峰会先触发自动分段。
 BUDGET_PROFILES = {
     "browser": {"maxSteps": 80, "maxToolCalls": 120, "maxObserve": 40, "maxAct": 50,
+                "maxTextDeltas": _int_env("CRAWSHRIMP_AGENT_BROWSER_MAX_TEXT_DELTAS", 20000),
+                "maxOutputChars": _int_env("CRAWSHRIMP_AGENT_BROWSER_MAX_OUTPUT_CHARS", 480000),
+                "maxOutputSegments": _int_env("CRAWSHRIMP_AGENT_BROWSER_MAX_OUTPUT_SEGMENTS", 6),
+                "minOutputDeltasBeforePause": _int_env("CRAWSHRIMP_AGENT_BROWSER_MIN_OUTPUT_DELTAS_BEFORE_PAUSE", 2500),
+                "maxTextDeltaRatePerSecond": _float_env("CRAWSHRIMP_AGENT_BROWSER_MAX_TEXT_DELTA_RATE_PER_SECOND", 32.0, minimum=1.0),
+                "outputRateWindowMs": _int_env("CRAWSHRIMP_AGENT_BROWSER_OUTPUT_RATE_WINDOW_MS", 10000, minimum=1000),
                 "wallclockMs": 30 * 60 * 1000},
     "default": {"maxSteps": 30, "maxToolCalls": 40, "maxObserve": 5, "maxAct": 0,
+                "maxTextDeltas": _int_env("CRAWSHRIMP_AGENT_MAX_TEXT_DELTAS", 12000),
+                "maxOutputChars": _int_env("CRAWSHRIMP_AGENT_MAX_OUTPUT_CHARS", 240000),
+                "maxOutputSegments": _int_env("CRAWSHRIMP_AGENT_MAX_OUTPUT_SEGMENTS", 6),
+                "minOutputDeltasBeforePause": _int_env("CRAWSHRIMP_AGENT_MIN_OUTPUT_DELTAS_BEFORE_PAUSE", 2500),
+                "maxTextDeltaRatePerSecond": _float_env("CRAWSHRIMP_AGENT_MAX_TEXT_DELTA_RATE_PER_SECOND", 32.0, minimum=1.0),
+                "outputRateWindowMs": _int_env("CRAWSHRIMP_AGENT_OUTPUT_RATE_WINDOW_MS", 10000, minimum=1000),
                 "wallclockMs": 15 * 60 * 1000},
 }
 
@@ -485,6 +564,8 @@ class AgentService:
         self.subscribers: dict[str, set[asyncio.Queue]] = {}
         self.global_subscribers: set[asyncio.Queue] = set()
         self.sse_dropped_events = 0
+        self._sse_queue_overflows: dict[asyncio.Queue, int] = {}
+        self._assistant_streams: dict[str, dict] = {}
         # web UI 原生会话的影子投影:runtime_session_id → 影子 run
         self.shadow_runs: dict[str, dict] = {}
         # MCP client 是 runtime 级单连接，但 DSH Web 可并行运行多个会话。
@@ -790,20 +871,51 @@ class AgentService:
     def subscribe(self, session_id: str) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         self.subscribers.setdefault(session_id, set()).add(queue)
+        self._sse_queue_overflows.pop(queue, None)
         return queue
 
     def unsubscribe(self, session_id: str, queue: asyncio.Queue) -> None:
         subs = self.subscribers.get(session_id)
         if subs:
             subs.discard(queue)
+        self._sse_queue_overflows.pop(queue, None)
 
     def subscribe_all(self) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         self.global_subscribers.add(queue)
+        self._sse_queue_overflows.pop(queue, None)
         return queue
 
     def unsubscribe_all(self, queue: asyncio.Queue) -> None:
         self.global_subscribers.discard(queue)
+        self._sse_queue_overflows.pop(queue, None)
+
+    def _record_sse_queue_full(self, queue: asyncio.Queue, *,
+                               session_id: str = "", global_stream: bool = False) -> None:
+        self.sse_dropped_events += 1
+        overflow_count = self._sse_queue_overflows.get(queue, 0) + 1
+        self._sse_queue_overflows[queue] = overflow_count
+        label = "global" if global_stream else "session"
+        if self.sse_dropped_events == 1 or self.sse_dropped_events % 100 == 0:
+            print(f"[agent] SSE {label} 队列已满，累计丢弃 {self.sse_dropped_events} 次；客户端将按 SQLite cursor 补放", flush=True)
+        if overflow_count < SSE_QUEUE_MAX_OVERFLOWS:
+            return
+        if global_stream:
+            self.global_subscribers.discard(queue)
+        else:
+            subs = self.subscribers.get(session_id)
+            if subs:
+                subs.discard(queue)
+        self._sse_queue_overflows.pop(queue, None)
+        print(f"[agent] SSE {label} 订阅者连续 {overflow_count} 次不消费，已移除以保护核心事件循环", flush=True)
+
+    def _fanout_sse_message(self, queue: asyncio.Queue, message: dict, *,
+                            session_id: str = "", global_stream: bool = False) -> None:
+        try:
+            queue.put_nowait(message)
+            self._sse_queue_overflows.pop(queue, None)
+        except asyncio.QueueFull:
+            self._record_sse_queue_full(queue, session_id=session_id, global_stream=global_stream)
 
     async def broadcast(self, session_id: str, seq: int, event_type: str, payload: Any) -> None:
         """持久化一次产品事件并用同一个 SQLite seq 扇出 session/global SSE。"""
@@ -820,20 +932,153 @@ class AgentService:
         event_seq = db.append_event(session_id, run_id, event_type, payload)
         message = {"seq": event_seq, "event_type": event_type, "payload": payload}
         for queue in list(self.subscribers.get(session_id, ())):
-            try:
-                queue.put_nowait(message)
-            except asyncio.QueueFull:
-                self.sse_dropped_events += 1
-                if self.sse_dropped_events == 1 or self.sse_dropped_events % 100 == 0:
-                    print(f"[agent] SSE session 队列已满，累计丢弃 {self.sse_dropped_events} 次；客户端将按 SQLite cursor 补放", flush=True)
+            self._fanout_sse_message(queue, message, session_id=session_id)
         gmessage = message
         for queue in list(self.global_subscribers):
+            self._fanout_sse_message(queue, gmessage, global_stream=True)
+
+    def _assistant_stream_state(self, session_id: str, run: dict) -> dict:
+        run_id = str(run["run_id"])
+        state = self._assistant_streams.get(run_id)
+        if state is not None:
+            return state
+        message_id = f"{run_id}:assistant"
+        existing = _get_message_by_id(message_id)
+        text = ""
+        if existing:
             try:
-                queue.put_nowait(gmessage)
-            except asyncio.QueueFull:
-                self.sse_dropped_events += 1
-                if self.sse_dropped_events == 1 or self.sse_dropped_events % 100 == 0:
-                    print(f"[agent] SSE global 队列已满，累计丢弃 {self.sse_dropped_events} 次；客户端将按 SQLite cursor 补放", flush=True)
+                content = json.loads(existing.get("content_json") or "{}")
+                text = str(content.get("text") or "")
+            except (TypeError, ValueError):
+                text = ""
+        state = {
+            "run_id": run_id,
+            "session_id": session_id,
+            "turn_id": run.get("turn_id"),
+            "message_id": message_id,
+            "text": text,
+            "pending": [],
+            "pending_bytes": 0,
+            "message_exists": bool(existing),
+            "append_assistant_messages": False,
+            "flush_task": None,
+        }
+        self._assistant_streams[run_id] = state
+        return state
+
+    def _cancel_assistant_flush_task(self, state: dict) -> None:
+        task = state.get("flush_task")
+        if not task or task.done():
+            state["flush_task"] = None
+            return
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        if task is not current:
+            task.cancel()
+        state["flush_task"] = None
+
+    def _schedule_assistant_delta_flush(self, run_id: str) -> None:
+        state = self._assistant_streams.get(run_id)
+        if not state or not state.get("pending"):
+            return
+        task = state.get("flush_task")
+        if task and not task.done():
+            return
+        state["flush_task"] = asyncio.create_task(self._delayed_assistant_delta_flush(run_id))
+
+    async def _delayed_assistant_delta_flush(self, run_id: str) -> None:
+        try:
+            await asyncio.sleep(AGENT_DELTA_FLUSH_INTERVAL_SECONDS)
+            await self._flush_assistant_delta(run_id)
+        except asyncio.CancelledError:
+            return
+        finally:
+            state = self._assistant_streams.get(run_id)
+            if state and state.get("flush_task") is asyncio.current_task():
+                state["flush_task"] = None
+
+    def _persist_assistant_stream_message(self, state: dict, *, status: str = "streaming") -> None:
+        content = {"text": state.get("text") or ""}
+        if state.get("message_exists"):
+            db.update_message(state["message_id"], content_json=content, status=status,
+                              completed_at=_now_iso() if status == "complete" else None)
+        else:
+            db.create_message(state["message_id"], state["session_id"], state.get("turn_id"),
+                              state["run_id"], "assistant", "text", content, status=status)
+            state["message_exists"] = True
+
+    async def _flush_assistant_delta(self, run_id: str) -> None:
+        state = self._assistant_streams.get(str(run_id))
+        if not state or not state.get("pending"):
+            return
+        delta = "".join(state.get("pending") or [])
+        state["pending"] = []
+        state["pending_bytes"] = 0
+        if not delta:
+            return
+        self._persist_assistant_stream_message(state, status="streaming")
+        await self.broadcast(state["session_id"], 0, "assistant.delta",
+                             {"run_id": state["run_id"], "delta": delta})
+
+    async def _project_assistant_delta(self, session_id: str, run: dict, delta: str) -> None:
+        if not delta:
+            return
+        state = self._assistant_stream_state(session_id, run)
+        state["text"] = f"{state.get('text') or ''}{delta}"
+        state.setdefault("pending", []).append(delta)
+        state["pending_bytes"] = int(state.get("pending_bytes") or 0) + len(delta.encode("utf-8", "replace"))
+        if state["pending_bytes"] >= AGENT_DELTA_FLUSH_BYTES:
+            self._cancel_assistant_flush_task(state)
+            await self._flush_assistant_delta(str(run["run_id"]))
+        else:
+            self._schedule_assistant_delta_flush(str(run["run_id"]))
+
+    async def _complete_assistant_message(self, session_id: str, run: dict, text: str) -> None:
+        if not text:
+            return
+        state = self._assistant_stream_state(session_id, run)
+        self._cancel_assistant_flush_task(state)
+        current_text = state.get("text") or ""
+        if state.get("append_assistant_messages") and current_text:
+            state["text"] = current_text if current_text.endswith(text) else f"{current_text}{text}"
+        else:
+            state["text"] = text
+        state["append_assistant_messages"] = False
+        state["pending"] = []
+        state["pending_bytes"] = 0
+        self._persist_assistant_stream_message(state, status="complete")
+        await self.broadcast(session_id, 0, "assistant.completed",
+                             {"run_id": run["run_id"], "text": state["text"]})
+        self._assistant_streams.pop(str(run["run_id"]), None)
+
+    async def _checkpoint_interrupted_assistant_message(self, session_id: str, run: dict, text: str) -> None:
+        state = self._assistant_stream_state(session_id, run)
+        self._cancel_assistant_flush_task(state)
+        await self._flush_assistant_delta(str(run["run_id"]))
+        current_text = state.get("text") or ""
+        if text:
+            state["text"] = current_text if current_text.endswith(text) else f"{current_text}{text}"
+        state["pending"] = []
+        state["pending_bytes"] = 0
+        state["append_assistant_messages"] = True
+        self._persist_assistant_stream_message(state, status="streaming")
+
+    async def _finalize_assistant_stream(self, run_id: str, *, mark_complete: bool = False) -> None:
+        state = self._assistant_streams.get(str(run_id))
+        if not state:
+            return
+        self._cancel_assistant_flush_task(state)
+        if mark_complete and state.get("text"):
+            self._persist_assistant_stream_message(state, status="complete")
+            await self.broadcast(state["session_id"], 0, "assistant.completed",
+                                 {"run_id": state["run_id"], "text": state.get("text") or ""})
+            self._assistant_streams.pop(str(run_id), None)
+            return
+        await self._flush_assistant_delta(str(run_id))
+        if not mark_complete:
+            self._assistant_streams.pop(str(run_id), None)
 
     # ---------- 提交轮次 ----------
 
@@ -993,24 +1238,41 @@ class AgentService:
             status = result.get("status")
             if status not in RUN_FINAL_STATUSES:
                 status = "failed"
+            error_code = _result_error_code(result)
+            error_message = _result_error_message(result)
+            output_budget_reached = status == "interrupted" and error_code == OUTPUT_BUDGET_ERROR_CODE
+            await self._finalize_assistant_stream(
+                run_id,
+                mark_complete=status == "completed" or output_budget_reached,
+            )
             db.update_run(run_id, status=status, finished_at=_now_iso(),
                           dsh_message_id=result.get("messageId"),
                           dsh_start_seq=result.get("dsh_start_seq") or 0,
                           dsh_end_seq=result.get("dsh_end_seq") or 0,
-                          error_code=None if status == "completed" else (result.get("reason") or {}).get("error", {}).get("code") if isinstance(result.get("reason"), dict) else None,
+                          error_code=None if status == "completed" else error_code,
                           error_message=None if status == "completed" else json.dumps(result.get("reason"), ensure_ascii=False)[:500])
             db.update_turn(turn_id, status=status, completed_at=_now_iso())
             event_type = {"completed": "run.completed", "failed": "run.failed",
                           "canceled": "run.canceled", "interrupted": "run.interrupted"}[status]
-            await self.broadcast(session_id, 0, event_type, {"run_id": run_id, "status": status})
+            event_payload = {"run_id": run_id, "status": status}
+            if status != "completed":
+                if error_code:
+                    event_payload["error_code"] = error_code
+                if error_message:
+                    event_payload["error"] = error_message
+            if output_budget_reached:
+                event_payload.update({"resumable": True, "notice": OUTPUT_BUDGET_NOTICE})
+            await self.broadcast(session_id, 0, event_type, event_payload)
             if status == "completed":
                 await self._broadcast_run_artifacts(run_id, session_id)
         except AgentModelConfigurationError as exc:
+            await self._finalize_assistant_stream(run_id)
             db.update_run(run_id, status="failed", finished_at=_now_iso(),
                           error_code="MODEL_CONFIGURATION_ERROR", error_message=str(exc)[:500])
             db.update_turn(turn_id, status="failed", completed_at=_now_iso())
             await self.broadcast(session_id, 0, "run.failed", {"run_id": run_id, "error": str(exc)[:300]})
         except Exception as exc:  # noqa: BLE001
+            await self._finalize_assistant_stream(run_id)
             db.update_run(run_id, status="failed", finished_at=_now_iso(),
                           error_code="WORKER_ERROR", error_message=str(exc)[:500])
             db.update_turn(turn_id, status="failed", completed_at=_now_iso())
@@ -1020,6 +1282,7 @@ class AgentService:
             for runtime_sid in runtime_session_ids:
                 self.unregister_run_context(runtime_sid, run_id)
             self.active_run = None
+            self._assistant_streams.pop(run_id, None)
             db.update_session(session_id, status="idle")
             await self.broadcast(session_id, 0, "session.updated", {"session_id": session_id, "status": "idle"})
 
@@ -1467,11 +1730,13 @@ class AgentService:
             reason = data.get("reason") or {}
             kind = reason.get("kind") or "completed"
             if kind == "completed":
+                await self._finalize_assistant_stream(run["run_id"], mark_complete=True)
                 db.update_run(run["run_id"], status="completed", finished_at=_now_iso())
                 db.update_turn(run.get("turn_id") or "", status="completed", completed_at=_now_iso())
                 await self.broadcast(session_id, 0, "run.completed", {"run_id": run["run_id"]})
                 await self._broadcast_run_artifacts(run["run_id"], session_id)
             else:
+                await self._finalize_assistant_stream(run["run_id"])
                 error_code = None
                 if isinstance(reason.get("error"), dict):
                     error_code = reason["error"].get("code")
@@ -1500,32 +1765,16 @@ class AgentService:
         if event_type == "assistant/chunk":
             delta = _extract_text(data)
             if delta:
-                message_id = f"{run_id}:assistant"
-                existing = _get_message_by_id(message_id)
-                if existing:
-                    content = json.loads(existing["content_json"])
-                    content["text"] = (content.get("text") or "") + delta
-                    db.update_message(message_id, content_json=content)
-                else:
-                    db.create_message(message_id, session_id, run.get("turn_id"), run_id,
-                                      "assistant", "text", {"text": delta}, status="streaming")
-                await self.broadcast(session_id, _seq(session_id), "assistant.delta",
-                                     {"run_id": run_id, "delta": delta})
+                await self._project_assistant_delta(session_id, run, delta)
             return
 
         if event_type == "assistant/message":
             text = _extract_text(data)
             if text:
-                message_id = f"{run_id}:assistant"
-                existing = _get_message_by_id(message_id)
-                if existing:
-                    db.update_message(message_id, content_json={"text": text}, status="complete",
-                                      completed_at=_now_iso())
+                if data.get("interrupted"):
+                    await self._checkpoint_interrupted_assistant_message(session_id, run, text)
                 else:
-                    db.create_message(message_id, session_id, run.get("turn_id"), run_id,
-                                      "assistant", "text", {"text": text})
-                await self.broadcast(session_id, _seq(session_id), "assistant.completed",
-                                     {"run_id": run_id, "text": text})
+                    await self._complete_assistant_message(session_id, run, text)
             return
 
         if event_type == "tool/call":
@@ -1561,7 +1810,12 @@ class AgentService:
             reason = data.get("reason") or {}
             kind = reason.get("kind") or "error"
             if kind == "completed":
+                await self._finalize_assistant_stream(run_id, mark_complete=True)
                 return  # run.completed 由 _run_one 收尾广播
+            if _is_output_budget_turn_end(reason):
+                await self._flush_assistant_delta(run_id)
+                return
+            await self._finalize_assistant_stream(run_id)
             error_code = None
             if isinstance(reason.get("error"), dict):
                 error_code = reason["error"].get("code")

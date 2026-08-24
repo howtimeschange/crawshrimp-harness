@@ -195,6 +195,8 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import AgentBrowserPanel from '../components/agent/AgentBrowserPanel.vue'
 
 const BROWSER_PANEL_STORAGE_KEY = 'crawshrimp.agent.browserPanelOpen'
+const OUTPUT_BUDGET_ERROR_CODE = 'OUTPUT_BUDGET_REACHED'
+const OUTPUT_BUDGET_NOTICE = '内容较长，已自动分段输出并达到单轮安全上限。当前内容已保留；如需更多内容，可缩小范围或发送“继续”。'
 
 const props = defineProps({
   sessionId: { type: String, default: '' },
@@ -264,6 +266,12 @@ function writeBrowserPanelPref(open) {
 
 function pushMessage(message) {
   messages.value.push({ id: `m-${Date.now()}-${localSeq++}`, ...message })
+}
+
+function runInterruptedNotice(data) {
+  if (data?.notice) return data.notice
+  if (data?.error_code === OUTPUT_BUDGET_ERROR_CODE) return OUTPUT_BUDGET_NOTICE
+  return `回答已中断:${data?.error || data?.error_code || '未知原因'}`
 }
 
 async function scrollToBottom() {
@@ -385,6 +393,13 @@ function handleEvent(event, data) {
     case 'run.completed': {
       activeRunId.value = ''
       queuePosition.value = 0
+      break
+    }
+    case 'run.interrupted': {
+      activeRunId.value = ''
+      queuePosition.value = 0
+      pushMessage({ kind: 'notice', text: runInterruptedNotice(data) })
+      scrollToBottom()
       break
     }
     case 'run.canceled': {
