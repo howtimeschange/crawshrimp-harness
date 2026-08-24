@@ -157,6 +157,7 @@ const props = defineProps({
   theme: { type: String, default: '' },        // effectiveTheme(light|dark)
   navItems: { type: Array, default: () => [] }, // 抓虾一级菜单(注入会话侧边栏底部)
   activeNav: { type: String, default: '' },     // 当前激活菜单 id
+  appVersion: { type: String, default: '' },     // 抓虾桌面版本号,同步到 DSH 侧栏品牌区
   browserAutoOpen: { type: Number, default: 0 }, // 智能体调用浏览器工具时递增,自动弹出实时浏览器窗口
   browserTabs: { type: Object, default: () => ({ tabs: [], activeTabId: '' }) }, // 浏览器活动快照 → 多窗口跟随
 })
@@ -405,9 +406,10 @@ function openDeepSeekPlatform() {
 }
 
 function onFrameLoad() {
-  // iframe 加载后同步主题、菜单与默认工作区
+  // iframe 加载后同步主题、菜单、版本号与默认工作区
   pushTheme()
   pushNav()
+  pushAppVersion()
   pushWorkspace()
 }
 
@@ -426,6 +428,17 @@ function pushNav() {
     items: (props.navItems || []).map((item) => ({ id: item.id, icon: item.icon, label: item.label })),
     active: props.activeNav,
   })
+}
+
+function normalizedAppVersionLabel() {
+  const version = String(props.appVersion || '').trim().replace(/^v(?=\d)/i, '')
+  return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version) ? `v${version}` : ''
+}
+
+function pushAppVersion() {
+  const version = normalizedAppVersionLabel()
+  if (!version) return
+  postToFrame({ __crawshrimp: 'app-version', version })
 }
 
 function shouldUseShellDirectoryPicker() {
@@ -656,6 +669,10 @@ watch(() => props.theme, (t) => {
 watch(() => [props.navItems, props.activeNav], () => {
   pushNav()
 }, { deep: false })
+
+watch(() => props.appVersion, () => {
+  pushAppVersion()
+})
 
 watch(showFallbackNav, (visible) => {
   if (visible) emit('rail-metrics', { width: 280, collapsed: false })

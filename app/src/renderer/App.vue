@@ -127,6 +127,7 @@
           :theme="effectiveTheme"
           :nav-items="filteredNavItems"
           :active-nav="currentView"
+          :app-version="agentAppVersionLabel"
           :browser-auto-open="browserAutoOpenCount"
           :browser-tabs="browserTabs"
           @nav-select="onAgentNavSelect"
@@ -575,6 +576,11 @@ const titlebarUpdate = computed(() => {
   const icon = { available: '⬇', downloading: '↓', waiting: '…', ready: '↻',
                  error: '!', disabled: '-', checking: '⟳', installing: '↻' }[tone] || '✓'
   return { ...presentation, icon }
+})
+
+const agentAppVersionLabel = computed(() => {
+  const version = String(updateStatus.value.currentVersion || '').trim().replace(/^v(?=\d)/i, '')
+  return version ? `v${version}` : ''
 })
 
 const showTitlebarVersionBadge = computed(() =>

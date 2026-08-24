@@ -139,6 +139,33 @@ window.__ModuleLoader__.load({
     CRAWSHRIMP_TOKENS['--dsw-static-deepseek-700-delete'] = { light: '#D94300', dark: '#F05615' }
 
     const CRAWSHRIMP_BRAND_NAME = '抓虾智能体'
+    let currentCrawshrimpAppVersion = ''
+
+    function normalizeCrawshrimpAppVersion(value) {
+      const version = String(value || '').trim().replace(/^v(?=\d)/i, '')
+      return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version) ? `v${version}` : ''
+    }
+
+    function readCrawshrimpAppVersion() {
+      try {
+        const queryVersion = normalizeCrawshrimpAppVersion(new URLSearchParams(window.location.search || '').get('csAppVersion'))
+        if (queryVersion) return queryVersion
+      } catch (error) {
+        // 交给 shell 的 postMessage
+      }
+      return currentCrawshrimpAppVersion
+    }
+
+    function publishCrawshrimpAppVersion(value) {
+      const version = normalizeCrawshrimpAppVersion(value)
+      if (!version || version === currentCrawshrimpAppVersion) return
+      currentCrawshrimpAppVersion = version
+      try {
+        window.dispatchEvent(new CustomEvent('crawshrimp:app-version', { detail: { version } }))
+      } catch (error) {
+        // 旧环境没有 CustomEvent 时忽略,下一次组件挂载会读取内存值。
+      }
+    }
 
     function CrawshrimpBrandMark({ size = 24, className } = {}) {
       const px = Number(size) || 24
@@ -155,7 +182,20 @@ window.__ModuleLoader__.load({
     }
 
     function CrawshrimpBrandName() {
-      return react.createElement('span', { className: 'cs-brand-name' }, CRAWSHRIMP_BRAND_NAME)
+      const [version, setVersion] = react.useState(() => readCrawshrimpAppVersion())
+      react.useEffect(() => {
+        const updateVersion = (event) => {
+          const next = normalizeCrawshrimpAppVersion(event?.detail?.version || readCrawshrimpAppVersion())
+          if (next) setVersion(next)
+        }
+        window.addEventListener('crawshrimp:app-version', updateVersion)
+        updateVersion()
+        return () => window.removeEventListener('crawshrimp:app-version', updateVersion)
+      }, [])
+      return react.createElement('span', { className: 'cs-brand-lockup' },
+        react.createElement('span', { className: 'cs-brand-name' }, CRAWSHRIMP_BRAND_NAME),
+        version ? react.createElement('span', { className: 'cs-brand-version' }, version) : null,
+      )
     }
 
     function registerCrawshrimpBrandSlots(ctx) {
@@ -224,6 +264,12 @@ window.__ModuleLoader__.load({
       '  justify-content: center;',
       '  flex: none;',
       '}',
+      '.cs-brand-lockup {',
+      '  display: inline-flex;',
+      '  align-items: baseline;',
+      '  gap: 7px;',
+      '  min-width: 0;',
+      '}',
       '.cs-brand-name {',
       '  font-size: 17px;',
       '  font-weight: 750;',
@@ -231,6 +277,15 @@ window.__ModuleLoader__.load({
       '  color: var(--dsw-alias-label-primary);',
       '  white-space: nowrap;',
       '  overflow: hidden;',
+      '}',
+      '.cs-brand-version {',
+      '  flex: none;',
+      '  color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary));',
+      '  font-size: 11px;',
+      '  font-weight: 600;',
+      '  letter-spacing: 0;',
+      '  line-height: 1;',
+      '  white-space: nowrap;',
       '}',
       // 2) 折叠态的 DSH 装饰鱼标
       '.hHd-Xa_railFish { display: none !important; }',
@@ -245,9 +300,13 @@ window.__ModuleLoader__.load({
       '.Md3f7G_turnStatus .Md3f7G_turnStatusClock { font-size: 12px; }',
       // 5) 新会话空状态 hero:去 DeepSeek 鱼 logo 与文案,替换为抓虾
       'svg[viewBox="0 0 23.16 17.04"] { display: none !important; }',
-      '.pXSMma_headlineText { font-size: 0 !important; }',
+      '.pXSMma_headlineText { display: inline-flex !important; align-items: baseline; justify-content: center; gap: 0; font-size: 0 !important; line-height: 1.3; white-space: nowrap; }',
       '.pXSMma_headlineText::before { content: "抓虾智能体"; font-size: 24px; font-weight: 750; color: var(--dsw-alias-label-primary); }',
+      '.pXSMma_headlineText::after { content: "· 抓住灵感，拿到结果"; margin-left: 8px; font-size: 22px; font-weight: 400; color: transparent; background-image: linear-gradient(100deg, var(--dsw-alias-label-secondary) 0%, var(--dsw-alias-label-secondary) 32%, color-mix(in srgb, var(--dsw-alias-label-primary) 42%, #7C8AA5) 43%, #D9E6F2 49%, color-mix(in srgb, var(--dsw-alias-label-primary) 34%, #AFC3DA) 55%, var(--dsw-alias-label-secondary) 68%, var(--dsw-alias-label-secondary) 100%); background-size: 230% 100%; background-position: 120% 50%; -webkit-background-clip: text; background-clip: text; animation: cs-slogan-wave 2.8s cubic-bezier(0.4, 0, 0.2, 1) infinite; }',
       '.pXSMma_previewBadge { display: none !important; }',
+      '@keyframes cs-slogan-wave { 0% { background-position: 120% 50%; } 52% { background-position: -24% 50%; } 100% { background-position: -24% 50%; } }',
+      '@media (prefers-reduced-motion: reduce) { .pXSMma_headlineText::after { animation: none; background-image: none; color: var(--dsw-alias-label-secondary); } }',
+      '@supports not ((background-clip: text) or (-webkit-background-clip: text)) { .pXSMma_headlineText::after { background-image: none; color: var(--dsw-alias-label-secondary); } }',
       // 6) 抓虾菜单注入侧边栏(主菜单:新会话下/工作区上;底部菜单:设置)
       //    按 DESIGN.md 规范:13.5px 字号、4px 网格间距、完整 hover/active/focus 状态
       '[data-crawshrimp-nav-main], [data-crawshrimp-nav-bottom] { display: flex; flex-direction: column; gap: 2px; padding: 10px 6px; margin: 2px 2px 0; }',
@@ -1321,6 +1380,7 @@ window.__ModuleLoader__.load({
         const data = event && event.data
         if (data && data.__crawshrimp === 'theme') adopt(data.theme)
         if (data && data.__crawshrimp === 'nav') renderNav(data.items, data.active)
+        if (data && data.__crawshrimp === 'app-version') publishCrawshrimpAppVersion(data.version)
         if (data && data.__crawshrimp === 'workspace') ensureDefaultWorkspace(ctx, data.root)
         if (data && data.__crawshrimp === 'workspace-directory-picked') handleWorkspaceDirectoryPicked(data)
         if (data && data.__crawshrimp === 'artifact-show') renderArtifactShow(data)

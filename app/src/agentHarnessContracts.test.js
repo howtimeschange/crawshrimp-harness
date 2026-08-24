@@ -460,6 +460,8 @@ test('DSH attachment bridge resets and retitles the native file-drop overlay', (
 
 test('DSH Crawshrimp brand slots replace the official DeepSeek Harness wordmark', () => {
   const slots = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-slots/lib/client.js'), 'utf8')
+  const app = readFileSync(resolve(appRoot, 'src/renderer/App.vue'), 'utf8')
+  const webView = readFileSync(resolve(appRoot, 'src/renderer/views/AgentWebView.vue'), 'utf8')
   const slotsPackage = JSON.parse(readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-slots/package.json'), 'utf8'))
   const webCordis = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/web-cordis.yml'), 'utf8')
   const brandOfficialBlock = webCordis.split('- id: ui-brand-official', 2)[1]?.split('\n- id:', 1)[0] || ''
@@ -478,6 +480,16 @@ test('DSH Crawshrimp brand slots replace the official DeepSeek Harness wordmark'
   assert.match(slots, /ctx\.slots\.register\(\{\s*name:\s*['"]sidebar\.brand\.name['"]/)
   assert.match(slots, /ctx\.slots\.register\(\{\s*name:\s*['"]conversation\.hero\.brand\.mark['"]/)
   assert.match(slots, /抓虾智能体/)
+  assert.match(slots, /抓住灵感，拿到结果/)
+  assert.match(slots, /content:\s*["']· 抓住灵感，拿到结果["']/)
+  assert.match(slots, /font-size:\s*22px/)
+  assert.match(slots, /cs-slogan-wave/)
+  assert.match(app, /:app-version="agentAppVersionLabel"/)
+  assert.match(app, /const agentAppVersionLabel = computed/)
+  assert.match(webView, /appVersion/)
+  assert.match(webView, /__crawshrimp:\s*['"]app-version['"]/)
+  assert.match(slots, /normalizeCrawshrimpAppVersion/)
+  assert.match(slots, /cs-brand-version/)
   assert.doesNotMatch(slots, /hHd-Xa_brand::after/)
   assert.doesNotMatch(slots, /抓虾 Harness 智能体/)
   assert.match(brandOfficialBlock, /name:\s*'@deepseek-ai\/dsh-client-ui-brand-official'/)
