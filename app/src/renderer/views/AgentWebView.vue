@@ -92,16 +92,19 @@
               <div class="provider-guide-row">
                 <div>
                   <strong>DeepSeek 官方 API</strong>
-                  <span>适合新用户直接接入官方 Key；可先打开平台创建 Key，再进入配置弹窗粘贴保存。</span>
+                  <span>
+                    适合新用户直接接入官方 Key；
+                    <button class="provider-text-link" type="button" @click="openDeepSeekPlatform">
+                      <IconExternalLink :size="13" :stroke-width="2.1" aria-hidden="true" />
+                      <span>打开 DeepSeek 平台</span>
+                    </button>
+                    创建 Key 后进入配置弹窗粘贴保存。
+                  </span>
                 </div>
                 <div class="provider-guide-actions">
-                  <button class="placeholder-btn link" type="button" @click="openDeepSeekPlatform">
-                    <IconExternalLink :size="15" :stroke-width="2.1" aria-hidden="true" />
-                    <span>打开 DeepSeek 平台</span>
-                  </button>
                   <button class="placeholder-btn primary" type="button" @click="openDeepSeekProviderSettings">
                     <IconSettings :size="15" :stroke-width="2.1" aria-hidden="true" />
-                    <span>配置 DeepSeek 官方 API</span>
+                    <span>配置 DeepSeek</span>
                   </button>
                 </div>
               </div>
@@ -113,7 +116,7 @@
                 <div class="provider-guide-actions">
                   <button class="placeholder-btn primary" type="button" @click="openSemirProviderSettings">
                     <IconSettings :size="15" :stroke-width="2.1" aria-hidden="true" />
-                    <span>进入大模型配置页</span>
+                    <span>配置森马 AI 网关</span>
                   </button>
                 </div>
               </div>
@@ -1107,12 +1110,35 @@ async function removeBrowserWindow(tabId) {
   gap: 5px;
 }
 
+.provider-text-link {
+  margin: 0 1px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--orange-text);
+  font: inherit;
+  font-weight: 720;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  vertical-align: baseline;
+}
+
+.provider-text-link:hover {
+  text-decoration: underline;
+}
+
 .provider-guide-actions {
   flex-direction: row;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
+}
+
+.provider-guide-actions .placeholder-btn.primary {
+  width: 178px;
 }
 
 .inline-form-actions {
@@ -1176,12 +1202,8 @@ async function removeBrowserWindow(tabId) {
     padding-top: 36px;
   }
   .inline-card-head,
-  .inline-modal-head,
-  .provider-guide-row {
+  .inline-modal-head {
     grid-template-columns: 1fr;
-  }
-  .provider-guide-actions {
-    justify-content: flex-start;
   }
   .inline-llm-modal-backdrop {
     padding: 12px;
