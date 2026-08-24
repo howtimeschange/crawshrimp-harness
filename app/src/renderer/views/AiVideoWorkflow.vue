@@ -244,6 +244,14 @@
               >
                 {{ materialShowSelectedOnly ? '显示全部素材' : '只看已选素材' }}
               </button>
+              <button
+                type="button"
+                class="aiv-ghost small"
+                :disabled="!selectedMaterialCount"
+                @click="clearAllMaterialSelections"
+              >
+                清空已选
+              </button>
               <div class="aiv-material-view-switcher" role="tablist" aria-label="素材展示方式">
                 <button
                   type="button"
@@ -1884,14 +1892,36 @@
               <p class="aiv-video-gen-params-hint">优先使用本地角色图和动作视频；提交时会用百炼官方临时 OSS 转成模型可访问地址。</p>
             </section>
 
-            <label v-if="!isPixVerseVideoProvider(videoTaskDraft.provider)" :class="['aiv-field', { 'aiv-field-invalid': !videoTaskDraftRequirement('prompt')?.complete }]">
-              <span>Prompt</span>
+            <div v-if="!isPixVerseVideoProvider(videoTaskDraft.provider)" :class="['aiv-field', 'aiv-video-prompt-field', { 'aiv-field-invalid': !videoTaskDraftRequirement('prompt')?.complete }]">
+              <div class="aiv-field-heading aiv-video-prompt-heading">
+                <span>Prompt</span>
+                <div class="aiv-video-prompt-tools">
+                  <select
+                    v-model="selectedVideoPromptModelId"
+                    :disabled="videoPromptWriterBusy || !configuredVideoPromptModels.length"
+                    aria-label="AI 写 Prompt 模型"
+                  >
+                    <option v-if="!configuredVideoPromptModels.length" value="">未配置视觉模型</option>
+                    <option v-for="model in configuredVideoPromptModels" :key="model.value" :value="model.value">{{ model.label }}</option>
+                  </select>
+                  <button
+                    type="button"
+                    class="aiv-ghost small"
+                    :disabled="!canGenerateVideoTaskPrompt"
+                    @click="generateVideoTaskPrompt"
+                  >
+                    {{ videoPromptWriterBusy ? '生成中' : '一键写 Prompt' }}
+                  </button>
+                </div>
+              </div>
               <textarea
                 v-model="videoTaskDraft.prompt"
                 rows="4"
+                aria-label="视频 Prompt"
                 :placeholder="videoTaskDraft.provider === 'qn' ? '生意管家页面生成可不填写 Prompt' : '描述服装、场景、动作和镜头要求'"
               ></textarea>
-            </label>
+              <small v-if="videoPromptWriterStatus" class="aiv-video-prompt-status">{{ videoPromptWriterStatus }}</small>
+            </div>
 
             <div :class="['aiv-field', { 'aiv-field-invalid': !videoTaskDraftRequirement('output')?.complete }]">
               <span>输出目录</span>
@@ -2094,6 +2124,8 @@ import {
   BALA_AI_VIDEO_ADAPTER_ID,
   BALA_MATERIAL_PREPARE_TASK_ID,
   BALA_QN_VIDEO_TASK_ID,
+  BALA_VIDEO_PROMPT_MODEL_OPTIONS,
+  BALA_VIDEO_PROMPT_TEMPLATE,
   QN_VIDEO_MODEL_OPTIONS,
   applyBalaMaterialBatchToWorkspaceGroups,
   balaMaterialPanelControl,
@@ -2160,6 +2192,7 @@ import {
   normalizeSettings,
   sizeForModel,
 } from '../utils/aiImageModels.js'
+import { isDeepSeekConfigured, isLlmConfigured, normalizeCustomLlmProviders } from '../utils/llmSettings.mjs'
 
 const emit = defineEmits(['open-settings'])
 
@@ -2204,6 +2237,9 @@ const localMaterialLibraryStyleFilter = ref('all')
 const localMaterialLibraryStyleQuery = ref('')
 const aiImageSettings = ref({})
 const selectedAiImageModelId = ref('')
+const selectedVideoPromptModelId = ref('')
+const videoPromptWriterBusy = ref(false)
+const videoPromptWriterStatus = ref('')
 const modelLibraryOpen = ref(false)
 const templateLibraryOpen = ref(false)
 const videoTaskDialogOpen = ref(false)
@@ -2569,6 +2605,52 @@ const configuredAiImageModels = computed(() => {
   return AI_IMAGE_MODELS.filter(model => !missingKeyForModel(model.id, settings))
 })
 const selectedAiImageModel = computed(() => getAiImageModel(selectedAiImageModelId.value || configuredAiImageModels.value[0]?.id))
+function normalizeVideoPromptLlmSettings(settings = {}) {
+  const llm = settings?.ai?.llm && typeof settings.ai.llm === 'object' ? settings.ai.llm : {}
+  return {
+    ...settings,
+    'ai.llm.configured': settings?.['ai.llm.configured'] ?? llm.configured,
+    'ai.llm.deepseek_configured': settings?.['ai.llm.deepseek_configured'] ?? llm.deepseek_configured,
+    'ai.llm.default_model': settings?.['ai.llm.default_model'] ?? llm.default_model,
+    'ai.llm.custom_providers': settings?.['ai.llm.custom_providers'] ?? llm.custom_providers,
+  }
+}
+function customVideoPromptModelOptions(settings = {}) {
+  return normalizeCustomLlmProviders(settings['ai.llm.custom_providers'])
+    .filter(provider => provider.configured)
+    .flatMap(provider => (provider.models || [])
+      .filter(model => (model.input_modalities || []).includes('image'))
+      .map(model => ({
+        value: model.id,
+        label: `${provider.name} · ${model.label || model.id}`,
+        keyScope: 'custom',
+      })))
+}
+const configuredVideoPromptModels = computed(() => {
+  const settings = normalizeVideoPromptLlmSettings(aiImageSettings.value)
+  const builtins = BALA_VIDEO_PROMPT_MODEL_OPTIONS.filter(model => (
+    model.keyScope === 'deepseek'
+      ? isDeepSeekConfigured(settings)
+      : isLlmConfigured(settings)
+  ))
+  const seen = new Set(builtins.map(model => model.value))
+  const custom = customVideoPromptModelOptions(settings).filter((model) => {
+    if (seen.has(model.value)) return false
+    seen.add(model.value)
+    return true
+  })
+  return [...builtins, ...custom]
+})
+const selectedVideoTaskPromptImagePaths = computed(() => (
+  toBalaBridgeStringArray(selectedVideoTaskDraftAssets.value.map(asset => asset.path)).slice(0, 5)
+))
+const selectedVideoTaskPromptImageCount = computed(() => selectedVideoTaskPromptImagePaths.value.length)
+const canGenerateVideoTaskPrompt = computed(() => (
+  !videoPromptWriterBusy.value
+  && configuredVideoPromptModels.value.length > 0
+  && selectedVideoTaskPromptImageCount.value > 0
+  && !isPixVerseVideoProvider(videoTaskDraft.provider)
+))
 const previewHistoryItems = computed(() => {
   if (!previewImage.value) return []
   const items = Array.isArray(previewImage.value.history) ? previewImage.value.history : []
@@ -4987,7 +5069,9 @@ function toggleMaterialGroup(styleCode) {
 }
 
 function toggleMaterialSelection(asset) {
+  if (!asset || typeof asset !== 'object') return
   asset.selected = !asset.selected
+  if (!asset.selected) clearMaterialAssetSelections(asset)
 }
 
 function toggleVersionSelection(version) {
@@ -5037,6 +5121,53 @@ function continueEditingSource(source = {}) {
 function enterAiEditWorkspace() {
   expandAllMaterialGroups()
   activeStep.value = 'ai-edit'
+}
+
+function clearMaterialAssetSelections(asset = {}) {
+  let changed = false
+  if (asset.selected) {
+    asset.selected = false
+    changed = true
+  }
+  if (asset.editSelected) {
+    asset.editSelected = false
+    changed = true
+  }
+  for (const version of asset.versions || []) {
+    if (version?.selected) {
+      version.selected = false
+      changed = true
+    }
+    if (version?.editSelected) {
+      version.editSelected = false
+      changed = true
+    }
+  }
+  return changed
+}
+
+function clearAllMaterialSelections() {
+  let changed = false
+  for (const style of styleWorkspaces) {
+    for (const asset of workspaceImageSources(style)) {
+      if (clearMaterialAssetSelections(asset)) changed = true
+    }
+  }
+  if (!changed) return
+  selectedReviewAssetIds.clear()
+  materialShowSelectedOnly.value = false
+  updateMaterialTask({
+    status: materialTask.status === 'idle' ? 'idle' : materialTask.status,
+    error: '',
+    message: '已清空所有选图状态，可重新手动选择要进入 AI 改图和生视频的图片。',
+  })
+  updateAiTaskState({
+    status: ['running', 'queued'].includes(aiTaskState.status) ? aiTaskState.status : 'idle',
+    error: '',
+    message: '已清空选图状态，请重新选择本次要改的图片。',
+  })
+  buildVideoJobsFromReview()
+  persistAiImageWorkspaceState()
 }
 
 function visibleSourceVersions(source = {}, selectedOnly = false) {
@@ -5652,6 +5783,22 @@ function ensureAiImageModelSelected() {
   return true
 }
 
+function ensureVideoPromptModelSelected() {
+  const configured = configuredVideoPromptModels.value
+  if (!configured.length) {
+    selectedVideoPromptModelId.value = ''
+    return false
+  }
+  if (!configured.some(model => model.value === selectedVideoPromptModelId.value)) {
+    const settings = normalizeVideoPromptLlmSettings(aiImageSettings.value)
+    const preferred = String(settings['ai.llm.default_model'] || '').trim()
+    selectedVideoPromptModelId.value = configured.find(model => model.value === preferred)?.value
+      || configured.find(model => model.value === 'gemini-3.5-flash')?.value
+      || configured[0].value
+  }
+  return true
+}
+
 async function loadAiImageSettings() {
   try {
     aiImageSettings.value = typeof window.cs?.getSettings === 'function'
@@ -5661,6 +5808,7 @@ async function loadAiImageSettings() {
     aiImageSettings.value = {}
   }
   ensureAiImageModelSelected()
+  ensureVideoPromptModelSelected()
 }
 
 async function refreshAiVideoRuntimeState({ includeCatalogs = false } = {}) {
@@ -8329,6 +8477,8 @@ function resetVideoTaskDraftAssets() {
 function openVideoTaskDialog(styleCode = '', sourceTask = null, mode = 'new') {
   lastFocusedElement.value = document.activeElement
   videoTaskDraftError.value = ''
+  videoPromptWriterStatus.value = ''
+  ensureVideoPromptModelSelected()
   videoTaskAssetFilter.value = 'selected'
   videoTaskKindFilter.value = 'all'
   resetVideoTaskAssetRenderLimit()
@@ -8394,11 +8544,13 @@ function selectVideoTaskProvider(provider) {
   const next = String(provider || '').trim()
   if (!next || next === videoTaskDraft.provider) return
   videoTaskDraft.provider = next
+  videoPromptWriterStatus.value = ''
   handleVideoProviderChange()
 }
 
 function selectVideoTaskStyle(styleCode) {
   videoTaskDraftError.value = ''
+  videoPromptWriterStatus.value = ''
   videoTaskDraft.styleCode = String(styleCode || '').trim()
   resetVideoTaskAssetRenderLimit()
   resetVideoTaskDraftAssets()
@@ -8447,6 +8599,7 @@ function moveVideoTaskAssetTab(direction) {
 function toggleVideoTaskDraftAsset(asset) {
   if (!asset?.selectable) return
   videoTaskDraftError.value = ''
+  videoPromptWriterStatus.value = ''
   if (!providerUsesLocalImages(videoTaskDraft.provider, videoTaskDraft.happyhorseMode)) {
     videoTaskDraftError.value = `${providerLabel(videoTaskDraft.provider)} 当前不使用本地图片素材`
     return
@@ -8489,6 +8642,7 @@ function videoTaskAssetLimitForProvider(provider = videoTaskDraft.provider) {
 
 function selectFilteredVideoTaskAssets() {
   videoTaskDraftError.value = ''
+  videoPromptWriterStatus.value = ''
   if (!providerUsesLocalImages(videoTaskDraft.provider, videoTaskDraft.happyhorseMode)) {
     videoTaskDraftError.value = `${providerLabel(videoTaskDraft.provider)} 当前不使用本地图片素材`
     return
@@ -8515,10 +8669,47 @@ function selectFilteredVideoTaskAssets() {
 
 function clearFilteredVideoTaskAssets() {
   videoTaskDraftError.value = ''
+  videoPromptWriterStatus.value = ''
   const filteredIds = new Set(filteredVideoTaskSelectableAssets.value.map(asset => asset.id).filter(Boolean))
   if (!filteredIds.size) return
   videoTaskDraft.assetIds = videoTaskDraft.assetIds.filter(id => !filteredIds.has(id))
   syncHappyHorseModeFromAssetCount()
+}
+
+async function generateVideoTaskPrompt() {
+  videoTaskDraftError.value = ''
+  videoPromptWriterStatus.value = ''
+  if (!ensureVideoPromptModelSelected()) {
+    videoTaskDraftError.value = '请先在设置里配置文本大模型网关或 DeepSeek 官方 Key'
+    return
+  }
+  const imagePaths = selectedVideoTaskPromptImagePaths.value
+  if (!imagePaths.length) {
+    videoTaskDraftError.value = '请先在右侧选择至少 1 张图片素材'
+    return
+  }
+  if (typeof window.cs?.generateBalaVideoPrompt !== 'function') {
+    videoTaskDraftError.value = '当前环境不支持一键写 Prompt'
+    return
+  }
+  videoPromptWriterBusy.value = true
+  videoPromptWriterStatus.value = '生成中'
+  try {
+    const result = await window.cs.generateBalaVideoPrompt({
+      model_id: selectedVideoPromptModelId.value,
+      image_paths: imagePaths,
+      template_prompt: BALA_VIDEO_PROMPT_TEMPLATE,
+    })
+    const prompt = String(result?.prompt || '').trim()
+    if (!prompt) throw new Error('模型未返回视频 Prompt')
+    videoTaskDraft.prompt = prompt
+    videoPromptWriterStatus.value = `已写入 Prompt · ${result?.resolved_model_id || result?.model_id || selectedVideoPromptModelId.value} · ${result?.image_count || imagePaths.length} 张图`
+  } catch (error) {
+    videoPromptWriterStatus.value = ''
+    videoTaskDraftError.value = error?.message || String(error)
+  } finally {
+    videoPromptWriterBusy.value = false
+  }
 }
 
 function createVideoTaskFromDraft() {
@@ -9840,6 +10031,39 @@ function localFileUrl(path) {
   resize: none;
   padding: 10px;
   line-height: 1.5;
+}
+
+.aiv-video-prompt-heading {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.aiv-video-prompt-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  min-width: min(100%, 260px);
+}
+
+.aiv-video-prompt-tools select {
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.aiv-video-prompt-tools .aiv-ghost.small {
+  white-space: nowrap;
+}
+
+.aiv-video-prompt-status {
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .aiv-directory-picker {

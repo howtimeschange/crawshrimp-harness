@@ -144,6 +144,132 @@ class LlmGatewayTests(unittest.TestCase):
             route = llm_gateway.route_for_model("qwen3.8-max-preview", config)
         self.assertEqual(route.api_key, "runtime-only-key")
 
+    def test_openai_request_converts_remote_images_to_base64_for_gemini(self):
+        captured = {}
+        route = llm_gateway.LlmRoute(
+            model_id="gemini-3.5-flash",
+            protocol="openai",
+            base_url="https://openai.example/v1",
+            api_key="unit-key",
+        )
+
+        def fake_post(url, payload, headers, **_kwargs):
+            captured["url"] = url
+            captured["payload"] = payload
+            captured["headers"] = headers
+            return {"choices": [{"message": {"content": json.dumps(valid_scripts(), ensure_ascii=False)}}]}
+
+        with (
+            patch.object(llm_gateway, "_download_image_data", return_value=("image/jpeg", "/9j/2Q==")) as download,
+            patch.object(llm_gateway, "_post_json", side_effect=fake_post),
+        ):
+            response = llm_gateway._openai_request(
+                route,
+                "巴拉巴拉童鞋儿童运动鞋男童透气跑步鞋",
+                ["https://img.example/1.jpg"],
+                "",
+            )
+
+        self.assertEqual(response["choices"][0]["message"]["content"], json.dumps(valid_scripts(), ensure_ascii=False))
+        download.assert_called_once_with("https://img.example/1.jpg")
+        image_payload = captured["payload"]["messages"][1]["content"][1]["image_url"]
+        self.assertEqual(image_payload["url"], "data:image/jpeg;base64,/9j/2Q==")
+
+    def test_openai_request_keeps_remote_image_urls_for_non_gemini_models(self):
+        captured = {}
+        route = llm_gateway.LlmRoute(
+            model_id="gpt-5.6-terra",
+            protocol="openai",
+            base_url="https://openai.example/v1",
+            api_key="unit-key",
+        )
+
+        def fake_post(_url, payload, _headers, **_kwargs):
+            captured["payload"] = payload
+            return {"choices": [{"message": {"content": json.dumps(valid_scripts(), ensure_ascii=False)}}]}
+
+        with (
+            patch.object(llm_gateway, "_download_image_data") as download,
+            patch.object(llm_gateway, "_post_json", side_effect=fake_post),
+        ):
+            llm_gateway._openai_request(
+                route,
+                "巴拉巴拉童鞋儿童运动鞋男童透气跑步鞋",
+                ["https://img.example/1.jpg"],
+                "",
+            )
+
+        download.assert_not_called()
+        image_payload = captured["payload"]["messages"][1]["content"][1]["image_url"]
+        self.assertEqual(image_payload["url"], "https://img.example/1.jpg")
+
+    def test_bala_video_prompt_generation_uses_selected_images_and_model(self):
+        calls = []
+
+        def fake_openai(route, system_prompt, user_prompt, images, *, timeout_seconds=None):
+            calls.append((route, system_prompt, user_prompt, images, timeout_seconds))
+            return {
+                "choices": [{
+                    "message": {
+                        "content": "竖屏9:16，20秒高清写实童装短视频，严格复刻图1-2模特穿搭与服装颜色。\n\n精准分镜时序：0-10s 场景1；10-20s 场景2。\n\n负面提示词：人体畸变，手脚扭曲，衣服颜色改变。"
+                    }
+                }]
+            }
+
+        prompt, route = llm_gateway.generate_bala_video_prompt(
+            image_inputs=[
+                "data:image/jpeg;base64,/9j/2Q==",
+                "data:image/png;base64,iVBORw0KGgo=",
+            ],
+            model_id="gpt-5.6-luna",
+            template_prompt=llm_gateway.BALA_VIDEO_PROMPT_TEMPLATE,
+            config=self.config(),
+            request_openai=fake_openai,
+            timeout_seconds=77,
+        )
+
+        self.assertIn("竖屏9:16", prompt)
+        self.assertEqual(route.model_id, "gpt-5.6-luna")
+        self.assertEqual(calls[0][3], [
+            "data:image/jpeg;base64,/9j/2Q==",
+            "data:image/png;base64,iVBORw0KGgo=",
+        ])
+        self.assertIn("图 1-2", calls[0][2])
+        self.assertIn("下摆设计和面料", calls[0][2])
+        self.assertEqual(calls[0][4], 77)
+
+    def test_bala_video_prompt_generation_allows_custom_image_model(self):
+        config = self.config()
+        config["ai"]["llm"]["custom_providers"] = [{
+            "id": "custom-vision",
+            "name": "Custom Vision",
+            "protocol": "openai",
+            "base_url": "https://custom.example/v1",
+            "api_key": "custom-key",
+            "models": [{"id": "custom-vision-1", "input_modalities": ["text", "image"]}],
+        }]
+
+        prompt, route = llm_gateway.generate_bala_video_prompt(
+            image_inputs=["data:image/jpeg;base64,/9j/2Q=="],
+            model_id="custom-vision-1",
+            config=config,
+            request_openai=lambda *_args, **_kwargs: {
+                "choices": [{"message": {"content": "竖屏9:16，20秒高清写实童装短视频，保留图片模特穿搭和服装颜色，分镜展示下摆与面料特写，负面提示词：不畸变。"}}]
+            },
+        )
+
+        self.assertEqual(route.model_id, "custom-vision-1")
+        self.assertIn("竖屏9:16", prompt)
+
+    def test_bala_video_prompt_generation_rejects_non_vision_prompt_model(self):
+        with self.assertRaisesRegex(llm_gateway.LlmConfigurationError, "不支持的视频 Prompt 视觉模型"):
+            llm_gateway.generate_bala_video_prompt(
+                image_inputs=["data:image/jpeg;base64,/9j/2Q=="],
+                model_id="gpt-5.5",
+                config=self.config(),
+                request_openai=lambda *_args, **_kwargs: {},
+            )
+
     def test_response_validation_rejects_price_or_promotional_benefits(self):
         payload = valid_scripts()
         payload["scripts"][0]["video_description"] += "现在领券更优惠。"
@@ -355,7 +481,7 @@ class TmallVideoCopyPostProcessTests(unittest.IsolatedAsyncioTestCase):
             llm_gateway,
             "generate_video_copies",
             return_value=(llm_gateway.normalize_video_copies(valid_scripts()), llm_gateway.LlmRoute(
-                model_id="gpt-5.6-terra",
+                model_id="gemini-3.5-flash",
                 protocol="openai",
                 base_url="https://openai.example/v1",
                 api_key="unit-key",
@@ -402,8 +528,8 @@ class TmallVideoCopyPostProcessTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(len(rows), 3)
-        self.assertEqual(generate.call_args.kwargs["model_id"], "gpt-5.6-terra")
-        self.assertTrue(any("准备使用 gpt-5.6-terra" in item for item in logs))
+        self.assertEqual(generate.call_args.kwargs["model_id"], "gemini-3.5-flash")
+        self.assertTrue(any("准备使用 gemini-3.5-flash" in item for item in logs))
 
     async def test_final_workbook_matches_batch_upload_headers_and_text_ids(self):
         with tempfile.TemporaryDirectory() as tmpdir:
