@@ -572,11 +572,12 @@
               <article v-for="provider in llmProviders" :key="provider.id" class="llm-provider-row">
                 <div class="llm-provider-content">
                   <div
-                    :class="['llm-provider-logo', `brand-${provider.brand}`]"
+                    :class="['llm-provider-logo', `brand-${provider.brand}`, { 'with-image': provider.logoImage }]"
                     :title="provider.name"
                     aria-hidden="true"
                   >
-                    <span>{{ provider.logoText }}</span>
+                    <img v-if="provider.logoImage" :src="provider.logoImage" alt="" />
+                    <span v-else>{{ provider.logoText }}</span>
                   </div>
                   <div class="llm-provider-main">
                     <div class="llm-row-title">
@@ -955,7 +956,7 @@
 </template>
 
 <script setup>
-import { computed, defineComponent, h, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue'
 import { IconExternalLink } from '@tabler/icons-vue'
 import {
   AI_VIDEO_CONNECTION_DEFAULTS,
@@ -983,13 +984,14 @@ import {
   normalizeLlmProtocol,
   parseLlmModelsText,
 } from '../utils/llmSettings.mjs'
+import deepseekLogoUrl from '../assets/llm-providers/deepseek-logo.png'
+import semirLogoUrl from '../assets/llm-providers/semir-logo.png'
 
 const OFFICIAL_RELEASE_URL = 'https://github.com/howtimeschange/crawshrimp-harness/releases/latest'
 
 const props = defineProps([
   'status',
   'focusPanelId',
-  'focusAction',
   'updateStatus',
   'updateActionBusy',
   'themePreference',
@@ -1061,11 +1063,6 @@ async function onAgentClearData() {
 
 const cfg = ref({})
 const savedCfg = ref({})
-const settingsLoaded = ref(false)
-const pendingFocusAction = ref(null)
-
-const activeGroupId = ref('appearance')
-const activePanelId = ref('appearance-theme')
 
 const launching = ref(false)
 const chromeMsg = ref('')
@@ -1209,6 +1206,20 @@ const menuGroups = [
   },
 ]
 
+function resolvePanelSelection(panelId) {
+  const requested = String(panelId || '').trim()
+  for (const group of menuGroups) {
+    const child = group.children.find(item => item.id === requested)
+    if (child) return { groupId: group.id, panelId: child.id }
+  }
+  const fallback = menuGroups[0]
+  return { groupId: fallback.id, panelId: fallback.children[0]?.id || fallback.id }
+}
+
+const initialPanelSelection = resolvePanelSelection(props.focusPanelId)
+const activeGroupId = ref(initialPanelSelection.groupId)
+const activePanelId = ref(initialPanelSelection.panelId)
+
 const panelFields = {
   'notify-dingtalk': ['notify.dingtalk_webhook', 'notify.dingtalk_secret'],
   'notify-feishu': ['notify.feishu_webhook'],
@@ -1280,6 +1291,7 @@ const llmProviders = computed(() => {
       id: provider.id,
       name: provider.name,
       brand: provider.brand || 'custom',
+      logoImage: llmProviderLogoImage(provider),
       logoText: llmProviderLogoText(provider),
       isCustom: false,
       compatibility: provider.compatibility,
@@ -1297,6 +1309,7 @@ const llmProviders = computed(() => {
       id: provider.id,
       name: provider.name,
       brand: 'custom',
+      logoImage: '',
       logoText: llmProviderLogoText(provider),
       isCustom: true,
       compatibility: provider.protocol === 'anthropic' ? 'Anthropic 兼容' : 'OpenAI 兼容',
@@ -1315,6 +1328,12 @@ function llmProviderLogoText(provider = {}) {
   if (provider.brand === 'deepseek' || provider.id === 'crawshrimp-deepseek-official') return 'deepseek'
   if (provider.brand === 'semir' || String(provider.name || '').includes('森马')) return 'SEMIR'
   return Array.from(String(provider.name || 'AI').trim()).slice(0, 2).join('') || 'AI'
+}
+
+function llmProviderLogoImage(provider = {}) {
+  if (provider.brand === 'deepseek' || provider.id === 'crawshrimp-deepseek-official') return deepseekLogoUrl
+  if (provider.brand === 'semir' || String(provider.name || '').includes('森马')) return semirLogoUrl
+  return ''
 }
 
 function isMaskedLlmCredential(value) {
@@ -1631,7 +1650,6 @@ async function load() {
   const flat = normalizedSettings(await window.cs.getSettings() || {})
   cfg.value = { ...flat }
   savedCfg.value = { ...flat }
-  settingsLoaded.value = true
   await loadCloudStatus()
 }
 
@@ -1656,26 +1674,6 @@ function focusPanel(panelId) {
   if (!group) return
   activeGroupId.value = group.id
   activePanelId.value = panelId
-}
-
-function queueFocusAction(action = null) {
-  if (!action || action.panelId !== 'ai-llm') return
-  pendingFocusAction.value = action
-  focusPanel('ai-llm')
-  flushFocusAction()
-}
-
-async function flushFocusAction() {
-  if (!settingsLoaded.value || !pendingFocusAction.value) return
-  await nextTick()
-  if (activePanelId.value !== 'ai-llm') return
-  const action = pendingFocusAction.value
-  pendingFocusAction.value = null
-  if (action.action === 'open-llm-provider') {
-    openLlmProviderModal(action.providerId || '')
-  } else if (action.action === 'new-llm-provider') {
-    openLlmProviderModal()
-  }
 }
 
 function selectInputText(event) {
@@ -1971,22 +1969,15 @@ async function testNotify(channel) {
 
 onMounted(async () => {
   await load()
-  focusPanel(props.focusPanelId)
-  queueFocusAction(props.focusAction)
 })
 
 watch(() => props.focusPanelId, panelId => {
   focusPanel(panelId)
 })
 
-watch(() => props.focusAction, action => {
-  queueFocusAction(action)
-})
-
 watch(activePanelId, panelId => {
   if (panelId === 'cloud-approval') loadCloudStatus()
   if (panelId === 'ai-agent') refreshAgentRuntime()
-  if (panelId === 'ai-llm') flushFocusAction()
 })
 </script>
 
@@ -2621,9 +2612,9 @@ watch(activePanelId, panelId => {
 }
 
 .llm-provider-logo {
-  width: 76px;
+  width: 100px;
   height: 44px;
-  flex: 0 0 76px;
+  flex: 0 0 100px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2644,6 +2635,15 @@ watch(activePanelId, panelId => {
   font-weight: 850;
 }
 
+.llm-provider-logo img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: 34px;
+  max-height: 100%;
+  object-fit: contain;
+}
+
 .llm-provider-logo.brand-deepseek {
   color: #8fb0ff;
   border-color: rgba(112, 146, 255, 0.32);
@@ -2662,6 +2662,11 @@ watch(activePanelId, panelId => {
   color: var(--orange-text);
   border-color: rgba(var(--orange-rgb), 0.24);
   background: var(--orange-bg);
+}
+
+.llm-provider-logo.with-image {
+  border-color: transparent;
+  background: transparent;
 }
 
 .llm-provider-main {

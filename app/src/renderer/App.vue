@@ -205,7 +205,6 @@
             v-if="currentView === 'settings'"
             :status="status"
             :focus-panel-id="focusSettingsPanelId"
-            :focus-action="focusSettingsAction"
             :update-status="updateStatus"
             :update-action-busy="updateActionBusy"
             :theme-preference="themePreference"
@@ -236,7 +235,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, provide, ref } from 'vue'
+import { computed, onMounted, onUnmounted, provide, ref } from 'vue'
 import ScriptList  from './views/ScriptList.vue'
 import TaskRunner  from './views/TaskRunner.vue'
 import TaskCenter  from './views/TaskCenter.vue'
@@ -287,7 +286,6 @@ const taskRunnerHandoffParams = ref({})
 const taskRunnerHandoffKey = ref(0)
 const scriptGroups = ref([])
 const focusSettingsPanelId = ref('')
-const focusSettingsAction = ref(null)
 const sidebarCollapsed = ref(readSidebarCollapsed(window.localStorage))
 const effectiveSidebarCollapsed = computed(() => !activeScript.value && sidebarCollapsed.value)
 const isMacTitlebar = /mac/i.test(String(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent))
@@ -350,7 +348,6 @@ function selectNav(item) {
   activeInstanceUid.value = ''
   if (item.id !== 'settings') {
     focusSettingsPanelId.value = ''
-    focusSettingsAction.value = null
   }
 }
 
@@ -413,24 +410,11 @@ function openSettingsPanel(target) {
   const panelId = target && typeof target === 'object'
     ? target.panelId || target.id || ''
     : target
-  const action = target && typeof target === 'object'
-    ? { ...target, panelId, nonce: Date.now() }
-    : null
-  if (target && typeof target === 'object') {
-    focusSettingsPanelId.value = panelId
-  } else {
-    focusSettingsPanelId.value = panelId
-  }
-  focusSettingsAction.value = null
+  focusSettingsPanelId.value = panelId
   currentView.value = 'settings'
   activeScript.value = null
   activeTaskId.value = null
   activeInstanceUid.value = ''
-  if (action) {
-    nextTick(() => {
-      focusSettingsAction.value = action
-    })
-  }
 }
 
 async function loadScriptGroups(options = {}) {

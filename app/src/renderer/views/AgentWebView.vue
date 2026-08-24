@@ -370,19 +370,15 @@ function closeInlineLlmModal() {
   inlineLlmModalOpen.value = false
 }
 
-function openLlmSettings(target = {}) {
+function openLlmSettings() {
   inlineLlmModalOpen.value = false
   emit('open-settings', {
     panelId: 'ai-llm',
-    ...target,
   })
 }
 
 function openDeepSeekProviderSettings() {
-  openLlmSettings({
-    action: 'open-llm-provider',
-    providerId: 'crawshrimp-deepseek-official',
-  })
+  openLlmSettings()
 }
 
 function openSemirProviderSettings() {
@@ -390,9 +386,7 @@ function openSemirProviderSettings() {
 }
 
 function openCustomProviderSettings() {
-  openLlmSettings({
-    action: 'new-llm-provider',
-  })
+  openLlmSettings()
 }
 
 function openDeepSeekPlatform() {
