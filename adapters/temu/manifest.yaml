@@ -1,6 +1,6 @@
 id: temu
 name: Temu 运营助手
-version: 1.5.13
+version: 1.5.14
 author: howtimeschange
 description: "Temu 卖家后台数据抓取与批量自动化：商品数据、商品流量、售后、评价、站点商品、商品实拍图洗唛合规"
 entry_url: https://agentseller.temu.com
@@ -1643,7 +1643,7 @@ tasks:
         label: AI识别 SCM 洗唛附件
         default: true
         hidden: true
-        hint: SCM 备注没有可映射洗护说明时，下载洗唛附件到本地 artifacts，并调用项目已有多模态识别能力提取一组洗涤说明；失败时继续使用固定兜底。
+        hint: SCM 备注没有可映射洗护说明时，优先下载列表洗唛文件；列表为空时会点进申请单详情的「附件信息」读取「洗唛附件」作为兜底，并调用项目已有多模态识别能力提取一组洗涤说明；失败时继续使用固定兜底。
       - id: ai_wash_instruction_model_id
         type: text
         label: 洗护说明识别模型
