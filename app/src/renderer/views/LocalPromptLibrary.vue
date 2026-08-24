@@ -6,7 +6,6 @@
         <p>本地和线上 Prompt 模板，支持同步、预览和云端管理</p>
       </div>
       <div class="lpl-head-actions">
-        <button type="button" class="lpl-secondary" :disabled="busy" @click="openCloudApprovalLogin">登录云端审批平台</button>
         <button type="button" class="lpl-secondary" :disabled="cloudLoading" @click="loadCloudLibraries">
           {{ cloudLoading ? '读取线上...' : '刷新线上' }}
         </button>
@@ -201,7 +200,6 @@ import {
 } from '../utils/localPromptLibrary'
 import { loadLocalPromptLibraryViewSources } from '../utils/localPromptLibraryViewState'
 
-const emit = defineEmits(['open-cloud-approval'])
 const scenarioOptions = PROMPT_SCENARIOS
 const localLibraries = ref([])
 const cloudLibraries = ref([])
@@ -504,10 +502,6 @@ async function copyCloudLibraryToLocal() {
   } catch (err) {
     error.value = err?.message || String(err)
   }
-}
-
-function openCloudApprovalLogin() {
-  emit('open-cloud-approval')
 }
 
 function enterLibraryDetail(library) {

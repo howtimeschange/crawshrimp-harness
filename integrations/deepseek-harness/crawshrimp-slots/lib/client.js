@@ -240,7 +240,7 @@ window.__ModuleLoader__.load({
       '.pXSMma_headlineText { font-size: 0 !important; }',
       '.pXSMma_headlineText::before { content: "抓虾智能体"; font-size: 24px; font-weight: 750; color: var(--dsw-alias-label-primary); }',
       '.pXSMma_previewBadge { display: none !important; }',
-      // 6) 抓虾菜单注入侧边栏(主菜单:新会话下/工作区上;底部菜单:云端审批/设置)
+      // 6) 抓虾菜单注入侧边栏(主菜单:新会话下/工作区上;底部菜单:设置)
       //    按 DESIGN.md 规范:13.5px 字号、4px 网格间距、完整 hover/active/focus 状态
       '[data-crawshrimp-nav-main], [data-crawshrimp-nav-bottom] { display: flex; flex-direction: column; gap: 2px; padding: 10px 6px; margin: 2px 2px 0; }',
       '[data-crawshrimp-nav-main] { border-top: 1px solid var(--dsw-alias-border-l1); padding-top: 12px; }',
@@ -283,7 +283,7 @@ window.__ModuleLoader__.load({
 
     // ---- 抓虾菜单注入 DSH 侧边栏(主菜单 + 底部菜单) ----
     const MAIN_NAV_IDS = ['scripts', 'agent_script_review', 'ai_image', 'task_center', 'ai_video_generation', 'ai_video', 'local_prompt_library', 'files']
-    const BOTTOM_NAV_IDS = ['cloud_approval', 'settings']
+    const BOTTOM_NAV_IDS = ['settings']
     const MAIN_VISIBLE_DEFAULT = 3
 
     let lastMaxRailWidth = 0

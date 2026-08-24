@@ -18,7 +18,8 @@ test('App registers local prompt library menu below AI image and before data fil
   assert.ok(aiImage < promptLibrary, 'prompt library should sit below AI image in the sidebar')
   assert.ok(promptLibrary < files, 'prompt library should sit above data files in the sidebar')
   assert.match(app, /label: '提示词库'/)
-  assert.match(app, /<LocalPromptLibrary\s+v-if="currentView === 'local_prompt_library'"[\s\S]*@open-cloud-approval="currentView = 'cloud_approval'"/)
+  assert.match(app, /<LocalPromptLibrary\s+v-if="currentView === 'local_prompt_library'"/)
+  assert.doesNotMatch(app, /@open-cloud-approval="currentView = 'cloud_approval'"/)
 })
 
 test('LocalPromptLibrary view supports import update, manual edit, and cloud sync', () => {
@@ -40,7 +41,9 @@ test('LocalPromptLibrary view supports import update, manual edit, and cloud syn
 test('LocalPromptLibrary view combines local and cloud prompt libraries with source-aware actions', () => {
   const view = read('app/src/renderer/views/LocalPromptLibrary.vue')
 
-  assert.match(view, /登录云端审批平台/)
+  assert.doesNotMatch(view, /登录云端审批平台/)
+  assert.doesNotMatch(view, /defineEmits\(\['open-cloud-approval'\]\)/)
+  assert.doesNotMatch(view, /openCloudApprovalLogin/)
   assert.match(view, /刷新线上/)
   assert.match(view, /打开云端 Prompt 管理/)
   assert.match(view, /保存为本地副本/)
