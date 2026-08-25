@@ -571,17 +571,25 @@
             <div class="llm-provider-list" aria-label="文本大模型 Provider 列表">
               <article v-for="provider in llmProviders" :key="provider.id" class="llm-provider-row">
                 <div class="llm-provider-content">
-                  <div
+                  <button
                     :class="['llm-provider-logo', `brand-${provider.brand}`, { 'with-image': provider.logoImage }]"
                     :title="provider.name"
-                    aria-hidden="true"
+                    :aria-label="`编辑 ${provider.name}`"
+                    type="button"
+                    @click="openLlmProviderModal(provider.id)"
                   >
                     <img v-if="provider.logoImage" :src="provider.logoImage" alt="" />
                     <span v-else>{{ provider.logoText }}</span>
-                  </div>
+                  </button>
                   <div class="llm-provider-main">
                     <div class="llm-row-title">
-                      <strong>{{ provider.name }}</strong>
+                      <button
+                        class="llm-provider-title-button"
+                        type="button"
+                        @click="openLlmProviderModal(provider.id)"
+                      >
+                        {{ provider.name }}
+                      </button>
                       <span :class="['key-pill', provider.configured ? 'on' : 'off']">
                         {{ provider.configured ? '已配 Key' : '未配 Key' }}
                       </span>
@@ -1412,7 +1420,7 @@ const llmProviders = computed(() => {
 function llmProviderLogoText(provider = {}) {
   if (provider.brand === 'deepseek' || provider.id === 'crawshrimp-deepseek-official') return 'deepseek'
   if (provider.brand === 'semir' || String(provider.name || '').includes('森马')) return 'SEMIR'
-  return Array.from(String(provider.name || 'AI').trim()).slice(0, 2).join('') || 'AI'
+  return String(provider.name || provider.id || 'AI').trim().replace(/\s+/g, ' ') || 'AI'
 }
 
 function llmProviderLogoImage(provider = {}) {
@@ -2844,6 +2852,10 @@ watch(imSettingsUrl, () => {
   background: var(--soft-fill);
   color: var(--text2);
   overflow: hidden;
+  padding: 0;
+  font: inherit;
+  appearance: none;
+  cursor: pointer;
 }
 
 .llm-provider-logo span {
@@ -2863,6 +2875,17 @@ watch(imSettingsUrl, () => {
   height: 34px;
   max-height: 100%;
   object-fit: contain;
+}
+
+.llm-provider-logo:hover,
+.llm-provider-title-button:hover {
+  filter: brightness(1.08);
+}
+
+.llm-provider-logo:focus-visible,
+.llm-provider-title-button:focus-visible {
+  outline: 2px solid rgba(var(--orange-rgb), 0.72);
+  outline-offset: 3px;
 }
 
 .llm-provider-logo.brand-deepseek {
@@ -2885,6 +2908,13 @@ watch(imSettingsUrl, () => {
   background: var(--orange-bg);
 }
 
+.llm-provider-logo.brand-custom span {
+  max-width: calc(100% - 12px);
+  font-size: 16px;
+  font-weight: 850;
+  line-height: 1;
+}
+
 .llm-provider-logo.with-image {
   border-color: transparent;
   background: transparent;
@@ -2905,10 +2935,23 @@ watch(imSettingsUrl, () => {
   min-width: 0;
 }
 
-.llm-row-title strong {
+.llm-provider-title-button {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(100%, 420px);
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--text);
+  font-family: inherit;
   font-size: 14px;
   font-weight: 750;
+  line-height: 1.25;
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .llm-provider-main p {
@@ -2972,9 +3015,10 @@ watch(imSettingsUrl, () => {
   color: var(--text2);
   background: var(--soft-fill);
   font-family: var(--font-mono, ui-monospace, monospace);
-  max-width: 260px;
+  max-width: min(100%, 360px);
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .llm-model-preview .chip.muted {

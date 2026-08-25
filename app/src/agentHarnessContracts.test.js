@@ -2,8 +2,86 @@ const assert = require('node:assert/strict')
 const { existsSync, readFileSync } = require('node:fs')
 const { resolve } = require('node:path')
 const test = require('node:test')
+const { inflateSync } = require('node:zlib')
 
 const appRoot = resolve(__dirname, '..')
+
+function paethPredictor(left, up, upperLeft) {
+  const estimate = left + up - upperLeft
+  const leftDistance = Math.abs(estimate - left)
+  const upDistance = Math.abs(estimate - up)
+  const upperLeftDistance = Math.abs(estimate - upperLeft)
+  if (leftDistance <= upDistance && leftDistance <= upperLeftDistance) return left
+  if (upDistance <= upperLeftDistance) return up
+  return upperLeft
+}
+
+function readPngRgba(filePath) {
+  const source = readFileSync(filePath)
+  const signature = source.subarray(0, 8)
+  assert.equal(signature.toString('hex'), '89504e470d0a1a0a')
+  let offset = 8
+  let width = 0
+  let height = 0
+  let bitDepth = 0
+  let colorType = 0
+  const idat = []
+  while (offset < source.length) {
+    const length = source.readUInt32BE(offset)
+    const type = source.subarray(offset + 4, offset + 8).toString('ascii')
+    const data = source.subarray(offset + 8, offset + 8 + length)
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0)
+      height = data.readUInt32BE(4)
+      bitDepth = data[8]
+      colorType = data[9]
+      assert.equal(data[12], 0, 'interlaced PNGs are not supported by this test decoder')
+    } else if (type === 'IDAT') {
+      idat.push(data)
+    } else if (type === 'IEND') {
+      break
+    }
+    offset += 12 + length
+  }
+  assert.equal(bitDepth, 8)
+  assert.equal(colorType, 6)
+  const bytesPerPixel = 4
+  const stride = width * bytesPerPixel
+  const inflated = inflateSync(Buffer.concat(idat))
+  const pixels = Buffer.alloc(width * height * bytesPerPixel)
+  let inputOffset = 0
+  for (let y = 0; y < height; y += 1) {
+    const filter = inflated[inputOffset]
+    inputOffset += 1
+    for (let x = 0; x < stride; x += 1) {
+      const raw = inflated[inputOffset + x]
+      const left = x >= bytesPerPixel ? pixels[y * stride + x - bytesPerPixel] : 0
+      const up = y > 0 ? pixels[(y - 1) * stride + x] : 0
+      const upperLeft = y > 0 && x >= bytesPerPixel ? pixels[(y - 1) * stride + x - bytesPerPixel] : 0
+      let value = raw
+      if (filter === 1) value = raw + left
+      else if (filter === 2) value = raw + up
+      else if (filter === 3) value = raw + Math.floor((left + up) / 2)
+      else if (filter === 4) value = raw + paethPredictor(left, up, upperLeft)
+      else assert.equal(filter, 0)
+      pixels[y * stride + x] = value & 0xff
+    }
+    inputOffset += stride
+  }
+  return {
+    width,
+    height,
+    pixelAt(x, y) {
+      const index = (y * stride) + (x * bytesPerPixel)
+      return {
+        r: pixels[index],
+        g: pixels[index + 1],
+        b: pixels[index + 2],
+        a: pixels[index + 3],
+      }
+    },
+  }
+}
 
 test('worker absolute timeout cancels only the active Session and keeps the IM Host alive', () => {
   const source = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/worker.mjs'), 'utf8')
@@ -264,16 +342,36 @@ test('LLM provider settings save provider rows directly and keep the compact set
   assert.match(settings, /semir-logo\.png/)
   assert.match(settings, /v-if="provider\.logoImage"/)
   assert.match(settings, /\{ 'with-image': provider\.logoImage \}/)
+  assert.match(settings, /<button\s+[\s\S]*?:class="\['llm-provider-logo'/)
+  assert.match(settings, /:aria-label="`编辑 \$\{provider\.name\}`"[\s\S]*?@click="openLlmProviderModal\(provider\.id\)"/)
+  assert.match(settings, /class="llm-provider-title-button"[\s\S]*?@click="openLlmProviderModal\(provider\.id\)"/)
   assert.match(settings, /function llmProviderLogoImage/)
   assert.match(settings, /height: 34px/)
   assert.match(settings, /brand-deepseek/)
   assert.match(settings, /brand-semir/)
+  assert.match(settings, /return String\(provider\.name \|\| provider\.id \|\| 'AI'\)\.trim\(\)\.replace\(/)
+  assert.doesNotMatch(settings, /slice\(0,\s*2\)/)
+  assert.match(settings, /\.llm-provider-logo\.brand-custom span \{[\s\S]*?font-size: 16px/)
+  assert.match(settings, /\.llm-provider-title-button \{[\s\S]*?white-space: nowrap/)
+  assert.match(settings, /\.llm-model-preview \.chip,[\s\S]*?max-width: min\(100%, 360px\)[\s\S]*?white-space: nowrap/)
   assert.match(settings, /llmProviderLogoText/)
   assert.match(llmSettings, /brand: 'deepseek'/)
   assert.match(llmSettings, /brand: 'semir'/)
   assert.match(settings, /保存并重启智能体/)
   assert.doesNotMatch(settings, /运行时路由说明/)
   assert.doesNotMatch(settings, /llm-route-note/)
+})
+
+test('LLM provider Semir logo has transparent outer corners', () => {
+  const logo = readPngRgba(resolve(appRoot, 'src/renderer/assets/llm-providers/semir-logo.png'))
+  const corners = [
+    logo.pixelAt(0, 0).a,
+    logo.pixelAt(logo.width - 1, 0).a,
+    logo.pixelAt(0, logo.height - 1).a,
+    logo.pixelAt(logo.width - 1, logo.height - 1).a,
+  ]
+  assert.deepEqual(corners, [0, 0, 0, 0])
+  assert.equal(logo.pixelAt(Math.floor(logo.width / 2), Math.floor(logo.height / 2)).a, 255)
 })
 
 test('core status indicator debounces transient backend probe drops', () => {
