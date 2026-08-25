@@ -410,7 +410,7 @@
           <header class="aiv-panel-head">
             <div>
               <strong>AI 改图动作</strong>
-              <span>选择只表示本次操作范围；生视频会默认使用已选原图，AI 图需手动选择</span>
+              <span>选择只表示本次操作范围；生视频会默认使用已选原图和保留 AI 图</span>
             </div>
           </header>
           <div class="aiv-panel-body aiv-edit-scroll-body">
@@ -491,6 +491,13 @@
                 <span>尚未配置可用生图模型</span>
                 <button type="button" class="aiv-ghost small" @click="openAiImageModelSettings">去配置 1XM 图片模型</button>
               </div>
+            </label>
+
+            <label v-if="configuredAiImageModels.length && aiImageQualityOptions.length" class="aiv-field">
+              <span>品质</span>
+              <select v-model="selectedAiImageQuality">
+                <option v-for="quality in aiImageQualityOptions" :key="quality" :value="quality">{{ AI_IMAGE_QUALITY_LABELS[quality] || quality }}</option>
+              </select>
             </label>
 
             <label class="aiv-field">
@@ -1223,6 +1230,12 @@
                 <span>尚未配置可用生图模型</span>
                 <button type="button" class="aiv-ghost small" @click="openAiImageModelSettings">去配置 1XM 图片模型</button>
               </div>
+            </label>
+            <label v-if="configuredAiImageModels.length && aiImageQualityOptions.length" class="aiv-field">
+              <span>品质</span>
+              <select v-model="selectedAiImageQuality" :disabled="previewEditBusy">
+                <option v-for="quality in aiImageQualityOptions" :key="quality" :value="quality">{{ AI_IMAGE_QUALITY_LABELS[quality] || quality }}</option>
+              </select>
             </label>
             <section v-if="previewEditAction === 'face_swap'" class="aiv-preview-model-picker" aria-label="AI 换脸模特">
               <div class="aiv-preview-model-sample">
@@ -2209,6 +2222,7 @@ import {
   isNanoBananaModel,
   missingKeyForModel,
   normalizeSettings,
+  qualityOptionsForModel,
   sizeForModel,
 } from '../utils/aiImageModels.js'
 import { isDeepSeekConfigured, isLlmConfigured, normalizeCustomLlmProviders } from '../utils/llmSettings.mjs'
@@ -2256,6 +2270,7 @@ const localMaterialLibraryStyleFilter = ref('all')
 const localMaterialLibraryStyleQuery = ref('')
 const aiImageSettings = ref({})
 const selectedAiImageModelId = ref('')
+const selectedAiImageQuality = ref('high')
 const selectedVideoPromptModelId = ref('')
 const videoPromptWriterBusy = ref(false)
 const videoPromptWriterStatus = ref('')
@@ -2398,7 +2413,7 @@ const styleCodes = ref('208326102205\n208326105214\n208326108104')
 const cloudPath = ref('巴拉营运BU-商品//巴拉货控/02 产品上新模块/2-2 巴拉产品上新/')
 const materialPackageName = ref('')
 const AI_ACTION_PROMPT_DEFAULTS = {
-  face_swap: '只替换脸部五官与脸部皮肤软过渡区域；保留原始背景/场景、构图、姿势、头身比例、肩颈连接、发际线、耳朵、道具、服装版型和颜色；以原图为唯一光照模板，保留原脸光影遮罩和曝光层级，脸部色温、亮度、阴影、局部锐度、颗粒和景深匹配脖颈、耳朵、手部皮肤；不得继承参考头像棚拍柔光或磨皮质感；无文字、无水印。',
+  face_swap: '只替换脸部五官与脸部皮肤软过渡区域；保留原始背景/场景、构图、姿势、头身比例、肩颈连接、发际线、耳朵、道具、服装版型和颜色；以原图为唯一光照模板，脸部色温、亮度、阴影、局部锐度、颗粒和景深匹配脖颈、耳朵、手部皮肤；不得继承参考头像棚拍柔光或磨皮质感；无文字、无水印。',
   background_swap: '',
   outfit_swap: '仅替换服装商品；保留原人物脸部、姿势、背景、构图和光线，服装按参考图保持版型、颜色、图案和材质。',
   pose_swap: '',
@@ -2632,6 +2647,13 @@ const configuredAiImageModels = computed(() => {
   return AI_IMAGE_MODELS.filter(model => !missingKeyForModel(model.id, settings))
 })
 const selectedAiImageModel = computed(() => getAiImageModel(selectedAiImageModelId.value || configuredAiImageModels.value[0]?.id))
+const aiImageQualityOptions = computed(() => qualityOptionsForModel(selectedAiImageModel.value?.id))
+const AI_IMAGE_QUALITY_LABELS = {
+  auto: '自动',
+  high: '高',
+  medium: '中',
+  low: '低',
+}
 function normalizeVideoPromptLlmSettings(settings = {}) {
   const llm = settings?.ai?.llm && typeof settings.ai.llm === 'object' ? settings.ai.llm : {}
   return {
@@ -2778,6 +2800,8 @@ function workspaceSnapshot() {
       reviewBoardUrl: reviewBoardUrl.value,
       task: cloneWorkspaceValue(aiTaskState, {}),
       activeAction: activeAction.value,
+      selectedAiImageModelId: selectedAiImageModelId.value,
+      selectedAiImageQuality: selectedAiImageQuality.value,
       prompt: aiPrompt.value,
       prompts: cloneWorkspaceValue(aiActionPrompts, {}),
       selectedModel: cloneWorkspaceValue(selectedModel.value, null),
@@ -2975,6 +2999,8 @@ function restoreWorkspaceSnapshot(path = workspaceDir.value) {
   reviewBoardUrl.value = String(image.reviewBoardUrl || '')
   Object.assign(aiTaskState, cloneWorkspaceValue(image.task, {}))
   activeAction.value = aiActions.some(action => action.id === image.activeAction) ? image.activeAction : activeAction.value
+  selectedAiImageModelId.value = String(image.selectedAiImageModelId || selectedAiImageModelId.value)
+  selectedAiImageQuality.value = String(image.selectedAiImageQuality || selectedAiImageQuality.value || 'high')
   Object.assign(aiActionPrompts, { ...AI_ACTION_PROMPT_DEFAULTS, ...(image.prompts || {}) })
   if (!image.prompts && image.prompt) aiPrompt.value = String(image.prompt || aiPrompt.value)
   selectedModel.value = cloneWorkspaceValue(image.selectedModel, null)
@@ -5847,8 +5873,19 @@ function ensureAiImageModelSelected() {
   if (!configured.some(model => model.id === selectedAiImageModelId.value)) {
     selectedAiImageModelId.value = configured[0].id
   }
+  const qualityOptions = qualityOptionsForModel(selectedAiImageModelId.value)
+  if (qualityOptions.length && !qualityOptions.includes(selectedAiImageQuality.value)) {
+    selectedAiImageQuality.value = qualityOptions.includes('high') ? 'high' : qualityOptions[0]
+  }
   return true
 }
+
+watch(selectedAiImageModelId, (modelId) => {
+  const qualityOptions = qualityOptionsForModel(modelId)
+  if (qualityOptions.length && !qualityOptions.includes(selectedAiImageQuality.value)) {
+    selectedAiImageQuality.value = qualityOptions.includes('high') ? 'high' : qualityOptions[0]
+  }
+})
 
 function ensureVideoPromptModelSelected() {
   const configured = configuredVideoPromptModels.value
@@ -5899,12 +5936,16 @@ function resolveSelectedAiImageGenerationParams() {
   const size = isNanoBananaModel(model.id)
     ? (model.size || '2K')
     : sizeForModel(model.id, ratio, model.size)
+  const qualityOptions = qualityOptionsForModel(model.id)
+  const quality = qualityOptions.includes(selectedAiImageQuality.value)
+    ? selectedAiImageQuality.value
+    : (qualityOptions.includes('high') ? 'high' : qualityOptions[0])
   return {
     model,
     modelKey: model.key,
     modelKeyTier: model.keyTier,
     size,
-    quality: isNanoBananaModel(model.id) ? undefined : 'high',
+    quality: qualityOptions.length ? quality : undefined,
     outputFormat: 'png',
   }
 }
@@ -6203,7 +6244,7 @@ async function startAiImageGeneration() {
       model: generation.modelKey,
       model_key_tier: generation.modelKeyTier,
       image_size: generation.size,
-      quality: generation.quality || 'high',
+      quality: generation.quality,
       output_format: generation.outputFormat,
     })
     const request = buildBalaAiStageRequest(exportResult)
@@ -6219,7 +6260,7 @@ async function startAiImageGeneration() {
       model: generation.modelKey,
       model_key_tier: generation.modelKeyTier,
       image_size: generation.size,
-      quality: generation.quality || 'high',
+      quality: generation.quality,
       output_format: generation.outputFormat,
     }
     aiStageRequest.value = { ...request, params }
@@ -6609,7 +6650,7 @@ function syncWorkspaceVersionsFromReviewStyles(styles = reviewStyles) {
         operationType: asset.operationType,
         label: asset.label,
         meta: asset.meta,
-        selected: Boolean(asset.selected || asset.editSelected || asset.videoSelected),
+        selected: asset.status === 'approved',
         status: asset.status === 'generating' ? 'running' : asset.status,
         progress: asset.status === 'generating' ? 45 : 100,
         sourceAssetId: asset.sourceAssetId,
@@ -8240,9 +8281,7 @@ function editPromptText(operationType, instruction = '') {
       '严格锁定原图人物的头部大小、头身比例、肩颈连接、下巴位置、发际线轮廓、耳朵位置、视线方向和相机透视；生成后脸不能变大、变小、漂浮、前凸或像贴片。',
       '所选巴拉 AI 模特头像素材只作为五官身份、年龄气质和表情参考；不得继承参考头像的棚拍柔光、磨皮、曝光、肤色或眼部高光。',
       '以原图为唯一光照模板：新脸的色温、亮度、明暗分布、鼻梁/眼窝/脸颊/下巴投影、头发投影、下颌到脖颈阴影、局部锐度、颗粒感和景深必须与原图脸部周围、脖颈、耳朵、手部皮肤一致。',
-      '保留原脸区域已有的光影遮罩和曝光层级：额头、刘海下方、眼窝、鼻侧、嘴角、脸颊、下巴到脖颈的暗部不能被抹平；新脸不能比原图脖颈、耳朵或手部更亮、更白、更干净。',
-      '如果原图脸部因低头、刘海、室内暖光或景深而偏暗、偏暖或柔焦，必须保留这种欠曝、暖色偏和柔焦，禁止自动补光、美颜、统一提亮皮肤或强化眼白/牙齿高光。',
-      '禁止把新脸做成均匀柔光、棚拍证件照、过亮过白、过度锐化或眼睛高光过强；保留真实儿童照片的轻微阴影、皮肤纹理、局部不对称和运动/景深模糊。',
+      '避免把新脸做成均匀柔光、棚拍证件照、过亮过白、过度锐化或眼睛高光过强；保留真实儿童照片的轻微阴影、皮肤纹理、局部不对称和运动/景深模糊。',
       '脸部边缘必须与原图头发、耳朵、脖颈和脸颊阴影柔和融合；避免蜡像感、塑料皮肤、过度磨皮或一眼 AI 感。',
       '禁止替换背景或场景，禁止新增海边、户外、树木、天空、道具、文字、水印、Logo、吊牌、合格证或多余人物。',
       '输出应尽量与原图除脸部外像同一张照片，真实摄影质感，不要拼贴感。',
@@ -8361,7 +8400,7 @@ async function runPreviewImageEdit() {
       surface: 'ai-video-workflow',
       workspace_dir: workspaceDir.value,
       size: generation.size,
-      quality: generation.quality || 'high',
+      quality: generation.quality,
       response_format: generation.outputFormat,
       n: 1,
       model_key_tier: generation.modelKeyTier,
@@ -8532,7 +8571,7 @@ function resetVideoTaskDraftAssets() {
     syncHappyHorseModeFromAssetCount()
     return
   }
-  // 默认勾选第一步已选原图；AI 图即使已审核，也保留为手动选择。
+  // 默认勾选第一步已选原图和第二步保留的 AI 图；其余素材保留为手动选择。
   videoTaskDraft.assetIds = assets.filter(asset => asset.selectable && asset.selected).map(asset => asset.id)
   if (videoTaskDraft.provider === 'happyhorse' && videoTaskDraft.assetIds.length > 9) {
     videoTaskDraft.assetIds = videoTaskDraft.assetIds.slice(0, 9)
@@ -9285,6 +9324,8 @@ watch([
   reviewBatch,
   reviewBoardUrl,
   activeAction,
+  selectedAiImageModelId,
+  selectedAiImageQuality,
   aiPrompt,
   aiActionPrompts,
   selectedModel,

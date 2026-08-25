@@ -444,7 +444,67 @@ def _resolve_configured_generation_model(
     )
 
 
-def _sync_dsh_default_model_settings(agent_dir: Path, provider_id: str, runtime_model_id: str) -> None:
+def _compact_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _dsh_llm_pi_ai_settings(cfg: dict, custom_provider_profiles: list[dict[str, Any]]) -> dict[str, Any]:
+    llm = (cfg.get("ai") or {}).get("llm") or {}
+    llm = llm if isinstance(llm, dict) else {}
+    providers: dict[str, Any] = {}
+    for provider in BUILTIN_LLM_PROVIDERS:
+        provider_id = str(provider.get("id") or "").strip()
+        if not provider_id:
+            continue
+        models = []
+        for model_id in provider.get("models") or []:
+            cap = model_capabilities(str(model_id))
+            runtime_model_id = deepseek_official_real_model(str(model_id)) if provider.get("official_deepseek") else str(model_id)
+            model = {
+                "id": runtime_model_id,
+                "contextWindow": int(cap.get("context_window") or 64000),
+                "maxTokens": int(cap.get("max_output_tokens") or 8192),
+                "input": list(cap.get("input_modalities") or ["text"]),
+            }
+            if provider.get("official_deepseek") and model["input"] == ["text"]:
+                model["reasoningEfforts"] = {"off": None, "low": "low", "high": "high", "max": "max"}
+            models.append(model)
+        base_url = (
+            _compact_text(os.environ.get(str(provider.get("base_url_env") or "")))
+            or _compact_text(llm.get(str(provider.get("base_url_key") or "")))
+            or str(provider.get("base_url_default") or "")
+        )
+        entry: dict[str, Any] = {
+            "displayName": str(provider.get("display_name") or provider_id),
+            "apiKeyEnv": str(provider.get("api_key_env") or ""),
+            "api": str(provider.get("api") or "openai-completions"),
+            "baseURL": base_url,
+            "models": models,
+        }
+        if provider.get("official_deepseek"):
+            entry["reasoning"] = "high"
+        providers[provider_id] = entry
+    for provider in custom_provider_profiles:
+        provider_id = _compact_text(provider.get("id"))
+        if not provider_id:
+            continue
+        providers[provider_id] = {
+            "displayName": _compact_text(provider.get("displayName")) or provider_id,
+            "apiKeyEnv": _compact_text(provider.get("apiKeyEnv")),
+            "api": "anthropic-messages" if provider.get("api") == "anthropic-messages" else "openai-completions",
+            "baseURL": _compact_text(provider.get("baseURL")),
+            "models": list(provider.get("models") or []),
+        }
+    return {"providers": providers}
+
+
+def _sync_dsh_default_model_settings(
+    agent_dir: Path,
+    provider_id: str,
+    runtime_model_id: str,
+    cfg: Optional[dict] = None,
+    custom_provider_profiles: Optional[list[dict[str, Any]]] = None,
+) -> None:
     settings_path = agent_dir / "dsh-home" / "settings.yaml"
     try:
         import yaml
@@ -460,6 +520,10 @@ def _sync_dsh_default_model_settings(agent_dir: Path, provider_id: str, runtime_
     entry = dict(current) if isinstance(current, dict) else {}
     entry.update({"provider": provider_id, "model": runtime_model_id})
     settings["agent-default-model"] = entry
+    settings["llm-pi-ai"] = _dsh_llm_pi_ai_settings(
+        cfg if isinstance(cfg, dict) else {},
+        custom_provider_profiles if isinstance(custom_provider_profiles, list) else [],
+    )
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(settings_path, yaml.safe_dump(settings, allow_unicode=True, sort_keys=False))
 
@@ -1479,7 +1543,7 @@ class AgentService:
         data_root = _data_root()
         agent_dir = data_root / "agent"
         try:
-            _sync_dsh_default_model_settings(agent_dir, provider_id, runtime_model_id)
+            _sync_dsh_default_model_settings(agent_dir, provider_id, runtime_model_id, cfg, custom_providers)
         except AgentModelConfigurationError as exc:
             self.runtime_error = str(exc)
             self.runtime_error_code = "MODEL_CONFIGURATION"

@@ -1665,9 +1665,9 @@ def test_dsh_model_catalog_declares_vision_without_widening_text_only_models():
     assert "input_modalities" not in model_capabilities("deepseek-v4-pro")
 
     profile = build_cordis_yaml({"ai": {"llm": {"default_model": "gpt-5.5"}}})
-    assert re.search(r"id: 'gpt-5\.5'[\s\S]*input: \['text', 'image'\]", profile)
-    assert re.search(r"id: 'deepseek-v4-pro'[\s\S]*input: \['text'\]", profile)
-    assert re.search(r"id: 'deepseek-v4-flash-vision-exp'[\s\S]*input: \['text', 'image'\]", profile)
+    assert re.search(r"id: gpt-5\.5[\s\S]*input: \[text, image\]", profile)
+    assert re.search(r"id: deepseek-v4-pro[\s\S]*input: \[text\]", profile)
+    assert re.search(r"id: deepseek-v4-flash-vision-exp[\s\S]*input: \[text, image\]", profile)
 
 
 def test_dsh_native_deepseek_route_is_hidden_in_favor_of_crawshrimp_route():
@@ -1686,16 +1686,19 @@ def test_dsh_deepseek_official_models_expose_reasoning_efforts():
     from core.agent.cordis_config import build_cordis_yaml
 
     profile = build_cordis_yaml({"ai": {"llm": {"default_model": "deepseek-official-v4-flash"}}})
-    official_block = profile.split("providers['crawshrimp-deepseek-official']", 1)[1].split("if (hasGatewayKey)", 1)[0]
-    efforts = "reasoningEfforts: { off: null, low: 'low', high: 'high', max: 'max' }"
-    vision_line = re.search(r"id: 'deepseek-v4-flash-vision-exp'[^\n]+", official_block).group(0)
+    official_block = profile.split("crawshrimp-deepseek-official:", 1)[1].split("crawshrimp-overseas-openai:", 1)[0]
+    flash_block = official_block.split("- id: deepseek-v4-flash", 1)[1].split("- id:", 1)[0]
+    pro_block = official_block.split("- id: deepseek-v4-pro", 1)[1].split("- id:", 1)[0]
+    vision_block = official_block.split("- id: deepseek-v4-flash-vision-exp", 1)[1]
 
-    assert "reasoning: 'high'" in official_block
-    assert re.search(r"id: 'deepseek-v4-flash'[\s\S]*" + re.escape(efforts), official_block)
-    assert re.search(r"id: 'deepseek-v4-pro'[\s\S]*" + re.escape(efforts), official_block)
-    assert official_block.count(efforts) == 2
-    assert "input: ['text', 'image']" in vision_line
-    assert "reasoningEfforts" not in vision_line
+    assert "reasoning: high" in official_block
+    for block in (flash_block, pro_block):
+        assert "reasoningEfforts:" in block
+        assert "low: low" in block
+        assert "high: high" in block
+        assert "max: max" in block
+    assert "input: [text, image]" in vision_block
+    assert "reasoningEfforts" not in vision_block
 
 
 def test_dsh_runtime_patch_guards_deepseek_vision_reasoning_and_image_bridge():
@@ -1922,6 +1925,51 @@ def test_agent_start_generation_overwrites_stale_dsh_default_model_settings_with
     assert "provider: crawshrimp-deepseek-official" in settings
     assert "model: deepseek-v4-flash" in settings
     assert "keep: true" in settings
+
+
+def test_dsh_settings_sync_writes_runtime_provider_profiles_without_secrets(tmp_path):
+    import yaml
+    from core.agent import service as service_mod
+
+    cfg = {"ai": {"llm": {
+        "api_key": "legacy-gateway-key",
+        "deepseek_api_key": "sk-ds-official-unit",
+        "default_model": "deepseek-official-v4-flash",
+        "custom_providers": [{
+            "id": "custom-1xm",
+            "name": "1XM",
+            "protocol": "openai",
+            "base_url": "https://api.1xm.ai/v1",
+            "api_key": "custom-secret-key",
+            "models": [{"id": "gpt-5.6-luna"}],
+        }],
+    }}}
+    custom_profiles, _custom_env = service_mod.custom_providers_runtime_payload(cfg)
+    agent_dir = tmp_path / "agent"
+
+    service_mod._sync_dsh_default_model_settings(
+        agent_dir,
+        "crawshrimp-deepseek-official",
+        "deepseek-v4-flash",
+        cfg,
+        custom_profiles,
+    )
+
+    text = (agent_dir / "dsh-home" / "settings.yaml").read_text(encoding="utf-8")
+    settings = yaml.safe_load(text)
+    providers = settings["llm-pi-ai"]["providers"]
+
+    assert settings["agent-default-model"] == {
+        "provider": "crawshrimp-deepseek-official",
+        "model": "deepseek-v4-flash",
+    }
+    assert "deepseek-v4-flash" in [item["id"] for item in providers["crawshrimp-deepseek-official"]["models"]]
+    assert "deepseek-v4-flash" in [item["id"] for item in providers["crawshrimp-domestic-openai"]["models"]]
+    assert "kimi-k3" in [item["id"] for item in providers["crawshrimp-domestic-openai"]["models"]]
+    assert providers["custom-1xm"]["apiKeyEnv"] == "CRAWSHRIMP_CUSTOM_LLM_KEY_CUSTOM_1XM"
+    assert "sk-ds-official-unit" not in text
+    assert "legacy-gateway-key" not in text
+    assert "custom-secret-key" not in text
 
 
 def test_agent_start_generation_falls_back_from_unkeyed_gateway_model_to_deepseek(tmp_path, monkeypatch):

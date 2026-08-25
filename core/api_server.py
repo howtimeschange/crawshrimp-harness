@@ -3090,9 +3090,7 @@ def _bala_face_swap_prompt(source_path: Path, model_item: dict, extra: str = "")
         "严格锁定原图人物的头部大小、头身比例、肩颈连接、下巴位置、发际线轮廓、耳朵位置、视线方向和相机透视；生成后脸不能变大、变小、漂浮、前凸或像贴片。",
         f"第二张巴拉 AI 模特头像素材（{model_label}）只作为五官身份、年龄气质和表情参考；不得继承第二张头像的棚拍柔光、磨皮、曝光、肤色或眼部高光。",
         "以第一张原图为唯一光照模板：新脸的色温、亮度、明暗分布、鼻梁/眼窝/脸颊/下巴投影、头发投影、下颌到脖颈阴影、局部锐度、颗粒感和景深必须与原图脸部周围、脖颈、耳朵、手部皮肤一致。",
-        "保留第一张原脸区域已有的光影遮罩和曝光层级：额头、刘海下方、眼窝、鼻侧、嘴角、脸颊、下巴到脖颈的暗部不能被抹平；新脸不能比原图脖颈、耳朵或手部更亮、更白、更干净。",
-        "如果原图脸部因低头、刘海、室内暖光或景深而偏暗、偏暖或柔焦，必须保留这种欠曝、暖色偏和柔焦，禁止自动补光、美颜、统一提亮皮肤或强化眼白/牙齿高光。",
-        "禁止把新脸做成均匀柔光、棚拍证件照、过亮过白、过度锐化或眼睛高光过强；保留真实儿童照片的轻微阴影、皮肤纹理、局部不对称和运动/景深模糊。",
+        "避免把新脸做成均匀柔光、棚拍证件照、过亮过白、过度锐化或眼睛高光过强；保留真实儿童照片的轻微阴影、皮肤纹理、局部不对称和运动/景深模糊。",
         "脸部边缘必须与原图头发、耳朵、脖颈和脸颊阴影柔和融合；避免蜡像感、塑料皮肤、过度磨皮或一眼 AI 感。",
         "禁止替换背景或场景，禁止新增海边、户外、树木、天空、道具、文字、水印、Logo、吊牌、合格证或多余人物。",
         "输出应尽量与原图除脸部外像同一张照片，真实摄影质感，不要拼贴感。",
@@ -3101,6 +3099,52 @@ def _bala_face_swap_prompt(source_path: Path, model_item: dict, extra: str = "")
     if extra_text:
         lines.append(f"补充要求（不得改变上述只换脸范围，不得替换背景/场景）：{extra_text}")
     return "\n".join(lines)
+
+
+def _bala_source_aspect_image_size(source_path: Path, requested_size: object) -> str:
+    fallback = str(requested_size or "1536x2048").strip() or "1536x2048"
+    match = re.fullmatch(r"\s*(\d{2,5})\s*x\s*(\d{2,5})\s*", fallback)
+    if not match:
+        return fallback
+    requested_width = max(16, int(match.group(1)))
+    requested_height = max(16, int(match.group(2)))
+    target_long_edge = max(requested_width, requested_height)
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(source_path) as image:
+            source = ImageOps.exif_transpose(image)
+            source_width, source_height = source.size
+    except Exception as exc:
+        logger.debug("use requested Bala edit size for unreadable image %s: %s", source_path, exc)
+        return fallback
+    if source_width <= 0 or source_height <= 0:
+        return fallback
+    source_ratio = source_width / float(source_height)
+    requested_ratio = requested_width / float(requested_height)
+    if abs(source_ratio - requested_ratio) < 0.015:
+        return f"{requested_width}x{requested_height}"
+
+    def multiple16(value: float) -> int:
+        return max(16, int(round(value / 16.0)) * 16)
+
+    target_long_edge = min(3840, max(16, multiple16(target_long_edge)))
+    if source_width >= source_height:
+        output_width = target_long_edge
+        output_height = multiple16(target_long_edge * source_height / float(source_width))
+    else:
+        output_height = target_long_edge
+        output_width = multiple16(target_long_edge * source_width / float(source_height))
+    output_width = min(3840, max(16, output_width))
+    output_height = min(3840, max(16, output_height))
+    while output_width * output_height > 8_294_400 and max(output_width, output_height) > 16:
+        if output_width >= output_height:
+            output_width = max(16, output_width - 16)
+            output_height = multiple16(output_width * source_height / float(source_width))
+        else:
+            output_height = max(16, output_height - 16)
+            output_width = multiple16(output_height * source_width / float(source_height))
+    return f"{output_width}x{output_height}"
 
 
 def _bala_ai_operation_prompt(source_path: Path, model_item: dict, run_params: dict, operation_type: str) -> str:
@@ -3219,7 +3263,11 @@ def _bala_create_ai_image_job_row(
     output_dir = _bala_workspace_ai_results_dir(workspace_dir, style_code, requested_output_dir)
     params = {
         "prompt": prompt,
-        "size": str(run_params.get("image_size") or "1536x2048").strip() or "1536x2048",
+        "size": (
+            _bala_source_aspect_image_size(source_path, run_params.get("image_size") or "1536x2048")
+            if operation_type == "face_swap"
+            else str(run_params.get("image_size") or "1536x2048").strip() or "1536x2048"
+        ),
         "quality": str(run_params.get("quality") or "high").strip() or "high",
         "output_format": str(run_params.get("output_format") or "png").strip() or "png",
         "n": 1,
@@ -3627,6 +3675,11 @@ def _prepare_shenhui_shoe_package_rows(
         output_root=output_root,
         model_id=str(run_params.get("model_id") or shenhui_shoe_packaging.SHOE_POSE_DEFAULT_MODEL).strip()
         or shenhui_shoe_packaging.SHOE_POSE_DEFAULT_MODEL,
+        pose_strategy=(
+            run_params.get("shoe_pose_strategy")
+            or run_params.get("pose_strategy")
+            or shenhui_shoe_packaging.SHOE_POSE_DEFAULT_STRATEGY
+        ),
         fallback_model_ids=fallback_model_ids,
         label_model_id=str(run_params.get("label_model_id") or "").strip(),
         label_fallback_model_ids=run_params.get("label_fallback_model_ids")

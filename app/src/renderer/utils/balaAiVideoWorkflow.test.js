@@ -81,32 +81,73 @@ test('AI-named recalled materials are not selected until the operator chooses th
   assert.equal(balaWorkflow.summarizeBalaMaterialGroups(groups).selectedCount, 0)
 })
 
-test('video asset pool dedupes by content hash but keeps AI assets manually selected', () => {
+test('recalled original materials collapse by content hash even when filenames differ', () => {
+  const groups = balaWorkflow.normalizeBalaMaterialGroups({
+    batch: {
+      items: [{
+        style_code: '208326103208',
+        assets: [
+          {
+            id: 'same-origin-1',
+            source_type: 'model',
+            filename: '260510bala7218-1.jpg',
+            path: '/workspace/208326103208/01_模拍原图/260510bala7218-1.jpg',
+            content_hash: 'same-original-image',
+          },
+          {
+            id: 'same-origin-2',
+            source_type: 'model',
+            filename: '260510bala7218-2.jpg',
+            path: '/workspace/208326103208/01_模拍原图/260510bala7218-2.jpg',
+            content_hash: 'same-original-image',
+          },
+        ],
+      }],
+    },
+    rows: [{
+      输入款号: '208326103208',
+      素材来源: '模拍图',
+      文件名: '260510bala7218-3.jpg',
+      本地文件: '/workspace/208326103208/01_模拍原图/260510bala7218-3.jpg',
+      下载结果: '已下载',
+      content_hash: 'same-original-image',
+    }],
+  })
+
+  assert.equal(groups.length, 1)
+  assert.equal(groups[0].modelPhotos.length, 1)
+  assert.equal(groups[0].modelPhotos[0].filename, '260510bala7218-1.jpg')
+  assert.equal(groups[0].modelPhotos[0].contentHash, 'same-original-image')
+})
+
+test('video asset pool keeps archived AI-looking copies unselected when only path or filename marks AI', () => {
   const assets = balaWorkflow.buildBalaVideoAssetPool({
-    reviewStyle: {
-      styleCode: '208326103208',
-      assets: [
+    materialStyle: {
+      styleCode: '208426105206',
+      modelPhotos: [
         {
-          id: 'ai-a',
+          id: 'ai-copy-1',
           sourceType: 'model',
-          status: 'approved',
-          path: '/workspace/208326103208/03_AI图/260510bala6811-1-AI.jpg',
-          contentHash: 'same-hash',
+          filename: '2-AI-1.jpg',
+          path: '/workspace/208426105206/03_AI图/2-AI-1.jpg',
+          contentHash: 'same-ai-output',
         },
         {
-          id: 'ai-b',
+          id: 'ai-copy-2',
           sourceType: 'model',
-          status: 'approved',
-          path: '/workspace/208326103208/03_AI图/260510bala6811-2-AI.jpg',
-          cloudFilehash: 'same-hash',
+          filename: '2-AI-2.jpg',
+          path: '/workspace/208426105206/03_AI图/2-AI-2.jpg',
+          contentHash: 'same-ai-output',
         },
       ],
+      detailPhotos: [],
     },
   })
 
   assert.equal(assets.length, 1)
+  assert.equal(assets[0].kind, 'ai')
   assert.equal(assets[0].isAi, true)
-  assert.equal(assets[0].contentHash, 'same-hash')
+  assert.equal(assets[0].displayKind, 'AI·模拍')
   assert.equal(assets[0].selected, false)
 })
 

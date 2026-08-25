@@ -58,8 +58,10 @@ OVERSEAS_ANTHROPIC_MODELS = (
 DOMESTIC_OPENAI_MODELS = (
     "qwen3.8-max-preview",
     "qwen3.7-plus",
+    "deepseek-v4-flash",
     "deepseek-v4-pro",
     "glm-5.2",
+    "kimi-k3",
     "kimi-k2.7-code",
 )
 SUPPORTED_MODELS = (
@@ -141,6 +143,7 @@ BALA_VIDEO_PROMPT_BUILTIN_MODELS = (
     "qwen3.8-max-preview",
     "qwen3.7-plus",
     "glm-5.2",
+    "kimi-k3",
 )
 
 VIDEO_COPY_SYSTEM_PROMPT = """你是一个小红书童装穿搭账号的资深短视频运营。你要为童装或童鞋商品编写像真实妈妈/店主分享的种草视频标题和文案。

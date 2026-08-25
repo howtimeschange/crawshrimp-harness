@@ -29,6 +29,7 @@ export const BALA_VIDEO_PROMPT_MODEL_OPTIONS = Object.freeze([
   { value: 'qwen3.8-max-preview', label: '森马网关 · Qwen 3.8 Max Preview', keyScope: 'gateway' },
   { value: 'qwen3.7-plus', label: '森马网关 · Qwen 3.7 Plus', keyScope: 'gateway' },
   { value: 'glm-5.2', label: '森马网关 · GLM 5.2', keyScope: 'gateway' },
+  { value: 'kimi-k3', label: '森马网关 · Kimi K3', keyScope: 'gateway' },
 ])
 
 const LEGACY_BALA_BUSINESS_MANAGER_NAME = ['软件', '管家'].join('')
@@ -1576,13 +1577,33 @@ export function resolveVideoAssetTaxonomy(asset = {}, { folderHint = '' } = {}) 
   }
 }
 
+function hasGeneratedAiEvidence(asset = {}) {
+  const kind = compact(asset?.kind).toLowerCase()
+  const sourceType = compact(asset?.sourceType || asset?.source_type).toLowerCase()
+  const rawOperation = compact(asset?.operationType || asset?.operation_type || asset?.action)
+  const operationType = rawOperation ? normalizeOperationType(rawOperation) : ''
+  const label = compact(asset?.label || asset?.name || asset?.action)
+  return Boolean(
+    kind === 'ai'
+    || sourceType === 'ai'
+    || asset?.isAi === true
+    || asset?.is_ai === true
+    || compact(asset?.jobUid || asset?.job_uid)
+    || compact(asset?.runUid || asset?.run_uid)
+    || (operationType && operationType !== 'origin')
+    || /换脸|换背景|换装|换姿势/i.test(label)
+  )
+}
+
 export function buildBalaVideoAssetPool({ reviewStyle = {}, materialStyle = null } = {}) {
   const styleCode = compact(reviewStyle?.styleCode || reviewStyle?.style_code || materialStyle?.styleCode)
   const output = []
   const seenPaths = new Set()
   const seenContent = new Set()
-  const selectedForVideo = (asset = {}) => (
+  const selectedForVideo = (asset = {}, status = 'pending', taxonomy = {}) => (
     Boolean(asset?.selected || asset?.editSelected || asset?.videoSelected)
+    || (hasGeneratedAiEvidence(asset) && !asset?.deleted)
+    || (!taxonomy?.isAi && status === 'approved')
   )
   const append = (asset, { source = false, folderHint = '' } = {}) => {
     const status = reviewAssetStatus(asset?.status)
@@ -1611,7 +1632,7 @@ export function buildBalaVideoAssetPool({ reviewStyle = {}, materialStyle = null
       businessKind: videoBusinessKind({ ...asset, kind: structuralKind, sourceType: taxonomy.sourceType }),
       displayKind: taxonomy.displayKind,
       status,
-      selected: selectedForVideo(asset),
+      selected: selectedForVideo(asset, status, taxonomy),
       selectable: true,
       path,
       sourcePath: compact(asset?.sourcePath || asset?.source_path),

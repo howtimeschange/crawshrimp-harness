@@ -1448,6 +1448,7 @@ test('video task dialog can write prompt from selected images with a vision LLM 
     'qwen3.8-max-preview',
     'qwen3.7-plus',
     'glm-5.2',
+    'kimi-k3',
   ])
   assert.match(balaWorkflow.BALA_VIDEO_PROMPT_TEMPLATE, /根据图 1-5 的模拍图/)
   assert.match(balaWorkflow.BALA_VIDEO_PROMPT_TEMPLATE, /下摆设计和面料/)
@@ -1801,6 +1802,9 @@ test('precise image edit modal keeps the same operation boundaries as batch AI e
   assert.match(templateSource, /@click="setPreviewEditAction\(action\.id\)"/)
   assert.match(templateSource, /{{ previewEditPromptLabel }}/)
   assert.match(templateSource, /:placeholder="previewEditPromptPlaceholder"/)
+  assert.match(templateSource, /<span>品质<\/span>[\s\S]*v-model="selectedAiImageQuality"[\s\S]*AI_IMAGE_QUALITY_LABELS/)
+  assert.match(source, /const selectedAiImageQuality = ref\('high'\)/)
+  assert.match(source, /const aiImageQualityOptions = computed\(\(\) => qualityOptionsForModel\(selectedAiImageModel\.value\?\.id\)\)/)
   assert.match(source, /const previewEditActionPrompts = reactive\(\{ \.\.\.AI_ACTION_PROMPT_DEFAULTS \}\)/)
   assert.match(actionSource, /previewEditActionPrompts\[previewEditAction\.value\] = String\(previewEditPrompt\.value \|\| ''\)/)
   assert.match(actionSource, /previewEditPrompt\.value = previewPromptForAction\(previewEditAction\.value\)/)
@@ -1808,7 +1812,9 @@ test('precise image edit modal keeps the same operation boundaries as batch AI e
   assert.match(openSource, /const assetPrompt = previewAssetPrompt\(asset, operationType\)/)
   assert.doesNotMatch(openSource, /asset\?\.meta \|\| aiPrompt\.value/)
 
-  assert.match(promptSource, /face_swap:[\s\S]*软过渡区域[\s\S]*头身比例[\s\S]*保留原脸区域已有的光影遮罩[\s\S]*禁止自动补光[\s\S]*脸部边缘必须与原图头发、耳朵、脖颈和脸颊阴影柔和融合[\s\S]*禁止替换背景或场景/)
+  assert.match(promptSource, /face_swap:[\s\S]*软过渡区域[\s\S]*头身比例[\s\S]*不得继承参考头像的棚拍柔光[\s\S]*唯一光照模板[\s\S]*脸部边缘必须与原图头发、耳朵、脖颈和脸颊阴影柔和融合[\s\S]*禁止替换背景或场景/)
+  assert.doesNotMatch(promptSource, /光影遮罩和曝光层级/)
+  assert.doesNotMatch(promptSource, /禁止自动补光、美颜、统一提亮皮肤/)
   assert.match(promptSource, /background_swap:[\s\S]*编辑范围只限背景\/场景[\s\S]*禁止改脸、换衣服、改变姿势/)
   assert.match(promptSource, /outfit_swap:[\s\S]*编辑范围只限服装商品区域[\s\S]*禁止换脸、替换背景、改变姿势/)
   assert.match(promptSource, /pose_swap:[\s\S]*编辑范围以人物身体姿态为主[\s\S]*禁止换脸、换衣服、替换背景/)
@@ -1817,6 +1823,8 @@ test('precise image edit modal keeps the same operation boundaries as batch AI e
   assert.match(editSource, /if \(operationType === 'background_swap' && !promptInstruction\)/)
   assert.match(editSource, /if \(operationType === 'pose_swap' && !promptInstruction\)/)
   assert.match(editSource, /operation_type:\s*operationType/)
+  assert.match(editSource, /quality:\s*generation\.quality/)
+  assert.doesNotMatch(editSource, /quality:\s*generation\.quality \|\| 'high'/)
   assert.match(editSource, /background_prompt:\s*operationType === 'background_swap' \? promptInstruction : ''/)
   assert.match(editSource, /pose_prompt:\s*operationType === 'pose_swap' \? promptInstruction : ''/)
   assert.match(editSource, /prompt_extra:\s*promptExtra/)
@@ -2122,6 +2130,7 @@ test('video asset pool lets pending model detail and AI images be manually selec
         { id: 'approved-origin', name: '原图', sourceType: 'model', status: 'approved', path: '/tmp/source.jpg', selected: true },
         { id: 'pending-origin', name: '待审模特', sourceType: 'model', status: 'pending', path: '/tmp/pending-source.jpg' },
         { id: 'pending-detail', name: '待审细节', sourceType: 'detail', status: 'pending', path: '/tmp/pending-detail.jpg', selected: true },
+        { id: 'archived-ai-name', name: '旧归档-AI.jpg', sourceType: 'model', status: 'approved', path: '/workspace/208326102205/03_AI图/旧归档-AI.jpg' },
         { id: 'rejected-detail', name: '细节', sourceType: 'detail', status: 'rejected', path: '/tmp/detail.jpg' },
       ],
     },
@@ -2136,13 +2145,14 @@ test('video asset pool lets pending model detail and AI images be manually selec
     asset.selected,
     asset.selectable,
   ]), [
-    ['vasset-approved-face', 'ai', '模拍', 'AI·模拍', 'approved', false, true],
-    ['vasset-pending-outfit', 'ai', '模拍', 'AI·模拍', 'pending', false, true],
-    ['vasset-pending-detail-ai', 'ai', '素材', 'AI·细节', 'pending', false, true],
+    ['vasset-approved-face', 'ai', '模拍', 'AI·模拍', 'approved', true, true],
+    ['vasset-pending-outfit', 'ai', '模拍', 'AI·模拍', 'pending', true, true],
+    ['vasset-pending-detail-ai', 'ai', '素材', 'AI·细节', 'pending', true, true],
     ['vasset-retry-pose', 'ai', '模拍', 'AI·模拍', 'retry', true, true],
     ['vasset-208326102205-source-approved-origin', 'origin', '模拍', '模特图', 'approved', true, true],
     ['vasset-208326102205-source-pending-origin', 'origin', '模拍', '模特图', 'pending', false, true],
     ['vasset-208326102205-source-pending-detail', 'reference', '素材', '细节图', 'pending', true, true],
+    ['vasset-208326102205-source-archived-ai-name', 'ai', '模拍', 'AI·模拍', 'approved', false, true],
   ])
   assert.equal(assets[0].thumbnailUrl, 'http://127.0.0.1:18765/thumbnail/approved-face')
 })

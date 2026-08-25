@@ -71,13 +71,13 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
         }
         self.assertEqual(default_model["id"], "model_id")
         self.assertEqual(default_model["label"], "默认模型")
-        self.assertEqual(default_model["default"], "gpt-5.6-terra")
+        self.assertEqual(default_model["default"], "gpt-5.6-sol")
         self.assertEqual(
             fallback_models["fallback_model_1"]["default"],
-            "gpt-5.6-luna",
+            "gpt-5.6-terra",
         )
         self.assertEqual(fallback_models["fallback_model_1"]["label"], "备选模型 1")
-        self.assertEqual(fallback_models["fallback_model_2"]["default"], "gpt-5.6-sol")
+        self.assertEqual(fallback_models["fallback_model_2"]["default"], "gpt-5.6-luna")
         self.assertEqual(fallback_models["fallback_model_2"]["label"], "备选模型 2")
         self.assertEqual(fallback_models["fallback_model_3"]["default"], "gpt-5.5")
         self.assertEqual(fallback_models["fallback_model_3"]["label"], "备选模型 3")
@@ -86,7 +86,7 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
             "deepseek-official-v4-flash-vision-exp",
         )
         self.assertEqual(fallback_models["fallback_model_4"]["label"], "备选模型 4")
-        self.assertEqual(fallback_models["fallback_model_5"]["default"], "")
+        self.assertEqual(fallback_models["fallback_model_5"]["default"], "kimi-k2.7-code")
         self.assertEqual(fallback_models["fallback_model_5"]["label"], "备选模型 5")
         self.assertNotIn("Fallback", params["model_chain"]["hint"])
         self.assertIn("不使用", [
@@ -113,6 +113,7 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
                 "deepseek-v4-flash",
                 "deepseek-v4-pro",
                 "glm-5.2",
+                "kimi-k3",
                 "kimi-k2.7-code",
             }.issubset(
                 {
@@ -120,6 +121,14 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
                     for option in default_model["options"]
                 }
             )
+        )
+        self.assertEqual(params["shoe_pose_strategy"]["default"], "single_sheet")
+        self.assertEqual(
+            [
+                option["value"]
+                for option in params["shoe_pose_strategy"]["options"]
+            ],
+            ["single_sheet", "global_pages", "batch_overview", "batch"],
         )
         self.assertEqual(params["export_folder"]["type"], "directory")
 
@@ -145,10 +154,10 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
         self.assertEqual(param.fallback_models[0]["label"], "备选模型 1")
 
         serialized = _serialize_task_param("shenhui-new-arrival", param)
-        self.assertEqual(serialized["default_model"]["default"], "gpt-5.6-terra")
+        self.assertEqual(serialized["default_model"]["default"], "gpt-5.6-sol")
         self.assertEqual(
-            serialized["fallback_models"][3]["default"],
-            "deepseek-official-v4-flash-vision-exp",
+            serialized["fallback_models"][0]["default"],
+            "gpt-5.6-terra",
         )
 
     def test_manifest_declares_deepdraw_upload_task_with_fail_closed_controls(self):
@@ -1068,6 +1077,7 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
                 "fallback_model_1": "gpt-5.6-terra",
                 "fallback_model_2": "gpt-5.6-luna",
                 "fallback_model_3": "",
+                "shoe_pose_strategy": "global_pages",
                 "shoe_category_file": {
                     "rows": [
                         {"款号": "208326146209", "品类": "宝宝鞋"},
@@ -1107,6 +1117,10 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
             self.assertEqual(
                 prepare.call_args.kwargs["fallback_model_ids"],
                 ["gpt-5.6-terra", "gpt-5.6-luna"],
+            )
+            self.assertEqual(
+                prepare.call_args.kwargs["pose_strategy"],
+                "global_pages",
             )
             self.assertEqual(
                 prepare.call_args.kwargs["label_fallback_model_ids"],

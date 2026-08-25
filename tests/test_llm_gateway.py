@@ -63,6 +63,15 @@ class LlmGatewayTests(unittest.TestCase):
         self.assertEqual(domestic.protocol, "openai")
         self.assertEqual(domestic.base_url, "https://domestic.example/v1")
 
+    def test_domestic_gateway_exposes_flash_and_kimi_k3(self):
+        with patch.dict(os.environ, {}, clear=True):
+            for model_id in ("deepseek-v4-flash", "kimi-k3"):
+                route = llm_gateway.route_for_model(model_id, self.config())
+                self.assertEqual(route.model_id, model_id)
+                self.assertEqual(route.protocol, "openai")
+                self.assertEqual(route.base_url, "https://domestic.example/v1")
+                self.assertEqual(route.api_key, "unit-key")
+
     def test_deepseek_official_routes_use_dedicated_key_and_real_model_names(self):
         config = self.config()
         config["ai"]["llm"]["deepseek_api_key"] = "sk-ds-official-unit"
@@ -205,6 +214,7 @@ class LlmGatewayTests(unittest.TestCase):
 
     def test_bala_video_prompt_generation_uses_selected_images_and_model(self):
         calls = []
+        self.assertIn("kimi-k3", llm_gateway.bala_video_prompt_model_ids(self.config()))
 
         def fake_openai(route, system_prompt, user_prompt, images, *, timeout_seconds=None):
             calls.append((route, system_prompt, user_prompt, images, timeout_seconds))
