@@ -775,13 +775,19 @@
           </div>
 
           <div v-if="imSettingsUrl" class="im-settings-shell">
+            <div v-if="!imSettingsReady" class="im-settings-loading" role="status" aria-live="polite">
+              <span class="im-settings-loading-spinner" aria-hidden="true"></span>
+              <strong>正在载入机器人渠道</strong>
+              <p>正在准备接入页面，请稍候…</p>
+            </div>
             <iframe
               ref="imSettingsFrame"
               :key="imSettingsUrl"
-              class="im-settings-frame"
+              :class="['im-settings-frame', { 'is-ready': imSettingsReady }]"
               :src="imSettingsUrl"
               title="抓虾 IM机器人设置"
               allow="clipboard-read; clipboard-write"
+              :aria-hidden="imSettingsReady ? 'false' : 'true'"
               @load="onImSettingsFrameLoad"
             />
           </div>
@@ -994,7 +1000,7 @@
 </template>
 
 <script setup>
-import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineComponent, h, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { IconExternalLink } from '@tabler/icons-vue'
 import {
   AI_VIDEO_CONNECTION_DEFAULTS,
@@ -1041,6 +1047,7 @@ const agentRuntime = ref({ state: 'unknown', generation: 0, model: '', web_url: 
 const agentBusy = ref('')
 const agentNotice = ref('')
 const imSettingsFrame = ref(null)
+const imSettingsReady = ref(false)
 const agentRuntimeLabel = computed(() => {
   const state = String(agentRuntime.value?.state || '')
   if (state === 'ready') return '就绪'
@@ -1069,6 +1076,17 @@ function onImSettingsFrameLoad(event) {
   } catch {
     // Runtime may have restarted between iframe load and message delivery.
   }
+}
+
+function onImSettingsMessage(event) {
+  const frameWindow = imSettingsFrame.value?.contentWindow
+  if (!frameWindow || event.source !== frameWindow || !imSettingsUrl.value) return
+  try {
+    if (event.origin !== new URL(imSettingsUrl.value).origin) return
+  } catch {
+    return
+  }
+  if (event.data?.__crawshrimp === 'im-settings-ready') imSettingsReady.value = true
 }
 
 async function refreshAgentRuntime() {
@@ -2035,8 +2053,13 @@ async function testNotify(channel) {
 }
 
 onMounted(async () => {
+  window.addEventListener('message', onImSettingsMessage)
   await load()
   if (activePanelId.value === 'im-bots') await refreshAgentRuntime()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('message', onImSettingsMessage)
 })
 
 watch(() => props.focusPanelId, panelId => {
@@ -2045,11 +2068,16 @@ watch(() => props.focusPanelId, panelId => {
 
 watch(activePanelId, panelId => {
   if (panelId === 'cloud-approval') loadCloudStatus()
+  if (panelId === 'im-bots') imSettingsReady.value = false
   if (panelId === 'ai-agent' || panelId === 'im-bots') refreshAgentRuntime()
 })
 
 watch(() => props.effectiveTheme, () => {
   if (activePanelId.value === 'im-bots') onImSettingsFrameLoad()
+})
+
+watch(imSettingsUrl, () => {
+  imSettingsReady.value = false
 })
 </script>
 
@@ -2326,6 +2354,7 @@ watch(() => props.effectiveTheme, () => {
 }
 
 .im-settings-shell {
+  position: relative;
   flex: 1;
   min-height: 640px;
   overflow: hidden;
@@ -2341,6 +2370,53 @@ watch(() => props.effectiveTheme, () => {
   min-height: 640px;
   border: 0;
   background: var(--bg);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.im-settings-frame.is-ready {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.im-settings-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 420px;
+  color: var(--text2);
+  background: var(--bg);
+}
+
+.im-settings-loading strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.im-settings-loading p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.im-settings-loading-spinner {
+  width: 22px;
+  height: 22px;
+  margin-bottom: 4px;
+  border: 2px solid color-mix(in srgb, var(--orange) 22%, transparent);
+  border-top-color: var(--orange);
+  border-radius: 50%;
+  animation: im-settings-spin 0.75s linear infinite;
+}
+
+@keyframes im-settings-spin {
+  to { transform: rotate(360deg); }
 }
 
 .im-runtime-placeholder {

@@ -146,6 +146,8 @@ window.__ModuleLoader__.load({
       return node === root
     }
 
+    let crawshrimpImSettingsReadyPublished = false
+
     function openCrawshrimpImSettings() {
       if (!crawshrimpImSettingsEnabled() || typeof document === 'undefined') return false
       injectImSettingsEmbedCss()
@@ -165,9 +167,13 @@ window.__ModuleLoader__.load({
       const imTab = [...overlay.querySelectorAll('[role="tab"]')]
         .find((button) => /^IM\s*(?:机器人|bots?)$/i.test(String(button.textContent || '').trim()))
       if (imTab && imTab.getAttribute('aria-selected') !== 'true') imTab.click()
-      isolateCrawshrimpImSurface(overlay)
+      const surfaceReady = isolateCrawshrimpImSurface(overlay)
+      if (surfaceReady && !crawshrimpImSettingsReadyPublished) {
+        crawshrimpImSettingsReadyPublished = true
+        postToShell({ __crawshrimp: 'im-settings-ready' })
+      }
       document.documentElement.dataset.csImSettings = '1'
-      return Boolean(imTab)
+      return Boolean(imTab && surfaceReady)
     }
 
     let workspaceDirectoryPickSeq = 0
