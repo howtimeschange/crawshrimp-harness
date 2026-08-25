@@ -95,15 +95,28 @@ window.__ModuleLoader__.load({
     }
 
     const IM_SETTINGS_EMBED_CSS = [
-      'html, body { overflow: hidden !important; }',
+      'html, body { overflow: hidden !important; background: var(--dsw-alias-bg-base, #f7f7f8) !important; }',
       '.hHd-Xa_settingsArea { display: contents !important; }',
       '.VOzbGW_overlay { align-items: stretch !important; justify-content: stretch !important; }',
       '.VOzbGW_mask, .VOzbGW_nav, .VOzbGW_header { display: none !important; }',
-      '.VOzbGW_panel { width: 100vw !important; max-width: none !important; height: 100vh !important; max-height: none !important; border-radius: 0 !important; box-shadow: none !important; }',
-      '.VOzbGW_content { width: 100% !important; min-width: 0 !important; }',
-      '.VOzbGW_options { padding: 22px 24px 30px !important; }',
-      '.dim-page { max-width: none !important; }',
+      '.VOzbGW_panel { width: 100vw !important; max-width: none !important; height: 100vh !important; max-height: none !important; border: 0 !important; border-radius: 0 !important; background: var(--dsw-alias-bg-base, #f7f7f8) !important; box-shadow: none !important; }',
+      '.VOzbGW_content { width: 100% !important; min-width: 0 !important; background: var(--dsw-alias-bg-base, #f7f7f8) !important; }',
+      '.VOzbGW_options { width: 100% !important; min-width: 0 !important; height: 100% !important; padding: 0 !important; overflow: hidden !important; background: var(--dsw-alias-bg-base, #f7f7f8) !important; }',
+      '[data-cs-im-surface-root="1"], [data-cs-im-surface-path="1"] { display: block !important; width: 100% !important; height: 100% !important; min-height: 0 !important; }',
+      '[data-cs-im-surface-root="1"] > :not([data-cs-im-surface-path="1"]), [data-cs-im-surface-path="1"] > :not([data-cs-im-surface-path="1"]):not(.dim-page) { display: none !important; }',
+      '.dim-page { --dim-crawshrimp-accent: var(--dsw-alias-state-business-primary, #FF5000); --dim-crawshrimp-accent-soft: color-mix(in srgb, var(--dim-crawshrimp-accent) 11%, transparent); --dim-blue: var(--dim-crawshrimp-accent) !important; width: 100% !important; max-width: none !important; height: 100% !important; min-height: 0 !important; padding: 0 !important; }',
+      '.dim-title { display: none !important; }',
+      '.dim-layout { grid-template-columns: 174px 1px minmax(0, 1fr) !important; align-items: stretch !important; gap: 22px !important; width: 100% !important; height: 100% !important; min-height: 0 !important; padding: 20px !important; }',
+      '.dim-rail { grid-template-columns: minmax(0, 1fr) !important; align-content: start !important; max-height: none !important; min-height: 0 !important; padding: 1px 4px 1px 1px !important; overflow-y: auto !important; }',
+      '.dim-divider { display: block !important; min-height: 100% !important; }',
+      '.dim-panel { min-height: 0 !important; padding-right: 4px !important; overflow-y: auto !important; }',
+      '.dim-channel:hover { border-color: color-mix(in srgb, var(--dim-crawshrimp-accent) 28%, var(--dsw-alias-border-l2, #eef0f3)) !important; background: color-mix(in srgb, var(--dim-crawshrimp-accent) 3%, var(--dsw-alias-bg-layer-3, #fff)) !important; }',
+      '.dim-channel[aria-selected="true"] { border-color: color-mix(in srgb, var(--dim-crawshrimp-accent) 48%, var(--dsw-alias-border-l2, #dfe1e5)) !important; color: var(--dim-crawshrimp-accent) !important; background: var(--dim-crawshrimp-accent-soft) !important; box-shadow: 0 3px 12px color-mix(in srgb, var(--dim-crawshrimp-accent) 9%, transparent) !important; }',
+      '.dim-page button[data-kind="primary"], .dim-page a[data-kind="primary"], .dim-page .dim-scanButton, .dim-page .dim-loopbackRecoveryAction, .dim-page .dim-directoryPickerPrimary { border-color: var(--dim-crawshrimp-accent) !important; color: var(--dsw-alias-brand-primary-invert, #fff) !important; background: var(--dim-crawshrimp-accent) !important; box-shadow: none !important; }',
+      '.dim-page button[data-kind="primary"]:hover:not(:disabled), .dim-page a[data-kind="primary"]:hover, .dim-page .dim-scanButton:hover:not(:disabled), .dim-page .dim-loopbackRecoveryAction:hover, .dim-page .dim-directoryPickerPrimary:hover:not(:disabled) { border-color: var(--dim-crawshrimp-accent) !important; background: var(--dim-crawshrimp-accent) !important; filter: brightness(.92); }',
+      '.dim-page button[data-kind="primary"]:focus-visible, .dim-page a[data-kind="primary"]:focus-visible, .dim-page .dim-scanButton:focus-visible, .dim-page .dim-loopbackRecoveryAction:focus-visible, .dim-page .dim-directoryPickerPrimary:focus-visible { outline: 2px solid color-mix(in srgb, var(--dim-crawshrimp-accent) 62%, white) !important; outline-offset: 2px !important; }',
       '.dim-workspaceEdit { display: none !important; }',
+      '@media (max-width: 560px) { .dim-layout { grid-template-columns: minmax(0, 1fr) !important; height: auto !important; min-height: 100% !important; } .dim-rail { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; max-height: 240px !important; } .dim-divider { display: none !important; } .dim-panel { overflow: visible !important; } }',
     ].join('\n')
 
     function injectImSettingsEmbedCss() {
@@ -114,6 +127,23 @@ window.__ModuleLoader__.load({
       tag.dataset.pluginCss = tagId
       tag.textContent = IM_SETTINGS_EMBED_CSS
       document.head.appendChild(tag)
+    }
+
+    function isolateCrawshrimpImSurface(overlay) {
+      const page = overlay?.querySelector?.('.dim-page')
+      const root = page?.closest?.('[data-slot="settings.section"]')
+      if (!page || !root) return false
+
+      root.querySelectorAll('[data-cs-im-surface-path="1"]').forEach((node) => {
+        delete node.dataset.csImSurfacePath
+      })
+      root.dataset.csImSurfaceRoot = '1'
+      let node = page.parentElement
+      while (node && node !== root) {
+        node.dataset.csImSurfacePath = '1'
+        node = node.parentElement
+      }
+      return node === root
     }
 
     function openCrawshrimpImSettings() {
@@ -135,6 +165,7 @@ window.__ModuleLoader__.load({
       const imTab = [...overlay.querySelectorAll('[role="tab"]')]
         .find((button) => /^IM\s*(?:机器人|bots?)$/i.test(String(button.textContent || '').trim()))
       if (imTab && imTab.getAttribute('aria-selected') !== 'true') imTab.click()
+      isolateCrawshrimpImSurface(overlay)
       document.documentElement.dataset.csImSettings = '1'
       return Boolean(imTab)
     }

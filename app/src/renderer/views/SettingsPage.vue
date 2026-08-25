@@ -2329,9 +2329,9 @@ watch(() => props.effectiveTheme, () => {
   flex: 1;
   min-height: 640px;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .im-settings-frame {
