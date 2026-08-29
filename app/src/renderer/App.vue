@@ -140,7 +140,8 @@
       </div>
       <!-- 覆盖层:其他菜单视图(左偏移让出智能体会话侧边栏) -->
       <div
-        v-if="currentView !== 'agent'"
+        v-if="currentView !== 'agent' || settingsMountedOnce"
+        v-show="currentView !== 'agent'"
         class="embed-overlay"
         :style="{ left: `${embedLeft}px` }"
       >
@@ -209,7 +210,8 @@
           <AgentScriptReview v-if="currentView === 'agent_script_review'" />
           <!-- 设置 -->
           <SettingsPage
-            v-if="currentView === 'settings'"
+            v-if="settingsMountedOnce"
+            v-show="currentView === 'settings'"
             :status="status"
             :focus-panel-id="focusSettingsPanelId"
             :update-status="updateStatus"
@@ -294,6 +296,7 @@ const taskRunnerHandoffParams = ref({})
 const taskRunnerHandoffKey = ref(0)
 const scriptGroups = ref([])
 const focusSettingsPanelId = ref('')
+const settingsMountedOnce = ref(currentView.value === 'settings')
 const sidebarCollapsed = ref(readSidebarCollapsed(window.localStorage))
 const effectiveSidebarCollapsed = computed(() => !activeScript.value && sidebarCollapsed.value)
 const isMacTitlebar = /mac/i.test(String(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent))
@@ -360,6 +363,7 @@ function selectNav(item) {
     activeScript.value = null
     activeTaskId.value = null
   }
+  if (item.id === 'settings') settingsMountedOnce.value = true
   currentView.value = item.id
   activeInstanceUid.value = ''
   if (item.id !== 'settings') {
@@ -435,6 +439,7 @@ function openSettingsPanel(target) {
   const panelId = target && typeof target === 'object'
     ? target.panelId || target.id || ''
     : target
+  settingsMountedOnce.value = true
   focusSettingsPanelId.value = panelId
   currentView.value = 'settings'
   activeScript.value = null

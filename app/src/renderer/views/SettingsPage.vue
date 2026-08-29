@@ -765,50 +765,6 @@
           </div>
         </section>
 
-        <section v-else-if="activePanelId === 'im-bots'" key="im-bots" class="panel im-panel">
-          <div class="panel-head">
-            <div>
-              <p class="panel-kicker">IM机器人</p>
-              <h3>机器人接入</h3>
-            </div>
-            <span :class="['badge', agentRuntime.state === 'ready' ? 'on' : 'neutral']">
-              {{ agentRuntime.state === 'ready' ? '服务常驻' : agentRuntimeLabel }}
-            </span>
-          </div>
-
-          <div class="im-safety-strip" aria-label="IM 安全策略">
-            <span><i aria-hidden="true"></i>仅接受渠道可信用户</span>
-            <span><i aria-hidden="true"></i>工作区范围已锁定</span>
-            <span><i aria-hidden="true"></i>远程审批默认关闭</span>
-          </div>
-
-          <div v-if="imSettingsUrl" class="im-settings-shell">
-            <div v-if="!imSettingsReady" class="im-settings-loading" role="status" aria-live="polite">
-              <span class="im-settings-loading-spinner" aria-hidden="true"></span>
-              <strong>正在载入机器人渠道</strong>
-              <p>正在准备接入页面，请稍候…</p>
-            </div>
-            <iframe
-              ref="imSettingsFrame"
-              :key="imSettingsUrl"
-              :class="['im-settings-frame', { 'is-ready': imSettingsReady }]"
-              :src="imSettingsUrl"
-              title="抓虾 IM机器人设置"
-              allow="clipboard-read; clipboard-write"
-              :aria-hidden="imSettingsReady ? 'false' : 'true'"
-              @load="onImSettingsFrameLoad"
-            />
-          </div>
-          <div v-else class="im-runtime-placeholder">
-            <strong>正在启动 IM 常驻服务</strong>
-            <p>IM机器人随抓虾核心服务启动；首次准备运行时可能需要一些时间。</p>
-            <button class="btn-orange" type="button" :disabled="Boolean(agentBusy)" @click="onAgentRestartRuntime">
-              {{ agentBusy === 'runtime' ? '启动中…' : '重新启动 IM 服务' }}
-            </button>
-            <p v-if="agentRuntime.error" class="inline-msg err">{{ agentRuntime.error }}</p>
-          </div>
-        </section>
-
         <section v-else-if="activePanelId === 'cloud-approval'" key="cloud-approval" class="panel">
           <div class="panel-head">
             <div>
@@ -903,6 +859,54 @@
           </div>
         </section>
         </Transition>
+        <section
+          v-if="imSettingsPanelMountedOnce"
+          v-show="activePanelId === 'im-bots'"
+          key="im-bots"
+          class="panel im-panel"
+        >
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">IM机器人</p>
+              <h3>机器人接入</h3>
+            </div>
+            <span :class="['badge', agentRuntime.state === 'ready' ? 'on' : 'neutral']">
+              {{ agentRuntime.state === 'ready' ? '服务常驻' : agentRuntimeLabel }}
+            </span>
+          </div>
+
+          <div class="im-safety-strip" aria-label="IM 安全策略">
+            <span><i aria-hidden="true"></i>仅接受渠道可信用户</span>
+            <span><i aria-hidden="true"></i>工作区范围已锁定</span>
+            <span><i aria-hidden="true"></i>远程审批默认关闭</span>
+          </div>
+
+          <div v-if="imSettingsUrl" class="im-settings-shell">
+            <div v-if="!imSettingsReady" class="im-settings-loading" role="status" aria-live="polite">
+              <span class="im-settings-loading-spinner" aria-hidden="true"></span>
+              <strong>正在载入机器人渠道</strong>
+              <p>正在准备接入页面，请稍候…</p>
+            </div>
+            <iframe
+              ref="imSettingsFrame"
+              :key="imSettingsUrl"
+              :class="['im-settings-frame', { 'is-ready': imSettingsReady }]"
+              :src="imSettingsUrl"
+              title="抓虾 IM机器人设置"
+              allow="clipboard-read; clipboard-write"
+              :aria-hidden="imSettingsReady ? 'false' : 'true'"
+              @load="onImSettingsFrameLoad"
+            />
+          </div>
+          <div v-else class="im-runtime-placeholder">
+            <strong>正在启动 IM 常驻服务</strong>
+            <p>IM机器人随抓虾核心服务启动；首次准备运行时可能需要一些时间。</p>
+            <button class="btn-orange" type="button" :disabled="Boolean(agentBusy)" @click="onAgentRestartRuntime">
+              {{ agentBusy === 'runtime' ? '启动中…' : '重新启动 IM 服务' }}
+            </button>
+            <p v-if="agentRuntime.error" class="inline-msg err">{{ agentRuntime.error }}</p>
+          </div>
+        </section>
       </main>
     </div>
 
@@ -1070,6 +1074,10 @@ const imSettingsUrl = computed(() => {
   try {
     const url = new URL(raw)
     url.searchParams.set('csImSettings', '1')
+    const generation = Number(agentRuntime.value?.generation || 0)
+    if (Number.isFinite(generation) && generation > 0) {
+      url.searchParams.set('csRuntimeGeneration', String(Math.trunc(generation)))
+    }
     return url.href
   } catch {
     return ''
@@ -1312,6 +1320,7 @@ function resolvePanelSelection(panelId) {
 const initialPanelSelection = resolvePanelSelection(props.focusPanelId)
 const activeGroupId = ref(initialPanelSelection.groupId)
 const activePanelId = ref(initialPanelSelection.panelId)
+const imSettingsPanelMountedOnce = ref(initialPanelSelection.panelId === 'im-bots')
 
 const panelFields = {
   'notify-dingtalk': ['notify.dingtalk_webhook', 'notify.dingtalk_secret'],
@@ -2077,8 +2086,12 @@ watch(() => props.focusPanelId, panelId => {
 
 watch(activePanelId, panelId => {
   if (panelId === 'cloud-approval') loadCloudStatus()
-  if (panelId === 'im-bots') imSettingsReady.value = false
-  if (panelId === 'ai-agent' || panelId === 'im-bots') refreshAgentRuntime()
+  if (panelId === 'im-bots') {
+    imSettingsPanelMountedOnce.value = true
+    if (!imSettingsFrame.value) imSettingsReady.value = false
+    refreshAgentRuntime()
+  }
+  if (panelId === 'ai-agent') refreshAgentRuntime()
 })
 
 watch(() => props.effectiveTheme, () => {
