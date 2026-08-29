@@ -15,6 +15,24 @@ Crawshrimp Harness 把抓虾桌面应用与 DeepSeek Harness（DSH）组合成�
 
 ## 版本记录
 
+### v0.1.10
+
+- 同步抓虾主线业务能力到 Harness 桌面端：脚本搜索、买家秀 AI、TEMU SCM 水洗附件兜底、唯品会 PDC 图片持久化、Shenhui 标签 / 鞋包处理和 Bala 视频工作流可靠性改进。
+- 集成 IM 机器人设置面，并通过 ready handshake 与常驻 iframe 降低中间 DSH 页面闪现和切换状态丢失。
+- 修复 LLM Provider 品牌 Logo 展示，补齐融合回归覆盖。
+
+### v0.1.9
+
+- 加强长流式输出恢复、AI 视频材料状态清理和 agent harness contract 覆盖。
+- 优化缺少 LLM Provider 配置时的引导入口、设置页跳转和品牌化展示。
+- 隐藏云审批相关入口，保持 Harness 桌面端能力边界更清晰。
+
+### v0.1.8
+
+- 并入 DeepSeek 官方视觉模型、浏览器控制和图片生成参数修复。
+- 支持并行抓虾 MCP contexts，减少跨会话工具上下文串扰。
+- 加强 Windows agent runtime 启动、SQLite sidecar ACL 和打包验证稳定性。
+
 ### v0.1.3
 
 - 修复智能体 DSH Web 端口漂移时的白屏问题：后端只暴露已验证的会话页面地址，并可从预期端口扫描修正到真实端口。

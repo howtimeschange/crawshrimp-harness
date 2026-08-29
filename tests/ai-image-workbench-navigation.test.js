@@ -19,7 +19,11 @@ test('App registers AI image route after task center and before data files', () 
   assert.ok(aiImage < files, 'AI image route should precede data files')
   assert.match(app, /label: 'AI 生图'/)
   assert.match(app, /<KeepAlive>[\s\S]*<AiImageWorkbench[\s\S]*v-if="currentView === 'ai_image'"[\s\S]*@open-settings="openSettingsPanel\('ai-1xm'\)"[\s\S]*<\/KeepAlive>/)
-  assert.doesNotMatch(app, /<AiImageWorkbench[\s\S]*v-show=/)
+  const aiImageComponentStart = app.indexOf('<AiImageWorkbench')
+  const aiImageComponentEnd = app.indexOf('/>', aiImageComponentStart)
+  const aiImageComponent = app.slice(aiImageComponentStart, aiImageComponentEnd)
+  assert.notEqual(aiImageComponentStart, -1, 'AI image workbench component is missing')
+  assert.doesNotMatch(aiImageComponent, /v-show=/)
 })
 
 test('App keeps DSH as the primary navigation and opens AI image as an overlay', () => {
@@ -27,7 +31,7 @@ test('App keeps DSH as the primary navigation and opens AI image as an overlay',
 
   assert.match(app, /<AgentWebView[\s\S]*:nav-items="filteredNavItems"/)
   assert.match(app, /class="embed-overlay"/)
-  assert.match(app, /v-if="currentView !== 'agent'"/)
+  assert.match(app, /v-if="currentView !== 'agent' \|\| settingsMountedOnce"/)
   assert.match(app, /<aside v-if="activeScript" class="sidebar">/)
   assert.doesNotMatch(app, /<aside class="sidebar">/)
 })
