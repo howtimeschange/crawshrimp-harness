@@ -1,7 +1,7 @@
 """从抓虾 ai.llm 配置生成 DSH Cordis profile。
 
-- 复用 route_for_model 的路由(三组森马网关 + DeepSeek 官方);
-- API key 只通过 CRAWSHRIMP_LLM_API_KEY / CRAWSHRIMP_DEEPSEEK_API_KEY 环境引用(apiKeyEnv),绝不写入 yml;
+- 复用 route_for_model 的路由(三组森马网关 + DeepSeek/GLM 官方);
+- API key 只通过环境变量引用(apiKeyEnv),绝不写入 yml;
 - MCP runtime token 通过 !!js 表达式在运行时从 CRAWSHRIMP_MCP_TOKEN 环境读取(仅进程内存);
 - 模型能力登记表:agent 可用模型需显式登记容量,未登记模型使用保守上限。
 """
@@ -13,6 +13,8 @@ from core.llm_gateway import (
     DEEPSEEK_OFFICIAL_MODELS,
     DOMESTIC_OPENAI_BASE_URL,
     DOMESTIC_OPENAI_MODELS,
+    GLM_OFFICIAL_BASE_URL,
+    GLM_OFFICIAL_MODELS,
     OVERSEAS_ANTHROPIC_BASE_URL,
     OVERSEAS_ANTHROPIC_MODELS,
     OVERSEAS_OPENAI_BASE_URL,
@@ -21,7 +23,7 @@ from core.llm_gateway import (
     builtin_provider_has_configured_key,
     custom_provider_for_configured_model,
     custom_llm_providers,
-    deepseek_official_real_model,
+    official_real_model,
     model_has_configured_key,
     select_default_model,
 )
@@ -44,6 +46,9 @@ MODEL_CAPABILITIES: dict[str, dict[str, Any]] = {
     "deepseek-official-v4-flash": {"context_window": 128000, "max_output_tokens": 8192, "supports_tools": True},
     "deepseek-official-v4-pro": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
     "deepseek-official-v4-flash-vision-exp": {"context_window": 128000, "max_output_tokens": 8192, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "glm-official-5.3-flash": {"context_window": 128000, "max_output_tokens": 8192, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "glm-official-5.3": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
+    "glm-official-5.2": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
     "glm-5.2": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
     "kimi-k3": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
     "kimi-k2.7-code": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
@@ -51,6 +56,7 @@ MODEL_CAPABILITIES: dict[str, dict[str, Any]] = {
 
 AGENT_MODEL_DISPLAY_ORDER = (
     *DEEPSEEK_OFFICIAL_MODELS,
+    *GLM_OFFICIAL_MODELS,
     *OVERSEAS_OPENAI_MODELS,
     *OVERSEAS_ANTHROPIC_MODELS,
     *DOMESTIC_OPENAI_MODELS,
@@ -160,8 +166,7 @@ def build_cordis_yaml(cfg: dict, selected_model: Optional[str] = None) -> str:
                 if lines[j].startswith("      provider:"):
                     lines[j] = f"      provider: {provider_id}"
                 elif lines[j].startswith("      model:"):
-                    # 产品内 ID → runtime 真实模型名(DeepSeek 官方模型映射回官方 API 名)
-                    lines[j] = f"      model: {deepseek_official_real_model(sel)}"
+                    lines[j] = f"      model: {official_real_model(sel)}"
                 j += 1
             break
     else:
@@ -191,6 +196,7 @@ def _build_cordis_yaml_legacy(cfg: dict, selected_model: str, provider_id: str) 
     overseas_openai_base = llm.get("overseas_openai_base_url") or OVERSEAS_OPENAI_BASE_URL
     overseas_anthropic_base = llm.get("overseas_anthropic_base_url") or OVERSEAS_ANTHROPIC_BASE_URL
     domestic_base = llm.get("domestic_base_url") or DOMESTIC_OPENAI_BASE_URL
+    glm_base = llm.get("glm_base_url") or GLM_OFFICIAL_BASE_URL
     sel = selected_model
 
     return f"""# 由 crawshrimp-harness FastAPI 从 ai.llm 配置生成(勿手改;legacy 回退,无 web host)
@@ -222,6 +228,13 @@ def _build_cordis_yaml_legacy(cfg: dict, selected_model: str, provider_id: str) 
         baseURL: '{domestic_base}'
         models:
 {_yaml_models(_route_models(DOMESTIC_OPENAI_MODELS), 10)}
+      crawshrimp-glm-official:
+        displayName: 智谱官方
+        apiKeyEnv: CRAWSHRIMP_GLM_API_KEY
+        api: openai-completions
+        baseURL: '{glm_base}'
+        models:
+{_yaml_models(_route_models(GLM_OFFICIAL_MODELS), 10)}
 
 - id: agent-spine
   name: '@deepseek-ai/dsh-agent-spine-demo'
@@ -290,6 +303,8 @@ def resolve_provider_for_model(model_id: str, config: Optional[dict] = None) -> 
         return "crawshrimp-domestic-openai"
     if model_id in DEEPSEEK_OFFICIAL_MODELS:
         return "crawshrimp-deepseek-official"
+    if model_id in GLM_OFFICIAL_MODELS:
+        return "crawshrimp-glm-official"
     if custom:
         return str(custom.get("id") or "")
     for provider in custom_llm_providers(config, include_secrets=False):

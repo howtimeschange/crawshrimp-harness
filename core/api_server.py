@@ -24,7 +24,9 @@ import shutil
 import tempfile
 import threading
 import time
+import warnings
 import zipfile
+from collections import deque
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -60,6 +62,7 @@ from core import adapter_loader
 from core import ai_image_service
 from core import ai_video_generation_service
 from core import llm_gateway
+from core import ocr_service
 from core import shenhui_shoe_packaging
 from core import data_sink
 from core import notifier
@@ -76,6 +79,7 @@ from core.probe_models import ProbeRequest
 from core.probe_service import read_probe_bundle, read_probe_bundle_full, run_probe_request
 from core.runtime_install_guard import InstallRuntimeBusy, RuntimeInstallGuard, UpdateDrainActive
 from core.shenhui_pdf_screenshot import finalize_pdf_batch_screenshot_outputs, convert_pdf_rows_to_yq_output_root
+from core.shenhui_apparel_label_processing import process_prepare_upload_package_labels
 from core.windows_acl import harden_windows_path
 from core.amazon_label_splitter import (
     copy_amazon_label_outputs_to_export_folder,
@@ -2433,19 +2437,47 @@ def _try_rewrite_shenhui_package_summary_excels(
     except Exception as exc:
         if log:
             log(f"[warn] Shenhui package Excel paths refresh skipped: {exc}")
-    if not include_compression:
-        return
     try:
+        columns = (
+            "文件名",
+            "处理动作",
+            "下载结果",
+            "备注",
+            "标签角色",
+            "识别模型",
+            "识别款号",
+            "识别色号",
+            "识别尺码",
+            "标签判定",
+            "标签证据",
+            "最终裁图",
+        )
+        if include_compression:
+            columns = (*columns, "压缩结果")
         _rewrite_summary_excel_row_columns(
             exported_files,
             data_rows,
             log,
             context="Shenhui package",
-            columns=("压缩结果",),
+            columns=columns,
         )
     except Exception as exc:
         if log:
             log(f"[warn] Shenhui package Excel compression column refresh skipped: {exc}")
+
+
+_MOVED_DIRECTORY_ROW_PATH_FIELDS = ("本地文件", "最终裁图")
+
+
+def _rewrite_path_under_moved_directory(value: object, source_root: Path, target_root: Path) -> str:
+    raw_path = str(value or "").strip()
+    if not raw_path:
+        return raw_path
+    try:
+        relative = Path(raw_path).expanduser().resolve(strict=False).relative_to(source_root)
+    except Exception:
+        return raw_path
+    return str(target_root / relative)
 
 
 def _rewrite_rows_under_moved_directory(
@@ -2457,14 +2489,35 @@ def _rewrite_rows_under_moved_directory(
     for row in data_rows or []:
         if not isinstance(row, dict):
             continue
-        raw_path = str(row.get("本地文件") or "").strip()
+        for field in _MOVED_DIRECTORY_ROW_PATH_FIELDS:
+            if field not in row:
+                continue
+            row[field] = _rewrite_path_under_moved_directory(row.get(field), source_root, target_root)
+
+
+def _clear_zip_packaged_final_crop_paths(
+    data_rows: list,
+    package_root: Path,
+    zip_filenames_by_style: dict[str, str],
+) -> int:
+    package_root = package_root.resolve(strict=False)
+    changed = 0
+    for row in data_rows or []:
+        if not isinstance(row, dict):
+            continue
+        raw_path = str(row.get("最终裁图") or "").strip()
         if not raw_path:
             continue
         try:
-            relative = Path(raw_path).expanduser().resolve(strict=False).relative_to(source_root)
+            relative = Path(raw_path).expanduser().resolve(strict=False).relative_to(package_root)
         except Exception:
             continue
-        row["本地文件"] = str(target_root / relative)
+        style_name = relative.parts[0] if relative.parts else ""
+        zip_filename = zip_filenames_by_style.get(style_name) or f"{style_name}.zip"
+        row["最终裁图"] = ""
+        row["备注"] = _append_note(row.get("备注"), f"最终裁图已打包至款号 ZIP：{zip_filename}")
+        changed += 1
+    return changed
 
 
 def _cleanup_shenhui_runtime_artifacts(runtime_files: list, package_root: Optional[Path], work_dir: Optional[Path]) -> None:
@@ -3708,6 +3761,11 @@ _SHENHUI_NEW_ARRIVAL_SINGLE_IMAGE_THRESHOLD_BYTES = 30 * 1024 * 1024
 _SHENHUI_NEW_ARRIVAL_STYLE_PACKAGE_THRESHOLD_BYTES = 1024 * 1024 * 1024
 _SHENHUI_NEW_ARRIVAL_JPEG_QUALITIES = (95, 92, 90, 88)
 _SHENHUI_NEW_ARRIVAL_WEBP_QUALITIES = (95, 92, 90, 88)
+_SHENHUI_LABEL_TILE_JPEG_QUALITIES = (95, 92, 90, 88, 86, 85, 82, 80, 78, 75, 72, 70)
+_SHENHUI_LABEL_TILE_WEBP_QUALITIES = (95, 92, 90, 88, 86, 85, 82, 80, 78, 75, 72, 70)
+_SHENHUI_LABEL_TILE_DETAIL_PREVIEW_EDGE = 1200
+_SHENHUI_LABEL_TILE_MAX_PREVIEW_RMS = 2.5
+_SHENHUI_LABEL_TILE_MAX_EDGE_RMS = 8.0
 
 
 def _append_shenhui_label_tile_note(row: dict, note: str) -> None:
@@ -3716,6 +3774,589 @@ def _append_shenhui_label_tile_note(row: dict, note: str) -> None:
         return
     existing = str(row.get("备注") or "").strip()
     row["备注"] = f"{existing}；{clean_note}" if existing else clean_note
+
+
+def _shenhui_label_tile_text(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _shenhui_label_tile_digits(value: object) -> str:
+    return re.sub(r"\D+", "", _shenhui_label_tile_text(value))
+
+
+def _is_shenhui_shoe_label_ocr_candidate_row(row: dict) -> bool:
+    return (
+        _shenhui_label_tile_text(row.get("__shenhui_asset_role")).lower() == "shoe_label"
+        and _shenhui_label_tile_text(row.get("__shoe_label_candidate_kind")).lower() == "generic_ocr"
+    )
+
+
+def _shenhui_shoe_label_candidate_key(row: dict) -> tuple[str, str]:
+    style_code = _safe_local_name(
+        row.get("__shenhui_group_code")
+        or row.get("输入款号")
+        or row.get("输入编码")
+        or "未分类",
+        "未分类",
+    )
+    color_code = _shenhui_label_tile_digits(row.get("__shoe_color_code"))
+    return style_code, color_code
+
+
+def _shenhui_shoe_label_visual_metrics(path: Path) -> dict[str, float]:
+    from PIL import Image, ImageOps
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+        with Image.open(path) as opened:
+            image = ImageOps.exif_transpose(opened).convert("RGB")
+    image.thumbnail((320, 320), Image.Resampling.LANCZOS)
+    width, height = image.size
+    if width <= 0 or height <= 0:
+        return {"score": 0.0, "brown_ratio": 0.0, "white_ratio": 0.0, "dark_ratio": 0.0}
+    pixels = image.load()
+    brown = 0
+    white = 0
+    dark = 0
+    total = width * height
+    for y in range(height):
+        for x in range(width):
+            r, g, b = pixels[x, y]
+            if r > 90 and g > 60 and b > 35 and r - b > 25 and g - b > 15 and r > g * 0.85:
+                brown += 1
+            if r > 220 and g > 220 and b > 215:
+                white += 1
+            if r < 85 and g < 85 and b < 85:
+                dark += 1
+    brown_ratio = brown / total
+    white_ratio = white / total
+    dark_ratio = dark / total
+    score = brown_ratio * 2.0 + white_ratio * 0.2 + dark_ratio * 0.5
+    return {
+        "score": score,
+        "brown_ratio": brown_ratio,
+        "white_ratio": white_ratio,
+        "dark_ratio": dark_ratio,
+    }
+
+
+def _shenhui_shoe_label_ocr_text(path: Path, *, timeout_seconds: float = 75.0) -> tuple[str, float, str]:
+    result = ocr_service.recognize_image_with_tesseract_js(
+        path,
+        lang="chi_sim+eng",
+        timeout_seconds=timeout_seconds,
+    )
+    text = _shenhui_label_tile_text(result.get("text"))
+    normalized = re.sub(r"\s+", "", text)
+    confidence = float(result.get("confidence") or 0.0)
+    return text, confidence, normalized
+
+
+def _shenhui_shoe_label_ocr_structure_signals(
+    normalized_text: str,
+    *,
+    style_code: str = "",
+) -> list[str]:
+    text = _shenhui_label_tile_text(normalized_text)
+    if not text:
+        return []
+
+    signals: list[str] = []
+    if any(word in text for word in ("合格证", "产品名称", "执行标准", "商品标签", "balabala")):
+        signals.append("label_words")
+    if re.search(r"(?:执行标准|GB\s*\d{4,6}|QB\s*/?\s*T\s*\d{3,5}|Q\s*/?\s*B|FZ\s*/?\s*T)", text, re.I):
+        signals.append("standard")
+    barcode_candidates = [
+        match.group(0)
+        for match in re.finditer(r"\d{12,14}", text)
+        if match.group(0) != style_code
+    ]
+    if barcode_candidates:
+        signals.append("barcode")
+    if re.search(r"(?:EUR|CHN|尺码|鞋号)?\d{2}(?:[-－—~]\d{2}|[（(]\d(?:\.\d)?[）)])", text, re.I):
+        signals.append("size")
+    if any(word in text for word in ("合成革", "织物", "帮面", "鞋面", "材质", "材料", "面料")):
+        signals.append("material")
+    if re.search(r"(?:生产日期|生产批号|产地|检验|等级|合格品|20\d{6})", text):
+        signals.append("compliance")
+    return signals
+
+
+def _shenhui_shoe_label_has_structure(normalized_text: str, *, style_code: str = "") -> tuple[bool, bool, list[str]]:
+    has_style = bool(style_code and style_code in _shenhui_label_tile_text(normalized_text))
+    structure_signals = _shenhui_shoe_label_ocr_structure_signals(
+        normalized_text,
+        style_code=style_code,
+    )
+    has_label_structure = "label_words" in structure_signals or len(structure_signals) >= 2
+    return has_style, has_label_structure, structure_signals
+
+
+def _shenhui_shoe_label_should_try_crop_ocr(metrics: dict[str, float]) -> bool:
+    return (
+        float(metrics.get("score") or 0.0) >= 0.48
+        and float(metrics.get("brown_ratio") or 0.0) >= 0.16
+        and float(metrics.get("white_ratio") or 0.0) >= 0.50
+    )
+
+
+def _shenhui_shoe_label_box_crop(path: Path):
+    from PIL import Image, ImageOps
+
+    def is_brown(pixel) -> bool:
+        r, g, b = pixel
+        return r > 90 and g > 60 and b > 35 and r - b > 25 and g - b > 15 and r > g * 0.85
+
+    def is_label_dark(pixel) -> bool:
+        r, g, b = pixel
+        return r < 105 and g < 105 and b < 105 and max(r, g, b) - min(r, g, b) < 70
+
+    def is_label_white(pixel) -> bool:
+        r, g, b = pixel
+        return r > 185 and g > 185 and b > 175 and max(r, g, b) - min(r, g, b) < 65
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+        with Image.open(path) as opened:
+            image = ImageOps.exif_transpose(opened).convert("RGB")
+
+    width, height = image.size
+    if width <= 0 or height <= 0:
+        return None
+
+    small = image.copy()
+    small.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
+    small_width, small_height = small.size
+    pixels = small.load()
+
+    brown_x: list[int] = []
+    brown_y: list[int] = []
+    for y in range(small_height):
+        for x in range(small_width):
+            if is_brown(pixels[x, y]):
+                brown_x.append(x)
+                brown_y.append(y)
+    if len(brown_x) < 100:
+        return None
+
+    pad = max(12, int(max(small_width, small_height) * 0.03))
+    box_x0 = max(0, min(brown_x) - pad)
+    box_y0 = max(0, min(brown_y) - pad)
+    box_x1 = min(small_width, max(brown_x) + pad)
+    box_y1 = min(small_height, max(brown_y) + pad)
+    if box_x1 <= box_x0 or box_y1 <= box_y0:
+        return None
+
+    search_x0 = box_x0 + int((box_x1 - box_x0) * 0.35)
+    edge_pad = max(3, int(max(box_x1 - box_x0, box_y1 - box_y0) * 0.006))
+
+    def to_original_crop(crop_box: tuple[int, int, int, int]):
+        crop_x0, crop_y0, crop_x1, crop_y1 = crop_box
+        if crop_x1 <= crop_x0 or crop_y1 <= crop_y0:
+            return None
+        scale_x = width / small_width
+        scale_y = height / small_height
+        original_box = (
+            int(crop_x0 * scale_x),
+            int(crop_y0 * scale_y),
+            int(crop_x1 * scale_x),
+            int(crop_y1 * scale_y),
+        )
+        if original_box[2] <= original_box[0] or original_box[3] <= original_box[1]:
+            return None
+        return image.crop(original_box)
+
+    def component_touches_search_edge(
+        comp_x0: int,
+        comp_y0: int,
+        comp_x1: int,
+        comp_y1: int,
+    ) -> tuple[bool, bool, bool, bool]:
+        return (
+            comp_x0 <= search_x0 + edge_pad,
+            comp_y0 <= box_y0 + edge_pad,
+            comp_x1 >= box_x1 - edge_pad,
+            comp_y1 >= box_y1 - edge_pad,
+        )
+
+    # The box label itself is split into many white cells by dark grid lines, while
+    # the surrounding studio background can be one huge white connected component.
+    # Use internal dark text/grid components first so the OCR crop lands on the
+    # actual printed label rather than most of the cardboard box.
+    dark_visited = bytearray(small_width * small_height)
+
+    def offset(x: int, y: int) -> int:
+        return y * small_width + x
+
+    dark_components: list[tuple[int, tuple[int, int, int, int], tuple[bool, bool, bool, bool]]] = []
+    for start_y in range(box_y0, box_y1):
+        for start_x in range(search_x0, box_x1):
+            start_offset = offset(start_x, start_y)
+            if dark_visited[start_offset] or not is_label_dark(pixels[start_x, start_y]):
+                continue
+            queue = deque([(start_x, start_y)])
+            dark_visited[start_offset] = 1
+            count = 0
+            comp_x0 = comp_x1 = start_x
+            comp_y0 = comp_y1 = start_y
+            while queue:
+                x, y = queue.popleft()
+                count += 1
+                comp_x0 = min(comp_x0, x)
+                comp_x1 = max(comp_x1, x)
+                comp_y0 = min(comp_y0, y)
+                comp_y1 = max(comp_y1, y)
+                for next_x, next_y in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                    if next_x < search_x0 or next_x >= box_x1 or next_y < box_y0 or next_y >= box_y1:
+                        continue
+                    next_offset = offset(next_x, next_y)
+                    if dark_visited[next_offset] or not is_label_dark(pixels[next_x, next_y]):
+                        continue
+                    dark_visited[next_offset] = 1
+                    queue.append((next_x, next_y))
+            dark_components.append((
+                count,
+                (comp_x0, comp_y0, comp_x1 + 1, comp_y1 + 1),
+                component_touches_search_edge(comp_x0, comp_y0, comp_x1, comp_y1),
+            ))
+
+    internal_dark_boxes: list[tuple[int, int, int, int]] = []
+    for count, component_box, touches in dark_components:
+        if count < 3:
+            continue
+        comp_x0, comp_y0, comp_x1, comp_y1 = component_box
+        comp_center_x = (comp_x0 + comp_x1) / 2
+        comp_center_y = (comp_y0 + comp_y1) / 2
+        if touches[1] or touches[2] or touches[3]:
+            continue
+        if comp_center_y < box_y0 + max(12, (box_y1 - box_y0) * 0.04):
+            continue
+        if comp_center_y > box_y1 - max(12, (box_y1 - box_y0) * 0.05):
+            continue
+        if comp_center_x > box_x1 - max(18, (box_x1 - box_x0) * 0.04):
+            continue
+        internal_dark_boxes.append(component_box)
+
+    if len(internal_dark_boxes) >= 8:
+        dark_x0 = min(box[0] for box in internal_dark_boxes)
+        dark_y0 = min(box[1] for box in internal_dark_boxes)
+        dark_x1 = max(box[2] for box in internal_dark_boxes)
+        dark_y1 = max(box[3] for box in internal_dark_boxes)
+        dark_width = dark_x1 - dark_x0
+        dark_height = dark_y1 - dark_y0
+        dark_ratio = dark_width / max(1, dark_height)
+        box_width = box_x1 - box_x0
+        box_height = box_y1 - box_y0
+        if (
+            dark_width >= box_width * 0.32
+            and dark_height >= box_height * 0.35
+            and 0.75 <= dark_ratio <= 2.8
+        ):
+            crop_pad_x = max(10, int(dark_width * 0.04))
+            crop_pad_y = max(10, int(dark_height * 0.06))
+            dark_crop = (
+                max(0, dark_x0 - crop_pad_x),
+                max(0, dark_y0 - crop_pad_y),
+                min(small_width, dark_x1 + crop_pad_x),
+                min(small_height, dark_y1 + crop_pad_y),
+            )
+            cropped = to_original_crop(dark_crop)
+            if cropped is not None:
+                return cropped
+
+    visited = bytearray(small_width * small_height)
+    components: list[tuple[int, int, float, tuple[int, int, int, int]]] = []
+
+    for start_y in range(box_y0, box_y1):
+        for start_x in range(search_x0, box_x1):
+            start_offset = offset(start_x, start_y)
+            if visited[start_offset] or not is_label_white(pixels[start_x, start_y]):
+                continue
+            queue = deque([(start_x, start_y)])
+            visited[start_offset] = 1
+            count = 0
+            comp_x0 = comp_x1 = start_x
+            comp_y0 = comp_y1 = start_y
+            while queue:
+                x, y = queue.popleft()
+                count += 1
+                comp_x0 = min(comp_x0, x)
+                comp_x1 = max(comp_x1, x)
+                comp_y0 = min(comp_y0, y)
+                comp_y1 = max(comp_y1, y)
+                for next_x, next_y in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                    if next_x < search_x0 or next_x >= box_x1 or next_y < box_y0 or next_y >= box_y1:
+                        continue
+                    next_offset = offset(next_x, next_y)
+                    if visited[next_offset] or not is_label_white(pixels[next_x, next_y]):
+                        continue
+                    visited[next_offset] = 1
+                    queue.append((next_x, next_y))
+            comp_width = comp_x1 - comp_x0 + 1
+            comp_height = comp_y1 - comp_y0 + 1
+            ratio = comp_width / max(1, comp_height)
+            touches = component_touches_search_edge(comp_x0, comp_y0, comp_x1, comp_y1)
+            if (
+                count > 80
+                and comp_width > 20
+                and comp_height > 10
+                and 0.6 < ratio < 5.5
+                and not any(touches)
+            ):
+                components.append((count, comp_width * comp_height, ratio, (comp_x0, comp_y0, comp_x1 + 1, comp_y1 + 1)))
+
+    if not components:
+        return None
+
+    components.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    crop_x0, crop_y0, crop_x1, crop_y1 = components[0][3]
+    crop_pad = max(10, int(max(crop_x1 - crop_x0, crop_y1 - crop_y0) * 0.05))
+    crop_x0 = max(0, crop_x0 - crop_pad)
+    crop_y0 = max(0, crop_y0 - crop_pad)
+    crop_x1 = min(small_width, crop_x1 + crop_pad)
+    crop_y1 = min(small_height, crop_y1 + crop_pad)
+    return to_original_crop((crop_x0, crop_y0, crop_x1, crop_y1))
+
+
+def _shenhui_shoe_label_crop_ocr_text(path: Path) -> tuple[str, float, str]:
+    from PIL import Image, ImageFilter
+
+    crop = _shenhui_shoe_label_box_crop(path)
+    if crop is None:
+        raise ValueError("未定位到鞋盒白标区域")
+
+    max_dimension = 2200
+    scale = max_dimension / max(crop.size)
+    if scale > 0 and abs(scale - 1.0) > 0.01:
+        target_size = (
+            max(1, int(crop.width * scale)),
+            max(1, int(crop.height * scale)),
+        )
+        crop = crop.resize(target_size, Image.Resampling.LANCZOS)
+    crop = crop.convert("RGB").filter(ImageFilter.SHARPEN)
+
+    temp_path = _ensure_unique_local_path(path.with_name(f".{path.stem}.shoe-label-crop.png"))
+    try:
+        crop.save(temp_path)
+        return _shenhui_shoe_label_ocr_text(temp_path, timeout_seconds=45.0)
+    finally:
+        try:
+            temp_path.unlink()
+        except OSError:
+            pass
+
+
+def _shenhui_shoe_label_crop_style_code_text(path: Path) -> tuple[str, float, str]:
+    from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+
+    crop = _shenhui_shoe_label_box_crop(path)
+    if crop is None:
+        raise ValueError("未定位到鞋盒白标区域")
+
+    width, height = crop.size
+    if width <= 0 or height <= 0:
+        raise ValueError("鞋盒白标区域为空")
+    style_crop = crop.crop((
+        int(width * 0.36),
+        int(height * 0.04),
+        int(width * 0.82),
+        int(height * 0.22),
+    ))
+    style_crop = ImageOps.grayscale(style_crop)
+    style_crop = ImageEnhance.Contrast(style_crop).enhance(1.8)
+    style_crop = ImageOps.autocontrast(style_crop)
+    if style_crop.height < 360:
+        scale = 360 / max(1, style_crop.height)
+        style_crop = style_crop.resize((
+            max(1, int(style_crop.width * scale)),
+            max(1, int(style_crop.height * scale)),
+        ), Image.Resampling.LANCZOS)
+    style_crop = style_crop.filter(ImageFilter.SHARPEN)
+
+    temp_path = _ensure_unique_local_path(path.with_name(f".{path.stem}.shoe-label-style-crop.png"))
+    try:
+        style_crop.save(temp_path)
+        result = ocr_service.recognize_image_with_tesseract_js(
+            temp_path,
+            lang="eng",
+            timeout_seconds=20.0,
+            whitelist="0123456789",
+        )
+        text = _shenhui_label_tile_text(result.get("text"))
+        digits = _shenhui_label_tile_digits(text)
+        confidence = float(result.get("confidence") or 0.0)
+        return text, confidence, digits
+    finally:
+        try:
+            temp_path.unlink()
+        except OSError:
+            pass
+
+
+def _shenhui_shoe_box_label_candidate_result(
+    row: dict,
+    local_path: Path,
+    log,
+) -> dict[str, object]:
+    style_code, color_code = _shenhui_shoe_label_candidate_key(row)
+    metrics = _shenhui_shoe_label_visual_metrics(local_path)
+    if metrics["score"] < 0.42:
+        return {
+            "accepted": False,
+            "score": metrics["score"],
+            "confidence": 0.0,
+            "note": (
+                "鞋盒标签候选视觉特征不足："
+                f"score={metrics['score']:.3f} brown={metrics['brown_ratio']:.3f} "
+                f"white={metrics['white_ratio']:.3f}"
+            ),
+        }
+    try:
+        _text, confidence, normalized_text = _shenhui_shoe_label_ocr_text(local_path)
+    except Exception as exc:
+        return {
+            "accepted": False,
+            "score": metrics["score"],
+            "confidence": 0.0,
+            "note": f"鞋盒标签候选 OCR 失败：{exc}",
+        }
+
+    ocr_scope = "整图"
+    has_style, has_label_structure, structure_signals = _shenhui_shoe_label_has_structure(
+        normalized_text,
+        style_code=style_code,
+    )
+    if (
+        (not has_style or not has_label_structure)
+        and _shenhui_shoe_label_should_try_crop_ocr(metrics)
+    ):
+        try:
+            _crop_text, crop_confidence, crop_normalized_text = _shenhui_shoe_label_crop_ocr_text(local_path)
+            crop_has_style, crop_has_label_structure, crop_structure_signals = _shenhui_shoe_label_has_structure(
+                crop_normalized_text,
+                style_code=style_code,
+            )
+            if not crop_has_style and crop_has_label_structure and style_code:
+                try:
+                    _style_text, style_confidence, style_digits = _shenhui_shoe_label_crop_style_code_text(local_path)
+                    if style_code in style_digits:
+                        crop_confidence = max(crop_confidence, style_confidence)
+                        crop_normalized_text = f"{style_code}{crop_normalized_text}"
+                        crop_has_style = True
+                        crop_structure_signals = [*crop_structure_signals, "style_digit_crop"]
+                except Exception as exc:
+                    if log:
+                        log(f"Shenhui shoe label style-code crop OCR skipped: {local_path.name} ({exc})")
+            if crop_has_style and crop_has_label_structure:
+                confidence = crop_confidence
+                normalized_text = crop_normalized_text
+                has_style = crop_has_style
+                has_label_structure = crop_has_label_structure
+                structure_signals = crop_structure_signals
+                ocr_scope = "裁剪"
+        except Exception as exc:
+            if log:
+                log(f"Shenhui shoe label crop OCR skipped: {local_path.name} ({exc})")
+
+    if not has_style:
+        return {
+            "accepted": False,
+            "score": metrics["score"],
+            "confidence": confidence,
+            "note": (
+                "鞋盒标签候选 OCR 未读到当前款号："
+                f"{style_code}；score={metrics['score']:.3f} confidence={confidence:.0f}"
+            ),
+        }
+    if not has_label_structure:
+        return {
+            "accepted": False,
+            "score": metrics["score"],
+            "confidence": confidence,
+            "note": (
+                "鞋盒标签候选 OCR 缺少鞋盒标签结构证据："
+                f"signals={','.join(structure_signals) or 'none'} "
+                f"score={metrics['score']:.3f} confidence={confidence:.0f}"
+            ),
+        }
+    note = (
+        f"OCR{ocr_scope}确认鞋盒标签："
+        f"款号 {style_code}"
+        + (f" 色号 {color_code}" if color_code else "")
+        + f"，signals={','.join(structure_signals)} score={metrics['score']:.3f} confidence={confidence:.0f}"
+    )
+    if log:
+        log(f"Shenhui shoe label candidate accepted: {local_path.name} ({note})")
+    return {
+        "accepted": True,
+        "score": metrics["score"],
+        "confidence": confidence,
+        "note": note,
+    }
+
+
+def _filter_shenhui_shoe_label_ocr_candidates(
+    successful_rows: list[tuple[dict, Path]],
+    log,
+) -> list[tuple[dict, Path]]:
+    generic_candidates: dict[tuple[str, str], list[tuple[dict, Path]]] = {}
+    explicit_label_keys: set[tuple[str, str]] = set()
+    passthrough: list[tuple[dict, Path]] = []
+
+    for row, local_path in successful_rows:
+        if _is_shenhui_shoe_label_ocr_candidate_row(row):
+            generic_candidates.setdefault(
+                _shenhui_shoe_label_candidate_key(row),
+                [],
+            ).append((row, local_path))
+            continue
+        passthrough.append((row, local_path))
+        if _shenhui_label_tile_text(row.get("__shenhui_asset_role")).lower() == "shoe_label":
+            explicit_label_keys.add(_shenhui_shoe_label_candidate_key(row))
+
+    selected: list[tuple[dict, Path]] = []
+    for key, candidates in generic_candidates.items():
+        if key in explicit_label_keys:
+            for row, _local_path in candidates:
+                row["下载结果"] = "已跳过"
+                row["本地文件"] = ""
+                _append_shenhui_label_tile_note(row, "已有显式鞋盒标签/电子吊牌图，未保留无语义候选")
+            continue
+
+        scored: list[tuple[float, float, dict, Path, str]] = []
+        for row, local_path in candidates:
+            result = _shenhui_shoe_box_label_candidate_result(row, local_path, log)
+            if result.get("accepted"):
+                scored.append((
+                    float(result.get("score") or 0.0),
+                    float(result.get("confidence") or 0.0),
+                    row,
+                    local_path,
+                    _shenhui_label_tile_text(result.get("note")),
+                ))
+            else:
+                row["下载结果"] = "已跳过"
+                row["本地文件"] = ""
+                _append_shenhui_label_tile_note(row, _shenhui_label_tile_text(result.get("note")))
+
+        if not scored:
+            style_code, color_code = key
+            if log:
+                color_note = f"-{color_code}" if color_code else ""
+                log(f"[warn] Shenhui shoe label OCR found no accepted candidate: {style_code}{color_note}")
+            continue
+
+        scored.sort(key=lambda item: (-item[0], -item[1], _shenhui_label_tile_text(item[2].get("文件名"))))
+        _score, _confidence, selected_row, selected_path, selected_note = scored[0]
+        selected_row["__shoe_label_candidate_kind"] = "ocr_selected"
+        _append_shenhui_label_tile_note(selected_row, selected_note)
+        selected.append((selected_row, selected_path))
+        for _score, _confidence, row, _local_path, _note in scored[1:]:
+            row["下载结果"] = "已跳过"
+            row["本地文件"] = ""
+            _append_shenhui_label_tile_note(row, "同款色已选出更高置信度鞋盒标签图")
+
+    return [*passthrough, *selected]
 
 
 def _shenhui_label_tile_temp_path(path: Path, marker: str) -> Path:
@@ -3751,13 +4392,78 @@ def _jpeg_image_for_high_quality_save(image):
     return image.convert("RGB")
 
 
+def _shenhui_label_tile_rgb_for_metrics(image):
+    normalized = _jpeg_image_for_high_quality_save(image)
+    return normalized if normalized.mode == "RGB" else normalized.convert("RGB")
+
+
+def _shenhui_label_tile_detail_preview(image):
+    from PIL import Image
+
+    preview = _shenhui_label_tile_rgb_for_metrics(image.copy())
+    preview.thumbnail(
+        (
+            _SHENHUI_LABEL_TILE_DETAIL_PREVIEW_EDGE,
+            _SHENHUI_LABEL_TILE_DETAIL_PREVIEW_EDGE,
+        ),
+        Image.Resampling.LANCZOS,
+    )
+    return preview
+
+
+def _shenhui_label_tile_rms_difference(left, right) -> float:
+    from PIL import ImageChops, ImageStat
+
+    diff = ImageChops.difference(left, right)
+    stat = ImageStat.Stat(diff)
+    if not stat.rms:
+        return 0.0
+    return float((sum(value * value for value in stat.rms) / len(stat.rms)) ** 0.5)
+
+
+def _shenhui_label_tile_candidate_preserves_detail(
+    *,
+    reference_size: tuple[int, int],
+    reference_preview,
+    reference_edge_preview,
+    candidate_path: Path,
+) -> tuple[bool, dict[str, float]]:
+    from PIL import Image, ImageFilter, ImageOps
+
+    with Image.open(candidate_path) as opened:
+        candidate = ImageOps.exif_transpose(opened)
+        candidate.load()
+    if candidate.size != reference_size:
+        return False, {
+            "pixel_rms": float("inf"),
+            "edge_rms": float("inf"),
+        }
+
+    candidate_preview = _shenhui_label_tile_detail_preview(candidate)
+    if candidate_preview.size != reference_preview.size:
+        return False, {
+            "pixel_rms": float("inf"),
+            "edge_rms": float("inf"),
+        }
+    candidate_edge_preview = candidate_preview.convert("L").filter(ImageFilter.FIND_EDGES)
+    pixel_rms = _shenhui_label_tile_rms_difference(reference_preview, candidate_preview)
+    edge_rms = _shenhui_label_tile_rms_difference(reference_edge_preview, candidate_edge_preview)
+    return (
+        pixel_rms <= _SHENHUI_LABEL_TILE_MAX_PREVIEW_RMS
+        and edge_rms <= _SHENHUI_LABEL_TILE_MAX_EDGE_RMS
+    ), {
+        "pixel_rms": pixel_rms,
+        "edge_rms": edge_rms,
+    }
+
+
 def _compress_shenhui_label_tile_image_if_beneficial(path: Path, log) -> tuple[str, int, int]:
     before_size = path.stat().st_size
     suffix = path.suffix.lower()
-    temp_paths: list[Path] = []
+    temp_paths: list[tuple[str, Path, dict[str, float]]] = []
 
     try:
-        from PIL import Image
+        from PIL import Image, ImageFilter, ImageOps
     except Exception as exc:
         if log:
             log(f"[warn] 深绘下载图片压缩跳过，Pillow 不可用：{exc}")
@@ -3765,42 +4471,62 @@ def _compress_shenhui_label_tile_image_if_beneficial(path: Path, log) -> tuple[s
 
     try:
         with Image.open(path) as source:
-            source.load()
+            image = ImageOps.exif_transpose(source)
+            image.load()
             icc_profile = source.info.get("icc_profile")
-            exif = source.info.get("exif")
+            reference_size = image.size
+            reference_preview = _shenhui_label_tile_detail_preview(image)
+            reference_edge_preview = reference_preview.convert("L").filter(ImageFilter.FIND_EDGES)
 
             def save_candidate(marker: str, image, format_name: str, **save_kwargs) -> None:
                 temp_path = _shenhui_label_tile_temp_path(path, marker)
                 kwargs = {"optimize": True, **save_kwargs}
                 if icc_profile:
                     kwargs["icc_profile"] = icc_profile
-                if exif and format_name.upper() == "JPEG":
-                    kwargs["exif"] = exif
-                image.save(temp_path, format=format_name, **kwargs)
-                temp_paths.append(temp_path)
+                try:
+                    image.save(temp_path, format=format_name, **kwargs)
+                    ok, metrics = _shenhui_label_tile_candidate_preserves_detail(
+                        reference_size=reference_size,
+                        reference_preview=reference_preview,
+                        reference_edge_preview=reference_edge_preview,
+                        candidate_path=temp_path,
+                    )
+                except Exception:
+                    temp_path.unlink(missing_ok=True)
+                    raise
+                if ok:
+                    temp_paths.append((marker, temp_path, metrics))
+                else:
+                    temp_path.unlink(missing_ok=True)
 
             if suffix in {".jpg", ".jpeg"}:
-                jpeg_image = _jpeg_image_for_high_quality_save(source)
-                if source.format == "JPEG" and jpeg_image is source:
-                    try:
-                        save_candidate("keep", jpeg_image, "JPEG", quality="keep", subsampling="keep")
-                    except Exception:
-                        logger.debug("Failed to optimize JPEG with kept quantization %s", path, exc_info=True)
-                save_candidate("q95", jpeg_image, "JPEG", quality=95)
+                jpeg_image = _jpeg_image_for_high_quality_save(image)
+                for quality in _SHENHUI_LABEL_TILE_JPEG_QUALITIES:
+                    save_candidate(
+                        f"q{quality}",
+                        jpeg_image,
+                        "JPEG",
+                        quality=quality,
+                        progressive=True,
+                        subsampling=0,
+                    )
             elif suffix == ".png":
-                save_candidate("png", source, "PNG", compress_level=9)
+                save_candidate("png-lossless", image, "PNG", compress_level=9)
             elif suffix == ".webp":
-                webp_image = source if source.mode in {"RGB", "RGBA"} else source.convert("RGB")
-                save_candidate("webp", webp_image, "WEBP", quality=95, method=6)
+                webp_image = image if image.mode in {"RGB", "RGBA"} else image.convert("RGB")
+                for quality in _SHENHUI_LABEL_TILE_WEBP_QUALITIES:
+                    save_candidate(f"webp-q{quality}", webp_image, "WEBP", quality=quality, method=6)
     except Exception:
-        for temp_path in temp_paths:
+        for _marker, temp_path, _metrics in temp_paths:
             temp_path.unlink(missing_ok=True)
         logger.debug("Failed to compress shenhui label tile image %s", path, exc_info=True)
         return "", before_size, before_size
 
     best_temp = None
+    best_marker = ""
+    best_metrics: dict[str, float] = {}
     best_size = before_size
-    for temp_path in temp_paths:
+    for marker, temp_path, metrics in temp_paths:
         if not temp_path.is_file():
             continue
         size = temp_path.stat().st_size
@@ -3808,6 +4534,8 @@ def _compress_shenhui_label_tile_image_if_beneficial(path: Path, log) -> tuple[s
             if best_temp and best_temp != temp_path:
                 best_temp.unlink(missing_ok=True)
             best_temp = temp_path
+            best_marker = marker
+            best_metrics = metrics
             best_size = size
         else:
             temp_path.unlink(missing_ok=True)
@@ -3818,7 +4546,13 @@ def _compress_shenhui_label_tile_image_if_beneficial(path: Path, log) -> tuple[s
     after_size = _replace_with_temp_if_smaller(path, best_temp, before_size)
     if after_size >= before_size:
         return "", before_size, before_size
-    note = f"已压缩：{_format_mb(before_size)} -> {_format_mb(after_size)}"
+    detail = best_marker
+    if best_metrics:
+        detail = (
+            f"{detail}, rms={best_metrics.get('pixel_rms', 0):.2f}, "
+            f"edge={best_metrics.get('edge_rms', 0):.2f}"
+        )
+    note = f"已压缩：{_format_mb(before_size)} -> {_format_mb(after_size)}（高保真 {detail}）"
     if log:
         log(f"Shenhui label/tile image compressed: {path} ({note})")
     return note, before_size, after_size
@@ -4160,6 +4894,7 @@ def _finalize_shenhui_label_tile_download_outputs(
         successful_rows.append((row, local_path))
 
     if successful_rows:
+        successful_rows = _filter_shenhui_shoe_label_ocr_candidates(successful_rows, log)
         compressed_count = 0
         saved_bytes = 0
         for row, local_path in successful_rows:
@@ -4205,7 +4940,7 @@ def _finalize_shenhui_label_tile_download_outputs(
             data_rows,
             log,
             context="Shenhui label tile download",
-            columns=("备注",),
+            columns=("下载结果", "本地文件", "备注"),
         )
         final_refs.append(str(external_dir))
         for file_path in exported_files or []:
@@ -4527,6 +5262,7 @@ def _finalize_shenhui_new_arrival_outputs(
         f"深绘上新图包_{timestamp}",
     )
     package_root = _ensure_unique_local_dir(runtime_dir / package_base)
+    package_root.mkdir(parents=True, exist_ok=True)
     pdf_work_dir = _ensure_unique_local_dir(runtime_dir / "_pdf_work")
     auto_zip_package = _shenhui_auto_zip_enabled(run_params)
 
@@ -4579,20 +5315,27 @@ def _finalize_shenhui_new_arrival_outputs(
             f"{time.monotonic() - finalize_started_at:.1f}s"
         )
 
+        label_started_at = time.monotonic()
+        label_result = process_prepare_upload_package_labels(
+            data_rows=data_rows,
+            package_root=package_root,
+            pdf_rows=pdf_rows,
+            work_dir=pdf_work_dir,
+            run_params=run_params or {},
+            log=log,
+        )
         if pdf_rows:
-            pdf_data_rows = [row for row, _local_path, _group_code in pdf_rows]
-            pdf_started_at = time.monotonic()
-            converted_count = convert_pdf_rows_to_yq_output_root(
-                data_rows=pdf_data_rows,
-                output_root=package_root,
-                pdf_work_dir=pdf_work_dir,
-                run_params=run_params or {},
-                log=log,
-            )
-            if converted_count:
-                log(f"Shenhui downloaded PDF screenshots added to style packages: {converted_count}")
             for row, local_path, group_code in pdf_rows:
                 if str(row.get("处理动作") or "").strip() != "截图失败":
+                    # Successfully handled or intentionally skipped PDFs remain
+                    # runtime-only sources and are removed during final cleanup.
+                    # Do not export a stale path in the result workbook. Keep a
+                    # processor-provided replacement only when it is a real file
+                    # distinct from the original runtime PDF.
+                    replacement = Path(str(row.get("本地文件") or "")).expanduser()
+                    if replacement == local_path or not replacement.is_file():
+                        row["本地文件"] = ""
+                        row["最终裁图"] = ""
                     continue
                 pending_target = package_root / group_code / "_PDF待裁图" / _safe_local_name(
                     row.get("__package_filename") or row.get("文件名") or local_path.name,
@@ -4602,11 +5345,14 @@ def _finalize_shenhui_new_arrival_outputs(
                     preserved = _copy_file_to_unique_target(local_path, pending_target)
                     row["本地文件"] = str(preserved)
                     row["备注"] = _append_note(row.get("备注"), f"原 PDF 已保留：{preserved.name}")
-            log(
-                "Shenhui package PDF processing finished: "
-                f"{converted_count} generated images from {len(pdf_rows)} PDF files, "
-                f"{time.monotonic() - pdf_started_at:.1f}s"
-            )
+        log(
+            "Shenhui apparel label processing finished: "
+            f"generated={label_result.generated_count}, "
+            f"existing={len(label_result.accepted_existing)}, "
+            f"rejected={len(label_result.rejected_paths)}, "
+            f"missing={len(label_result.missing_roles)}, "
+            f"{time.monotonic() - label_started_at:.1f}s"
+        )
 
         style_dirs = [
             path
@@ -4663,11 +5409,20 @@ def _finalize_shenhui_new_arrival_outputs(
         external_refs = []
 
         if successful_rows and auto_zip_package:
+            zip_filenames_by_style = {}
             for style_zip_path in style_zip_paths:
                 if style_zip_path.exists():
                     copied_style_zip = _copy_file_to_unique_target(style_zip_path, target_root / style_zip_path.name)
                     external_refs.append(str(copied_style_zip))
+                    zip_filenames_by_style[style_zip_path.stem] = copied_style_zip.name
             if style_zip_paths:
+                if _clear_zip_packaged_final_crop_paths(data_rows, package_root, zip_filenames_by_style):
+                    _try_rewrite_shenhui_package_summary_excels(
+                        exported_files,
+                        data_rows,
+                        log,
+                        include_compression=bool(compression_changed_rows),
+                    )
                 log(f"Shenhui style ZIPs copied to export folder: {target_root}")
         elif successful_rows and package_root.exists():
             external_dir = _move_dir_to_unique_target(package_root, target_root / package_root.name)
@@ -4694,11 +5449,20 @@ def _finalize_shenhui_new_arrival_outputs(
         target_root = _default_output_root_for_runtime(runtime_dir, exported_files)
         target_root.mkdir(parents=True, exist_ok=True)
         default_refs = []
+        zip_filenames_by_style = {}
         for style_zip_path in style_zip_paths:
             if style_zip_path.exists():
                 copied_style_zip = _copy_file_to_unique_target(style_zip_path, target_root / style_zip_path.name)
                 default_refs.append(str(copied_style_zip))
+                zip_filenames_by_style[style_zip_path.stem] = copied_style_zip.name
         if default_refs:
+            if _clear_zip_packaged_final_crop_paths(data_rows, package_root, zip_filenames_by_style):
+                _try_rewrite_shenhui_package_summary_excels(
+                    exported_files,
+                    data_rows,
+                    log,
+                    include_compression=bool(compression_changed_rows),
+                )
             log(f"Shenhui style ZIPs moved to default output folder: {target_root}")
             final_refs = [*default_refs, *exported_refs]
     elif successful_rows and package_root.exists():
@@ -13323,6 +14087,7 @@ _LLM_PRIVATE_SETTING_FIELDS = frozenset({
     "overseas_anthropic_api_key",
     "domestic_api_key",
     "deepseek_api_key",
+    "glm_api_key",
 })
 _LLM_RUNTIME_SETTING_FIELDS = frozenset({
     "api_key",
@@ -13330,10 +14095,12 @@ _LLM_RUNTIME_SETTING_FIELDS = frozenset({
     "overseas_anthropic_api_key",
     "domestic_api_key",
     "deepseek_api_key",
+    "glm_api_key",
     "overseas_openai_base_url",
     "overseas_anthropic_base_url",
     "domestic_base_url",
     "deepseek_base_url",
+    "glm_base_url",
     "default_model",
     "custom_providers",
 })
@@ -13417,12 +14184,14 @@ def _public_settings() -> dict:
         or str(source_llm.get("overseas_anthropic_api_key") or "").strip()
         or str(source_llm.get("domestic_api_key") or "").strip()
         or str(source_llm.get("deepseek_api_key") or "").strip()
+        or str(source_llm.get("glm_api_key") or "").strip()
         or any(bool(provider.get("configured")) for provider in public_custom_llm_providers)
     )
     public_llm["overseas_openai_configured"] = _llm_key_configured(source_llm, "overseas_openai_api_key", legacy_gateway=True)
     public_llm["overseas_anthropic_configured"] = _llm_key_configured(source_llm, "overseas_anthropic_api_key", legacy_gateway=True)
     public_llm["domestic_configured"] = _llm_key_configured(source_llm, "domestic_api_key", legacy_gateway=True)
     public_llm["deepseek_configured"] = _llm_key_configured(source_llm, "deepseek_api_key")
+    public_llm["glm_configured"] = _llm_key_configured(source_llm, "glm_api_key")
     ai["llm"] = public_llm
     public["ai"] = ai
     return public
@@ -13445,6 +14214,7 @@ def _safe_settings_write_patch(cfg: dict) -> dict:
     patch.pop("ai.llm.overseas_anthropic_configured", None)
     patch.pop("ai.llm.domestic_configured", None)
     patch.pop("ai.llm.deepseek_configured", None)
+    patch.pop("ai.llm.glm_configured", None)
     if isinstance(patch.get("ai.llm.custom_providers"), list):
         patch["ai.llm.custom_providers"] = _merge_custom_llm_provider_secrets(
             patch.get("ai.llm.custom_providers"),
@@ -13472,6 +14242,7 @@ def _safe_settings_write_patch(cfg: dict) -> dict:
         llm.pop("overseas_anthropic_configured", None)
         llm.pop("domestic_configured", None)
         llm.pop("deepseek_configured", None)
+        llm.pop("glm_configured", None)
     return patch
 
 

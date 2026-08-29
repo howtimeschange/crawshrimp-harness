@@ -2225,7 +2225,7 @@ import {
   qualityOptionsForModel,
   sizeForModel,
 } from '../utils/aiImageModels.js'
-import { isDeepSeekConfigured, isLlmConfigured, normalizeCustomLlmProviders } from '../utils/llmSettings.mjs'
+import { isDeepSeekConfigured, isGlmConfigured, isLlmConfigured, normalizeCustomLlmProviders } from '../utils/llmSettings.mjs'
 
 const emit = defineEmits(['open-settings'])
 
@@ -2660,6 +2660,7 @@ function normalizeVideoPromptLlmSettings(settings = {}) {
     ...settings,
     'ai.llm.configured': settings?.['ai.llm.configured'] ?? llm.configured,
     'ai.llm.deepseek_configured': settings?.['ai.llm.deepseek_configured'] ?? llm.deepseek_configured,
+    'ai.llm.glm_configured': settings?.['ai.llm.glm_configured'] ?? llm.glm_configured,
     'ai.llm.default_model': settings?.['ai.llm.default_model'] ?? llm.default_model,
     'ai.llm.custom_providers': settings?.['ai.llm.custom_providers'] ?? llm.custom_providers,
   }
@@ -2680,6 +2681,8 @@ const configuredVideoPromptModels = computed(() => {
   const builtins = BALA_VIDEO_PROMPT_MODEL_OPTIONS.filter(model => (
     model.keyScope === 'deepseek'
       ? isDeepSeekConfigured(settings)
+      : model.keyScope === 'glm'
+        ? isGlmConfigured(settings)
       : isLlmConfigured(settings)
   ))
   const seen = new Set(builtins.map(model => model.value))

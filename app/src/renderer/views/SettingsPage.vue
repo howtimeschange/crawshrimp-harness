@@ -1419,6 +1419,7 @@ const llmProviders = computed(() => {
 
 function llmProviderLogoText(provider = {}) {
   if (provider.brand === 'deepseek' || provider.id === 'crawshrimp-deepseek-official') return 'deepseek'
+  if (provider.brand === 'glm' || provider.id === 'crawshrimp-glm-official') return 'GLM'
   if (provider.brand === 'semir' || String(provider.name || '').includes('森马')) return 'SEMIR'
   return String(provider.name || provider.id || 'AI').trim().replace(/\s+/g, ' ') || 'AI'
 }
@@ -2894,6 +2895,14 @@ watch(imSettingsUrl, () => {
   background:
     radial-gradient(circle at 22% 18%, rgba(143, 176, 255, 0.32), transparent 42%),
     linear-gradient(135deg, rgba(40, 58, 132, 0.58), rgba(22, 25, 42, 0.92));
+}
+
+.llm-provider-logo.brand-glm {
+  color: #a7ffe1;
+  border-color: rgba(44, 211, 169, 0.34);
+  background:
+    radial-gradient(circle at 18% 16%, rgba(124, 255, 220, 0.26), transparent 42%),
+    linear-gradient(135deg, rgba(23, 127, 111, 0.58), rgba(16, 30, 38, 0.92));
 }
 
 .llm-provider-logo.brand-semir {

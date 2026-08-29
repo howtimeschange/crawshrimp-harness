@@ -12,6 +12,9 @@ export const DEEPSEEK_API_KEY_FIELD = 'ai.llm.deepseek_api_key'
 export const DEEPSEEK_BASE_URL_FIELD = 'ai.llm.deepseek_base_url'
 export const DEEPSEEK_OFFICIAL_BASE_URL_DEFAULT = 'https://api.deepseek.com'
 export const DEEPSEEK_PLATFORM_URL = 'https://platform.deepseek.com/'
+export const GLM_API_KEY_FIELD = 'ai.llm.glm_api_key'
+export const GLM_BASE_URL_FIELD = 'ai.llm.glm_base_url'
+export const GLM_OFFICIAL_BASE_URL_DEFAULT = 'https://open.bigmodel.cn/api/paas/v4'
 
 export const LLM_CUSTOM_PROVIDERS_FIELD = 'ai.llm.custom_providers'
 
@@ -20,6 +23,7 @@ export const LLM_DEFAULTS = Object.freeze({
   'ai.llm.overseas_anthropic_base_url': 'https://ai-aigw.semir.com/overseas-anthropic-vip',
   'ai.llm.domestic_base_url': 'https://ai-aigw.semir.com/bailian-codingplan/v1',
   'ai.llm.deepseek_base_url': DEEPSEEK_OFFICIAL_BASE_URL_DEFAULT,
+  'ai.llm.glm_base_url': GLM_OFFICIAL_BASE_URL_DEFAULT,
   'ai.llm.default_model': 'deepseek-official-v4-flash',
 })
 
@@ -53,6 +57,12 @@ export const DEEPSEEK_OFFICIAL_MODELS_UI = Object.freeze([
   { value: 'deepseek-official-v4-flash-vision-exp', label: 'DeepSeek 官方 · V4 Flash Vision Exp' },
 ])
 
+export const GLM_OFFICIAL_MODELS_UI = Object.freeze([
+  { value: 'glm-official-5.3-flash', label: '智谱官方 · GLM-5.3-Flash' },
+  { value: 'glm-official-5.3', label: '智谱官方 · GLM-5.3' },
+  { value: 'glm-official-5.2', label: '智谱官方 · GLM-5.2' },
+])
+
 export const LLM_BUILTIN_PROVIDERS = Object.freeze([
   {
     id: 'crawshrimp-deepseek-official',
@@ -67,6 +77,19 @@ export const LLM_BUILTIN_PROVIDERS = Object.freeze([
     defaultBaseUrl: DEEPSEEK_OFFICIAL_BASE_URL_DEFAULT,
     models: DEEPSEEK_OFFICIAL_MODELS_UI,
     officialUrl: DEEPSEEK_PLATFORM_URL,
+  },
+  {
+    id: 'crawshrimp-glm-official',
+    name: '智谱官方',
+    brand: 'glm',
+    kind: 'builtin',
+    protocol: 'openai',
+    compatibility: 'OpenAI 兼容',
+    apiKeyField: GLM_API_KEY_FIELD,
+    configuredField: 'ai.llm.glm_configured',
+    baseUrlField: GLM_BASE_URL_FIELD,
+    defaultBaseUrl: GLM_OFFICIAL_BASE_URL_DEFAULT,
+    models: GLM_OFFICIAL_MODELS_UI,
   },
   {
     id: 'crawshrimp-overseas-openai',
@@ -118,11 +141,13 @@ export const LLM_CREDENTIAL_FIELDS = Object.freeze([
   OVERSEAS_ANTHROPIC_API_KEY_FIELD,
   DOMESTIC_API_KEY_FIELD,
   DEEPSEEK_API_KEY_FIELD,
+  GLM_API_KEY_FIELD,
 ])
 
 // 默认模型下拉覆盖官方 DeepSeek 与森马网关模型;运行时只展示已配置 key 的路由。
 export const LLM_MODELS = Object.freeze([
   ...DEEPSEEK_OFFICIAL_MODELS_UI,
+  ...GLM_OFFICIAL_MODELS_UI,
   ...OVERSEAS_OPENAI_MODELS,
   ...OVERSEAS_ANTHROPIC_MODELS,
   ...DOMESTIC_OPENAI_MODELS,
@@ -213,6 +238,11 @@ export function llmProviderConfigured(cfg = {}, provider = {}) {
 
 export function isDeepSeekConfigured(cfg = {}) {
   const provider = LLM_BUILTIN_PROVIDERS.find(item => item.id === 'crawshrimp-deepseek-official')
+  return llmProviderConfigured(cfg, provider)
+}
+
+export function isGlmConfigured(cfg = {}) {
+  const provider = LLM_BUILTIN_PROVIDERS.find(item => item.id === 'crawshrimp-glm-official')
   return llmProviderConfigured(cfg, provider)
 }
 

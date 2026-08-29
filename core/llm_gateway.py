@@ -43,6 +43,28 @@ def deepseek_official_real_model(model_id: str) -> str:
     return _DEEPSEEK_OFFICIAL_REAL_MODELS.get(model_id, model_id)
 
 
+GLM_OFFICIAL_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
+GLM_OFFICIAL_MODELS = (
+    "glm-official-5.3-flash",
+    "glm-official-5.3",
+    "glm-official-5.2",
+)
+_GLM_OFFICIAL_REAL_MODELS = {
+    "glm-official-5.3-flash": "glm-5.3-flash",
+    "glm-official-5.3": "glm-5.3",
+    "glm-official-5.2": "glm-5.2",
+}
+
+
+def glm_official_real_model(model_id: str) -> str:
+    """产品内 ID → GLM 官方 API 真实模型名。"""
+    return _GLM_OFFICIAL_REAL_MODELS.get(model_id, model_id)
+
+
+def official_real_model(model_id: str) -> str:
+    return glm_official_real_model(deepseek_official_real_model(model_id))
+
+
 OVERSEAS_OPENAI_MODELS = (
     "gpt-5.6-sol",
     "gpt-5.6-terra",
@@ -69,6 +91,7 @@ SUPPORTED_MODELS = (
     *OVERSEAS_ANTHROPIC_MODELS,
     *DOMESTIC_OPENAI_MODELS,
     *DEEPSEEK_OFFICIAL_MODELS,
+    *GLM_OFFICIAL_MODELS,
 )
 DEFAULT_MODEL = "deepseek-official-v4-flash"
 GATEWAY_FALLBACK_MODEL = "gpt-5.6-terra"
@@ -125,6 +148,19 @@ BUILTIN_LLM_PROVIDERS = (
         "models": DEEPSEEK_OFFICIAL_MODELS,
         "official_deepseek": True,
     },
+    {
+        "id": "crawshrimp-glm-official",
+        "display_name": "智谱官方",
+        "protocol": "openai",
+        "api": "openai-completions",
+        "base_url_key": "glm_base_url",
+        "base_url_env": "CRAWSHRIMP_GLM_BASE_URL",
+        "base_url_default": GLM_OFFICIAL_BASE_URL,
+        "api_key_key": "glm_api_key",
+        "api_key_env": "CRAWSHRIMP_GLM_API_KEY",
+        "models": GLM_OFFICIAL_MODELS,
+        "official_glm": True,
+    },
 )
 GUANG_TITLE_MIN_CHARS = 24
 GUANG_TITLE_MAX_CHARS = 30
@@ -142,6 +178,7 @@ BALA_VIDEO_PROMPT_BUILTIN_MODELS = (
     "gemini-3.5-flash",
     "qwen3.8-max-preview",
     "qwen3.7-plus",
+    "glm-official-5.3-flash",
     "glm-5.2",
     "kimi-k3",
 )
@@ -245,6 +282,13 @@ def _key_for_builtin_provider(provider: dict, llm: dict) -> str:
     return ""
 
 
+def _base_url_for_builtin_provider(provider: dict, llm: dict) -> str:
+    env_value = _compact(os.environ.get(str(provider.get("base_url_env") or "")))
+    if env_value:
+        return env_value
+    return _compact(llm.get(str(provider.get("base_url_key") or ""))) or str(provider.get("base_url_default") or "")
+
+
 def gateway_api_key_configured(config: dict | None = None) -> bool:
     llm = _llm_settings(config)
     return any(
@@ -260,8 +304,14 @@ def deepseek_api_key_configured(config: dict | None = None) -> bool:
     return bool(_key_for_builtin_provider(provider or {}, llm))
 
 
+def glm_api_key_configured(config: dict | None = None) -> bool:
+    llm = _llm_settings(config)
+    provider = _provider_by_id("crawshrimp-glm-official")
+    return bool(_key_for_builtin_provider(provider or {}, llm))
+
+
 def any_llm_api_key_configured(config: dict | None = None) -> bool:
-    if gateway_api_key_configured(config) or deepseek_api_key_configured(config):
+    if gateway_api_key_configured(config) or deepseek_api_key_configured(config) or glm_api_key_configured(config):
         return True
     return any(provider.get("configured") for provider in custom_llm_providers(config, include_secrets=False))
 
@@ -443,16 +493,16 @@ def route_for_model(model_id: str, config: dict | None = None) -> LlmRoute:
     if provider and not _key_for_builtin_provider(provider, llm):
         custom = custom_provider_for_configured_model(selected, cfg)
 
-    if provider and provider.get("official_deepseek") and not custom:
-        # DeepSeek 原生接入:独立 Key 与 Base URL(官方 API,不走公司网关)
-        ds_key = _key_for_builtin_provider(provider, llm)
-        if not ds_key:
-            raise LlmConfigurationError("DeepSeek 原生模型需要独立 API Key,请在设置 → AI 能力 → 文本大模型中配置")
+    if provider and (provider.get("official_deepseek") or provider.get("official_glm")) and not custom:
+        api_key = _key_for_builtin_provider(provider, llm)
+        if not api_key:
+            provider_label = "DeepSeek 原生" if provider.get("official_deepseek") else "GLM 官方"
+            raise LlmConfigurationError(f"{provider_label}模型需要独立 API Key,请在设置 → AI 能力 → 文本大模型中配置")
         return LlmRoute(
-            model_id=deepseek_official_real_model(selected),
+            model_id=official_real_model(selected),
             protocol="openai",
-            base_url=_compact(llm.get("deepseek_base_url")) or DEEPSEEK_OFFICIAL_BASE_URL,
-            api_key=ds_key,
+            base_url=_base_url_for_builtin_provider(provider, llm),
+            api_key=api_key,
         )
 
     if provider and not custom:
@@ -462,7 +512,7 @@ def route_for_model(model_id: str, config: dict | None = None) -> LlmRoute:
         return LlmRoute(
             model_id=selected,
             protocol=str(provider["protocol"]),
-            base_url=_compact(llm.get(str(provider["base_url_key"]))) or str(provider["base_url_default"]),
+            base_url=_base_url_for_builtin_provider(provider, llm),
             api_key=api_key,
         )
 

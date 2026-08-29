@@ -1,4 +1,7 @@
 import unittest
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 
@@ -63,3 +66,53 @@ class OcrServiceTests(unittest.TestCase):
         self.assertEqual(status["package"], "tesseract.js")
         self.assertIn("available", status)
         self.assertIn("node_modules", status)
+
+    def test_extract_shoe_label_fields_preserves_full_printed_color_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_path = Path(tmpdir) / "shoe-box.jpg"
+            Image.new("RGB", (1200, 800), "white").save(image_path)
+            with patch.object(
+                ocr_service,
+                "recognize_image_with_tesseract_js",
+                return_value={
+                    "text": (
+                        "产 品 名 称 : 婴 童 学 步 鞋\n"
+                        "颜 色 : 梦 幻 粉 60301\n"
+                    ),
+                    "confidence": 94,
+                    "words": [],
+                },
+            ):
+                fields = ocr_service.extract_shoe_label_fields(
+                    image_path,
+                    label_bbox=(0.05, 0.05, 0.95, 0.95),
+                    expected_color_code="60301",
+                )
+
+        self.assertEqual(fields["color_name"], "梦幻粉60301")
+        self.assertEqual(fields["product_name"], "婴童学步鞋")
+        self.assertEqual(fields["source"], "local_tesseract_explicit_label_field")
+
+    def test_extract_shoe_label_fields_preserves_observed_text_when_color_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_path = Path(tmpdir) / "shoe-box.jpg"
+            Image.new("RGB", (1200, 800), "white").save(image_path)
+            with patch.object(
+                ocr_service,
+                "recognize_image_with_tesseract_js",
+                return_value={
+                    "text": "balabala 204426146023\n产品名称: 婴童稳步鞋",
+                    "confidence": 59,
+                    "words": [],
+                },
+            ):
+                fields = ocr_service.extract_shoe_label_fields(
+                    image_path,
+                    label_bbox=(0.05, 0.05, 0.95, 0.95),
+                    expected_color_code="00355",
+                )
+
+        self.assertEqual(fields["color_name"], "")
+        self.assertEqual(fields["product_name"], "婴童稳步鞋")
+        self.assertIn("204426146023", fields["observed_text"])
+        self.assertEqual(fields["confidence"], 59)

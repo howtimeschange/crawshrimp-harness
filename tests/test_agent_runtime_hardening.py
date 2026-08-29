@@ -1662,12 +1662,14 @@ def test_dsh_model_catalog_declares_vision_without_widening_text_only_models():
 
     assert model_capabilities("gpt-5.5")["input_modalities"] == ["text", "image"]
     assert model_capabilities("deepseek-official-v4-flash-vision-exp")["input_modalities"] == ["text", "image"]
+    assert model_capabilities("glm-official-5.3-flash")["input_modalities"] == ["text", "image"]
     assert "input_modalities" not in model_capabilities("deepseek-v4-pro")
 
     profile = build_cordis_yaml({"ai": {"llm": {"default_model": "gpt-5.5"}}})
     assert re.search(r"id: gpt-5\.5[\s\S]*input: \[text, image\]", profile)
     assert re.search(r"id: deepseek-v4-pro[\s\S]*input: \[text\]", profile)
     assert re.search(r"id: deepseek-v4-flash-vision-exp[\s\S]*input: \[text, image\]", profile)
+    assert re.search(r"id: glm-5\.3-flash[\s\S]*input: \[text, image\]", profile)
 
 
 def test_dsh_native_deepseek_route_is_hidden_in_favor_of_crawshrimp_route():
@@ -1721,6 +1723,7 @@ def test_agent_default_model_prefers_deepseek_flash_when_key_is_configured(monke
 
     monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
     monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_GLM_API_KEY", raising=False)
     monkeypatch.setattr(service_mod, "load_config", lambda: {
         "ai": {"llm": {
             "api_key": "",
@@ -1742,6 +1745,7 @@ def test_agent_default_model_falls_back_to_gateway_when_deepseek_key_missing(mon
 
     monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
     monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_GLM_API_KEY", raising=False)
     monkeypatch.setattr(service_mod, "load_config", lambda: {
         "ai": {"llm": {
             "api_key": "gateway-key",
@@ -1758,12 +1762,35 @@ def test_agent_default_model_falls_back_to_gateway_when_deepseek_key_missing(mon
     )
 
 
+def test_agent_default_model_prefers_glm_flash_when_key_is_configured(monkeypatch):
+    from core.agent import service as service_mod
+
+    monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_GLM_API_KEY", raising=False)
+    monkeypatch.setattr(service_mod, "load_config", lambda: {
+        "ai": {"llm": {
+            "api_key": "",
+            "glm_api_key": "glm-unit-key",
+            "default_model": "glm-official-5.3-flash",
+        }}
+    })
+
+    service = service_mod.AgentService()
+
+    assert service._resolve_model() == (
+        "glm-official-5.3-flash",
+        "crawshrimp-glm-official",
+    )
+
+
 def test_agent_models_endpoint_hides_unconfigured_gateway_models(monkeypatch):
     from core import config as config_mod
     from core.agent import api as agent_api
 
     monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
     monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_GLM_API_KEY", raising=False)
     monkeypatch.setattr(config_mod, "load_config", lambda: {
         "ai": {"llm": {
             "api_key": "",
@@ -1787,6 +1814,7 @@ def test_agent_models_endpoint_keeps_official_deepseek_first_when_all_keys_exist
 
     monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
     monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_GLM_API_KEY", raising=False)
     monkeypatch.setattr(config_mod, "load_config", lambda: {
         "ai": {"llm": {
             "api_key": "gateway-key",
@@ -1802,6 +1830,34 @@ def test_agent_models_endpoint_keeps_official_deepseek_first_when_all_keys_exist
         "deepseek-official-v4-pro",
         "deepseek-official-v4-flash-vision-exp",
     ]
+    assert "glm-official-5.3-flash" not in model_ids
+
+
+def test_agent_models_endpoint_includes_official_glm_when_configured(monkeypatch):
+    from core import config as config_mod
+    from core.agent import api as agent_api
+
+    monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_GLM_API_KEY", raising=False)
+    monkeypatch.setattr(config_mod, "load_config", lambda: {
+        "ai": {"llm": {
+            "api_key": "",
+            "deepseek_api_key": "",
+            "glm_api_key": "glm-unit-key",
+            "default_model": "glm-official-5.3-flash",
+        }}
+    })
+
+    models = agent_api.list_agent_models()["models"]
+    model_ids = [item["model_id"] for item in models]
+
+    assert model_ids[:3] == [
+        "glm-official-5.3-flash",
+        "glm-official-5.3",
+        "glm-official-5.2",
+    ]
+    assert {item["route"] for item in models} == {"crawshrimp-glm-official"}
 
 
 def test_agent_start_generation_uses_packaged_web_cordis_without_install_write(tmp_path, monkeypatch):
@@ -1934,6 +1990,7 @@ def test_dsh_settings_sync_writes_runtime_provider_profiles_without_secrets(tmp_
     cfg = {"ai": {"llm": {
         "api_key": "legacy-gateway-key",
         "deepseek_api_key": "sk-ds-official-unit",
+        "glm_api_key": "glm-unit-key",
         "default_model": "deepseek-official-v4-flash",
         "custom_providers": [{
             "id": "custom-1xm",
@@ -1964,10 +2021,12 @@ def test_dsh_settings_sync_writes_runtime_provider_profiles_without_secrets(tmp_
         "model": "deepseek-v4-flash",
     }
     assert "deepseek-v4-flash" in [item["id"] for item in providers["crawshrimp-deepseek-official"]["models"]]
+    assert "glm-5.3-flash" in [item["id"] for item in providers["crawshrimp-glm-official"]["models"]]
     assert "deepseek-v4-flash" in [item["id"] for item in providers["crawshrimp-domestic-openai"]["models"]]
     assert "kimi-k3" in [item["id"] for item in providers["crawshrimp-domestic-openai"]["models"]]
     assert providers["custom-1xm"]["apiKeyEnv"] == "CRAWSHRIMP_CUSTOM_LLM_KEY_CUSTOM_1XM"
     assert "sk-ds-official-unit" not in text
+    assert "glm-unit-key" not in text
     assert "legacy-gateway-key" not in text
     assert "custom-secret-key" not in text
 

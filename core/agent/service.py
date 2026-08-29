@@ -26,7 +26,8 @@ from core.llm_gateway import (
     any_llm_api_key_configured,
     custom_providers_runtime_payload,
     deepseek_api_key_configured,
-    deepseek_official_real_model,
+    glm_api_key_configured,
+    official_real_model,
     gateway_api_key_configured,
     model_has_configured_key,
     select_default_model,
@@ -440,7 +441,7 @@ def _resolve_configured_generation_model(
     provider_label = str(provider_id or resolve_provider_for_model(requested_model, cfg) or "").strip()
     raise AgentModelConfigurationError(
         f"智能体模型 {requested_model}({provider_label}) 没有可用 API Key；"
-        "请配置 DeepSeek 官方 API Key，或配置网关 API Key 后再使用海外/国内网关模型。"
+        "请配置 DeepSeek/GLM 官方 API Key，或配置网关 API Key 后再使用海外/国内网关模型。"
     )
 
 
@@ -459,7 +460,9 @@ def _dsh_llm_pi_ai_settings(cfg: dict, custom_provider_profiles: list[dict[str, 
         models = []
         for model_id in provider.get("models") or []:
             cap = model_capabilities(str(model_id))
-            runtime_model_id = deepseek_official_real_model(str(model_id)) if provider.get("official_deepseek") else str(model_id)
+            runtime_model_id = official_real_model(str(model_id)) if (
+                provider.get("official_deepseek") or provider.get("official_glm")
+            ) else str(model_id)
             model = {
                 "id": runtime_model_id,
                 "contextWindow": int(cap.get("context_window") or 64000),
@@ -1484,7 +1487,7 @@ class AgentService:
                 self.runtime_error_code = "MODEL_CONFIGURATION"
                 self.runtime_state = "needs_configuration"
                 return False
-        runtime_model_id = deepseek_official_real_model(model_id)
+        runtime_model_id = official_real_model(model_id)
 
         if config_required_mode:
             os.environ["CRAWSHRIMP_LLM_CONFIG_REQUIRED"] = "1"
@@ -1527,14 +1530,11 @@ class AgentService:
             ("CRAWSHRIMP_OVERSEAS_ANTHROPIC_BASE_URL", "overseas_anthropic_base_url", None),
             ("CRAWSHRIMP_DOMESTIC_OPENAI_BASE_URL", "domestic_base_url", None),
             ("CRAWSHRIMP_DEEPSEEK_BASE_URL", "deepseek_base_url", None),
+            ("CRAWSHRIMP_GLM_BASE_URL", "glm_base_url", None),
         ):
             value = str(base.get(cfg_key) or "").strip()
             if value:
                 os.environ[env_key] = value
-        # DeepSeek 原生接入:独立 Key 注入 runtime 环境(不落盘)
-        ds_key = os.environ.get("CRAWSHRIMP_DEEPSEEK_API_KEY", "").strip() or str(base.get("deepseek_api_key") or "").strip()
-        if ds_key:
-            os.environ["CRAWSHRIMP_DEEPSEEK_API_KEY"] = ds_key
         custom_providers, custom_env = custom_providers_runtime_payload(cfg)
         for key, value in custom_env.items():
             os.environ[key] = value
@@ -1701,6 +1701,7 @@ class AgentService:
         candidate_web_url = f"http://127.0.0.1:{candidate_web_port}/" if candidate_web_port else ""
         gateway_key_configured = gateway_api_key_configured(cfg)
         deepseek_key_configured = deepseek_api_key_configured(cfg)
+        glm_key_configured = glm_api_key_configured(cfg)
         any_key_configured = any_llm_api_key_configured(cfg)
         display_state = self.runtime_state
         display_error = self.runtime_error
@@ -1712,6 +1713,7 @@ class AgentService:
             "api_key_configured": any_key_configured,
             "gateway_api_key_configured": gateway_key_configured,
             "deepseek_api_key_configured": deepseek_key_configured,
+            "glm_api_key_configured": glm_key_configured,
             "active_run": ((self.active_run or next(iter(self.active_runs_by_runtime.values()), {}))
                            or {}).get("run_id"),
             "queue_depth": self.queue.qsize(),

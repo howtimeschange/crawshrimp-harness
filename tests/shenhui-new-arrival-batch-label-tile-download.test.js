@@ -94,7 +94,7 @@ test('selectLabelItems prefers yq1 and yq2 over descriptive label filenames', as
   )
 })
 
-test('selectLabelItems falls back to code-only PDF as wash label when yq2 is absent', async () => {
+test('selectLabelItems does not treat code-only PDF as wash label without explicit marker', async () => {
   const helpers = await loadExports()
   const items = [
     {
@@ -119,7 +119,46 @@ test('selectLabelItems falls back to code-only PDF as wash label when yq2 is abs
   )
   assert.deepEqual(
     Array.from(helpers.selectLabelItems(items, 'wash_label', '208426107013').map(item => item.filename)),
-    ['20842610701311781059940298_3301.pdf'],
+    [],
+  )
+})
+
+test('label tile plan preserves label filenames and filters waste markers', async () => {
+  const helpers = await loadExports()
+  const items = [
+    {
+      dir: '0',
+      ext: 'jpg',
+      filename: '208426108223吊牌.jpg',
+      fullpath: '平拍原图/208426108223/208426108223吊牌.jpg',
+    },
+    {
+      dir: '0',
+      ext: 'jpg',
+      filename: '208426108223无水洗废图.jpg',
+      fullpath: '平拍原图/208426108223/208426108223无水洗废图.jpg',
+    },
+    {
+      dir: '0',
+      ext: 'jpg',
+      filename: '208426108223平铺图.jpg',
+      fullpath: '平拍原图/208426108223/208426108223无吊牌/208426108223平铺图.jpg',
+    },
+  ]
+
+  assert.equal(helpers.hasWasteLabelMarker(items[1]), true)
+  assert.equal(helpers.inferLabelKind(items[1], '208426108223'), '')
+  assert.deepEqual(
+    Array.from(helpers.selectLabelItems(items, 'hang_tag', '208426108223').map(item => item.filename)),
+    ['208426108223吊牌.jpg'],
+  )
+  assert.equal(
+    helpers.buildPackageFilename('208426108223', 'hang_tag', items[0]),
+    '208426108223吊牌.jpg',
+  )
+  assert.deepEqual(
+    Array.from(helpers.selectTileItems([], items, '208426108223').items.map(item => item.filename)),
+    [],
   )
 })
 
@@ -228,7 +267,9 @@ test('buildCodePlan downloads model-path tile first and appends 有模拍 to fil
   assert.equal(tileRows.some(row => row['云盘路径'].includes('208426103211')), false)
   assert.equal(tileRows[0]['模拍路径命中'], '是')
   assert.equal(plan.rows.find(row => row['素材类型'] === '吊牌')['匹配策略'], '优先命中 yq1')
+  assert.equal(plan.rows.find(row => row['素材类型'] === '吊牌')['文件名'], 'yq1.jpg')
   assert.equal(plan.rows.find(row => row['素材类型'] === '洗唛')['匹配策略'], '优先命中 yq2')
+  assert.equal(plan.rows.find(row => row['素材类型'] === '洗唛')['文件名'], 'yq2.jpg')
   assert.equal(plan.downloadItems.length, 3)
 })
 
@@ -295,4 +336,69 @@ test('selectTileItems keeps a single folder fallback tile when no style color is
   assert.equal(selection.sourceType, 'still')
   assert.equal(selection.items.length, 1)
   assert.equal(selection.items[0].filename, 'IMG_2240.jpg')
+})
+
+test('selectShoeLabelItems keeps only a small OCR candidate tail for unnamed shoe box photos', async () => {
+  const helpers = await loadExports()
+  const basePath = '巴拉货控/02 产品上新模块/2-2 巴拉产品上新/2026年巴拉冬/平拍原图/全域/7p/鞋品/204426141122-已写/00322/36'
+  const items = [
+    {
+      dir: '0',
+      ext: 'jpg',
+      filename: '204426141122-00322.jpg',
+      fullpath: `${basePath}/204426141122-00322.jpg`,
+    },
+    {
+      dir: '0',
+      ext: 'jpg',
+      filename: 'yk1.jpg',
+      fullpath: `${basePath}/yk1.jpg`,
+    },
+    {
+      dir: '0',
+      ext: 'jpg',
+      filename: 'GUDO6700 拷贝.jpg',
+      fullpath: `${basePath}/GUDO6700 拷贝.jpg`,
+    },
+    ...Array.from({ length: 12 }, (_unused, index) => {
+      const number = 6800 + index
+      return {
+        dir: '0',
+        ext: 'jpg',
+        filename: `GUDO${number}.jpg`,
+        fullpath: `${basePath}/GUDO${number}.jpg`,
+      }
+    }),
+  ]
+
+  const selected = helpers.selectShoeLabelItems(items, '204426141122')
+
+  assert.equal(selected.length, 8)
+  assert.deepEqual(
+    Array.from(selected, item => item.filename),
+    Array.from({ length: 8 }, (_unused, index) => `GUDO${6804 + index}.jpg`),
+  )
+  assert.equal(selected.every(item => item.__shoe_color_code === '00322'), true)
+  assert.equal(selected.every(item => item.__shoe_label_candidate_kind === 'generic_ocr'), true)
+})
+
+test('selectShoeLabelItems respects requested shoe color for OCR candidates', async () => {
+  const helpers = await loadExports()
+  const itemForColor = (color, filename) => ({
+    dir: '0',
+    ext: 'jpg',
+    filename,
+    fullpath: `巴拉货控/02 产品上新模块/2-2 巴拉产品上新/2026年巴拉冬/平拍原图/全域/7p/鞋品/204426141129 2-已写/${color}/27/${filename}`,
+  })
+  const items = [
+    itemForColor('00322', 'GUDO7015.jpg'),
+    itemForColor('00322', 'GUDO7016.jpg'),
+    itemForColor('00415', 'GUDO7035.jpg'),
+    itemForColor('00415', 'GUDO7036.jpg'),
+  ]
+
+  const selected = helpers.selectShoeLabelItems(items, '204426141129-00322')
+
+  assert.deepEqual(Array.from(selected, item => item.filename), ['GUDO7015.jpg', 'GUDO7016.jpg'])
+  assert.equal(selected.every(item => item.__shoe_color_code === '00322'), true)
 })

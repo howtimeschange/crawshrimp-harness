@@ -147,6 +147,24 @@
               contextWindow: 128000
               maxTokens: 8192
               input: [text, image]
+        crawshrimp-glm-official:
+          displayName: 智谱官方
+          apiKeyEnv: CRAWSHRIMP_GLM_API_KEY
+          api: openai-completions
+          baseURL: !!js process.env.CRAWSHRIMP_GLM_BASE_URL ?? 'https://open.bigmodel.cn/api/paas/v4'
+          models:
+            - id: glm-5.3-flash
+              contextWindow: 128000
+              maxTokens: 8192
+              input: [text, image]
+            - id: glm-5.3
+              contextWindow: 128000
+              maxTokens: 16384
+              input: [text]
+            - id: glm-5.2
+              contextWindow: 128000
+              maxTokens: 16384
+              input: [text]
         crawshrimp-overseas-openai:
           displayName: 抓虾-海外 OpenAI
           apiKeyEnv: CRAWSHRIMP_OVERSEAS_OPENAI_API_KEY

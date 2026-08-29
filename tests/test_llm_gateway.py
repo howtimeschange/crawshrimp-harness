@@ -46,6 +46,8 @@ class LlmGatewayTests(unittest.TestCase):
                     "overseas_openai_base_url": "https://openai.example/v1",
                     "overseas_anthropic_base_url": "https://anthropic.example",
                     "domestic_base_url": "https://domestic.example/v1",
+                    "glm_api_key": "glm-unit-key",
+                    "glm_base_url": "https://glm.example/api/paas/v4",
                     "default_model": "gpt-5.6-terra",
                 }
             }
@@ -55,6 +57,7 @@ class LlmGatewayTests(unittest.TestCase):
         overseas = llm_gateway.route_for_model("gemini-3.5-flash", self.config())
         anthropic = llm_gateway.route_for_model("claude-sonnet-5", self.config())
         domestic = llm_gateway.route_for_model("deepseek-v4-pro", self.config())
+        glm = llm_gateway.route_for_model("glm-official-5.3-flash", self.config())
 
         self.assertEqual(overseas.protocol, "openai")
         self.assertEqual(overseas.base_url, "https://openai.example/v1")
@@ -62,6 +65,9 @@ class LlmGatewayTests(unittest.TestCase):
         self.assertEqual(anthropic.base_url, "https://anthropic.example")
         self.assertEqual(domestic.protocol, "openai")
         self.assertEqual(domestic.base_url, "https://domestic.example/v1")
+        self.assertEqual(glm.protocol, "openai")
+        self.assertEqual(glm.base_url, "https://glm.example/api/paas/v4")
+        self.assertEqual(glm.model_id, "glm-5.3-flash")
 
     def test_domestic_gateway_exposes_flash_and_kimi_k3(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -108,6 +114,42 @@ class LlmGatewayTests(unittest.TestCase):
             route = llm_gateway.route_for_model("deepseek-official-v4-flash", config)
         self.assertEqual(route.api_key, "runtime-ds-key")
 
+    def test_glm_official_routes_use_dedicated_key_and_real_model_names(self):
+        config = self.config()
+        config["ai"]["llm"]["glm_api_key"] = "glm-official-unit"
+        config["ai"]["llm"]["glm_base_url"] = "https://open.bigmodel.example/api/paas/v4"
+
+        flash = llm_gateway.route_for_model("glm-official-5.3-flash", config)
+        standard = llm_gateway.route_for_model("glm-official-5.3", config)
+        previous = llm_gateway.route_for_model("glm-official-5.2", config)
+
+        self.assertEqual(flash.model_id, "glm-5.3-flash")
+        self.assertEqual(flash.base_url, "https://open.bigmodel.example/api/paas/v4")
+        self.assertEqual(flash.api_key, "glm-official-unit")
+        self.assertEqual(flash.protocol, "openai")
+        self.assertEqual(standard.model_id, "glm-5.3")
+        self.assertEqual(previous.model_id, "glm-5.2")
+
+    def test_glm_official_requires_dedicated_key(self):
+        config = self.config()
+        config["ai"]["llm"].pop("glm_api_key", None)
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(llm_gateway.LlmConfigurationError):
+                llm_gateway.route_for_model("glm-official-5.3-flash", config)
+
+    def test_glm_official_key_and_base_url_can_come_from_runtime_environment(self):
+        config = self.config()
+        config["ai"]["llm"].pop("glm_api_key", None)
+        config["ai"]["llm"]["glm_base_url"] = ""
+        with patch.dict(os.environ, {
+            "CRAWSHRIMP_GLM_API_KEY": "runtime-glm-key",
+            "CRAWSHRIMP_GLM_BASE_URL": "https://runtime.bigmodel.example/api/paas/v4",
+        }, clear=True):
+            route = llm_gateway.route_for_model("glm-official-5.3-flash", config)
+        self.assertEqual(route.api_key, "runtime-glm-key")
+        self.assertEqual(route.model_id, "glm-5.3-flash")
+        self.assertEqual(route.base_url, "https://runtime.bigmodel.example/api/paas/v4")
+
     def test_default_model_prefers_deepseek_flash_when_dedicated_key_is_configured(self):
         config = self.config()
         config["ai"]["llm"]["default_model"] = "deepseek-official-v4-flash"
@@ -121,6 +163,15 @@ class LlmGatewayTests(unittest.TestCase):
         config = self.config()
         config["ai"]["llm"]["default_model"] = "deepseek-official-v4-flash"
         config["ai"]["llm"].pop("deepseek_api_key", None)
+        with patch.dict(os.environ, {}, clear=True):
+            route = llm_gateway.route_for_model("", config)
+        self.assertEqual(route.model_id, "gpt-5.6-terra")
+        self.assertEqual(route.api_key, "unit-key")
+
+    def test_default_model_falls_back_to_gateway_when_glm_key_is_missing(self):
+        config = self.config()
+        config["ai"]["llm"]["default_model"] = "glm-official-5.3-flash"
+        config["ai"]["llm"].pop("glm_api_key", None)
         with patch.dict(os.environ, {}, clear=True):
             route = llm_gateway.route_for_model("", config)
         self.assertEqual(route.model_id, "gpt-5.6-terra")
@@ -215,6 +266,7 @@ class LlmGatewayTests(unittest.TestCase):
     def test_bala_video_prompt_generation_uses_selected_images_and_model(self):
         calls = []
         self.assertIn("kimi-k3", llm_gateway.bala_video_prompt_model_ids(self.config()))
+        self.assertIn("glm-official-5.3-flash", llm_gateway.bala_video_prompt_model_ids(self.config()))
 
         def fake_openai(route, system_prompt, user_prompt, images, *, timeout_seconds=None):
             calls.append((route, system_prompt, user_prompt, images, timeout_seconds))

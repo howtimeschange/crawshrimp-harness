@@ -1439,6 +1439,7 @@ test('video task dialog can write prompt from selected images with a vision LLM 
 
   assert.deepEqual(balaWorkflow.BALA_VIDEO_PROMPT_MODEL_OPTIONS.map(option => option.value), [
     'deepseek-official-v4-flash-vision-exp',
+    'glm-official-5.3-flash',
     'gpt-5.6-sol',
     'gpt-5.6-terra',
     'gpt-5.6-luna',
@@ -1460,6 +1461,7 @@ test('video task dialog can write prompt from selected images with a vision LLM 
   assert.match(source, /function ensureVideoPromptModelSelected\(\)/)
   assert.match(source, /normalizeCustomLlmProviders\(settings\['ai\.llm\.custom_providers'\]\)/)
   assert.match(source, /isDeepSeekConfigured\(settings\)/)
+  assert.match(source, /isGlmConfigured\(settings\)/)
   assert.match(source, /isLlmConfigured\(settings\)/)
   assert.match(source, /async function generateVideoTaskPrompt\(\)/)
   assert.match(source, /window\.cs\.generateBalaVideoPrompt/)
