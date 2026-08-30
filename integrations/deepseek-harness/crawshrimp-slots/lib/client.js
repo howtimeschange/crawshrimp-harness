@@ -409,7 +409,8 @@ window.__ModuleLoader__.load({
       '.cs-nav-active { background: var(--dsw-alias-state-business-tertiary); color: var(--dsw-alias-state-business-primary); font-weight: 600; }',
       '.cs-nav-icon { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; flex: none; font-size: 15px; }',
       '.cs-nav-toggle { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary)); font-size: 12.5px; }',
-      '.cs-nav-toggle .cs-nav-icon { font-size: 16px; transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1); }',
+      '.cs-nav-toggle .cs-nav-icon { width: 20px; height: 20px; color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary)); font-size: 0; transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1); }',
+      '.cs-nav-toggle .cs-nav-icon::before { content: ""; width: 0; height: 0; border-left: 3.5px solid transparent; border-right: 3.5px solid transparent; border-top: 4.5px solid currentColor; transform: translateY(1px); }',
       '.cs-nav-toggle[aria-expanded="true"] .cs-nav-icon { transform: rotate(180deg); }',
       '.cs-nav-parent.cs-nav-active { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); font-weight: 600; }',
       '.cs-nav-child { padding-left: 24px; font-size: 13px; }',
@@ -558,9 +559,10 @@ window.__ModuleLoader__.load({
       if (!icon) {
         icon = document.createElement('span')
         icon.className = 'cs-nav-icon'
+        icon.setAttribute('aria-hidden', 'true')
         toggle.appendChild(icon)
       }
-      if (icon.textContent !== '▾') icon.textContent = '▾'
+      if (icon.textContent !== '') icon.textContent = ''
       let label = toggle.querySelector(':scope > .cs-nav-label')
       if (!label) {
         label = document.createElement('span')
