@@ -9,7 +9,12 @@ from unittest.mock import AsyncMock, patch
 
 from core.agent import mcp_gateway
 from core.agent.redaction import REDACTED, contains_redaction, redact_value
-from core.agent.service import AgentService
+from core.agent.service import (
+    AgentService,
+    _approval_display_arguments,
+    _approval_human_text,
+    _cap_approval_display_arguments,
+)
 
 
 def _catalog_duplicate() -> list[dict]:
@@ -129,6 +134,89 @@ def test_approval_persistence_and_broadcast_are_redacted(monkeypatch):
         assert native_summary == captured["summary"]
 
     asyncio.run(scenario())
+
+
+def test_native_approval_bridge_payload_has_call_id_and_redacted_display_arguments(monkeypatch):
+    async def scenario():
+        service = AgentService()
+        service.web_port = 19065
+        captured = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"ok": true, "outcome": "allowed-once"}'
+
+        def fake_urlopen(req, timeout):
+            captured["url"] = req.full_url
+            captured["timeout"] = timeout
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return FakeResponse()
+
+        monkeypatch.setattr(
+            "core.agent.service.db.get_session",
+            lambda _session_id: {"runtime_session_id": "runtime-session"},
+        )
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        previous_run = mcp_gateway.ctx.active_run
+        previous_call_id = mcp_gateway.ctx.current_tool_call_id
+        mcp_gateway.ctx.active_run = {"run_id": "run-1", "session_id": "session-1"}
+        mcp_gateway.ctx.current_tool_call_id = "run-1:call-1"
+        try:
+            decision = await service._ds_native_approval(
+                mcp_gateway.ctx.active_run,
+                {"plan_id": "plan-1", "task_id": "publish-item", "adapter_id": "adapter", "risk": "external_write"},
+                {"params": {"apiKey": "plain-api-key", "公开参数": "值"}, "risk": "external_write"},
+                "external_write",
+            )
+        finally:
+            mcp_gateway.ctx.active_run = previous_run
+            mcp_gateway.ctx.current_tool_call_id = previous_call_id
+
+        assert decision == "approved"
+        assert captured["url"] == "http://127.0.0.1:19065/api/crawshrimp/approval/request"
+        body = captured["body"]
+        assert body["sessionId"] == "runtime-session"
+        assert body["callId"] == "call-1"
+        assert isinstance(body["arguments"], str)
+        assert "风险:external_write" in body["arguments"]
+        assert f"apiKey={REDACTED}" in body["arguments"]
+        assert "公开参数=值" in body["arguments"]
+        assert "adapter_id=adapter" in body["arguments"]
+        assert "task_id=publish-item" in body["arguments"]
+        assert "plan_id=plan-1" in body["arguments"]
+        assert "plain-api-key" not in json.dumps(body, ensure_ascii=False)
+
+    asyncio.run(scenario())
+
+
+def test_native_approval_display_arguments_are_brief_and_cap_display_text_for_mobile_im():
+    command = "grep -rn \"approval\" /Users/xingyicheng/Documents/crawshrimp-harness --include='*.py'"
+    reason = _approval_human_text({"kind": "fs_exec", "command": command}, {}, "local_write")
+    assert reason == "在本机执行一条命令；完整命令已收起，只展示简略参数。"
+    assert command not in reason
+
+    payload = _approval_display_arguments(
+        {"kind": "fs_exec", "command": "x" * 10_000},
+        {"plan_id": "plan-1", "task_id": "task-1", "adapter_id": "adapter-1"},
+        "local_write",
+    )
+    assert isinstance(payload, str)
+    assert len(payload) < 1_000
+    assert "command=" in payload
+    assert "adapter_id=adapter-1" in payload
+    assert "x" * 200 not in payload
+
+    capped = _cap_approval_display_arguments("x" * 10_000, 4_500)
+    assert isinstance(capped, str)
+    assert len(capped) == 4_500
+    assert capped.endswith(")")
+    assert "truncated, original length" in capped
 
 
 def test_tool_result_is_redacted_before_persistence(monkeypatch):

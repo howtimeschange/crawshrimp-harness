@@ -544,6 +544,49 @@ def _params_brief(params) -> str:
     return "参数:" + "; ".join(parts)
 
 
+def _brief_display_value(value: Any, max_chars: int = 48) -> str:
+    text = str(value)
+    text = " ".join(text.split())
+    if len(text) > max_chars:
+        text = text[:max_chars] + "..."
+    return text
+
+
+def _approval_brief_params(summary: dict, plan: dict) -> list[str]:
+    items: list[tuple[str, Any]] = []
+    if isinstance(summary.get("params"), dict):
+        items.extend(list(redact_value(summary.get("params")).items())[:6])
+    for key in (
+        "path",
+        "size",
+        "command",
+        "url",
+        "repo",
+        "draft_path",
+        "task_instance_uid",
+        "action",
+    ):
+        value = summary.get(key)
+        if value not in (None, ""):
+            items.append((key, redact_value(value)))
+    for key in ("adapter_id", "task_id", "plan_id"):
+        value = plan.get(key)
+        if value not in (None, ""):
+            items.append((key, value))
+
+    seen: set[str] = set()
+    brief: list[str] = []
+    for key, value in items:
+        key_text = str(key or "").strip()
+        if not key_text or key_text in seen:
+            continue
+        seen.add(key_text)
+        brief.append(f"{key_text}={_brief_display_value(value)}")
+        if len(brief) >= 6:
+            break
+    return brief
+
+
 def _approval_human_text(summary: dict, plan: dict, risk: str) -> str:
     """审批卡中文人话描述(替代英文键值堆砌)。"""
     kind = str(summary.get("kind") or "")
@@ -554,7 +597,7 @@ def _approval_human_text(summary: dict, plan: dict, risk: str) -> str:
     if kind == "fs_write":
         return f"写入本机文件:{summary.get('path')}({summary.get('size', 0)} 字节)。"
     if kind == "fs_exec":
-        return f"在本机执行命令:{_redact_secret_text(summary.get('command'))}"
+        return "在本机执行一条命令；完整命令已收起，只展示简略参数。"
     if kind == "repo_install":
         return f"把第三方代码仓库「{summary.get('repo')}」下载到抓虾本地仓库目录；只下载，不执行代码。"
     if kind == "repo_update":
@@ -610,6 +653,37 @@ def _approval_human_tool_name(summary: dict, plan: dict) -> str:
         adapter_id = plan.get("adapter_id") or summary.get("adapter_id")
         return f"运行任务:{_task_display_name(adapter_id, task_id)}"
     return "敏感操作"
+
+
+def _approval_runtime_call_id() -> str:
+    """Return the DSH call id for the current MCP tool, without the run prefix."""
+    raw = str(getattr(mcp_gateway.ctx, "current_tool_call_id", "") or "").strip()
+    if not raw:
+        return ""
+    return raw.split(":", 1)[1].strip() if ":" in raw else raw
+
+
+def _cap_approval_display_arguments(value: Any, max_chars: int = 4_500) -> Any:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    if len(text) <= max_chars:
+        return value
+    suffix = f"...(truncated, original length {len(text)})"
+    return f"{text[:max(0, max_chars - len(suffix))]}{suffix}"
+
+
+def _approval_display_arguments(summary: dict, plan: dict, risk: str) -> Any:
+    """Build the brief, display-only argument summary used by IM approvals."""
+    safe_summary = summary if isinstance(summary, dict) else {}
+    safe_plan = plan if isinstance(plan, dict) else {}
+    lines = []
+    if risk:
+        lines.append(f"风险:{risk}")
+    brief = _approval_brief_params(safe_summary, safe_plan)
+    if brief:
+        lines.append("关键参数:" + "; ".join(brief))
+    if not lines:
+        lines.append("关键参数:无")
+    return _cap_approval_display_arguments("\n".join(lines), 900)
 
 
 class AgentService:
@@ -2042,12 +2116,16 @@ class AgentService:
             return "rejected"
         tool_name = _approval_human_tool_name(summary, plan)
         reason = _approval_human_text(summary, plan, risk)
+        call_id = _approval_runtime_call_id()
         payload = {
             "sessionId": runtime_session_id,
             "toolName": tool_name,
             "reason": reason,
             "timeoutMs": (APPROVAL_WAIT_SECONDS - 30) * 1000,
+            "arguments": _approval_display_arguments(summary, plan, risk),
         }
+        if call_id:
+            payload["callId"] = call_id
 
         def _post() -> str:
             import urllib.request

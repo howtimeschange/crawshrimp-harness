@@ -110,6 +110,13 @@ def list_agent_models() -> dict:
     return {"models": models}
 
 
+@router.get("/model-catalog")
+def list_crawshrimp_model_catalog() -> dict:
+    from core.model_catalog import crawshrimp_model_catalog
+
+    return crawshrimp_model_catalog()
+
+
 @router.patch("/sessions/{session_id}/model")
 def set_session_model(session_id: str, req: SessionModelRequest) -> dict:
     from core.agent.cordis_config import model_capabilities

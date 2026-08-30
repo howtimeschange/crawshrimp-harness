@@ -8,7 +8,15 @@ import { isAbsolute, relative, resolve } from 'node:path'
 
 export const name = 'crawshrimp-product-bridge'
 
-export const inject = ['webServer', 'approval', 'agents', 'tools', 'connection']
+export const inject = [
+  'webServer',
+  'approval',
+  'agents',
+  'tools',
+  'connection',
+  'apiProxy',
+  'agentDefaultModel',
+]
 
 const MCP_TOOL_PREFIX = 'mcp__crawshrimp__'
 const MCP_LEASE_HEADER = 'x-crawshrimp-mcp-lease'
@@ -23,6 +31,9 @@ const IM_APPROVAL_GUARD = Symbol.for('crawshrimp.im-approval-guard')
 const IM_CONNECTION_RPC_GUARD = Symbol.for('crawshrimp.im-connection-rpc-guard')
 const mcpLeaseStorage = new AsyncLocalStorage()
 let fetchBridgeInstalled = false
+const APPROVAL_ARGUMENTS_MAX_CHARS = 4_500
+const MODEL_CATALOG_TIMEOUT_MS = 10_000
+const SESSION_SELECT_MODEL_TIMEOUT_MS = 30_000
 
 function imSessionRegistry() {
   if (!(globalThis[CRAWSHRIMP_IM_SESSION_REGISTRY] instanceof Set)) {
@@ -37,7 +48,8 @@ function imSessionRegistry() {
 }
 
 function remoteImApprovalsEnabled(env = process.env) {
-  return /^(1|true|yes|on)$/i.test(String(env?.CRAWSHRIMP_IM_REMOTE_APPROVALS || '').trim())
+  const value = String(env?.CRAWSHRIMP_IM_REMOTE_APPROVALS || '').trim()
+  return !/^(0|false|no|off|disabled)$/i.test(value)
 }
 
 async function canonicalPath(path) {
@@ -333,6 +345,147 @@ function readBody(req) {
   })
 }
 
+function cappedJsonText(value, maxChars = APPROVAL_ARGUMENTS_MAX_CHARS) {
+  if (value === undefined || value === null) return undefined
+  let text
+  if (typeof value === 'string') {
+    text = value
+  } else {
+    try {
+      text = JSON.stringify(value)
+    } catch {
+      text = String(value)
+    }
+  }
+  if (typeof text !== 'string') return undefined
+  if (!text.trim() || text === 'null' || text === 'undefined') return undefined
+  if (text.length <= maxChars) return value
+  const suffix = `...(truncated, original length ${text.length})`
+  return `${text.slice(0, Math.max(0, maxChars - suffix.length))}${suffix}`
+}
+
+export function approvalDisplayArgumentsFromBody(body) {
+  if (!body || typeof body !== 'object') return undefined
+  return cappedJsonText(body.arguments ?? body.toolArguments)
+}
+
+function crawshrimpBackendPort(env = process.env) {
+  const port = Number.parseInt(String(env?.CRAWSHRIMP_PORT || '18765'), 10)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('Invalid CRAWSHRIMP_PORT for model catalog')
+  }
+  return port
+}
+
+export async function fetchCrawshrimpModelCatalog(fetchImpl = globalThis.fetch, env = process.env) {
+  if (typeof fetchImpl !== 'function') throw new TypeError('fetch is unavailable')
+  const token = String(env?.CRAWSHRIMP_API_TOKEN || '').trim()
+  const headers = { accept: 'application/json' }
+  if (token) headers['x-crawshrimp-token'] = token
+  const signal = AbortSignal.timeout(MODEL_CATALOG_TIMEOUT_MS)
+  const response = await fetchImpl(
+    new URL('/agent/model-catalog', `http://127.0.0.1:${crawshrimpBackendPort(env)}`),
+    { method: 'GET', headers, signal },
+  )
+  if (!response?.ok) {
+    throw new Error(`Crawshrimp model catalog failed: HTTP ${response?.status || 0}`)
+  }
+  const body = await response.json()
+  if (!body || body.ok !== true || !Array.isArray(body.groups)) {
+    throw new Error('Crawshrimp model catalog returned an invalid response')
+  }
+  return body
+}
+
+function validSelection(value) {
+  return value
+    && typeof value === 'object'
+    && typeof value.provider === 'string'
+    && value.provider.length > 0
+    && typeof value.model === 'string'
+    && value.model.length > 0
+    && (value.reasoningEffort === undefined
+      || (typeof value.reasoningEffort === 'string' && value.reasoningEffort.length > 0))
+}
+
+function sameSelection(left, right) {
+  return left?.provider === right?.provider
+    && left?.model === right?.model
+    && left?.reasoningEffort === right?.reasoningEffort
+}
+
+function apiProxyRequest(method, payload) {
+  return {
+    type: 'client-request',
+    rpcId: `crawshrimp-${method}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    method,
+    payload,
+  }
+}
+
+function apiProxyFailure(error, fallbackCode = 'internal') {
+  return {
+    code: String(error?.code || error?.failure?.code || fallbackCode),
+    message: String(error?.message || error?.failure?.message || error || 'operation failed'),
+    ...(error?.details && typeof error.details === 'object' ? { details: error.details } : {}),
+  }
+}
+
+export async function selectCrawshrimpSessionModel(ctx, body) {
+  const selection = {
+    provider: String(body?.provider || ''),
+    model: String(body?.model || ''),
+    ...(body?.reasoningEffort === undefined ? {} : { reasoningEffort: String(body.reasoningEffort) }),
+  }
+  const sessionId = String(body?.sessionId || '')
+  if (!sessionId || !validSelection(selection)) {
+    return { ok: false, status: 400, error: { code: 'bad-request', message: 'sessionId/provider/model required' } }
+  }
+  if (!ctx?.apiProxy?.sessions || typeof ctx.apiProxy.sessions.selectModel !== 'function') {
+    return { ok: false, status: 501, error: { code: 'unsupported', message: 'session model selection is unavailable' } }
+  }
+  if (!ctx?.agentDefaultModel
+    || typeof ctx.agentDefaultModel.currentSelection !== 'function'
+    || typeof ctx.agentDefaultModel.saveSelection !== 'function') {
+    return { ok: false, status: 501, error: { code: 'unsupported', message: 'default model restore is unavailable' } }
+  }
+
+  const previousDefault = ctx.agentDefaultModel.currentSelection()
+  if (!validSelection(previousDefault)) {
+    return { ok: false, status: 500, error: { code: 'invalid-default-model', message: 'current default model is invalid' } }
+  }
+
+  let response
+  try {
+    response = await ctx.apiProxy.sessions.selectModel(apiProxyRequest('session.selectModel', {
+      sessionId,
+      provider: selection.provider,
+      model: selection.model,
+      ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
+    }))
+  } catch (error) {
+    return { ok: false, status: 500, error: apiProxyFailure(error) }
+  } finally {
+    const currentDefault = ctx.agentDefaultModel.currentSelection()
+    if (!sameSelection(currentDefault, previousDefault)) {
+      await ctx.agentDefaultModel.saveSelection(previousDefault)
+    }
+  }
+
+  if (response?.result?.ok !== true) {
+    return {
+      ok: false,
+      status: 200,
+      error: apiProxyFailure(response?.result?.error, 'model-unavailable'),
+    }
+  }
+  const selected = response.result.value?.selected
+  if (!validSelection(selected)) {
+    return { ok: false, status: 500, error: { code: 'invalid-response', message: 'Harness returned an invalid selected model' } }
+  }
+  return { ok: true, status: 200, selected }
+}
+
 function findLiveAgent(ctx, sessionId) {
   const agents = ctx.agents
   if (!agents) return undefined
@@ -386,6 +539,41 @@ export function apply(ctx) {
     path: '/api/crawshrimp',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://x')
+      if (url.pathname === '/api/crawshrimp/model-catalog' && req.method === 'GET') {
+        try {
+          const catalog = await fetchCrawshrimpModelCatalog()
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+          res.end(JSON.stringify(catalog))
+        } catch (error) {
+          res.writeHead(502, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+          res.end(JSON.stringify({ ok: false, error: String(error?.message || error) }))
+        }
+        return
+      }
+      if (url.pathname === '/api/crawshrimp/session/select-model' && req.method === 'POST') {
+        try {
+          const body = await readBody(req)
+          const result = await Promise.race([
+            selectCrawshrimpSessionModel(ctx, body),
+            new Promise((_, reject) => {
+              setTimeout(() => reject(Object.assign(new Error('session model selection timed out'), {
+                code: 'timeout',
+              })), SESSION_SELECT_MODEL_TIMEOUT_MS)
+            }),
+          ])
+          res.writeHead(result.status ?? (result.ok ? 200 : 500), {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+          })
+          res.end(JSON.stringify(result.ok
+            ? { ok: true, selected: result.selected }
+            : { ok: false, error: result.error }))
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+          res.end(JSON.stringify({ ok: false, error: apiProxyFailure(error) }))
+        }
+        return
+      }
       if (url.pathname !== '/api/crawshrimp/approval/request' || req.method !== 'POST') {
         res.writeHead(404)
         res.end('not found')
@@ -396,6 +584,7 @@ export function apply(ctx) {
       const toolName = String(body?.toolName ?? '')
       const reason = String(body?.reason ?? '')
       const callId = body?.callId != null ? String(body.callId) : undefined
+      const approvalArguments = approvalDisplayArgumentsFromBody(body)
       const timeoutMs = Math.min(Math.max(Number(body?.timeoutMs) || 0, 0), 30 * 60 * 1000)
       if (!sessionId || !toolName) {
         res.writeHead(400, { 'Content-Type': 'application/json' })
@@ -411,6 +600,8 @@ export function apply(ctx) {
       const controller = new AbortController()
       const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null
       try {
+        // IM 用户看不到桌面端审批卡；默认仍走 DSH 原生审批交互，
+        // 由 dsh-im 的同 route/同 actor 队列接收自然语言“确认/拒绝”。
         if (sessionRegistry.has(sessionId) && !remoteImApprovalsEnabled()) {
           res.writeHead(200, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ ok: true, outcome: 'rejected', code: REMOTE_APPROVAL_DISABLED }))
@@ -429,6 +620,7 @@ export function apply(ctx) {
           toolName,
           ...(callId ? { callId } : {}),
           reason,
+          ...(approvalArguments === undefined ? {} : { arguments: approvalArguments }),
           signal: controller.signal,
         })
         res.writeHead(200, { 'Content-Type': 'application/json' })

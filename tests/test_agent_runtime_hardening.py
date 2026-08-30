@@ -1860,6 +1860,84 @@ def test_agent_models_endpoint_includes_official_glm_when_configured(monkeypatch
     assert {item["route"] for item in models} == {"crawshrimp-glm-official"}
 
 
+def test_agent_model_catalog_endpoint_lists_configured_product_models(monkeypatch):
+    from core import config as config_mod
+    from core import llm_gateway
+    from core import model_catalog
+    from core.agent import api as agent_api
+
+    monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_GLM_API_KEY", raising=False)
+    cfg = {
+        "ai": {
+            "llm": {
+                "api_key": "",
+                "deepseek_api_key": "sk-ds-official-unit",
+                "default_model": "deepseek-official-v4-flash",
+                "custom_providers": [{
+                    "id": "unit-custom",
+                    "name": "Unit Custom",
+                    "base_url": "https://unit.example/v1",
+                    "api_key": "sk-custom-secret",
+                    "models": [{"id": "unit-model", "label": "Unit Model"}],
+                }],
+            },
+            "1xm": {
+                "gpt_image_2k_key": "img-2k-secret",
+                "gemini_3_pro_image_preview_key": "gemini-pro-secret",
+            },
+        }
+    }
+    video_config = {
+        "data": {
+            "models": [
+                {
+                    "id": "seedance-2.0",
+                    "label": "Seedance 2.0",
+                    "provider": "seedance",
+                    "model": "doubao-seedance-2-0-260128",
+                    "configured": True,
+                },
+                {
+                    "id": "kling-v3",
+                    "label": "Kling V3",
+                    "provider": "happyhorse",
+                    "model": "kling/kling-v3-video-generation",
+                    "configured": False,
+                },
+            ],
+        },
+    }
+    monkeypatch.setattr(config_mod, "load_config", lambda: cfg)
+    monkeypatch.setattr(llm_gateway, "load_config", lambda: cfg)
+    monkeypatch.setattr(model_catalog, "load_config", lambda: cfg)
+    monkeypatch.setattr(model_catalog.ai_video_generation_service, "get_config", lambda: video_config)
+
+    result = agent_api.list_crawshrimp_model_catalog()
+
+    groups = {group["id"]: group for group in result["groups"]}
+    assert set(groups) == {"llm", "ai-image", "ai-video"}
+    assert groups["llm"]["name"] == "LLM 对话模型"
+    assert groups["ai-image"]["name"] == "AI 生图模型"
+    assert groups["ai-video"]["name"] == "AI 生视频模型"
+    llm_models = {model["id"]: model for model in groups["llm"]["models"]}
+    image_models = {model["id"]: model for model in groups["ai-image"]["models"]}
+    video_models = {model["id"]: model for model in groups["ai-video"]["models"]}
+    assert llm_models["deepseek-official-v4-flash"]["default"] is True
+    assert llm_models["deepseek-official-v4-pro"]["configured"] is True
+    assert llm_models["unit-model"]["provider"] == "unit-custom"
+    assert image_models["gpt-image-2k"]["configured"] is True
+    assert image_models["gpt-image-4k"]["configured"] is False
+    assert image_models["gemini-3-pro-image-preview"]["configured"] is True
+    assert video_models["seedance-2.0"]["configured"] is True
+    assert video_models["kling-v3"]["configured"] is False
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert "sk-ds-official-unit" not in serialized
+    assert "sk-custom-secret" not in serialized
+    assert "img-2k-secret" not in serialized
+
+
 def test_agent_start_generation_uses_packaged_web_cordis_without_install_write(tmp_path, monkeypatch):
     from core.agent import service as service_mod
 
