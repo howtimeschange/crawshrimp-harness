@@ -13,6 +13,7 @@
     "build:mac:ci": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime.mjs && node scripts/run-electron-builder.js --mac --publish=never",
     "build:win": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime.mjs && node scripts/run-electron-builder.js --win --publish=never",
     "stage:harness": "node ../integrations/deepseek-harness/scripts/stage-runtime.mjs",
+    "pretest": "node ../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs",
     "vite:build": "vite build",
     "test": "node --test src/*.test.js src/renderer/utils/*.test.js scripts/*.test.js",
     "test:update-artifacts": "node --test scripts/validate-update-artifacts.test.js"

@@ -20,6 +20,7 @@ Crawshrimp Harness 把抓虾桌面应用与 DeepSeek Harness（DSH）组合成�
 - 增强 IM 自然语言控制：支持在会话里列出/切换模型，并识别抓虾、GPT-5、Claude、Gemini、DeepSeek 等常用模型别名。
 - 修复 IM 权限模式路由：去掉审批、开启完整访问等指令直接进入权限模式更新，减少误触发探索型工具调用。
 - 优化 DSH 侧边栏展开/收起图标表现，补强 IM 与侧边栏视觉回归覆盖。
+- 稳定 fresh install 后的 DSH runtime patch 测试路径，确保 CI 与本地测试使用同一套 IM 补丁产物。
 
 ### v0.1.10
 

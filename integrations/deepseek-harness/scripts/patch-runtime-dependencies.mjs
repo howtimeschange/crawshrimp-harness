@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -48,7 +48,7 @@ function deepseekPackageEntryPaths(runtimeRoot, packageName, ...segments) {
     })
 }
 
-function xmanruiPackageEntryPaths(runtimeRoot, packageName, ...segments) {
+function xmanruiPackageRootPaths(runtimeRoot, packageName) {
   const root = resolve(runtimeRoot)
   const candidates = [join(root, 'node_modules', '@xmanrui', packageName)]
   const pnpmRoot = join(root, 'node_modules', '.pnpm')
@@ -61,12 +61,18 @@ function xmanruiPackageEntryPaths(runtimeRoot, packageName, ...segments) {
   }
   const seen = new Set()
   return candidates
-    .map((candidate) => resolve(candidate, ...segments))
+    .map((candidate) => resolve(candidate))
     .filter((candidate) => {
       if (seen.has(candidate) || !existsSync(candidate)) return false
       seen.add(candidate)
       return true
     })
+}
+
+function xmanruiPackageEntryPaths(runtimeRoot, packageName, ...segments) {
+  return xmanruiPackageRootPaths(runtimeRoot, packageName)
+    .map((candidate) => resolve(candidate, ...segments))
+    .filter((candidate) => existsSync(candidate))
 }
 
 export function patchRuntimeDependencies(runtimeRoot) {
@@ -1308,6 +1314,7 @@ function patchSdkJsonrpcInternalPrompt(runtimeRoot) {
 }
 
 function patchDshImNaturalControls(runtimeRoot) {
+  const helpersResult = materializeDshImNaturalControlHelpers(runtimeRoot)
   const modelEntries = xmanruiPackageEntryPaths(
     runtimeRoot,
     'dsh-im',
@@ -1405,7 +1412,7 @@ function patchDshImNaturalControls(runtimeRoot) {
     'wecom-bridge.mjs',
   )
   const bundledEntries = xmanruiPackageEntryPaths(runtimeRoot, 'dsh-im', 'lib', 'index.js')
-  let patched = false
+  let patched = helpersResult.patched
 
   for (const entry of modelEntries) {
     patched = patchFile(entry, patchDshImModelCommandSource) || patched
@@ -1450,6 +1457,7 @@ function patchDshImNaturalControls(runtimeRoot) {
   return {
     patched,
     dshImNaturalControlsEntry: [
+      ...helpersResult.entries,
       ...modelEntries,
       ...permissionEntries,
       ...approvalEntries,
@@ -1473,6 +1481,517 @@ function patchFile(entry, transform) {
   if (next === source) return false
   writeFileSync(entry, next, 'utf8')
   return true
+}
+
+function materializeRuntimeFile(entry, source) {
+  mkdirSync(dirname(entry), { recursive: true })
+  if (existsSync(entry) && readFileSync(entry, 'utf8') === source) return false
+  writeFileSync(entry, source, 'utf8')
+  return true
+}
+
+function materializeDshImNaturalControlHelpers(runtimeRoot) {
+  const entries = []
+  let patched = false
+  for (const packageRoot of xmanruiPackageRootPaths(runtimeRoot, 'dsh-im')) {
+    const sharedRoot = join(packageRoot, 'src', 'channels', 'shared')
+    const controlTextEntry = join(sharedRoot, 'control-text.mjs')
+    const permissionEntry = join(sharedRoot, 'permission-command.mjs')
+    entries.push(controlTextEntry, permissionEntry)
+    patched = materializeRuntimeFile(controlTextEntry, dshImControlTextSource()) || patched
+    patched = materializeRuntimeFile(permissionEntry, dshImPermissionCommandSource()) || patched
+  }
+  return { patched, entries }
+}
+
+function dshImControlTextSource() {
+  return `const UNSAFE_CONTROL_TEXT_GLOBAL = /[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]+/gu;
+
+const POLITE_PREFIXES = Object.freeze([
+  '请帮我',
+  '麻烦帮我',
+  '麻烦',
+  '帮我',
+  '帮忙',
+  '请',
+]);
+
+export function normalizeControlText(value, { allowPolitePrefix = true } = {}) {
+  if (typeof value !== 'string') return '';
+  let normalized = value
+    .replace(UNSAFE_CONTROL_TEXT_GLOBAL, ' ')
+    .replace(/[？?。！!，,；;：:]+$/gu, '')
+    .replace(/\\s+/gu, ' ')
+    .trim();
+  if (allowPolitePrefix) {
+    for (const prefix of POLITE_PREFIXES) {
+      if (!normalized.startsWith(prefix)) continue;
+      const stripped = normalized.slice(prefix.length).trim();
+      if (stripped) {
+        normalized = stripped;
+        break;
+      }
+    }
+  }
+  return normalized.toLocaleLowerCase('en-US');
+}
+
+export function normalizeModelLookup(value) {
+  let normalized = normalizeControlText(value, { allowPolitePrefix: false });
+  if (!normalized) return '';
+  for (const suffix of ['模型', 'model']) {
+    if (!normalized.endsWith(suffix)) continue;
+    const stripped = normalized.slice(0, -suffix.length).trim();
+    if (stripped) normalized = stripped;
+  }
+  return normalized.replace(/[\\s_.-]+/gu, '');
+}
+`
+}
+
+function dshImPermissionCommandSource() {
+  return `import { t } from './i18n.mjs';
+import { withSessionBindingLock } from './session-binding-lock.mjs';
+import { splitWorkspaceCommandMessage } from './workspace-command.mjs';
+import { WORKSPACE_SESSION_STALE } from './workspace-session.mjs';
+import { normalizeControlText } from './control-text.mjs';
+
+const PERMISSION_CONFIRM_TTL_MS = 2 * 60_000;
+const CONFIRM_FULL_ACCESS = '确认切换到完全访问';
+// ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: permission controls for mobile IM chats without menu access.
+const UNSAFE_TARGET_TEXT = /[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]/u;
+
+const PRESETS = Object.freeze({
+  'read-only': Object.freeze({
+    label: '只读（Read Only）',
+    aliases: Object.freeze(['只读', '只读模式', '只读权限', '只读审批', 'read only', 'read-only']),
+  }),
+  'workspace-write': Object.freeze({
+    label: '工作区写入（Workspace Write）',
+    aliases: Object.freeze([
+      '工作区写入',
+      '允许工作区写入',
+      '允许写入工作区',
+      '工作区写入权限',
+      '打开审批模式',
+      '开启审批',
+      '打开审批',
+      '恢复审批',
+      '需要审批',
+      '逐次审批',
+      'ask',
+      'workspace write',
+      'workspace-write',
+    ]),
+  }),
+  'danger-full-access': Object.freeze({
+    label: '完全访问（Full access）',
+    aliases: Object.freeze([
+      '完全访问',
+      '完整访问',
+      '完全访问权限',
+      '全权限',
+      '关闭审批',
+      '关闭审批模式',
+      '去掉审批',
+      '去除审批',
+      '取消审批',
+      '关掉审批',
+      '取消审批模式',
+      '不用审批',
+      '不需要审批',
+      '自动批准',
+      '自动审批',
+      '免审批',
+      'never',
+      'full access',
+      'full assess',
+      'full-access',
+    ]),
+  }),
+});
+
+const QUERY_PHRASES = new Set([
+  '当前什么权限',
+  '当前权限',
+  '查看权限',
+  '查看审批权限',
+  '现在是哪个权限模式',
+  '现在是什么审批模式',
+  '当前审批模式',
+  '当前审批策略',
+  '现在审批策略',
+  '审批模式',
+  '审批权限',
+  '审批权限设置',
+  '审批怎么设置',
+  '修改审批权限',
+  '调整审批权限',
+  '更改审批权限',
+  '有哪些权限',
+  '有哪些审批权限',
+  '权限列表',
+]);
+
+const PRESET_BY_ALIAS = new Map(
+  Object.entries(PRESETS).flatMap(([preset, metadata]) => (
+    metadata.aliases.map((alias) => [normalizeControlText(alias), preset])
+  )),
+);
+
+function commandResult(message) {
+  return {
+    handled: true,
+    message,
+    messages: splitWorkspaceCommandMessage(message),
+  };
+}
+
+function rpcOptions(signal) {
+  return signal ? { signal } : {};
+}
+
+function actorIdentity(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function presetLabel(preset) {
+  return PRESETS[preset]?.label ?? t('自定义权限');
+}
+
+// ${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: permission manager uses direct session permission API.
+function permissionPayloadPreset(payload) {
+  if (!payload || typeof payload !== 'object'
+    || typeof payload.preset !== 'string'
+    || !payload.preset
+    || !Array.isArray(payload.available)
+    || payload.available.some((preset) => typeof preset !== 'string' || !preset)) {
+    throw new TypeError('Harness returned an invalid permission payload');
+  }
+  if (!Object.hasOwn(PRESETS, payload.preset) && payload.preset !== 'custom') {
+    throw new TypeError('Harness returned an unknown permission preset');
+  }
+  return payload.preset;
+}
+
+function currentPermissionMessage(preset) {
+  return [
+    t('当前权限：'),
+    presetLabel(preset),
+    '',
+    t('仅影响当前聊天绑定的 Session。'),
+    t('可选权限：只读（Read Only）/ 工作区写入（Workspace Write）/ 完全访问（Full access）'),
+  ].join('\\n');
+}
+
+function changedPermissionMessage(preset) {
+  const suffix = preset === 'danger-full-access'
+    ? t('审批策略已关闭（never），后续需审批的命令将不再弹窗。')
+    : t('逐次审批已恢复；需要额外授权的操作仍会请求确认。');
+  return [
+    t('权限已切换为：'),
+    presetLabel(preset),
+    '',
+    t('仅影响当前聊天绑定的 Session。'),
+    suffix,
+  ].join('\\n');
+}
+
+function fullAccessWarningMessage() {
+  return [
+    t('准备切换到完全访问（Full access），尚未修改权限。'),
+    '',
+    t('风险：'),
+    t('- 可访问工作区外文件'),
+    t('- 审批策略将变为 never'),
+    t('- 后续需审批的命令将不再弹窗'),
+    '',
+    t('如确认，请在 2 分钟内发送完整短句：'),
+    CONFIRM_FULL_ACCESS,
+  ].join('\\n');
+}
+
+function pendingInteractionMessage() {
+  return [
+    t('当前任务正在等待你的回答或审批。'),
+    '',
+    t('请先处理当前请求，或者发送 /stop 停止任务。'),
+  ].join('\\n');
+}
+
+function permissionErrorMessage(error, { query = false, mismatch = false } = {}) {
+  const code = error?.code ?? error?.failure?.code;
+  if (code === 'commands-unavailable') {
+    return t('当前 Harness 不支持通过 IM 进行权限切换或查询。');
+  }
+  if (code === 'agent-busy') return t('当前任务正在运行，请等待完成或先发送 /stop。');
+  if (code === 'session-not-found') return t('当前聊天绑定的会话已不存在，请发送新消息开启会话。');
+  if (code === WORKSPACE_SESSION_STALE || code === 'workspace-bot-not-found') {
+    return t('工作区或机器人状态已发生变化，权限未切换，请重试。');
+  }
+  if (error?.name === 'AbortError' || code === 'cancelled') {
+    return query ? t('权限查询已取消。') : t('权限切换已取消，权限未切换。');
+  }
+  if (mismatch) return t('权限写入结果未能确认，请检查桌面端；本次操作状态未知。');
+  return query ? t('暂时无法查询当前权限，请稍后重试。') : t('权限未切换，请稍后重试。');
+}
+
+async function boundSession(harness, state, key, options) {
+  const sessionId = typeof state?.sessionFor === 'function' ? state.sessionFor(key) : null;
+  if (typeof sessionId !== 'string' || !sessionId) return null;
+  if (typeof harness?.workspaceSession !== 'function') {
+    throw new TypeError('Harness does not support workspace sessions');
+  }
+  const session = harness.workspaceSession(sessionId);
+  if (!session || typeof session !== 'object') {
+    throw new TypeError('Harness returned an invalid workspace session');
+  }
+  if (typeof session.sessionExists === 'function' && !(await session.sessionExists(options))) {
+    const error = new Error('Session no longer exists');
+    error.code = 'session-not-found';
+    throw error;
+  }
+  return { sessionId, session };
+}
+
+async function sessionHasActiveTurn(session, control, options) {
+  if (typeof session?.hasActiveTurn !== 'function') return false;
+  return session.hasActiveTurn(control, options);
+}
+
+async function queryPermission(harness, state, key, options) {
+  const requestOptions = rpcOptions(options.signal);
+  try {
+    return await withSessionBindingLock(state, key, async () => {
+      const bound = await boundSession(harness, state, key, requestOptions);
+      if (!bound) return commandResult(t('当前聊天没有绑定会话，请先发送消息开始会话。'));
+      if (typeof bound.session.permission !== 'function') {
+        const unavailable = new Error('Harness permission API is unavailable');
+        unavailable.code = 'commands-unavailable';
+        throw unavailable;
+      }
+      const preset = permissionPayloadPreset(await bound.session.permission(requestOptions));
+      if (state.sessionFor(key) !== bound.sessionId) {
+        return commandResult(t('当前聊天绑定的会话已发生变化，请重试权限查询。'));
+      }
+      return commandResult(currentPermissionMessage(preset));
+    });
+  } catch (error) {
+    return commandResult(permissionErrorMessage(error, { query: true }));
+  }
+}
+
+async function changePermission(preset, harness, state, key, options, expectedSessionId) {
+  const requestOptions = rpcOptions(options.signal);
+  try {
+    return await withSessionBindingLock(state, key, async () => {
+      const bound = await boundSession(harness, state, key, requestOptions);
+      if (!bound) return commandResult(t('当前聊天没有绑定会话，请先发送消息开始会话。'));
+      if (expectedSessionId && bound.sessionId !== expectedSessionId) {
+        return commandResult(t('当前聊天绑定的会话已变化，完全访问确认已失效，请重新发起。'));
+      }
+      if (await sessionHasActiveTurn(bound.session, options.control, requestOptions)) {
+        return commandResult(t('当前任务正在运行，请等待完成或先发送 /stop。'));
+      }
+      if (typeof bound.session.setPermission !== 'function') {
+        const unavailable = new Error('Harness permission API is unavailable');
+        unavailable.code = 'commands-unavailable';
+        throw unavailable;
+      }
+      const actual = permissionPayloadPreset(await bound.session.setPermission(preset, requestOptions));
+      if (actual !== preset) {
+        const mismatch = new Error('Harness permission readback mismatch');
+        mismatch.code = 'permission-readback-mismatch';
+        throw mismatch;
+      }
+      if (state.sessionFor(key) !== bound.sessionId) {
+        return commandResult(t('当前聊天绑定的会话已发生变化，无法确认权限切换。'));
+      }
+      return commandResult(changedPermissionMessage(preset));
+    });
+  } catch (error) {
+    return commandResult(permissionErrorMessage(error, {
+      mismatch: error?.code === 'permission-readback-mismatch',
+    }));
+  }
+}
+
+export function parsePermissionCommand(text) {
+  const normalized = normalizeControlText(text);
+  if (!normalized) return null;
+  if (QUERY_PHRASES.has(normalized)) return { action: 'query' };
+  if (normalized === normalizeControlText(CONFIRM_FULL_ACCESS)) {
+    return { action: 'confirm-full-access' };
+  }
+  const directPreset = PRESET_BY_ALIAS.get(normalized);
+  if (directPreset) return { action: 'select', preset: directPreset };
+
+  const match = /^(?:切换到|设置为|设为|改成|权限改成|审批权限改成|审批改成|设置审批为|审批设置为|把审批改成|把权限改成|开启|启用|打开)\\s*(.+)$/u.exec(normalized)
+    ?? /^允许\\s*(工作区写入|写入工作区)$/u.exec(normalized);
+  const target = match?.[1]?.trim();
+  if (!target || target.length > 128 || UNSAFE_TARGET_TEXT.test(target)) return null;
+  const preset = PRESET_BY_ALIAS.get(target);
+  return preset ? { action: 'select', preset } : null;
+}
+
+export function isPermissionCommand(text) {
+  return parsePermissionCommand(text) !== null;
+}
+
+export class PermissionCommandManager {
+  #pending = new Map();
+  #now;
+  #ttlMs;
+
+  constructor({ now = () => Date.now(), ttlMs = PERMISSION_CONFIRM_TTL_MS } = {}) {
+    if (typeof now !== 'function') throw new TypeError('now must be a function');
+    this.#now = now;
+    this.#ttlMs = ttlMs;
+  }
+
+  #prune(now, activeKey) {
+    for (const [key, pending] of this.#pending) {
+      if (pending.expiresAt < now && key !== activeKey) this.#pending.delete(key);
+    }
+  }
+
+  async #requestFullAccess(harness, state, key, now, options) {
+    const actor = actorIdentity(options.actor);
+    if (!actor) return commandResult(t('无法确认当前操作者，未创建完全访问确认。'));
+    const requestOptions = rpcOptions(options.signal);
+    try {
+      return await withSessionBindingLock(state, key, async () => {
+        const bound = await boundSession(harness, state, key, requestOptions);
+        if (!bound) return commandResult(t('当前聊天没有绑定会话，请先发送消息开始会话。'));
+        if (await sessionHasActiveTurn(bound.session, options.control, requestOptions)) {
+          return commandResult(t('当前任务正在运行，请等待完成或先发送 /stop。'));
+        }
+        if (state.sessionFor(key) !== bound.sessionId) {
+          return commandResult(t('当前聊天绑定的会话已发生变化，请重新发起权限切换。'));
+        }
+        this.#pending.set(key, Object.freeze({
+          actor,
+          sessionId: bound.sessionId,
+          expiresAt: now + this.#ttlMs,
+        }));
+        return commandResult(fullAccessWarningMessage());
+      });
+    } catch (error) {
+      return commandResult(permissionErrorMessage(error));
+    }
+  }
+
+  async #confirmFullAccess(harness, state, key, now, options) {
+    const pending = this.#pending.get(key);
+    if (!pending) {
+      return commandResult(t('没有有效的完全访问确认，请先重新发起“切换到完全访问”。'));
+    }
+    if (pending.expiresAt < now) {
+      this.#pending.delete(key);
+      return commandResult(t('完全访问确认已过期，请重新发起权限切换。'));
+    }
+    const actor = actorIdentity(options.actor);
+    if (!actor || actor !== pending.actor) {
+      return commandResult(t('只有发起切换的用户可以确认完全访问。'));
+    }
+    if (state?.sessionFor?.(key) !== pending.sessionId) {
+      this.#pending.delete(key);
+      return commandResult(t('当前聊天绑定的会话已变化，完全访问确认已失效，请重新发起。'));
+    }
+    this.#pending.delete(key);
+    if (options.pendingInteraction) {
+      return commandResult(t('当前任务正在等待回答或审批，完全访问确认已失效，请处理后重新发起。'));
+    }
+    return changePermission('danger-full-access', harness, state, key, options, pending.sessionId);
+  }
+
+  async run(text, harness, state, key, options = {}) {
+    if (options.hasImages || options.hasFiles) return null;
+    const command = parsePermissionCommand(text);
+    if (!command) return null;
+    const now = this.#now();
+    this.#prune(now, key);
+    if (command.action === 'confirm-full-access') {
+      return this.#confirmFullAccess(harness, state, key, now, options);
+    }
+    if (command.action === 'select') this.#pending.delete(key);
+    if (options.pendingInteraction) return commandResult(pendingInteractionMessage());
+    if (command.action === 'query') return queryPermission(harness, state, key, options);
+    if (command.action === 'select' && command.preset === 'danger-full-access') {
+      return this.#requestFullAccess(harness, state, key, now, options);
+    }
+    if (command.action === 'select') {
+      return changePermission(command.preset, harness, state, key, options);
+    }
+    return null;
+  }
+}
+`
+}
+
+function dshImSessionControlDispatcherSource() {
+  return `class SessionControlDispatcher {
+  isCommand(text, { hasImages = false, hasFiles = false } = {}) {
+    if (hasFiles) return false;
+    if (isModelCommand(text) || isPresetCommand(text)) return true;
+    return !hasImages && isPermissionCommand(text);
+  }
+
+  runner(text, permissionRunner) {
+    if (isModelCommand(text)) return runModelCommand;
+    if (isPresetCommand(text)) return runPresetCommand;
+    if (isPermissionCommand(text) && typeof permissionRunner === 'function') {
+      return permissionRunner;
+    }
+    return null;
+  }
+}
+`
+}
+
+function patchDshImPermissionCommandImportSource(source, relativePrefix, label) {
+  if (source.includes('PermissionCommandManager')) return source
+  const presetImport = `import {
+  isPresetCommand,
+  runPresetCommand,
+} from '${relativePrefix}preset-command.mjs';`
+  return replaceExact(
+    source,
+    presetImport,
+    `import {
+  isPermissionCommand,
+  PermissionCommandManager,
+} from '${relativePrefix}permission-command.mjs';
+${presetImport}`,
+    label,
+  )
+}
+
+function patchDshImSessionControlDispatcherClassSource(source, label) {
+  if (source.includes('class SessionControlDispatcher')) return source
+  const match = /\n(?:const|function|export function|export const|export class)\b/u.exec(source)
+  if (!match) throw new Error(`cannot patch ${label}: expected declaration insertion point not found`)
+  return `${source.slice(0, match.index + 1)}${dshImSessionControlDispatcherSource()}\n${source.slice(match.index + 1)}`
+}
+
+function patchDshImSessionControlFieldsSource(source, label) {
+  if (!source.includes('#sessionControls = new SessionControlDispatcher();')) {
+    source = replaceExact(
+      source,
+      '  #approvals;',
+      '  #approvals;\n  #sessionControls = new SessionControlDispatcher();',
+      `${label} session control dispatcher field`,
+    )
+  }
+  if (!source.includes('#permissions = new PermissionCommandManager();')) {
+    source = replaceExact(
+      source,
+      '  #sessionControls = new SessionControlDispatcher();',
+      '  #sessionControls = new SessionControlDispatcher();\n  #permissions = new PermissionCommandManager();',
+      `${label} permission manager field`,
+    )
+  }
+  return source
 }
 
 function patchDshImHarnessClientSource(source) {
@@ -3194,8 +3713,28 @@ function patchDshImTextBridgeApprovalAllowAllSource(source) {
 }
 
 function patchDshImTextHarnessBridgeSource(source) {
-  if (source.includes(`${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: text bridge commands`)) {
-    return patchDshImTextBridgeApprovalAllowAllSource(source)
+  source = patchDshImPermissionCommandImportSource(
+    source,
+    './',
+    'dsh-im text bridge permission command import',
+  )
+  source = patchDshImSessionControlDispatcherClassSource(
+    source,
+    'dsh-im text bridge session control dispatcher',
+  )
+  source = patchDshImSessionControlFieldsSource(source, 'dsh-im text bridge')
+  if (!source.includes('actor: cleanText(message.senderId),')) {
+    source = replaceExact(
+      source,
+      `        {
+          signal: this.#signal,
+          hasImages: hasInboundImages(message),`,
+      `        {
+          signal: this.#signal,
+          actor: cleanText(message.senderId),
+          hasImages: hasInboundImages(message),`,
+      'dsh-im text bridge command actor',
+    )
   }
   if (!source.includes('PermissionCommandManager')) {
     const withExistingModelImport = source.replace(
@@ -3245,51 +3784,47 @@ import { askInWorkspaceSession } from './workspace-session.mjs';`,
         'dsh-im text bridge natural command imports',
       )
   }
-  if (!source.includes('#permissions = new PermissionCommandManager();')) {
-    const withSessionControls = source.replace(
-      `  #approvals;
-  #sessionControls = new SessionControlDispatcher();
-  #batches = new BatchInputManager();`,
-      `  #approvals;
-  #sessionControls = new SessionControlDispatcher();
-  #permissions = new PermissionCommandManager();
-  #batches = new BatchInputManager();`,
-    )
-    source = withSessionControls !== source
-      ? withSessionControls
-      : replaceExact(
-        source,
-        `  #approvals;
-  #batches = new BatchInputManager();`,
-        `  #approvals;
-  #permissions = new PermissionCommandManager();
-  #batches = new BatchInputManager();`,
-        'dsh-im text bridge permission manager',
-      )
+  source = patchDshImSessionControlFieldsSource(source, 'dsh-im text bridge')
+  if (source.includes('#sessionControls.isCommand')) {
+    return patchDshImTextBridgeApprovalAllowAllSource(source)
   }
   const withSessionControlRunner = source.replace(
     `    const commandRunner = collectingBatch || hasFiles ? null : isControlCommand(text)
       ? runControlCommand
       : (sessionControlRunner ?? (isPresetCommand(text) ? runPresetCommand : null));`,
     `    // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: text bridge commands for mobile IM chats without toolbar access.
+    const sessionControlRunner = this.#sessionControls.isCommand(text, { hasImages, hasFiles })
+      ? this.#sessionControls.runner(text, this.#permissions.run.bind(this.#permissions))
+      : null;
     const commandRunner = collectingBatch || hasFiles ? null : isControlCommand(text)
       ? runControlCommand
-      : (sessionControlRunner
-        ?? (isPresetCommand(text) ? runPresetCommand : null)
-        ?? (isModelCommand(text) ? runModelCommand : null)
-        ?? (!hasImages && isPermissionCommand(text) ? this.#permissions.run.bind(this.#permissions) : null));`,
+      : (sessionControlRunner ?? (isPresetCommand(text) ? runPresetCommand : null));`,
   )
   if (withSessionControlRunner !== source) {
     return patchDshImTextBridgeApprovalAllowAllSource(withSessionControlRunner)
   }
-  return patchDshImTextBridgeApprovalAllowAllSource(replaceExact(
+  return patchDshImTextBridgeApprovalAllowAllSource(replaceAny(
     source,
-    `    const commandRunner = collectingBatch || hasInboundFiles(normalized) ? null : isControlCommand(text)
+    [
+      [
+        `    const commandRunner = collectingBatch || hasInboundFiles(normalized) ? null : isControlCommand(text)
       ? runControlCommand
       : (isModelCommand(text)
           ? runModelCommand
           : (isPresetCommand(text) ? runPresetCommand : null));`,
-    `    // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: text bridge commands for mobile IM chats without toolbar access.
+        `    // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: text bridge commands for mobile IM chats without toolbar access.
+    const sessionControlRunner = this.#sessionControls.isCommand(text, {
+      hasImages: hasInboundImages(normalized),
+      hasFiles: hasInboundFiles(normalized),
+    })
+      ? this.#sessionControls.runner(text, this.#permissions.run.bind(this.#permissions))
+      : null;
+    const commandRunner = collectingBatch || hasInboundFiles(normalized) ? null : isControlCommand(text)
+      ? runControlCommand
+      : sessionControlRunner;`,
+      ],
+      [
+        `    // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: text bridge commands for mobile IM chats without toolbar access.
     const commandRunner = collectingBatch || hasInboundFiles(normalized) ? null : isControlCommand(text)
       ? runControlCommand
       : (isModelCommand(text)
@@ -3299,6 +3834,18 @@ import { askInWorkspaceSession } from './workspace-session.mjs';`,
             : (!hasInboundImages(normalized) && isPermissionCommand(text)
               ? this.#permissions.run.bind(this.#permissions)
               : null)));`,
+        `    // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: text bridge commands for mobile IM chats without toolbar access.
+    const sessionControlRunner = this.#sessionControls.isCommand(text, {
+      hasImages: hasInboundImages(normalized),
+      hasFiles: hasInboundFiles(normalized),
+    })
+      ? this.#sessionControls.runner(text, this.#permissions.run.bind(this.#permissions))
+      : null;
+    const commandRunner = collectingBatch || hasInboundFiles(normalized) ? null : isControlCommand(text)
+      ? runControlCommand
+      : sessionControlRunner;`,
+      ],
+    ],
     'dsh-im text bridge natural command routing',
   ))
 }
@@ -3340,8 +3887,28 @@ function patchDshImWeixinBridgeApprovalAllowAllSource(source) {
 }
 
 function patchDshImWeixinBridgeSource(source) {
-  if (source.includes(`${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: weixin bridge commands`)) {
-    return patchDshImWeixinBridgeApprovalAllowAllSource(source)
+  source = patchDshImPermissionCommandImportSource(
+    source,
+    '../shared/',
+    'dsh-im weixin bridge permission command import',
+  )
+  source = patchDshImSessionControlDispatcherClassSource(
+    source,
+    'dsh-im weixin bridge session control dispatcher',
+  )
+  source = patchDshImSessionControlFieldsSource(source, 'dsh-im weixin bridge')
+  if (!source.includes('actor: sender,\n      hasImages: hasWeixinImageItems(message),')) {
+    source = replaceExact(
+      source,
+      `    const result = await runner(text, this.#harness, this.#state, key, {
+      signal: this.#signal,
+      hasImages: hasWeixinImageItems(message),`,
+      `    const result = await runner(text, this.#harness, this.#state, key, {
+      signal: this.#signal,
+      actor: sender,
+      hasImages: hasWeixinImageItems(message),`,
+      'dsh-im weixin bridge command actor',
+    )
   }
   if (!source.includes('PermissionCommandManager')) {
     const withExistingModelImport = source.replace(
@@ -3391,39 +3958,21 @@ import { runWorkspaceCommand } from '../shared/workspace-command.mjs';`,
         'dsh-im weixin bridge natural command imports',
       )
   }
-  if (!source.includes('#permissions = new PermissionCommandManager();')) {
-    const withSessionControls = source.replace(
-      `  #approvals;
-  #sessionControls = new SessionControlDispatcher();
-  #batchInputs = new BatchInputManager();`,
-      `  #approvals;
-  #sessionControls = new SessionControlDispatcher();
-  #permissions = new PermissionCommandManager();
-  #batchInputs = new BatchInputManager();`,
-    )
-    source = withSessionControls !== source
-      ? withSessionControls
-      : replaceExact(
-        source,
-        `  #approvals;
-  #batchInputs = new BatchInputManager();`,
-        `  #approvals;
-  #permissions = new PermissionCommandManager();
-  #batchInputs = new BatchInputManager();`,
-        'dsh-im weixin bridge permission manager',
-      )
+  source = patchDshImSessionControlFieldsSource(source, 'dsh-im weixin bridge')
+  if (source.includes('#sessionControls.isCommand')) {
+    return patchDshImWeixinBridgeApprovalAllowAllSource(source)
   }
   const withSessionControlRunner = source.replace(
     `    const commandRunner = hasFiles ? null : isControlCommand(commandText)
       ? runControlCommand
       : (sessionControlRunner ?? (isPresetCommand(commandText) ? runPresetCommand : null));`,
     `    // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: weixin bridge commands for mobile chats without toolbar access.
+    const sessionControlRunner = this.#sessionControls.isCommand(commandText, { hasImages, hasFiles })
+      ? this.#sessionControls.runner(commandText, this.#permissions.run.bind(this.#permissions))
+      : null;
     const commandRunner = hasFiles ? null : isControlCommand(commandText)
       ? runControlCommand
-      : (sessionControlRunner
-        ?? (isPresetCommand(commandText) ? runPresetCommand : null)
-        ?? (isModelCommand(commandText) ? runModelCommand : null)
-        ?? (!hasImages && isPermissionCommand(commandText) ? this.#permissions.run.bind(this.#permissions) : null));`,
+      : (sessionControlRunner ?? (isPresetCommand(commandText) ? runPresetCommand : null));`,
   )
   if (withSessionControlRunner !== source) {
     return patchDshImWeixinBridgeApprovalAllowAllSource(withSessionControlRunner)
@@ -3435,27 +3984,37 @@ import { runWorkspaceCommand } from '../shared/workspace-command.mjs';`,
           ? runModelCommand
           : (isPresetCommand(commandText) ? runPresetCommand : null));`,
     `    // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: weixin bridge commands for mobile chats without toolbar access.
+    const sessionControlRunner = this.#sessionControls.isCommand(commandText, { hasImages, hasFiles })
+      ? this.#sessionControls.runner(commandText, this.#permissions.run.bind(this.#permissions))
+      : null;
     const commandRunner = hasFiles ? null : isControlCommand(commandText)
       ? runControlCommand
-      : (isModelCommand(commandText)
-          ? runModelCommand
-          : (isPresetCommand(commandText)
-            ? runPresetCommand
-            : (!hasImages && isPermissionCommand(commandText)
-              ? this.#permissions.run.bind(this.#permissions)
-              : null)));`,
+      : sessionControlRunner;`,
   )
   if (withLocalFlagsRunner !== source) {
     return patchDshImWeixinBridgeApprovalAllowAllSource(withLocalFlagsRunner)
   }
-  return patchDshImWeixinBridgeApprovalAllowAllSource(replaceExact(
+  return patchDshImWeixinBridgeApprovalAllowAllSource(replaceAny(
     source,
-    `    const commandRunner = hasWeixinFileItems(message) ? null : isControlCommand(commandText)
+    [
+      [
+        `    const commandRunner = hasWeixinFileItems(message) ? null : isControlCommand(commandText)
       ? runControlCommand
       : (isModelCommand(commandText)
           ? runModelCommand
           : (isPresetCommand(commandText) ? runPresetCommand : null));`,
-    `    // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: weixin bridge commands for mobile chats without toolbar access.
+        `    // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: weixin bridge commands for mobile chats without toolbar access.
+    const hasImages = hasWeixinImageItems(message);
+    const hasFiles = hasWeixinFileItems(message);
+    const sessionControlRunner = this.#sessionControls.isCommand(commandText, { hasImages, hasFiles })
+      ? this.#sessionControls.runner(commandText, this.#permissions.run.bind(this.#permissions))
+      : null;
+    const commandRunner = hasFiles ? null : isControlCommand(commandText)
+      ? runControlCommand
+      : sessionControlRunner;`,
+      ],
+      [
+        `    // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: weixin bridge commands for mobile chats without toolbar access.
     const commandRunner = hasWeixinFileItems(message) ? null : isControlCommand(commandText)
       ? runControlCommand
       : (isModelCommand(commandText)
@@ -3465,6 +4024,17 @@ import { runWorkspaceCommand } from '../shared/workspace-command.mjs';`,
             : (!hasWeixinImageItems(message) && isPermissionCommand(commandText)
               ? this.#permissions.run.bind(this.#permissions)
               : null)));`,
+        `    // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: weixin bridge commands for mobile chats without toolbar access.
+    const hasImages = hasWeixinImageItems(message);
+    const hasFiles = hasWeixinFileItems(message);
+    const sessionControlRunner = this.#sessionControls.isCommand(commandText, { hasImages, hasFiles })
+      ? this.#sessionControls.runner(commandText, this.#permissions.run.bind(this.#permissions))
+      : null;
+    const commandRunner = hasFiles ? null : isControlCommand(commandText)
+      ? runControlCommand
+      : sessionControlRunner;`,
+      ],
+    ],
     'dsh-im weixin bridge natural command routing',
   ))
 }
@@ -3491,7 +4061,183 @@ function approvalAllowAllSource() {
         },`
 }
 
+function patchDshImDingtalkBridgeNaturalControlsSource(source) {
+  source = patchDshImPermissionCommandImportSource(
+    source,
+    '../shared/',
+    'dsh-im dingtalk bridge permission command import',
+  )
+  source = patchDshImSessionControlDispatcherClassSource(
+    source,
+    'dsh-im dingtalk bridge session control dispatcher',
+  )
+  source = patchDshImSessionControlFieldsSource(source, 'dsh-im dingtalk bridge')
+  if (!source.includes('actor: senderStaffId(message),')) {
+    source = replaceExact(
+      source,
+      `        signal: this.#signal,
+        hasImages: hasInboundImages(prompt),`,
+      `        signal: this.#signal,
+        actor: senderStaffId(message),
+        hasImages: hasInboundImages(prompt),`,
+      'dsh-im dingtalk bridge command actor',
+    )
+  }
+  if (source.includes('#sessionControls.isCommand')) return source
+  return replaceExact(
+    source,
+    `    const commandRunner = hasInboundFiles(promptMessage) ? null : isControlCommand(commandText)
+      ? runControlCommand
+      : (isModelCommand(commandText)
+          ? runModelCommand
+          : (isPresetCommand(commandText) ? runPresetCommand : null));`,
+    `    // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: dingtalk bridge commands for mobile chats without toolbar access.
+    const hasImages = hasInboundImages(promptMessage);
+    const hasFiles = hasInboundFiles(promptMessage);
+    const sessionControlRunner = this.#sessionControls.isCommand(commandText, { hasImages, hasFiles })
+      ? this.#sessionControls.runner(commandText, this.#permissions.run.bind(this.#permissions))
+      : null;
+    const commandRunner = hasFiles ? null : isControlCommand(commandText)
+      ? runControlCommand
+      : sessionControlRunner;`,
+    'dsh-im dingtalk bridge natural command routing',
+  )
+}
+
+function patchDshImFeishuBridgeNaturalControlsSource(source) {
+  source = patchDshImPermissionCommandImportSource(
+    source,
+    '../shared/',
+    'dsh-im feishu bridge permission command import',
+  )
+  source = patchDshImSessionControlDispatcherClassSource(
+    source,
+    'dsh-im feishu bridge session control dispatcher',
+  )
+  source = patchDshImSessionControlFieldsSource(source, 'dsh-im feishu bridge')
+  if (!source.includes('actor: senderOpenId(event),\n        hasImages: hasInboundImages(message),')) {
+    source = replaceExact(
+      source,
+      `        signal: this.#signal,
+        hasImages: hasInboundImages(message),`,
+      `        signal: this.#signal,
+        actor: senderOpenId(event),
+        hasImages: hasInboundImages(message),`,
+      'dsh-im feishu bridge command actor',
+    )
+  }
+  if (source.includes('#sessionControls.isCommand')) return source
+  return replaceExact(
+    source,
+    `    const commandRunner = hasInboundFiles(commandMessage) ? null : isControlCommand(commandText)
+      ? runControlCommand
+      : (isModelCommand(commandText)
+          ? runModelCommand
+          : (isPresetCommand(commandText) ? runPresetCommand : null));`,
+    `    // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: feishu bridge commands for mobile chats without toolbar access.
+    const hasCommandImages = hasInboundImages(commandMessage);
+    const hasCommandFiles = hasInboundFiles(commandMessage);
+    const sessionControlRunner = this.#sessionControls.isCommand(commandText, {
+      hasImages: hasCommandImages,
+      hasFiles: hasCommandFiles,
+    })
+      ? this.#sessionControls.runner(commandText, this.#permissions.run.bind(this.#permissions))
+      : null;
+    const commandRunner = hasCommandFiles ? null : isControlCommand(commandText)
+      ? runControlCommand
+      : sessionControlRunner;`,
+    'dsh-im feishu bridge natural command routing',
+  )
+}
+
+function patchDshImQqBridgeNaturalControlsSource(source) {
+  source = patchDshImPermissionCommandImportSource(
+    source,
+    '../shared/',
+    'dsh-im qq bridge permission command import',
+  )
+  source = patchDshImSessionControlDispatcherClassSource(
+    source,
+    'dsh-im qq bridge session control dispatcher',
+  )
+  source = patchDshImSessionControlFieldsSource(source, 'dsh-im qq bridge')
+  if (!source.includes('actor: nonEmptyString(message?.senderId),')) {
+    source = replaceExact(
+      source,
+      `      signal: this.#signal,
+      hasImages: hasQqImageAttachments(message),`,
+      `      signal: this.#signal,
+      actor: nonEmptyString(message?.senderId),
+      hasImages: hasQqImageAttachments(message),`,
+      'dsh-im qq bridge command actor',
+    )
+  }
+  if (source.includes('#sessionControls.isCommand')) return source
+  return replaceExact(
+    source,
+    `    const commandRunner = hasQqFileAttachments(message) ? null : isControlCommand(commandText)
+      ? runControlCommand
+      : (isModelCommand(commandText)
+          ? runModelCommand
+          : (isPresetCommand(commandText) ? runPresetCommand : null));`,
+    `    // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: qq bridge commands for mobile chats without toolbar access.
+    const hasImages = hasQqImageAttachments(message);
+    const hasFiles = hasQqFileAttachments(message);
+    const sessionControlRunner = this.#sessionControls.isCommand(commandText, { hasImages, hasFiles })
+      ? this.#sessionControls.runner(commandText, this.#permissions.run.bind(this.#permissions))
+      : null;
+    const commandRunner = hasFiles ? null : isControlCommand(commandText)
+      ? runControlCommand
+      : sessionControlRunner;`,
+    'dsh-im qq bridge natural command routing',
+  )
+}
+
+function patchDshImWecomBridgeNaturalControlsSource(source) {
+  source = patchDshImPermissionCommandImportSource(
+    source,
+    '../shared/',
+    'dsh-im wecom bridge permission command import',
+  )
+  source = patchDshImSessionControlDispatcherClassSource(
+    source,
+    'dsh-im wecom bridge session control dispatcher',
+  )
+  source = patchDshImSessionControlFieldsSource(source, 'dsh-im wecom bridge')
+  if (!source.includes('actor: bodyOf(frame).from?.userid,')) {
+    source = replaceExact(
+      source,
+      `      signal: this.#signal,
+      hasImages: hasInboundImages(message),`,
+      `      signal: this.#signal,
+      actor: bodyOf(frame).from?.userid,
+      hasImages: hasInboundImages(message),`,
+      'dsh-im wecom bridge command actor',
+    )
+  }
+  if (source.includes('#sessionControls.isCommand')) return source
+  return replaceExact(
+    source,
+    `    const commandRunner = hasInboundFiles(commandMessage) ? null : isControlCommand(commandText)
+      ? runControlCommand
+      : (isModelCommand(commandText)
+          ? runModelCommand
+          : (isPresetCommand(commandText) ? runPresetCommand : null));`,
+    `    // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: wecom bridge commands for mobile chats without toolbar access.
+    const hasImages = hasInboundImages(commandMessage);
+    const hasFiles = hasInboundFiles(commandMessage);
+    const sessionControlRunner = this.#sessionControls.isCommand(commandText, { hasImages, hasFiles })
+      ? this.#sessionControls.runner(commandText, this.#permissions.run.bind(this.#permissions))
+      : null;
+    const commandRunner = hasFiles ? null : isControlCommand(commandText)
+      ? runControlCommand
+      : sessionControlRunner;`,
+    'dsh-im wecom bridge natural command routing',
+  )
+}
+
 function patchDshImDingtalkBridgeApprovalAllowAllSource(source) {
+  source = patchDshImDingtalkBridgeNaturalControlsSource(source)
   if (source.includes(DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER)) {
     return source
   }
@@ -3511,6 +4257,7 @@ ${approvalAllowAllSource()}
 }
 
 function patchDshImFeishuBridgeApprovalAllowAllSource(source) {
+  source = patchDshImFeishuBridgeNaturalControlsSource(source)
   if (source.includes(DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER)) {
     return source
   }
@@ -3530,6 +4277,7 @@ ${approvalAllowAllSource()}
 }
 
 function patchDshImQqBridgeApprovalAllowAllSource(source) {
+  source = patchDshImQqBridgeNaturalControlsSource(source)
   if (source.includes(DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER)) {
     return source
   }
@@ -3549,6 +4297,7 @@ ${approvalAllowAllSource()}
 }
 
 function patchDshImWecomBridgeApprovalAllowAllSource(source) {
+  source = patchDshImWecomBridgeNaturalControlsSource(source)
   if (source.includes(DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER)) {
     return source
   }
