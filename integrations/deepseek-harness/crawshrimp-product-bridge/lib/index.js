@@ -16,6 +16,7 @@ export const inject = [
   'connection',
   'apiProxy',
   'agentDefaultModel',
+  'permissionPresets',
 ]
 
 const MCP_TOOL_PREFIX = 'mcp__crawshrimp__'
@@ -34,6 +35,7 @@ let fetchBridgeInstalled = false
 const APPROVAL_ARGUMENTS_MAX_CHARS = 4_500
 const MODEL_CATALOG_TIMEOUT_MS = 10_000
 const SESSION_SELECT_MODEL_TIMEOUT_MS = 30_000
+const SESSION_PERMISSION_TIMEOUT_MS = 10_000
 
 function imSessionRegistry() {
   if (!(globalThis[CRAWSHRIMP_IM_SESSION_REGISTRY] instanceof Set)) {
@@ -431,6 +433,87 @@ function apiProxyFailure(error, fallbackCode = 'internal') {
   }
 }
 
+function permissionService(ctx) {
+  const service = ctx?.permissionPresets
+  if (!service
+    || !Array.isArray(service.names)
+    || typeof service.current !== 'function'
+    || (typeof service.apply !== 'function' && typeof service.set !== 'function')) {
+    return null
+  }
+  return service
+}
+
+function sessionPermissionPayload(ctx, agent) {
+  const service = permissionService(ctx)
+  if (!service) {
+    return { ok: false, status: 501, error: { code: 'unsupported', message: 'session permission service is unavailable' } }
+  }
+  const preset = service.current(agent.session.events)
+  return {
+    ok: true,
+    status: 200,
+    preset,
+    available: [...service.names],
+    policy: typeof ctx?.approval?.effectivePolicy === 'function'
+      ? ctx.approval.effectivePolicy(agent.session)
+      : undefined,
+  }
+}
+
+export async function getCrawshrimpSessionPermission(ctx, sessionId) {
+  const id = String(sessionId || '')
+  if (!id) {
+    return { ok: false, status: 400, error: { code: 'bad-request', message: 'sessionId required' } }
+  }
+  const agent = findLiveAgent(ctx, id)
+  if (agent === undefined) {
+    return { ok: false, status: 409, error: { code: 'NO_LIVE_AGENT', message: 'No live agent for this session' } }
+  }
+  return sessionPermissionPayload(ctx, agent)
+}
+
+export async function setCrawshrimpSessionPermission(ctx, body) {
+  const sessionId = String(body?.sessionId || '')
+  const preset = String(body?.preset || '')
+  if (!sessionId || !preset) {
+    return { ok: false, status: 400, error: { code: 'bad-request', message: 'sessionId/preset required' } }
+  }
+  const service = permissionService(ctx)
+  if (!service) {
+    return { ok: false, status: 501, error: { code: 'unsupported', message: 'session permission service is unavailable' } }
+  }
+  if (!service.names.includes(preset)) {
+    return {
+      ok: false,
+      status: 400,
+      error: { code: 'unknown-preset', message: `Unknown permission preset "${preset}"` },
+    }
+  }
+  const agent = findLiveAgent(ctx, sessionId)
+  if (agent === undefined) {
+    return { ok: false, status: 409, error: { code: 'NO_LIVE_AGENT', message: 'No live agent for this session' } }
+  }
+  const previous = service.current(agent.session.events)
+  if (typeof service.apply === 'function' && typeof ctx?.approval?.setPolicy === 'function') {
+    service.apply(agent.session, preset, (policy) => {
+      ctx.approval.setPolicy(agent, policy)
+    })
+  } else {
+    service.set(agent.session, preset)
+  }
+  const current = service.current(agent.session.events)
+  if (current !== preset) {
+    return {
+      ok: false,
+      status: 500,
+      error: { code: 'permission-readback-mismatch', message: 'Session permission readback did not match the requested preset' },
+    }
+  }
+  const payload = sessionPermissionPayload(ctx, agent)
+  return { ...payload, previous }
+}
+
 export async function selectCrawshrimpSessionModel(ctx, body) {
   const selection = {
     provider: String(body?.provider || ''),
@@ -567,6 +650,42 @@ export function apply(ctx) {
           })
           res.end(JSON.stringify(result.ok
             ? { ok: true, selected: result.selected }
+            : { ok: false, error: result.error }))
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+          res.end(JSON.stringify({ ok: false, error: apiProxyFailure(error) }))
+        }
+        return
+      }
+      if (url.pathname === '/api/crawshrimp/session/permission'
+        && (req.method === 'GET' || req.method === 'POST' || req.method === 'PATCH')) {
+        try {
+          const body = req.method === 'GET'
+            ? { sessionId: url.searchParams.get('sessionId') }
+            : await readBody(req)
+          const operation = req.method === 'GET'
+            ? getCrawshrimpSessionPermission(ctx, body.sessionId)
+            : setCrawshrimpSessionPermission(ctx, body)
+          const result = await Promise.race([
+            operation,
+            new Promise((_, reject) => {
+              setTimeout(() => reject(Object.assign(new Error('session permission operation timed out'), {
+                code: 'timeout',
+              })), SESSION_PERMISSION_TIMEOUT_MS)
+            }),
+          ])
+          res.writeHead(result.status ?? (result.ok ? 200 : 500), {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+          })
+          res.end(JSON.stringify(result.ok
+            ? {
+              ok: true,
+              preset: result.preset,
+              available: result.available,
+              previous: result.previous,
+              ...(result.policy === undefined ? {} : { policy: result.policy }),
+            }
             : { ok: false, error: result.error }))
         } catch (error) {
           res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })

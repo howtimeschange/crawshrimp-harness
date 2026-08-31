@@ -409,6 +409,68 @@ test('Crawshrimp product bridge selects an IM session model without persisting t
   assert.deepEqual(savedDefaults, [originalDefault])
 })
 
+test('Crawshrimp product bridge exposes direct session permission control without command execution', async () => {
+  const bridgeUrl = pathToFileURL(resolve(harnessRoot, 'crawshrimp-product-bridge/lib/index.js'))
+  const bridge = await import(`${bridgeUrl.href}?permission-control-test=${Date.now()}`)
+  let preset = 'workspace-write'
+  const policyCalls = []
+  const appended = []
+  const agent = {
+    session: {
+      id: 'im-session-1',
+      events: [],
+      append: (type, data) => {
+        appended.push({ type, data })
+        agent.session.events.push({ type, data })
+      },
+    },
+  }
+  const ctx = {
+    agents: {
+      roots: () => [agent],
+    },
+    approval: {
+      effectivePolicy: () => (preset === 'danger-full-access' ? 'never' : 'ask'),
+      setPolicy: (_agent, policy) => {
+        policyCalls.push(policy)
+      },
+    },
+    permissionPresets: {
+      names: ['workspace-write', 'danger-full-access'],
+      current: () => preset,
+      apply: (session, nextPreset, setApproval) => {
+        session.append('permission/preset', { preset: nextPreset })
+        preset = nextPreset
+        setApproval(nextPreset === 'danger-full-access' ? 'never' : 'ask')
+      },
+    },
+  }
+
+  const before = await bridge.getCrawshrimpSessionPermission(ctx, 'im-session-1')
+  assert.deepEqual(before, {
+    ok: true,
+    status: 200,
+    preset: 'workspace-write',
+    available: ['workspace-write', 'danger-full-access'],
+    policy: 'ask',
+  })
+
+  const changed = await bridge.setCrawshrimpSessionPermission(ctx, {
+    sessionId: 'im-session-1',
+    preset: 'danger-full-access',
+  })
+
+  assert.equal(changed.ok, true)
+  assert.equal(changed.previous, 'workspace-write')
+  assert.equal(changed.preset, 'danger-full-access')
+  assert.equal(changed.policy, 'never')
+  assert.deepEqual(policyCalls, ['never'])
+  assert.deepEqual(appended, [{
+    type: 'permission/preset',
+    data: { preset: 'danger-full-access' },
+  }])
+})
+
 test('dsh-im HarnessClient prefers Crawshrimp session-only model selection when available', async () => {
   const clientUrl = pathToFileURL(resolve(
     harnessRoot,
@@ -469,6 +531,73 @@ test('dsh-im HarnessClient prefers Crawshrimp session-only model selection when 
   ])
 })
 
+test('dsh-im HarnessClient reads and writes Crawshrimp session permission directly', async () => {
+  const clientUrl = pathToFileURL(resolve(
+    harnessRoot,
+    'node_modules/@xmanrui/dsh-im/src/channels/shared/harness-client.mjs',
+  ))
+  const { HarnessClient } = await import(`${clientUrl.href}?permission-client-test=${Date.now()}`)
+  const calls = []
+  const responseFor = (request, value) => new Response(JSON.stringify({
+    type: 'server-response',
+    rpcId: request.rpcId,
+    result: { ok: true, value },
+  }), { status: 200, headers: { 'content-type': 'application/json' } })
+  const client = new HarnessClient({
+    baseUrl: 'http://127.0.0.1:3090',
+    workspace: repoRoot,
+    autostart: false,
+    fetchImpl: async (url, init) => {
+      const parsed = new URL(url)
+      calls.push({ path: parsed.pathname, method: init.method, body: init.body ?? null })
+      if (parsed.pathname === '/api/host.describe') {
+        return responseFor(JSON.parse(init.body), { cwd: repoRoot })
+      }
+      if (parsed.pathname === '/api/crawshrimp/session/permission' && init.method === 'GET') {
+        assert.equal(parsed.searchParams.get('sessionId'), 'im-session-1')
+        return new Response(JSON.stringify({
+          ok: true,
+          preset: 'workspace-write',
+          available: ['read-only', 'workspace-write', 'danger-full-access'],
+          policy: 'ask',
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (parsed.pathname === '/api/crawshrimp/session/permission' && init.method === 'POST') {
+        assert.deepEqual(JSON.parse(init.body), {
+          sessionId: 'im-session-1',
+          preset: 'danger-full-access',
+        })
+        return new Response(JSON.stringify({
+          ok: true,
+          preset: 'danger-full-access',
+          available: ['read-only', 'workspace-write', 'danger-full-access'],
+          policy: 'never',
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      throw new Error(`unexpected ${init.method} ${parsed.pathname}`)
+    },
+  })
+
+  assert.deepEqual(await client.getSessionPermission('im-session-1'), {
+    ok: true,
+    preset: 'workspace-write',
+    available: ['read-only', 'workspace-write', 'danger-full-access'],
+    policy: 'ask',
+  })
+  assert.deepEqual(await client.setSessionPermission('im-session-1', 'danger-full-access'), {
+    ok: true,
+    preset: 'danger-full-access',
+    available: ['read-only', 'workspace-write', 'danger-full-access'],
+    policy: 'never',
+  })
+  assert.deepEqual(calls.map((call) => `${call.method} ${call.path}`), [
+    'POST /api/host.describe',
+    'GET /api/crawshrimp/session/permission',
+    'POST /api/host.describe',
+    'POST /api/crawshrimp/session/permission',
+  ])
+})
+
 test('dsh-im natural language model and permission controls parse required mobile phrases', async () => {
   const modelUrl = pathToFileURL(resolve(
     harnessRoot,
@@ -494,6 +623,7 @@ test('dsh-im natural language model and permission controls parse required mobil
   })
 
   assert.deepEqual(permission.parsePermissionCommand('修改审批权限'), { action: 'query' })
+  assert.deepEqual(permission.parsePermissionCommand('现在是什么审批模式'), { action: 'query' })
   assert.deepEqual(permission.parsePermissionCommand('审批权限改成 工作区写入'), {
     action: 'select',
     preset: 'workspace-write',
@@ -503,6 +633,14 @@ test('dsh-im natural language model and permission controls parse required mobil
     preset: 'workspace-write',
   })
   assert.deepEqual(permission.parsePermissionCommand('关闭审批'), {
+    action: 'select',
+    preset: 'danger-full-access',
+  })
+  assert.deepEqual(permission.parsePermissionCommand('去掉审批'), {
+    action: 'select',
+    preset: 'danger-full-access',
+  })
+  assert.deepEqual(permission.parsePermissionCommand('开启 full assess'), {
     action: 'select',
     preset: 'danger-full-access',
   })
@@ -597,6 +735,7 @@ function createNaturalCommandHarnessFixture() {
   let currentPermission = 'read-only'
   const selected = []
   const executed = []
+  const permissions = []
   const asked = []
   const calls = {
     listModels: 0,
@@ -729,6 +868,23 @@ function createNaturalCommandHarnessFixture() {
       }
       return { result: { kind: 'error', text: 'unsupported' } }
     },
+    permission: async () => {
+      permissions.push(['get'])
+      return {
+        preset: currentPermission,
+        available: ['read-only', 'workspace-write', 'danger-full-access'],
+        policy: currentPermission === 'danger-full-access' ? 'never' : 'ask',
+      }
+    },
+    setPermission: async (preset) => {
+      permissions.push(['set', preset])
+      currentPermission = preset
+      return {
+        preset: currentPermission,
+        available: ['read-only', 'workspace-write', 'danger-full-access'],
+        policy: currentPermission === 'danger-full-access' ? 'never' : 'ask',
+      }
+    },
     ask: async (text) => {
       asked.push(text)
       return 'unexpected agent reply'
@@ -737,6 +893,7 @@ function createNaturalCommandHarnessFixture() {
   return {
     selected,
     executed,
+    permissions,
     asked,
     calls,
     harness: {
@@ -814,22 +971,24 @@ test('dsh-im text bridge routes natural model and permission commands before age
 
   await bridge.accept(message('text-msg-4', '修改审批权限'))
   assert.match(sent.at(-1).text, /当前权限/)
+  assert.deepEqual(fixture.permissions.slice(-1), [['get']])
 
   await bridge.accept(message('text-msg-5', '审批权限改成 工作区写入'))
-  assert.deepEqual(fixture.executed.slice(-2), ['/permission workspace-write', '/permission'])
+  assert.deepEqual(fixture.permissions.slice(-1), [['set', 'workspace-write']])
   assert.match(sent.at(-1).text, /权限已切换为/)
 
   await bridge.accept(message('text-msg-6', '恢复审批'))
-  assert.deepEqual(fixture.executed.slice(-2), ['/permission workspace-write', '/permission'])
+  assert.deepEqual(fixture.permissions.slice(-1), [['set', 'workspace-write']])
   assert.match(sent.at(-1).text, /权限已切换为/)
 
-  await bridge.accept(message('text-msg-7', '关闭审批'))
+  await bridge.accept(message('text-msg-7', '去掉审批'))
   assert.match(sent.at(-1).text, /准备切换到完全访问/)
-  assert.doesNotMatch(fixture.executed.join('\n'), /danger-full-access/)
+  assert.deepEqual(fixture.permissions.filter((call) => call[1] === 'danger-full-access'), [])
 
   await bridge.accept(message('text-msg-8', '确认切换到完全访问'))
-  assert.deepEqual(fixture.executed.slice(-2), ['/permission danger-full-access', '/permission'])
+  assert.deepEqual(fixture.permissions.slice(-1), [['set', 'danger-full-access']])
   assert.match(sent.at(-1).text, /权限已切换为/)
+  assert.deepEqual(fixture.executed, [])
   assert.deepEqual(fixture.asked, [])
 })
 
@@ -885,21 +1044,23 @@ test('dsh-im Weixin bridge routes natural model and permission commands before a
 
   await bridge.accept(message('weixin-natural-4', '修改审批权限'))
   assert.match(sent.at(-1).text, /当前权限/)
+  assert.deepEqual(fixture.permissions.slice(-1), [['get']])
 
   await bridge.accept(message('weixin-natural-5', '审批权限改成 工作区写入'))
-  assert.deepEqual(fixture.executed.slice(-2), ['/permission workspace-write', '/permission'])
+  assert.deepEqual(fixture.permissions.slice(-1), [['set', 'workspace-write']])
   assert.match(sent.at(-1).text, /权限已切换为/)
 
   await bridge.accept(message('weixin-natural-6', '恢复审批'))
-  assert.deepEqual(fixture.executed.slice(-2), ['/permission workspace-write', '/permission'])
+  assert.deepEqual(fixture.permissions.slice(-1), [['set', 'workspace-write']])
 
-  await bridge.accept(message('weixin-natural-7', '关闭审批'))
+  await bridge.accept(message('weixin-natural-7', '去掉审批'))
   assert.match(sent.at(-1).text, /准备切换到完全访问/)
-  assert.equal(fixture.executed.filter((line) => line === '/permission danger-full-access').length, 0)
+  assert.deepEqual(fixture.permissions.filter((call) => call[1] === 'danger-full-access'), [])
 
   await bridge.accept(message('weixin-natural-8', '确认切换到完全访问'))
-  assert.deepEqual(fixture.executed.slice(-2), ['/permission danger-full-access', '/permission'])
+  assert.deepEqual(fixture.permissions.slice(-1), [['set', 'danger-full-access']])
   assert.match(sent.at(-1).text, /权限已切换为/)
+  assert.deepEqual(fixture.executed, [])
   assert.deepEqual(fixture.asked, [])
 })
 
@@ -911,19 +1072,26 @@ test('dsh-im permission manager requires exact same-actor confirmation for full 
   const { PermissionCommandManager } = await import(`${permissionUrl.href}?permission-manager-test=${Date.now()}`)
   let now = 1000
   const executed = []
+  const permissions = []
+  let currentPermission = 'workspace-write'
   const session = {
     sessionExists: async () => true,
     isRunning: async () => false,
     hasActiveTurn: async () => false,
     executeCommand: async (line) => {
       executed.push(line)
+      throw new Error(`permission manager must not execute ${line}`)
+    },
+    permission: async () => ({
+      preset: currentPermission,
+      available: ['read-only', 'workspace-write', 'danger-full-access'],
+    }),
+    setPermission: async (preset) => {
+      permissions.push(preset)
+      currentPermission = preset
       return {
-        result: {
-          kind: 'success',
-          text: line === '/permission'
-            ? 'current preset danger-full-access (available: read-only, workspace-write, danger-full-access)'
-            : 'updated',
-        },
+        preset,
+        available: ['read-only', 'workspace-write', 'danger-full-access'],
       }
     },
   }
@@ -934,14 +1102,17 @@ test('dsh-im permission manager requires exact same-actor confirmation for full 
   const request = await manager.run('关闭审批', harness, state, 'room-1', { actor: 'user-a' })
   assert.match(request.message, /准备切换到完全访问/)
   assert.deepEqual(executed, [])
+  assert.deepEqual(permissions, [])
 
   const wrongActor = await manager.run('确认切换到完全访问', harness, state, 'room-1', { actor: 'user-b' })
   assert.match(wrongActor.message, /只有发起切换的用户/)
   assert.deepEqual(executed, [])
+  assert.deepEqual(permissions, [])
 
   const confirmed = await manager.run('确认切换到完全访问', harness, state, 'room-1', { actor: 'user-a' })
   assert.match(confirmed.message, /权限已切换为/)
-  assert.deepEqual(executed, ['/permission danger-full-access', '/permission'])
+  assert.deepEqual(executed, [])
+  assert.deepEqual(permissions, ['danger-full-access'])
 
   now += 2000
   const expired = await manager.run('确认切换到完全访问', harness, state, 'room-1', { actor: 'user-a' })
@@ -1186,6 +1357,7 @@ test('dsh-im Weixin bridge allow-all approval switches the bound session only fo
   const sent = []
   const responded = []
   const executed = []
+  const permissions = []
   let currentPermission = 'read-only'
   let resolveApproval
   const approvalSettled = new Promise((resolve) => { resolveApproval = resolve })
@@ -1208,19 +1380,16 @@ test('dsh-im Weixin bridge allow-all approval switches the bound session only fo
     sessionExists: async () => true,
     executeCommand: async (line) => {
       executed.push(line)
-      if (line === '/permission danger-full-access') {
-        currentPermission = 'danger-full-access'
-        return { result: { kind: 'success', text: 'updated' } }
+      throw new Error(`allow-all must not execute ${line}`)
+    },
+    setPermission: async (preset) => {
+      permissions.push(preset)
+      currentPermission = preset
+      return {
+        preset: currentPermission,
+        available: ['read-only', 'workspace-write', 'danger-full-access'],
+        policy: currentPermission === 'danger-full-access' ? 'never' : 'ask',
       }
-      if (line === '/permission') {
-        return {
-          result: {
-            kind: 'success',
-            text: `current preset ${currentPermission} (available: read-only, workspace-write, danger-full-access)`,
-          },
-        }
-      }
-      return { result: { kind: 'error', text: 'unsupported' } }
     },
     ask: async (_text, options) => {
       await options.onInteraction({
@@ -1280,11 +1449,13 @@ test('dsh-im Weixin bridge allow-all approval switches the bound session only fo
 
   await bridge.accept(message('weixin-allow-all-wrong-actor', '允许所有', 'user-b'))
   assert.deepEqual(executed, [])
+  assert.deepEqual(permissions, [])
   assert.equal(responded.length, 0)
 
   await bridge.accept(message('weixin-allow-all-2', '允许所有'))
   await first
-  assert.deepEqual(executed, ['/permission danger-full-access', '/permission'])
+  assert.deepEqual(executed, [])
+  assert.deepEqual(permissions, ['danger-full-access'])
   assert.equal(responded.length, 1)
   assert.equal(responded[0].value.outcome, 'allowed-once')
   assert.match(sent.at(-2).text, /已批准，并已切换当前会话为完全访问/)
@@ -1301,7 +1472,7 @@ test('dsh-im IM bridges share natural controls and allow-all approvals beyond We
   assert.match(textBridge, /#sessionControls\.isCommand/)
   assert.match(textBridge, /actor: senderId/)
   assert.match(textBridge, /pendingInteraction: this\.\#pendingInteractions\.has\(key\)[\s\S]*this\.\#approvals\.hasPending\(key\)/)
-  assert.match(textBridge, /allowAll: async \(\) => \{[\s\S]*\/permission danger-full-access[\s\S]*current preset danger-full-access/)
+  assert.match(textBridge, /allowAll: async \(\) => \{[\s\S]*setPermission\('danger-full-access'[\s\S]*current\?\.preset !== 'danger-full-access'/)
 
   const inheritedBridgeFiles = [
     'slack/slack-bridge.mjs',
@@ -1333,7 +1504,7 @@ test('dsh-im IM bridges share natural controls and allow-all approvals beyond We
     assert.match(source, /#sessionControls\.isCommand/, `${file} should route natural controls before agent prompts`)
     assert.match(source, /actor:/, `${file} should pass the sender identity into natural controls and approval state`)
     assert.match(source, /pendingInteraction:/, `${file} should block unsafe permission changes while an interaction is pending`)
-    assert.match(source, /handleRequested\(interaction, \{[\s\S]*allowAll: async \(\) => \{[\s\S]*\/permission danger-full-access[\s\S]*current preset danger-full-access/, `${file} should support approval reply "允许所有"`)
+    assert.match(source, /handleRequested\(interaction, \{[\s\S]*allowAll: async \(\) => \{[\s\S]*setPermission\('danger-full-access'[\s\S]*current\?\.preset !== 'danger-full-access'/, `${file} should support approval reply "允许所有"`)
   }
 })
 
@@ -1406,6 +1577,7 @@ test('runtime patcher expands dsh-im natural language controls for mobile IM', (
   assert.match(patcher, /patchDshImBundledHostCurrent230/)
   assert.match(patcher, /patchDshImBundledApprovalCurrent230/)
   assert.match(patcher, /patchDshImBundledNaturalModelAliases/)
+  assert.match(patcher, /patchDshImBundledSessionPermissionApi/)
   assert.match(patcher, /patchDshImBundledStandaloneBridgeApprovalAllowAll/)
   assert.match(patcher, /patchDshImTextHarnessBridgeSource/)
   assert.match(patcher, /patchDshImWeixinBridgeSource/)
@@ -1429,6 +1601,9 @@ test('runtime patcher expands dsh-im natural language controls for mobile IM', (
   assert.ok(patcher.includes('^模型(?:切换到|换成|改成|设置为|设为)'))
   assert.match(patcher, /修改审批权限/)
   assert.match(patcher, /审批权限改成/)
+  assert.match(patcher, /\/api\/crawshrimp\/session\/permission/)
+  assert.match(patcher, /getSessionPermission/)
+  assert.match(patcher, /setSessionPermission/)
   assert.match(patcher, /directPreset/)
   assert.match(patcher, /确认切换到完全访问/)
   assert.match(patcher, /继续吧/)
@@ -1466,6 +1641,11 @@ test('runtime dsh-im bundle carries product model aliases used by mobile command
   assert.match(bundle, /crawshrimp-deepseek-official\/deepseek-v4-pro/)
   assert.doesNotMatch(bundle, /crawshrimp-deepseek-official\/deepseek-official-v4-pro/)
   assert.doesNotMatch(bundle, /Yce=new Map;function WA/)
+  assert.match(bundle, /\/api\/crawshrimp\/session\/permission/)
+  assert.match(bundle, /getSessionPermission/)
+  assert.match(bundle, /setSessionPermission/)
+  assert.match(bundle, /setPermission\("danger-full-access"/)
+  assert.doesNotMatch(bundle, /executeCommand\("\/permission/)
   assert.match(bundle, /bundled dingtalk bridge approval/)
   assert.match(bundle, /bundled feishu bridge approval/)
   assert.match(bundle, /bundled qq bridge approval/)
@@ -1502,6 +1682,11 @@ test('staged dsh-im bundle carries mobile approval and natural controls', {
   assert.match(bundle, /修改审批权限/)
   assert.match(bundle, /审批权限改成/)
   assert.match(bundle, /确认切换到完全访问/)
+  assert.match(bundle, /\/api\/crawshrimp\/session\/permission/)
+  assert.match(bundle, /getSessionPermission/)
+  assert.match(bundle, /setSessionPermission/)
+  assert.match(bundle, /setPermission\("danger-full-access"/)
+  assert.doesNotMatch(bundle, /executeCommand\("\/permission/)
   assert.match(bundle, /cshImApprovalPayloadArgs/)
   assert.match(bundle, /actor:e/)
   assert.match(bundle, /bundled dingtalk bridge approval/)

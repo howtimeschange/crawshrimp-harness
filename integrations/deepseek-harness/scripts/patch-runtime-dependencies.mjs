@@ -19,6 +19,7 @@ const DSH_IM_NATURAL_CONTROLS_PATCH_MARKER = 'crawshrimp-dsh-im-natural-controls
 const DSH_IM_NATURAL_MODEL_ALIASES_PATCH_MARKER = 'crawshrimp-dsh-im-natural-model-aliases-v1'
 const DSH_IM_MODEL_CATALOG_PATCH_MARKER = 'crawshrimp-dsh-im-model-catalog-v1'
 const DSH_IM_LOCAL_MODEL_SELECT_PATCH_MARKER = 'crawshrimp-dsh-im-local-model-select-v1'
+const DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER = 'crawshrimp-dsh-im-session-permission-api-v1'
 const DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER = 'crawshrimp-dsh-im-approval-allow-all-v1'
 const DSH_IM_APPROVAL_BRIEF_CARD_PATCH_MARKER = 'crawshrimp-dsh-im-approval-brief-card-v1'
 const DSH_APPROVAL_ALLOW_ALL_PATCH_MARKER = 'crawshrimp-dsh-approval-allow-all-v1'
@@ -1347,6 +1348,14 @@ function patchDshImNaturalControls(runtimeRoot) {
     'shared',
     'bot-workspace-store.mjs',
   )
+  const workspaceSessionEntries = xmanruiPackageEntryPaths(
+    runtimeRoot,
+    'dsh-im',
+    'src',
+    'channels',
+    'shared',
+    'workspace-session.mjs',
+  )
   const textBridgeEntries = xmanruiPackageEntryPaths(
     runtimeRoot,
     'dsh-im',
@@ -1413,6 +1422,9 @@ function patchDshImNaturalControls(runtimeRoot) {
   for (const entry of botWorkspaceStoreEntries) {
     patched = patchFile(entry, patchDshImBotWorkspaceStoreSource) || patched
   }
+  for (const entry of workspaceSessionEntries) {
+    patched = patchFile(entry, patchDshImWorkspaceSessionSource) || patched
+  }
   for (const entry of textBridgeEntries) {
     patched = patchFile(entry, patchDshImTextHarnessBridgeSource) || patched
   }
@@ -1443,6 +1455,7 @@ function patchDshImNaturalControls(runtimeRoot) {
       ...approvalEntries,
       ...harnessClientEntries,
       ...botWorkspaceStoreEntries,
+      ...workspaceSessionEntries,
       ...textBridgeEntries,
       ...weixinBridgeEntries,
       ...dingtalkBridgeEntries,
@@ -1517,12 +1530,12 @@ function patchDshImHarnessClientSource(source) {
       'dsh-im Crawshrimp model catalog client',
     )
   }
-  if (source.includes(DSH_IM_LOCAL_MODEL_SELECT_PATCH_MARKER)) return source
-  return replaceExact(
-    source,
-    `    await this.ensureRunning(options);
+  if (!source.includes(DSH_IM_LOCAL_MODEL_SELECT_PATCH_MARKER)) {
+    source = replaceExact(
+      source,
+      `    await this.ensureRunning(options);
     const operation = (maintenanceSignal) => {`,
-    `    await this.ensureRunning(options);
+      `    await this.ensureRunning(options);
     // ${DSH_IM_LOCAL_MODEL_SELECT_PATCH_MARKER}: prefer Crawshrimp's session-only model switch endpoint.
     let localResponse;
     try {
@@ -1558,25 +1571,157 @@ function patchDshImHarnessClientSource(source) {
       return { selected: body.selected };
     }
     const operation = (maintenanceSignal) => {`,
-    'dsh-im Crawshrimp local model select client',
+      'dsh-im Crawshrimp local model select client',
+    )
+  }
+  if (source.includes(DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER)) return source
+  source = replaceExact(
+    source,
+    `function turnStoppedError() {`,
+    `function validPermissionPayload(value) {
+  return value !== null
+    && typeof value === 'object'
+    && typeof value.preset === 'string'
+    && Boolean(value.preset)
+    && Array.isArray(value.available)
+    && value.available.every((preset) => typeof preset === 'string' && Boolean(preset));
+}
+
+function turnStoppedError() {`,
+    'dsh-im session permission payload validator',
+  )
+  return replaceExact(
+    source,
+    `  async isSessionRunning(sessionId, options = {}) {`,
+    `  // ${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: direct permission control avoids model/tool execution loops.
+  async getSessionPermission(sessionId, options = {}) {
+    if (typeof sessionId !== 'string' || !sessionId) throw new TypeError('sessionId is required');
+    await this.ensureRunning(options);
+    let response;
+    try {
+      const url = new URL('/api/crawshrimp/session/permission', this.#baseUrl);
+      url.searchParams.set('sessionId', sessionId);
+      response = await this.#fetch(url, {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+        signal: options.signal,
+      });
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      throw new HarnessTransportError('harness-connect-failed', 'crawshrimp.session.permission', {
+        cause: error,
+      });
+    }
+    if (!response.ok) {
+      throw new HarnessTransportError('harness-http-failed', 'crawshrimp.session.permission', {
+        status: response.status,
+      });
+    }
+    const body = await response.json();
+    if (body?.ok === false) throw new HarnessRpcError('crawshrimp.session.permission', body.error);
+    if (!validPermissionPayload(body)) {
+      throw new HarnessTransportError('harness-response-invalid', 'crawshrimp.session.permission', {
+        cause: new Error('Crawshrimp returned an invalid session permission'),
+      });
+    }
+    return body;
+  }
+
+  async setSessionPermission(sessionId, preset, options = {}) {
+    if (typeof sessionId !== 'string' || !sessionId) throw new TypeError('sessionId is required');
+    if (typeof preset !== 'string' || !preset) throw new TypeError('permission preset is required');
+    await this.ensureRunning(options);
+    let response;
+    try {
+      response = await this.#fetch(new URL('/api/crawshrimp/session/permission', this.#baseUrl), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ sessionId, preset }),
+        signal: options.signal,
+      });
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      throw new HarnessTransportError('harness-connect-failed', 'crawshrimp.session.permission', {
+        cause: error,
+      });
+    }
+    if (!response.ok) {
+      throw new HarnessTransportError('harness-http-failed', 'crawshrimp.session.permission', {
+        status: response.status,
+      });
+    }
+    const body = await response.json();
+    if (body?.ok === false) throw new HarnessRpcError('crawshrimp.session.permission', body.error);
+    if (!validPermissionPayload(body) || body.preset !== preset) {
+      throw new HarnessTransportError('harness-response-invalid', 'crawshrimp.session.permission', {
+        cause: new Error('Crawshrimp returned an invalid session permission update'),
+      });
+    }
+    return body;
+  }
+
+  async isSessionRunning(sessionId, options = {}) {`,
+    'dsh-im Crawshrimp session permission client',
   )
 }
 
 function patchDshImBotWorkspaceStoreSource(source) {
-  if (source.includes(`${DSH_IM_MODEL_CATALOG_PATCH_MARKER}: workspace scoped catalog`)) return source
-  return replaceExact(
-    source,
-    `      if ((property === 'listWorkspaces'
+  if (!source.includes(`${DSH_IM_MODEL_CATALOG_PATCH_MARKER}: workspace scoped catalog`)) {
+    source = replaceExact(
+      source,
+      `      if ((property === 'listWorkspaces'
         || property === 'listWorkspaceSessions'
         || property === 'listModels')
         && typeof target[property] === 'function') {`,
-    `      if ((property === 'listWorkspaces'
+      `      if ((property === 'listWorkspaces'
         || property === 'listWorkspaceSessions'
         || property === 'listModels'
         // ${DSH_IM_MODEL_CATALOG_PATCH_MARKER}: workspace scoped catalog for mobile model-list commands.
         || property === 'listCrawshrimpModelCatalog')
         && typeof target[property] === 'function') {`,
-    'dsh-im workspace scoped Crawshrimp model catalog',
+      'dsh-im workspace scoped Crawshrimp model catalog',
+    )
+  }
+  if (source.includes(`${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: direct permission control`)) {
+    return source
+  }
+  return replaceExact(
+    source,
+    `            selectModel(...args) {
+              return invokeCurrentSession('selectSessionModel', args, 'model selection');
+            },
+            isRunning(...args) {`,
+    `            selectModel(...args) {
+              return invokeCurrentSession('selectSessionModel', args, 'model selection');
+            },
+            // ${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: direct permission control avoids model/tool execution loops.
+            permission(...args) {
+              return invokeCurrentSession('getSessionPermission', args, 'permission query');
+            },
+            setPermission(...args) {
+              return invokeStartedSessionMutation('setSessionPermission', args, 'permission update');
+            },
+            isRunning(...args) {`,
+    'dsh-im workspace scoped session permission control',
+  )
+}
+
+function patchDshImWorkspaceSessionSource(source) {
+  if (source.includes(`${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: direct permission control`)) {
+    return source
+  }
+  return replaceExact(
+    source,
+    `    models: (...args) => harness.getSessionModels(sessionId, ...args),
+    selectModel: (...args) => harness.selectSessionModel(sessionId, ...args),
+    isRunning: (...args) => harness.isSessionRunning(sessionId, ...args),`,
+    `    models: (...args) => harness.getSessionModels(sessionId, ...args),
+    selectModel: (...args) => harness.selectSessionModel(sessionId, ...args),
+    // ${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: direct permission control avoids model/tool execution loops.
+    permission: (...args) => harness.getSessionPermission(sessionId, ...args),
+    setPermission: (...args) => harness.setSessionPermission(sessionId, ...args),
+    isRunning: (...args) => harness.isSessionRunning(sessionId, ...args),`,
+    'dsh-im workspace session permission control',
   )
 }
 
@@ -2068,18 +2213,18 @@ async function sessionCatalog(session, options) {`,
 }
 
 function patchDshImPermissionCommandSource(source) {
-  if (source.includes(`${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: permission`)) return source
-  source = replaceExact(
-    source,
-    "const CONFIRM_FULL_ACCESS = '确认切换到完全访问';\nconst UNSAFE_TARGET_TEXT = /[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]/u;",
-    `const CONFIRM_FULL_ACCESS = '确认切换到完全访问';
+  if (!source.includes(`${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: permission`)) {
+    source = replaceExact(
+      source,
+      "const CONFIRM_FULL_ACCESS = '确认切换到完全访问';\nconst UNSAFE_TARGET_TEXT = /[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]/u;",
+      `const CONFIRM_FULL_ACCESS = '确认切换到完全访问';
 // ${DSH_IM_NATURAL_CONTROLS_PATCH_MARKER}: permission controls for mobile IM chats without menu access.
 const UNSAFE_TARGET_TEXT = /[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]/u;`,
-    'dsh-im natural permission marker',
-  )
-  source = replaceExact(
-    source,
-    `const PRESETS = Object.freeze({
+      'dsh-im natural permission marker',
+    )
+    source = replaceExact(
+      source,
+      `const PRESETS = Object.freeze({
   'read-only': Object.freeze({
     label: '只读（Read Only）',
     aliases: Object.freeze(['只读', '只读模式', 'read only']),
@@ -2093,7 +2238,7 @@ const UNSAFE_TARGET_TEXT = /[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]/u;`,
     aliases: Object.freeze(['完全访问', '完整访问', 'full access']),
   }),
 });`,
-    `const PRESETS = Object.freeze({
+      `const PRESETS = Object.freeze({
   'read-only': Object.freeze({
     label: '只读（Read Only）',
     aliases: Object.freeze(['只读', '只读模式', '只读权限', '只读审批', 'read only', 'read-only']),
@@ -2105,6 +2250,7 @@ const UNSAFE_TARGET_TEXT = /[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]/u;`,
       '允许工作区写入',
       '允许写入工作区',
       '工作区写入权限',
+      '打开审批模式',
       '开启审批',
       '打开审批',
       '恢复审批',
@@ -2123,6 +2269,12 @@ const UNSAFE_TARGET_TEXT = /[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]/u;`,
       '完全访问权限',
       '全权限',
       '关闭审批',
+      '关闭审批模式',
+      '去掉审批',
+      '去除审批',
+      '取消审批',
+      '关掉审批',
+      '取消审批模式',
       '不用审批',
       '不需要审批',
       '自动批准',
@@ -2130,28 +2282,32 @@ const UNSAFE_TARGET_TEXT = /[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]/u;`,
       '免审批',
       'never',
       'full access',
+      'full assess',
       'full-access',
     ]),
   }),
 });`,
-    'dsh-im permission preset aliases',
-  )
-  source = replaceExact(
-    source,
-    `const QUERY_PHRASES = new Set([
+      'dsh-im permission preset aliases',
+    )
+    source = replaceExact(
+      source,
+      `const QUERY_PHRASES = new Set([
   '当前什么权限',
   '查看审批权限',
   '现在是哪个权限模式',
   '有哪些权限',
 ]);`,
-    `const QUERY_PHRASES = new Set([
+      `const QUERY_PHRASES = new Set([
   '当前什么权限',
   '当前权限',
   '查看权限',
   '查看审批权限',
   '现在是哪个权限模式',
+  '现在是什么审批模式',
+  '当前审批模式',
   '当前审批策略',
   '现在审批策略',
+  '审批模式',
   '审批权限',
   '审批权限设置',
   '审批怎么设置',
@@ -2162,14 +2318,114 @@ const UNSAFE_TARGET_TEXT = /[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]/u;`,
   '有哪些审批权限',
   '权限列表',
 ]);`,
-    'dsh-im permission query phrases',
-  )
-  return replaceExact(
-    source,
-    "  const match = /^(?:切换到|设置为|设为)\\s*(.+)$/u.exec(normalized)\n    ?? /^允许\\s*(工作区写入)$/u.exec(normalized);\n  const target = match?.[1]?.trim();",
-    "  const directPreset = PRESET_BY_ALIAS.get(normalized);\n  if (directPreset) return { action: 'select', preset: directPreset };\n\n  const match = /^(?:切换到|设置为|设为|改成|权限改成|审批权限改成|审批改成|设置审批为|审批设置为|把审批改成|把权限改成)\\s*(.+)$/u.exec(normalized)\n    ?? /^允许\\s*(工作区写入|写入工作区)$/u.exec(normalized);\n  const target = match?.[1]?.trim();",
-    'dsh-im natural permission parser',
-  )
+      'dsh-im permission query phrases',
+    )
+    source = replaceExact(
+      source,
+      "  const match = /^(?:切换到|设置为|设为)\\s*(.+)$/u.exec(normalized)\n    ?? /^允许\\s*(工作区写入)$/u.exec(normalized);\n  const target = match?.[1]?.trim();",
+      "  const directPreset = PRESET_BY_ALIAS.get(normalized);\n  if (directPreset) return { action: 'select', preset: directPreset };\n\n  const match = /^(?:切换到|设置为|设为|改成|权限改成|审批权限改成|审批改成|设置审批为|审批设置为|把审批改成|把权限改成|开启|启用|打开)\\s*(.+)$/u.exec(normalized)\n    ?? /^允许\\s*(工作区写入|写入工作区)$/u.exec(normalized);\n  const target = match?.[1]?.trim();",
+      'dsh-im natural permission parser',
+    )
+  }
+  if (!source.includes("'去掉审批'")) {
+    source = replaceExact(
+      source,
+      "      '关闭审批',\n      '不用审批',",
+      "      '关闭审批',\n      '关闭审批模式',\n      '去掉审批',\n      '去除审批',\n      '取消审批',\n      '关掉审批',\n      '取消审批模式',\n      '不用审批',",
+      'dsh-im extra no-approval aliases',
+    )
+  }
+  if (!source.includes("'full assess'")) {
+    source = replaceExact(
+      source,
+      "      'full access',\n      'full-access',",
+      "      'full access',\n      'full assess',\n      'full-access',",
+      'dsh-im full access typo alias',
+    )
+  }
+  if (!source.includes("'现在是什么审批模式'")) {
+    source = replaceExact(
+      source,
+      "  '现在是哪个权限模式',\n  '当前审批策略',",
+      "  '现在是哪个权限模式',\n  '现在是什么审批模式',\n  '当前审批模式',\n  '当前审批策略',",
+      'dsh-im approval mode query aliases',
+    )
+    source = replaceExact(
+      source,
+      "  '现在审批策略',\n  '审批权限',",
+      "  '现在审批策略',\n  '审批模式',\n  '审批权限',",
+      'dsh-im approval mode query phrase',
+    )
+  }
+  if (!source.includes(`${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: permission manager`)) {
+    source = replaceExact(
+      source,
+      `function presetLabel(preset) {`,
+      `// ${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: permission manager uses direct session permission API.
+function permissionPayloadPreset(payload) {
+  if (!payload || typeof payload !== 'object'
+    || typeof payload.preset !== 'string'
+    || !payload.preset) {
+    throw new TypeError('Harness returned an invalid permission payload');
+  }
+  if (!Object.hasOwn(PRESETS, payload.preset) && payload.preset !== 'custom') {
+    throw new TypeError('Harness returned an unknown permission preset');
+  }
+  return payload.preset;
+}
+
+function presetLabel(preset) {`,
+      'dsh-im permission payload parser',
+    )
+    source = replaceExact(
+      source,
+      `        if (typeof bound.session.executeCommand !== 'function') {
+          const unavailable = new Error('Harness command execution is unavailable');
+          unavailable.code = 'commands-unavailable';
+          throw unavailable;
+        }
+        const preset = currentPreset(await bound.session.executeCommand(
+          '/permission',
+          rpcOptions,
+        ));
+        if (!preset) throw new TypeError('Harness returned an invalid current permission');`,
+      `        if (typeof bound.session.permission !== 'function') {
+          const unavailable = new Error('Harness permission API is unavailable');
+          unavailable.code = 'commands-unavailable';
+          throw unavailable;
+        }
+        const preset = permissionPayloadPreset(await bound.session.permission(rpcOptions));`,
+      'dsh-im direct permission query',
+    )
+    source = replaceExact(
+      source,
+      `        if (typeof bound.session.executeCommand !== 'function') {
+          const unavailable = new Error('Harness command execution is unavailable');
+          unavailable.code = 'commands-unavailable';
+          throw unavailable;
+        }
+        const changed = commandResultValue(await bound.session.executeCommand(
+          permissionLine(preset),
+          rpcOptions,
+        ));
+        if (changed.kind !== 'success') throw new Error('Harness rejected the permission preset');
+        const actual = currentPreset(await bound.session.executeCommand(
+          '/permission',
+          rpcOptions,
+        ));`,
+      `        if (typeof bound.session.setPermission !== 'function') {
+          const unavailable = new Error('Harness permission API is unavailable');
+          unavailable.code = 'commands-unavailable';
+          throw unavailable;
+        }
+        const actual = permissionPayloadPreset(await bound.session.setPermission(
+          preset,
+          rpcOptions,
+        ));`,
+      'dsh-im direct permission change',
+    )
+  }
+  return source
 }
 
 function patchDshImHarnessApprovalSource(source) {
@@ -2643,7 +2899,35 @@ function argumentText(source) {
   )
 }
 
+function upgradeDshImApprovalAllowAllPermissionApiSource(source) {
+  let next = source.replaceAll(
+    `          if (!session || typeof session.executeCommand !== 'function') {
+            throw new Error('Harness permission command is unavailable');
+          }`,
+    `          if (!session || typeof session.setPermission !== 'function') {
+            throw new Error('Harness permission API is unavailable');
+          }`,
+  )
+  next = next.replaceAll(
+    `          const options = this.#signal ? { signal: this.#signal } : undefined;
+          const changed = await session.executeCommand('/permission danger-full-access', options);
+          if (changed?.result?.kind !== 'success') throw new Error('Harness rejected permission allow-all');
+          const current = await session.executeCommand('/permission', options);
+          const currentText = String(current?.result?.text || '').trim();
+          if (!/^current preset danger-full-access \\(/u.test(currentText)) {
+            throw new Error('Harness permission allow-all readback mismatch');
+          }`,
+    `          const options = this.#signal ? { signal: this.#signal } : undefined;
+          const current = await session.setPermission('danger-full-access', options);
+          if (current?.preset !== 'danger-full-access') {
+            throw new Error('Harness permission allow-all readback mismatch');
+          }`,
+  )
+  return next
+}
+
 function patchDshImTextBridgeApprovalAllowAllSource(source) {
+  source = upgradeDshImApprovalAllowAllPermissionApiSource(source)
   if (source.includes(DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER)) {
     return source
   }
@@ -2664,15 +2948,12 @@ function patchDshImTextBridgeApprovalAllowAllSource(source) {
             throw new Error('Harness workspace session is unavailable');
           }
           const session = this.#harness.workspaceSession(sessionId);
-          if (!session || typeof session.executeCommand !== 'function') {
-            throw new Error('Harness permission command is unavailable');
+          if (!session || typeof session.setPermission !== 'function') {
+            throw new Error('Harness permission API is unavailable');
           }
           const options = this.#signal ? { signal: this.#signal } : undefined;
-          const changed = await session.executeCommand('/permission danger-full-access', options);
-          if (changed?.result?.kind !== 'success') throw new Error('Harness rejected permission allow-all');
-          const current = await session.executeCommand('/permission', options);
-          const currentText = String(current?.result?.text || '').trim();
-          if (!/^current preset danger-full-access \\(/u.test(currentText)) {
+          const current = await session.setPermission('danger-full-access', options);
+          if (current?.preset !== 'danger-full-access') {
             throw new Error('Harness permission allow-all readback mismatch');
           }
         },
@@ -2792,6 +3073,7 @@ import { askInWorkspaceSession } from './workspace-session.mjs';`,
 }
 
 function patchDshImWeixinBridgeApprovalAllowAllSource(source) {
+  source = upgradeDshImApprovalAllowAllPermissionApiSource(source)
   if (source.includes(DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER)) {
     return source
   }
@@ -2812,15 +3094,12 @@ function patchDshImWeixinBridgeApprovalAllowAllSource(source) {
             throw new Error('Harness workspace session is unavailable');
           }
           const session = this.#harness.workspaceSession(sessionId);
-          if (!session || typeof session.executeCommand !== 'function') {
-            throw new Error('Harness permission command is unavailable');
+          if (!session || typeof session.setPermission !== 'function') {
+            throw new Error('Harness permission API is unavailable');
           }
           const options = this.#signal ? { signal: this.#signal } : undefined;
-          const changed = await session.executeCommand('/permission danger-full-access', options);
-          if (changed?.result?.kind !== 'success') throw new Error('Harness rejected permission allow-all');
-          const current = await session.executeCommand('/permission', options);
-          const currentText = String(current?.result?.text || '').trim();
-          if (!/^current preset danger-full-access \\(/u.test(currentText)) {
+          const current = await session.setPermission('danger-full-access', options);
+          if (current?.preset !== 'danger-full-access') {
             throw new Error('Harness permission allow-all readback mismatch');
           }
         },
@@ -2970,15 +3249,12 @@ function approvalAllowAllSource() {
             throw new Error('Harness workspace session is unavailable');
           }
           const session = this.#harness.workspaceSession(sessionId);
-          if (!session || typeof session.executeCommand !== 'function') {
-            throw new Error('Harness permission command is unavailable');
+          if (!session || typeof session.setPermission !== 'function') {
+            throw new Error('Harness permission API is unavailable');
           }
           const options = this.#signal ? { signal: this.#signal } : undefined;
-          const changed = await session.executeCommand('/permission danger-full-access', options);
-          if (changed?.result?.kind !== 'success') throw new Error('Harness rejected permission allow-all');
-          const current = await session.executeCommand('/permission', options);
-          const currentText = String(current?.result?.text || '').trim();
-          if (!/^current preset danger-full-access \\(/u.test(currentText)) {
+          const current = await session.setPermission('danger-full-access', options);
+          if (current?.preset !== 'danger-full-access') {
             throw new Error('Harness permission allow-all readback mismatch');
           }
         },`
@@ -3279,6 +3555,7 @@ function patchDshImBundledProductModelCatalog(source) {
 }
 
 function patchDshImBundledApprovalAllowAll(source) {
+  source = upgradeDshImBundledApprovalAllowAllPermissionApi(source)
   if (source.includes(`${DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER}: bundled approval`)) {
     return patchDshImBundledStandaloneBridgeApprovalAllowAll(source)
   }
@@ -3359,7 +3636,7 @@ function patchDshImBundledApprovalAllowAll(source) {
   source = replaceExact(
     source,
     'this.#d.handleRequested(t,{key:o,actor:i,requiresMention:a,send:c=>this.#A.sendText(e,c)})',
-    `this.#d.handleRequested(t,{key:o,actor:i,requiresMention:a,send:c=>this.#A.sendText(e,c),/* ${DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER}: bundled text bridge approval */allowAll:async()=>{let c=typeof this.#r.sessionFor=="function"?this.#r.sessionFor(o):null;if(c!==t.sessionId)throw new Error("approval session binding changed");if(typeof this.#t.workspaceSession!="function")throw new Error("Harness workspace session is unavailable");let I=this.#t.workspaceSession(c);if(!I||typeof I.executeCommand!="function")throw new Error("Harness permission command is unavailable");let d=this.#s?{signal:this.#s}:void 0,B=await I.executeCommand("/permission danger-full-access",d);if(B?.result?.kind!=="success")throw new Error("Harness rejected permission allow-all");let f=await I.executeCommand("/permission",d),Q=String(f?.result?.text||"").trim();if(!/^current preset danger-full-access \\(/u.test(Q))throw new Error("Harness permission allow-all readback mismatch")}})`,
+    `this.#d.handleRequested(t,{key:o,actor:i,requiresMention:a,send:c=>this.#A.sendText(e,c),/* ${DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER}: bundled text bridge approval */allowAll:async()=>{let c=typeof this.#r.sessionFor=="function"?this.#r.sessionFor(o):null;if(c!==t.sessionId)throw new Error("approval session binding changed");if(typeof this.#t.workspaceSession!="function")throw new Error("Harness workspace session is unavailable");let I=this.#t.workspaceSession(c);if(!I||typeof I.setPermission!="function")throw new Error("Harness permission API is unavailable");let d=this.#s?{signal:this.#s}:void 0,B=await I.setPermission("danger-full-access",d);if(B?.preset!=="danger-full-access")throw new Error("Harness permission allow-all readback mismatch")}})`,
     'bundled dsh-im text bridge approval allow-all callback',
   )
   source = replaceAny(
@@ -3367,11 +3644,11 @@ function patchDshImBundledApprovalAllowAll(source) {
     [
       [
         'this.#C.handleRequested(t,{key:o,actor:i,send:c=>this.#b(i,c,e,a)})',
-        `this.#C.handleRequested(t,{key:o,actor:i,send:c=>this.#b(i,c,e,a),/* ${DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER}: bundled weixin bridge approval */allowAll:async()=>{let c=typeof this.#i.sessionFor=="function"?this.#i.sessionFor(o):null;if(c!==t.sessionId)throw new Error("approval session binding changed");if(typeof this.#o.workspaceSession!="function")throw new Error("Harness workspace session is unavailable");let I=this.#o.workspaceSession(c);if(!I||typeof I.executeCommand!="function")throw new Error("Harness permission command is unavailable");let d=this.#n?{signal:this.#n}:void 0,B=await I.executeCommand("/permission danger-full-access",d);if(B?.result?.kind!=="success")throw new Error("Harness rejected permission allow-all");let f=await I.executeCommand("/permission",d),Q=String(f?.result?.text||"").trim();if(!/^current preset danger-full-access \\(/u.test(Q))throw new Error("Harness permission allow-all readback mismatch")}})`,
+        `this.#C.handleRequested(t,{key:o,actor:i,send:c=>this.#b(i,c,e,a),/* ${DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER}: bundled weixin bridge approval */allowAll:async()=>{let c=typeof this.#i.sessionFor=="function"?this.#i.sessionFor(o):null;if(c!==t.sessionId)throw new Error("approval session binding changed");if(typeof this.#o.workspaceSession!="function")throw new Error("Harness workspace session is unavailable");let I=this.#o.workspaceSession(c);if(!I||typeof I.setPermission!="function")throw new Error("Harness permission API is unavailable");let d=this.#n?{signal:this.#n}:void 0,B=await I.setPermission("danger-full-access",d);if(B?.preset!=="danger-full-access")throw new Error("Harness permission allow-all readback mismatch")}})`,
       ],
       [
         'this.#u.handleRequested(t,{key:o,actor:i,send:c=>this.#_(i,c,e,a)})',
-        `this.#u.handleRequested(t,{key:o,actor:i,send:c=>this.#_(i,c,e,a),/* ${DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER}: bundled weixin bridge approval */allowAll:async()=>{let c=typeof this.#i.sessionFor=="function"?this.#i.sessionFor(o):null;if(c!==t.sessionId)throw new Error("approval session binding changed");if(typeof this.#o.workspaceSession!="function")throw new Error("Harness workspace session is unavailable");let I=this.#o.workspaceSession(c);if(!I||typeof I.executeCommand!="function")throw new Error("Harness permission command is unavailable");let d=this.#n?{signal:this.#n}:void 0,B=await I.executeCommand("/permission danger-full-access",d);if(B?.result?.kind!=="success")throw new Error("Harness rejected permission allow-all");let f=await I.executeCommand("/permission",d),Q=String(f?.result?.text||"").trim();if(!/^current preset danger-full-access \\(/u.test(Q))throw new Error("Harness permission allow-all readback mismatch")}})`,
+        `this.#u.handleRequested(t,{key:o,actor:i,send:c=>this.#_(i,c,e,a),/* ${DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER}: bundled weixin bridge approval */allowAll:async()=>{let c=typeof this.#i.sessionFor=="function"?this.#i.sessionFor(o):null;if(c!==t.sessionId)throw new Error("approval session binding changed");if(typeof this.#o.workspaceSession!="function")throw new Error("Harness workspace session is unavailable");let I=this.#o.workspaceSession(c);if(!I||typeof I.setPermission!="function")throw new Error("Harness permission API is unavailable");let d=this.#n?{signal:this.#n}:void 0,B=await I.setPermission("danger-full-access",d);if(B?.preset!=="danger-full-access")throw new Error("Harness permission allow-all readback mismatch")}})`,
       ],
     ],
     'bundled dsh-im weixin bridge approval allow-all callback',
@@ -3380,7 +3657,14 @@ function patchDshImBundledApprovalAllowAll(source) {
 }
 
 function bundledApprovalAllowAllCallback({ label, state, harness, signal }) {
-  return `/* ${DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER}: bundled ${label} bridge approval */allowAll:async()=>{let c=typeof this.${state}.sessionFor=="function"?this.${state}.sessionFor(o):null;if(c!==t.sessionId)throw new Error("approval session binding changed");if(typeof this.${harness}.workspaceSession!="function")throw new Error("Harness workspace session is unavailable");let I=this.${harness}.workspaceSession(c);if(!I||typeof I.executeCommand!="function")throw new Error("Harness permission command is unavailable");let d=this.${signal}?{signal:this.${signal}}:void 0,B=await I.executeCommand("/permission danger-full-access",d);if(B?.result?.kind!=="success")throw new Error("Harness rejected permission allow-all");let f=await I.executeCommand("/permission",d),Q=String(f?.result?.text||"").trim();if(!/^current preset danger-full-access \\(/u.test(Q))throw new Error("Harness permission allow-all readback mismatch")}`
+  return `/* ${DSH_IM_APPROVAL_ALLOW_ALL_PATCH_MARKER}: bundled ${label} bridge approval */allowAll:async()=>{let c=typeof this.${state}.sessionFor=="function"?this.${state}.sessionFor(o):null;if(c!==t.sessionId)throw new Error("approval session binding changed");if(typeof this.${harness}.workspaceSession!="function")throw new Error("Harness workspace session is unavailable");let I=this.${harness}.workspaceSession(c);if(!I||typeof I.setPermission!="function")throw new Error("Harness permission API is unavailable");let d=this.${signal}?{signal:this.${signal}}:void 0,B=await I.setPermission("danger-full-access",d);if(B?.preset!=="danger-full-access")throw new Error("Harness permission allow-all readback mismatch")}`
+}
+
+function upgradeDshImBundledApprovalAllowAllPermissionApi(source) {
+  return source.replace(
+    /if\(!I\|\|typeof I\.executeCommand!="function"\)throw new Error\("Harness permission command is unavailable"\);let d=(this\.#[A-Za-z_$][\w$]*)\?\{signal:\1\}:void 0,B=await I\.executeCommand\("\/permission danger-full-access",d\);if\(B\?\.result\?\.kind!=="success"\)throw new Error\("Harness rejected permission allow-all"\);let f=await I\.executeCommand\("\/permission",d\),Q=String\(f\?\.result\?\.text\|\|""\)\.trim\(\);if\(!\/\^current preset danger-full-access \\\(\/u\.test\(Q\)\)throw new Error\("Harness permission allow-all readback mismatch"\)/g,
+    'if(!I||typeof I.setPermission!="function")throw new Error("Harness permission API is unavailable");let d=$1?{signal:$1}:void 0,B=await I.setPermission("danger-full-access",d);if(B?.preset!=="danger-full-access")throw new Error("Harness permission allow-all readback mismatch")',
+  )
 }
 
 function patchDshImBundledStandaloneBridgeApprovalAllowAll(source) {
@@ -3469,7 +3753,7 @@ function patchDshImBundledStandaloneBridgeApprovalAllowAll(source) {
       ],
     },
   ]
-  let next = source.replaceAll(
+  let next = upgradeDshImBundledApprovalAllowAllPermissionApi(source).replaceAll(
     'throw new Error("Harness permission allow-all readback mismatch")}}})',
     'throw new Error("Harness permission allow-all readback mismatch")}})',
   )
@@ -3493,7 +3777,7 @@ function patchDshImBundledStandaloneBridgeApprovalAllowAll(source) {
       throw new Error(`cannot patch bundled dsh-im ${patch.label} bridge approval allow-all callback: expected source not found`)
     }
   }
-  return next
+  return upgradeDshImBundledApprovalAllowAllPermissionApi(next)
 }
 
 function replaceAny(source, replacements, label) {
@@ -3579,6 +3863,7 @@ function patchDshImBundledHost(source) {
   source = patchDshImBundledNaturalModelAliases(source)
   source = patchDshImBundledProductModelCatalog(source)
   source = patchDshImBundledLocalModelSelect(source)
+  source = patchDshImBundledSessionPermissionApi(source)
   source = patchDshImBundledApprovalAllowAll(source)
   if (!source.includes(`${APPROVAL_DISPLAY_ARGUMENTS_TRUNCATION_PATCH_MARKER}: dsh-im-bundled-approval`)) {
     source = replaceExact(
@@ -3622,6 +3907,119 @@ function patchDshImBundledLocalModelSelect(source) {
     ],
     'bundled dsh-im Crawshrimp local model select client',
   )
+}
+
+function bundledPermissionPayloadGuard(value, { requirePreset } = {}) {
+  return `!${value}||typeof ${value}!="object"||typeof ${value}.preset!="string"||!${value}.preset||!Array.isArray(${value}.available)||${value}.available.some(${requirePreset}=>typeof ${requirePreset}!="string"||!${requirePreset})`
+}
+
+function patchDshImBundledSessionPermissionApi(source) {
+  let next = source
+  if (!next.includes(`${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: bundled client`)) {
+    const transportError = next.includes('new Og("harness-http-failed","crawshrimp.session.selectModel"')
+      ? 'Og'
+      : (next.includes('new Sg("harness-http-failed","crawshrimp.session.selectModel"') ? 'Sg' : null)
+    const rpcError = transportError === 'Og' ? 'jo' : (transportError === 'Sg' ? 'Yo' : null)
+    if (!transportError || !rpcError) {
+      throw new Error('cannot patch bundled dsh-im session permission client: expected transport error names not found')
+    }
+    next = replaceExact(
+      next,
+      'async isSessionRunning(t,o={}){if(typeof t!="string"||!t)throw new TypeError("sessionId is required");',
+      `async getSessionPermission(t,o={}){if(typeof t!="string"||!t)throw new TypeError("sessionId is required");await this.ensureRunning(o);let i=await this.#i(new URL("/api/crawshrimp/session/permission",this.#e),{method:"GET",headers:{accept:"application/json"},signal:o.signal});if(!i.ok)throw new ${transportError}("harness-http-failed","crawshrimp.session.permission",{status:i.status});let e=await i.json();if(e?.ok===!1)throw new ${rpcError}("crawshrimp.session.permission",e.error);if(${bundledPermissionPayloadGuard('e', { requirePreset: 'a' })})throw new ${transportError}("harness-response-invalid","crawshrimp.session.permission",{cause:new Error("Crawshrimp returned an invalid session permission")});return e}async setSessionPermission(t,o,i={}){if(typeof t!="string"||!t)throw new TypeError("sessionId is required");if(typeof o!="string"||!o)throw new TypeError("permission preset is required");await this.ensureRunning(i);let e=await this.#i(new URL("/api/crawshrimp/session/permission",this.#e),{method:"POST",headers:{"content-type":"application/json",accept:"application/json"},body:JSON.stringify({sessionId:t,preset:o}),signal:i.signal});if(!e.ok)throw new ${transportError}("harness-http-failed","crawshrimp.session.permission",{status:e.status});let a=await e.json();if(a?.ok===!1)throw new ${rpcError}("crawshrimp.session.permission",a.error);if(${bundledPermissionPayloadGuard('a', { requirePreset: 'A' })}||a.preset!==o)throw new ${transportError}("harness-response-invalid","crawshrimp.session.permission",{cause:new Error("Crawshrimp returned an invalid session permission update")});return a}/* ${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: bundled client */async isSessionRunning(t,o={}){if(typeof t!="string"||!t)throw new TypeError("sessionId is required");`,
+      'bundled dsh-im session permission client',
+    )
+  }
+
+  if (!next.includes(`${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: bundled workspace session`)) {
+    next = replaceExact(
+      next,
+      'selectModel:(...o)=>n.selectSessionModel(t,...o),isRunning:(...o)=>n.isSessionRunning(t,...o),',
+      `selectModel:(...o)=>n.selectSessionModel(t,...o),permission:(...o)=>n.getSessionPermission(t,...o),setPermission:(...o)=>n.setSessionPermission(t,...o),/* ${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: bundled workspace session */isRunning:(...o)=>n.isSessionRunning(t,...o),`,
+      'bundled dsh-im workspace session permission facade',
+    )
+  }
+
+  if (!next.includes(`${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: bundled bot workspace store`)) {
+    next = replaceExact(
+      next,
+      'models(...N){return m("getSessionModels",N,"model listing")},selectModel(...N){return m("selectSessionModel",N,"model selection")},isRunning(...N){return m("isSessionRunning",N,"run-state check")},',
+      `models(...N){return m("getSessionModels",N,"model listing")},selectModel(...N){return m("selectSessionModel",N,"model selection")},permission(...N){return m("getSessionPermission",N,"permission query")},setPermission(...N){return _("setSessionPermission",N,"permission update")},/* ${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: bundled bot workspace store */isRunning(...N){return m("isSessionRunning",N,"run-state check")},`,
+      'bundled dsh-im bot workspace session permission facade',
+    )
+  }
+
+  if (!next.includes('"去掉审批"')) {
+    next = replaceExact(
+      next,
+      '"关闭审批","不用审批"',
+      '"关闭审批","关闭审批模式","去掉审批","去除审批","取消审批","关掉审批","取消审批模式","不用审批"',
+      'bundled dsh-im no-approval aliases',
+    )
+  }
+  if (!next.includes('"full assess"')) {
+    next = replaceExact(
+      next,
+      '"full access","full-access"',
+      '"full access","full assess","full-access"',
+      'bundled dsh-im full assess alias',
+    )
+  }
+  if (!next.includes('"现在是什么审批模式"')) {
+    next = replaceExact(
+      next,
+      '"现在是哪个权限模式","当前审批策略"',
+      '"现在是哪个权限模式","现在是什么审批模式","当前审批模式","当前审批策略"',
+      'bundled dsh-im approval mode query aliases',
+    )
+    next = replaceExact(
+      next,
+      '"现在审批策略","审批权限"',
+      '"现在审批策略","审批模式","审批权限"',
+      'bundled dsh-im approval mode query phrase',
+    )
+  }
+  if (!next.includes('|把权限改成|开启|启用|打开)\\s*(.+)')) {
+    next = replaceExact(
+      next,
+      '|把权限改成)\\s*(.+)',
+      '|把权限改成|开启|启用|打开)\\s*(.+)',
+      'bundled dsh-im approval mode verb aliases',
+    )
+  }
+
+  if (!next.includes(`${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: bundled permission manager`)) {
+    next = replaceAny(
+      next,
+      [
+        [
+          'if(typeof A.session.executeCommand!="function"){let s=new Error("Harness command execution is unavailable");throw s.code="commands-unavailable",s}let r=fK(await A.session.executeCommand("/permission",a));if(!r)throw new TypeError("Harness returned an invalid current permission");return o.sessionFor(i)!==A.sessionId?cr(D("\\u5F53\\u524D\\u804A\\u5929\\u7ED1\\u5B9A\\u7684\\u4F1A\\u8BDD\\u5DF2\\u53D1\\u751F\\u53D8\\u5316\\uFF0C\\u8BF7\\u91CD\\u8BD5\\u6743\\u9650\\u67E5\\u8BE2\\u3002")):cr(hIe(r))',
+          `if(typeof A.session.permission!="function"){let s=new Error("Harness permission API is unavailable");throw s.code="commands-unavailable",s}let r=await A.session.permission(a);if(${bundledPermissionPayloadGuard('r', { requirePreset: 's' })})throw new TypeError("Harness returned an invalid permission payload");let g=r.preset;if(!Object.hasOwn(hf,g)&&g!=="custom")throw new TypeError("Harness returned an unknown permission preset");/* ${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: bundled permission manager */return o.sessionFor(i)!==A.sessionId?cr(D("\\u5F53\\u524D\\u804A\\u5929\\u7ED1\\u5B9A\\u7684\\u4F1A\\u8BDD\\u5DF2\\u53D1\\u751F\\u53D8\\u5316\\uFF0C\\u8BF7\\u91CD\\u8BD5\\u6743\\u9650\\u67E5\\u8BE2\\u3002")):cr(hIe(g))`,
+        ],
+        [
+          'if(typeof a.session.executeCommand!="function"){let A=new Error("Harness command execution is unavailable");throw A.code="commands-unavailable",A}let A=cshCurrentPermission(await a.session.executeCommand("/permission",e));if(!A)throw new TypeError("Harness returned an invalid current permission");return t.sessionFor(o)!==a.sessionId?pt(D("当前聊天绑定的会话已发生变化，请重试权限查询。")):pt(cshPermissionSummary(A))',
+          `if(typeof a.session.permission!="function"){let A=new Error("Harness permission API is unavailable");throw A.code="commands-unavailable",A}let A=await a.session.permission(e);if(${bundledPermissionPayloadGuard('A', { requirePreset: 'r' })})throw new TypeError("Harness returned an invalid permission payload");let r=A.preset;if(!Object.hasOwn(cshPermissionPresets,r)&&r!=="custom")throw new TypeError("Harness returned an unknown permission preset");/* ${DSH_IM_SESSION_PERMISSION_API_PATCH_MARKER}: bundled permission manager */return t.sessionFor(o)!==a.sessionId?pt(D("当前聊天绑定的会话已发生变化，请重试权限查询。")):pt(cshPermissionSummary(r))`,
+        ],
+      ],
+      'bundled dsh-im direct permission query',
+    )
+    next = replaceAny(
+      next,
+      [
+        [
+          'if(typeof s.session.executeCommand!="function"){let I=new Error("Harness command execution is unavailable");throw I.code="commands-unavailable",I}if(yK(await s.session.executeCommand(dIe(t),r)).kind!=="success")throw new Error("Harness rejected the permission preset");if(fK(await s.session.executeCommand("/permission",r))!==t){let I=new Error("Harness permission readback mismatch");throw I.code="permission-readback-mismatch",I}',
+          `if(typeof s.session.setPermission!="function"){let I=new Error("Harness permission API is unavailable");throw I.code="commands-unavailable",I}let d=await s.session.setPermission(t,r);if(${bundledPermissionPayloadGuard('d', { requirePreset: 'B' })})throw new TypeError("Harness returned an invalid permission payload");if(d.preset!==t){let I=new Error("Harness permission readback mismatch");throw I.code="permission-readback-mismatch",I}`,
+        ],
+        [
+          'if(typeof r.session.executeCommand!="function"){let s=new Error("Harness command execution is unavailable");throw s.code="commands-unavailable",s}if(cshPermissionResultValue(await r.session.executeCommand(cshPermissionLine(n),A)).kind!=="success")throw new Error("Harness rejected the permission preset");if(cshCurrentPermission(await r.session.executeCommand("/permission",A))!==n){let s=new Error("Harness permission readback mismatch");throw s.code="permission-readback-mismatch",s}',
+          `if(typeof r.session.setPermission!="function"){let s=new Error("Harness permission API is unavailable");throw s.code="commands-unavailable",s}let g=await r.session.setPermission(n,A);if(${bundledPermissionPayloadGuard('g', { requirePreset: 's' })})throw new TypeError("Harness returned an invalid permission payload");if(g.preset!==n){let s=new Error("Harness permission readback mismatch");throw s.code="permission-readback-mismatch",s}`,
+        ],
+      ],
+      'bundled dsh-im direct permission change',
+    )
+  }
+
+  return upgradeDshImBundledApprovalAllowAllPermissionApi(next)
 }
 
 function patchDshImBundledApprovalBriefCard(source) {
