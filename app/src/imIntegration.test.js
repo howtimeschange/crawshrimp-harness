@@ -621,6 +621,14 @@ test('dsh-im natural language model and permission controls parse required mobil
     action: 'select',
     requested: 'deepseek-v4-pro',
   })
+  assert.deepEqual(model.parseNaturalModelCommand('切换模型到 deepseek-official-v4-pro'), {
+    action: 'select',
+    requested: 'deepseek-official-v4-pro',
+  })
+  assert.deepEqual(model.parseNaturalModelCommand('切换到v4 pro 模型'), {
+    action: 'select',
+    requested: 'v4 pro 模型',
+  })
 
   assert.deepEqual(permission.parsePermissionCommand('修改审批权限'), { action: 'query' })
   assert.deepEqual(permission.parsePermissionCommand('现在是什么审批模式'), { action: 'query' })
@@ -687,6 +695,36 @@ test('dsh-im natural model aliases select only the bound IM Session model', asyn
     failures: [],
     current,
   })
+  const productCatalog = () => ({
+    ok: true,
+    configured_count: 2,
+    total_count: 2,
+    groups: [{
+      id: 'llm',
+      name: 'LLM 对话模型',
+      configured_count: 2,
+      total_count: 2,
+      models: [
+        {
+          id: 'deepseek-official-v4-flash',
+          label: 'DeepSeek V4 Flash',
+          provider: 'crawshrimp-deepseek-official',
+          runtime_model: 'deepseek-v4-flash',
+          configured: true,
+          default: true,
+          supports_switch: true,
+        },
+        {
+          id: 'deepseek-official-v4-pro',
+          label: 'DeepSeek V4 Pro',
+          provider: 'crawshrimp-deepseek-official',
+          runtime_model: 'deepseek-v4-pro',
+          configured: true,
+          supports_switch: true,
+        },
+      ],
+    }],
+  })
   const session = {
     sessionExists: async () => true,
     isRunning: async () => false,
@@ -700,6 +738,7 @@ test('dsh-im natural model aliases select only the bound IM Session model', asyn
   }
   const state = { sessionFor: () => 'session-1' }
   const harness = {
+    listCrawshrimpModelCatalog: async () => productCatalog(),
     workspaceSession: (sessionId) => {
       assert.equal(sessionId, 'session-1')
       return session
@@ -725,6 +764,25 @@ test('dsh-im natural model aliases select only the bound IM Session model', asyn
     model: 'gpt-5.5',
   })
   assert.deepEqual(created, [])
+
+  const switchedProductId = await runModelCommand(
+    '切换模型到 deepseek-official-v4-pro',
+    harness,
+    state,
+    'room-1',
+  )
+  assert.match(switchedProductId.message, /crawshrimp-deepseek-official\/deepseek-v4-pro/)
+  assert.deepEqual(selected.at(-1), {
+    provider: 'crawshrimp-deepseek-official',
+    model: 'deepseek-v4-pro',
+  })
+
+  const switchedSpokenAlias = await runModelCommand('切换到v4 pro 模型', harness, state, 'room-1')
+  assert.match(switchedSpokenAlias.message, /crawshrimp-deepseek-official\/deepseek-v4-pro/)
+  assert.deepEqual(selected.at(-1), {
+    provider: 'crawshrimp-deepseek-official',
+    model: 'deepseek-v4-pro',
+  })
 })
 
 function createNaturalCommandHarnessFixture() {
@@ -770,13 +828,13 @@ function createNaturalCommandHarnessFixture() {
   })
   const productCatalog = () => ({
     ok: true,
-    configured_count: 4,
+    configured_count: 5,
     total_count: 6,
     groups: [
       {
         id: 'llm',
         name: 'LLM 对话模型',
-        configured_count: 2,
+        configured_count: 3,
         total_count: 3,
         models: [
           {
@@ -791,7 +849,8 @@ function createNaturalCommandHarnessFixture() {
             id: 'deepseek-official-v4-pro',
             label: 'DeepSeek V4 Pro',
             provider: 'crawshrimp-deepseek-official',
-            configured: false,
+            runtime_model: 'deepseek-v4-pro',
+            configured: true,
             supports_switch: true,
           },
           {
@@ -969,6 +1028,20 @@ test('dsh-im text bridge routes natural model and permission commands before age
   })
   assert.match(sent.at(-1).text, /模型已切换为/)
 
+  await bridge.accept(message('text-msg-3a', '切换模型到 deepseek-official-v4-pro'))
+  assert.deepEqual(fixture.selected.at(-1), {
+    provider: 'crawshrimp-deepseek-official',
+    model: 'deepseek-v4-pro',
+  })
+  assert.match(sent.at(-1).text, /模型已切换为/)
+
+  await bridge.accept(message('text-msg-3b', '切换到v4 pro 模型'))
+  assert.deepEqual(fixture.selected.at(-1), {
+    provider: 'crawshrimp-deepseek-official',
+    model: 'deepseek-v4-pro',
+  })
+  assert.match(sent.at(-1).text, /模型已切换为/)
+
   await bridge.accept(message('text-msg-4', '修改审批权限'))
   assert.match(sent.at(-1).text, /当前权限/)
   assert.deepEqual(fixture.permissions.slice(-1), [['get']])
@@ -1036,6 +1109,20 @@ test('dsh-im Weixin bridge routes natural model and permission commands before a
   assert.match(sent.at(-1).text, /gpt-5\.5/)
 
   await bridge.accept(message('weixin-natural-3', '换成 deepseek-v4-pro'))
+  assert.deepEqual(fixture.selected.at(-1), {
+    provider: 'crawshrimp-deepseek-official',
+    model: 'deepseek-v4-pro',
+  })
+  assert.match(sent.at(-1).text, /模型已切换为/)
+
+  await bridge.accept(message('weixin-natural-3a', '切换模型到 deepseek-official-v4-pro'))
+  assert.deepEqual(fixture.selected.at(-1), {
+    provider: 'crawshrimp-deepseek-official',
+    model: 'deepseek-v4-pro',
+  })
+  assert.match(sent.at(-1).text, /模型已切换为/)
+
+  await bridge.accept(message('weixin-natural-3b', '切换到v4 pro 模型'))
   assert.deepEqual(fixture.selected.at(-1), {
     provider: 'crawshrimp-deepseek-official',
     model: 'deepseek-v4-pro',
@@ -1596,6 +1683,9 @@ test('runtime patcher expands dsh-im natural language controls for mobile IM', (
   assert.match(patcher, /切换模型到/)
   assert.match(patcher, /换成/)
   assert.match(patcher, /DSH_IM_NATURAL_MODEL_ALIASES_PATCH_MARKER/)
+  assert.match(patcher, /deepseekofficialv4pro/)
+  assert.match(patcher, /v4pro/)
+  assert.match(patcher, /runtime_model/)
   assert.match(patcher, /deepseek-official-v4-pro/)
   assert.match(patcher, /if \(!source\.includes\(DSH_IM_NATURAL_MODEL_ALIASES_PATCH_MARKER\)\)/)
   assert.ok(patcher.includes('^模型(?:切换到|换成|改成|设置为|设为)'))
@@ -1636,6 +1726,9 @@ test('runtime dsh-im bundle carries product model aliases used by mobile command
   assert.match(bundle, /抓虾已支持\/已配置模型/)
   assert.match(bundle, /gpt-5/)
   assert.match(bundle, /deepseek-v4-pro/)
+  assert.match(bundle, /deepseekofficialv4pro/)
+  assert.match(bundle, /v4pro/)
+  assert.match(bundle, /runtimeModel/)
   assert.match(bundle, /"deepseekv4pro","crawshrimp-deepseek-official\/deepseek-v4-pro"/)
   assert.doesNotMatch(bundle, /"deepseek-v4-pro","crawshrimp-deepseek-official\/deepseek-v4-pro"/)
   assert.match(bundle, /crawshrimp-deepseek-official\/deepseek-v4-pro/)
@@ -1677,6 +1770,9 @@ test('staged dsh-im bundle carries mobile approval and natural controls', {
   assert.match(bundle, /抓虾已支持\/已配置模型/)
   assert.match(bundle, /gpt-5/)
   assert.match(bundle, /deepseek-v4-pro/)
+  assert.match(bundle, /deepseekofficialv4pro/)
+  assert.match(bundle, /v4pro/)
+  assert.match(bundle, /runtimeModel/)
   assert.match(bundle, /"deepseekv4pro","crawshrimp-deepseek-official\/deepseek-v4-pro"/)
   assert.doesNotMatch(bundle, /"deepseek-v4-pro","crawshrimp-deepseek-official\/deepseek-v4-pro"/)
   assert.match(bundle, /修改审批权限/)

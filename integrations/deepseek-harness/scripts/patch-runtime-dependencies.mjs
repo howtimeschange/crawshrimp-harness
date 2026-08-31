@@ -1797,25 +1797,80 @@ function naturalModelCandidates(catalog) {
     model: model.id,
     displayName: model.name,
     fullId: modelId(group.id, model.id),
+    aliases: [model.id, model.name, modelId(group.id, model.id)],
   })));
 }
 
-function matchingNaturalModels(catalog, requested) {
+function modelLookupVariants(value) {
+  const normalized = normalizeControlText(value, { allowPolitePrefix: false });
+  if (!normalized) return [];
+  const variants = new Set([normalized]);
+  for (const suffix of ['模型', 'model']) {
+    if (normalized.endsWith(suffix)) {
+      const withoutSuffix = normalized.slice(0, -suffix.length).trim();
+      if (withoutSuffix) variants.add(withoutSuffix);
+    }
+  }
+  return [...new Set(
+    [...variants].map((variant) => normalizeModelLookup(variant)).filter(Boolean),
+  )];
+}
+
+function candidateAliases(candidate) {
+  return [
+    candidate.fullId,
+    candidate.model,
+    candidate.displayName,
+    ...(Array.isArray(candidate.aliases) ? candidate.aliases : []),
+  ].filter((value) => typeof value === 'string' && value);
+}
+
+function matchingModelCandidates(candidates, requested) {
   const raw = requested.toLocaleLowerCase('en-US');
-  const lookup = normalizeModelLookup(requested);
-  if (!lookup) return [];
-  const candidates = naturalModelCandidates(catalog);
+  const lookups = modelLookupVariants(requested);
+  if (lookups.length === 0) return [];
   const tiers = [
     (candidate) => candidate.fullId.toLocaleLowerCase('en-US') === raw,
-    (candidate) => SAFE_MODEL_ALIASES.get(lookup) === candidate.fullId,
-    (candidate) => normalizeModelLookup(candidate.model) === lookup,
-    (candidate) => normalizeModelLookup(candidate.displayName) === lookup,
+    (candidate) => lookups.some((lookup) => SAFE_MODEL_ALIASES.get(lookup) === candidate.fullId),
+    (candidate) => candidateAliases(candidate)
+      .some((alias) => lookups.includes(normalizeModelLookup(alias))),
   ];
   for (const matchesTier of tiers) {
     const matches = candidates.filter(matchesTier);
     if (matches.length > 0) return matches;
   }
   return [];
+}
+
+function matchingNaturalModels(catalog, requested) {
+  return matchingModelCandidates(naturalModelCandidates(catalog), requested);
+}
+
+function productModelCandidates(catalog) {
+  return catalog.groups.flatMap((group) => group.models.flatMap((model) => {
+    const provider = model.provider;
+    const runtimeModel = model.runtimeModel || model.id;
+    if (!model.configured || !model.supportsSwitch || !provider || !runtimeModel) return [];
+    const runtimeFullId = modelId(provider, runtimeModel);
+    const productFullId = modelId(provider, model.id);
+    return [{
+      provider,
+      model: runtimeModel,
+      displayName: model.label,
+      fullId: runtimeFullId,
+      aliases: [
+        model.id,
+        model.label,
+        productFullId,
+        runtimeModel,
+        runtimeFullId,
+      ],
+    }];
+  }));
+}
+
+function matchingProductNaturalModels(catalog, requested) {
+  return matchingModelCandidates(productModelCandidates(catalog), requested);
 }
 
 function ambiguousNaturalModelMessage(matches) {
@@ -1967,6 +2022,21 @@ export function isModelCommand(text) {
         if (matches.length === 1) {
           selection = { provider: matches[0].provider, model: matches[0].model };
         }
+        if (!selection) {
+          const productCatalog = await listProductModelCatalog(harness, requestOptions);
+          const productMatches = productCatalog
+            ? matchingProductNaturalModels(productCatalog, requested)
+            : [];
+          if (productMatches.length > 1) {
+            return commandResult(ambiguousNaturalModelMessage(productMatches));
+          }
+          if (productMatches.length === 1) {
+            selection = {
+              provider: productMatches[0].provider,
+              model: productMatches[0].model,
+            };
+          }
+        }
       } else {
         selection = numberRequest
           ? modelAt(catalog, numberRequest.index)
@@ -1984,6 +2054,126 @@ export function isModelCommand(text) {
       'dsh-im natural model selection matching',
     )
   }
+  if (!source.includes('function matchingProductNaturalModels(catalog, requested)')) {
+    source = replaceRange(
+      source,
+      `function naturalModelCandidates(catalog) {`,
+      `function ambiguousNaturalModelMessage(matches) {`,
+      `function naturalModelCandidates(catalog) {
+  return catalog.groups.flatMap((group) => group.models.map((model) => ({
+    provider: group.id,
+    model: model.id,
+    displayName: model.name,
+    fullId: modelId(group.id, model.id),
+    aliases: [model.id, model.name, modelId(group.id, model.id)],
+  })));
+}
+
+function modelLookupVariants(value) {
+  const normalized = normalizeControlText(value, { allowPolitePrefix: false });
+  if (!normalized) return [];
+  const variants = new Set([normalized]);
+  for (const suffix of ['模型', 'model']) {
+    if (normalized.endsWith(suffix)) {
+      const withoutSuffix = normalized.slice(0, -suffix.length).trim();
+      if (withoutSuffix) variants.add(withoutSuffix);
+    }
+  }
+  return [...new Set(
+    [...variants].map((variant) => normalizeModelLookup(variant)).filter(Boolean),
+  )];
+}
+
+function candidateAliases(candidate) {
+  return [
+    candidate.fullId,
+    candidate.model,
+    candidate.displayName,
+    ...(Array.isArray(candidate.aliases) ? candidate.aliases : []),
+  ].filter((value) => typeof value === 'string' && value);
+}
+
+function matchingModelCandidates(candidates, requested) {
+  const raw = requested.toLocaleLowerCase('en-US');
+  const lookups = modelLookupVariants(requested);
+  if (lookups.length === 0) return [];
+  const tiers = [
+    (candidate) => candidate.fullId.toLocaleLowerCase('en-US') === raw,
+    (candidate) => lookups.some((lookup) => SAFE_MODEL_ALIASES.get(lookup) === candidate.fullId),
+    (candidate) => candidateAliases(candidate)
+      .some((alias) => lookups.includes(normalizeModelLookup(alias))),
+  ];
+  for (const matchesTier of tiers) {
+    const matches = candidates.filter(matchesTier);
+    if (matches.length > 0) return matches;
+  }
+  return [];
+}
+
+function matchingNaturalModels(catalog, requested) {
+  return matchingModelCandidates(naturalModelCandidates(catalog), requested);
+}
+
+function productModelCandidates(catalog) {
+  return catalog.groups.flatMap((group) => group.models.flatMap((model) => {
+    const provider = model.provider;
+    const runtimeModel = model.runtimeModel || model.id;
+    if (!model.configured || !model.supportsSwitch || !provider || !runtimeModel) return [];
+    const runtimeFullId = modelId(provider, runtimeModel);
+    const productFullId = modelId(provider, model.id);
+    return [{
+      provider,
+      model: runtimeModel,
+      displayName: model.label,
+      fullId: runtimeFullId,
+      aliases: [
+        model.id,
+        model.label,
+        productFullId,
+        runtimeModel,
+        runtimeFullId,
+      ],
+    }];
+  }));
+}
+
+function matchingProductNaturalModels(catalog, requested) {
+  return matchingModelCandidates(productModelCandidates(catalog), requested);
+}
+
+function ambiguousNaturalModelMessage(matches) {`,
+      'dsh-im natural product model matching helpers',
+    )
+  }
+  if (!source.includes('matchingProductNaturalModels(productCatalog, requested)')) {
+    source = replaceExact(
+      source,
+      `        if (matches.length === 1) {
+          selection = { provider: matches[0].provider, model: matches[0].model };
+        }
+      } else {`,
+      `        if (matches.length === 1) {
+          selection = { provider: matches[0].provider, model: matches[0].model };
+        }
+        if (!selection) {
+          const productCatalog = await listProductModelCatalog(harness, requestOptions);
+          const productMatches = productCatalog
+            ? matchingProductNaturalModels(productCatalog, requested)
+            : [];
+          if (productMatches.length > 1) {
+            return commandResult(ambiguousNaturalModelMessage(productMatches));
+          }
+          if (productMatches.length === 1) {
+            selection = {
+              provider: productMatches[0].provider,
+              model: productMatches[0].model,
+            };
+          }
+        }
+      } else {`,
+      'dsh-im natural model product catalog fallback',
+    )
+  }
   if (!source.includes(DSH_IM_NATURAL_MODEL_ALIASES_PATCH_MARKER)) {
     source = replaceExact(
       source,
@@ -1991,6 +2181,11 @@ export function isModelCommand(text) {
       `// ${DSH_IM_NATURAL_MODEL_ALIASES_PATCH_MARKER}: accept product shorthand only when the corresponding full catalog id exists.
 const SAFE_MODEL_ALIASES = new Map([
   ['gpt5', 'crawshrimp-overseas-openai/gpt-5.5'],
+  ['v4pro', 'crawshrimp-deepseek-official/deepseek-v4-pro'],
+  ['v4flash', 'crawshrimp-deepseek-official/deepseek-v4-flash'],
+  ['deepseekofficialv4pro', 'crawshrimp-deepseek-official/deepseek-v4-pro'],
+  ['deepseekofficialv4flash', 'crawshrimp-deepseek-official/deepseek-v4-flash'],
+  ['deepseekofficialv4flashvisionexp', 'crawshrimp-deepseek-official/deepseek-v4-flash-vision-exp'],
   ['deepseekv4pro', 'crawshrimp-deepseek-official/deepseek-v4-pro'],
   ['deepseekv4flash', 'crawshrimp-deepseek-official/deepseek-v4-flash'],
   ['deepseekv4flashvisionexp', 'crawshrimp-deepseek-official/deepseek-v4-flash-vision-exp'],
@@ -2019,13 +2214,24 @@ const SAFE_MODEL_ALIASES = new Map([
   }
   const canonicalSafeModelAliases = `const SAFE_MODEL_ALIASES = new Map([
   ['gpt5', 'crawshrimp-overseas-openai/gpt-5.5'],
+  ['v4pro', 'crawshrimp-deepseek-official/deepseek-v4-pro'],
+  ['v4flash', 'crawshrimp-deepseek-official/deepseek-v4-flash'],
+  ['deepseekofficialv4pro', 'crawshrimp-deepseek-official/deepseek-v4-pro'],
+  ['deepseekofficialv4flash', 'crawshrimp-deepseek-official/deepseek-v4-flash'],
+  ['deepseekofficialv4flashvisionexp', 'crawshrimp-deepseek-official/deepseek-v4-flash-vision-exp'],
   ['deepseekv4pro', 'crawshrimp-deepseek-official/deepseek-v4-pro'],
   ['deepseekv4flash', 'crawshrimp-deepseek-official/deepseek-v4-flash'],
   ['deepseekv4flashvisionexp', 'crawshrimp-deepseek-official/deepseek-v4-flash-vision-exp'],
 ]);`
-  if (!source.includes("['gpt5', 'crawshrimp-overseas-openai/gpt-5.5']")
-    || source.includes('deepseek-official-v4-pro')) {
+  if (!source.includes("['deepseekofficialv4pro', 'crawshrimp-deepseek-official/deepseek-v4-pro']")
+    || source.includes('crawshrimp-deepseek-official/deepseek-official-v4-pro')) {
     const oldAliasMaps = [
+      `const SAFE_MODEL_ALIASES = new Map([
+  ['gpt5', 'crawshrimp-overseas-openai/gpt-5.5'],
+  ['deepseekv4pro', 'crawshrimp-deepseek-official/deepseek-v4-pro'],
+  ['deepseekv4flash', 'crawshrimp-deepseek-official/deepseek-v4-flash'],
+  ['deepseekv4flashvisionexp', 'crawshrimp-deepseek-official/deepseek-v4-flash-vision-exp'],
+]);`,
       `const SAFE_MODEL_ALIASES = new Map([
   ['gpt-5', 'crawshrimp-overseas-openai/gpt-5.5'],
   ['deepseek-v4-pro', 'crawshrimp-deepseek-official/deepseek-official-v4-pro'],
@@ -2057,12 +2263,22 @@ const SAFE_MODEL_ALIASES = new Map([
       source,
       `const SAFE_MODEL_ALIASES = new Map([
   ['gpt5', 'crawshrimp-overseas-openai/gpt-5.5'],
+  ['v4pro', 'crawshrimp-deepseek-official/deepseek-v4-pro'],
+  ['v4flash', 'crawshrimp-deepseek-official/deepseek-v4-flash'],
+  ['deepseekofficialv4pro', 'crawshrimp-deepseek-official/deepseek-v4-pro'],
+  ['deepseekofficialv4flash', 'crawshrimp-deepseek-official/deepseek-v4-flash'],
+  ['deepseekofficialv4flashvisionexp', 'crawshrimp-deepseek-official/deepseek-v4-flash-vision-exp'],
   ['deepseekv4pro', 'crawshrimp-deepseek-official/deepseek-v4-pro'],
   ['deepseekv4flash', 'crawshrimp-deepseek-official/deepseek-v4-flash'],
   ['deepseekv4flashvisionexp', 'crawshrimp-deepseek-official/deepseek-v4-flash-vision-exp'],
 ]);`,
       `const SAFE_MODEL_ALIASES = new Map([
   ['gpt5', 'crawshrimp-overseas-openai/gpt-5.5'],
+  ['v4pro', 'crawshrimp-deepseek-official/deepseek-v4-pro'],
+  ['v4flash', 'crawshrimp-deepseek-official/deepseek-v4-flash'],
+  ['deepseekofficialv4pro', 'crawshrimp-deepseek-official/deepseek-v4-pro'],
+  ['deepseekofficialv4flash', 'crawshrimp-deepseek-official/deepseek-v4-flash'],
+  ['deepseekofficialv4flashvisionexp', 'crawshrimp-deepseek-official/deepseek-v4-flash-vision-exp'],
   ['deepseekv4pro', 'crawshrimp-deepseek-official/deepseek-v4-pro'],
   ['deepseekv4flash', 'crawshrimp-deepseek-official/deepseek-v4-flash'],
   ['deepseekv4flashvisionexp', 'crawshrimp-deepseek-official/deepseek-v4-flash-vision-exp'],
@@ -2102,6 +2318,8 @@ const PRODUCT_MODEL_GROUP_LABELS = new Map([
         id: modelIdText,
         label: safeDisplayText(String(model.label || model.name || modelIdText)),
         provider: safeDisplayText(String(model.provider || '')),
+        type: safeDisplayText(String(model.type || group.id || '')),
+        runtimeModel: safeDisplayText(String(model.runtime_model || model.runtimeModel || '')),
         configured: model.configured === true,
         default: model.default === true,
         supportsSwitch: model.supports_switch === true || model.supportsSwitch === true,
@@ -2207,6 +2425,19 @@ async function sessionCatalog(session, options) {`,
     }
   }`,
       'dsh-im natural all-model catalog action',
+    )
+  }
+  if (source.includes(DSH_IM_MODEL_CATALOG_PATCH_MARKER)
+    && !source.includes("runtimeModel: safeDisplayText(String(model.runtime_model || model.runtimeModel || ''))")) {
+    source = replaceExact(
+      source,
+      `        provider: safeDisplayText(String(model.provider || '')),
+        configured: model.configured === true,`,
+      `        provider: safeDisplayText(String(model.provider || '')),
+        type: safeDisplayText(String(model.type || group.id || '')),
+        runtimeModel: safeDisplayText(String(model.runtime_model || model.runtimeModel || '')),
+        configured: model.configured === true,`,
+      'dsh-im product model runtime model field',
     )
   }
   return source
@@ -3355,7 +3586,7 @@ function patchDshImBundledHostCurrent230(source) {
   source = replaceExact(
     source,
     'hce=/[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]+/gu;function pt',
-      `hce=/[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]+/gu,cshUnsafeControl=/[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]/u,cshNaturalModelList=new Set(["有哪些模型","列出所有模型","列出所有可用模型","列出可用模型","查看可用模型","查看模型","模型列表","可用模型","所有模型","可以切换模型吗","能切换模型吗","怎么切换模型"]),cshNaturalModelCurrent=new Set(["当前是什么模型","现在用的哪个模型","当前模型","现在模型","用的什么模型","现在是什么模型"]),cshNaturalModelSelect=Object.freeze([/^切换到\\s*(.+)$/u,/^切换模型到\\s*(.+)$/u,/^切(?:到|成|为)\\s*(.+)$/u,/^换到\\s*(.+)$/u,/^换成\\s*(.+)$/u,/^改用\\s*(.+)$/u,/^使用\\s+(.+?)\\s*模型$/u,/^用\\s*(.+?)\\s*模型$/u,/^模型(?:切换到|换成|改成|设置为|设为)\\s*(.+)$/u]),cshSafeModelAliases=${bundledNaturalModelAliasMapSource()};/* ${DSH_IM_NATURAL_MODEL_ALIASES_PATCH_MARKER}: bundled current */function cshNormalizeControlText(n){return typeof n!="string"?"":n.replace(hce," ").replace(/[？?。！!，,；;：:]+$/gu,"").replace(/\\s+/gu," ").trim()}function cshNormalizeModelLookup(n){let t=cshNormalizeControlText(n).toLocaleLowerCase("en-US");return t.replace(/[\\s_]+/g,"-").replace(/[._]+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"")}function cshNaturalModelCommand(n){let t=cshNormalizeControlText(n);if(!t)return null;if(cshNaturalModelList.has(t))return{action:"list"};if(cshNaturalModelCurrent.has(t))return{action:"current"};for(let o of cshNaturalModelSelect){let i=o.exec(t);if(!i)continue;let e=i[1].trim();return!e||e.length>256||cshUnsafeControl.test(e)?null:{action:"select",requested:e}}return null}function pt`,
+      `hce=/[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]+/gu,cshUnsafeControl=/[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]/u,cshNaturalModelList=new Set(["有哪些模型","列出所有模型","列出所有可用模型","列出可用模型","查看可用模型","查看模型","模型列表","可用模型","所有模型","可以切换模型吗","能切换模型吗","怎么切换模型"]),cshNaturalModelCurrent=new Set(["当前是什么模型","现在用的哪个模型","当前模型","现在模型","用的什么模型","现在是什么模型"]),cshNaturalModelSelect=Object.freeze([/^切换到\\s*(.+)$/u,/^切换模型到\\s*(.+)$/u,/^切(?:到|成|为)\\s*(.+)$/u,/^换到\\s*(.+)$/u,/^换成\\s*(.+)$/u,/^改用\\s*(.+)$/u,/^使用\\s+(.+?)\\s*模型$/u,/^用\\s*(.+?)\\s*模型$/u,/^模型(?:切换到|换成|改成|设置为|设为)\\s*(.+)$/u]),cshSafeModelAliases=${bundledNaturalModelAliasMapSource()};/* ${DSH_IM_NATURAL_MODEL_ALIASES_PATCH_MARKER}: bundled current */function cshNormalizeControlText(n){return typeof n!="string"?"":n.replace(hce," ").replace(/[？?。！!，,；;：:]+$/gu,"").replace(/\\s+/gu," ").trim()}function cshNormalizeModelLookup(n){let t=cshNormalizeControlText(n).toLocaleLowerCase("en-US");for(let o of["模型","model"])if(t.endsWith(o)){let i=t.slice(0,-o.length).trim();if(i)t=i}return t.replace(/[\\s_.-]+/g,"")}/* cshStripModelLookupSuffix */function cshNaturalModelCommand(n){let t=cshNormalizeControlText(n);if(!t)return null;if(cshNaturalModelList.has(t))return{action:"list"};if(cshNaturalModelCurrent.has(t))return{action:"current"};for(let o of cshNaturalModelSelect){let i=o.exec(t);if(!i)continue;let e=i[1].trim();return!e||e.length>256||cshUnsafeControl.test(e)?null:{action:"select",requested:e}}return null}function pt`,
     'bundled dsh-im current natural model constants',
   )
   source = replaceExact(
@@ -3421,7 +3652,7 @@ function patchDshImBundledApprovalCurrent230(source) {
 }
 
 function bundledNaturalModelAliasMapSource() {
-  return 'new Map([["gpt5","crawshrimp-overseas-openai/gpt-5.5"],["deepseekv4pro","crawshrimp-deepseek-official/deepseek-v4-pro"],["deepseekv4flash","crawshrimp-deepseek-official/deepseek-v4-flash"],["deepseekv4flashvisionexp","crawshrimp-deepseek-official/deepseek-v4-flash-vision-exp"]])'
+  return 'new Map([["gpt5","crawshrimp-overseas-openai/gpt-5.5"],["v4pro","crawshrimp-deepseek-official/deepseek-v4-pro"],["v4flash","crawshrimp-deepseek-official/deepseek-v4-flash"],["deepseekofficialv4pro","crawshrimp-deepseek-official/deepseek-v4-pro"],["deepseekofficialv4flash","crawshrimp-deepseek-official/deepseek-v4-flash"],["deepseekofficialv4flashvisionexp","crawshrimp-deepseek-official/deepseek-v4-flash-vision-exp"],["deepseekv4pro","crawshrimp-deepseek-official/deepseek-v4-pro"],["deepseekv4flash","crawshrimp-deepseek-official/deepseek-v4-flash"],["deepseekv4flashvisionexp","crawshrimp-deepseek-official/deepseek-v4-flash-vision-exp"]])'
 }
 
 function patchDshImBundledNaturalModelAliases(source) {
@@ -3429,6 +3660,7 @@ function patchDshImBundledNaturalModelAliases(source) {
   let migrated = source
   if (source.includes(`${DSH_IM_NATURAL_MODEL_ALIASES_PATCH_MARKER}: bundled current`)) {
     const oldAliasMaps = source.includes(aliasMap) ? [] : [
+      'new Map([["gpt5","crawshrimp-overseas-openai/gpt-5.5"],["deepseekv4pro","crawshrimp-deepseek-official/deepseek-v4-pro"],["deepseekv4flash","crawshrimp-deepseek-official/deepseek-v4-flash"],["deepseekv4flashvisionexp","crawshrimp-deepseek-official/deepseek-v4-flash-vision-exp"]])',
       'new Map([["gpt-5","crawshrimp-overseas-openai/gpt-5.5"],["deepseek-v4-pro","crawshrimp-deepseek-official/deepseek-official-v4-pro"],["deepseek-v4-flash","crawshrimp-deepseek-official/deepseek-official-v4-flash"],["deepseek-v4-flash-vision-exp","crawshrimp-deepseek-official/deepseek-official-v4-flash-vision-exp"]])',
       'new Map([["gpt5","crawshrimp-overseas-openai/gpt-5.5"],["deepseek-v4-pro","crawshrimp-deepseek-official/deepseek-official-v4-pro"],["deepseek-v4-flash","crawshrimp-deepseek-official/deepseek-official-v4-flash"],["deepseek-v4-flash-vision-exp","crawshrimp-deepseek-official/deepseek-official-v4-flash-vision-exp"]])',
       'new Map([["deepseek-v4-pro","crawshrimp-deepseek-official/deepseek-official-v4-pro"],["deepseek-v4-flash","crawshrimp-deepseek-official/deepseek-official-v4-flash"],["deepseek-v4-flash-vision-exp","crawshrimp-deepseek-official/deepseek-official-v4-flash-vision-exp"]])',
@@ -3449,30 +3681,48 @@ function patchDshImBundledNaturalModelAliases(source) {
     for (const [index, oldOrder] of oldOrders.entries()) {
       migrated = migrated.replaceAll(oldOrder, newOrders[index])
     }
-    if (migrated !== source || migrated.includes(aliasMap)) return migrated
+    if (migrated !== source || migrated.includes(aliasMap)) return patchDshImBundledModelLookupSuffix(migrated)
     throw new Error('cannot migrate bundled dsh-im natural model aliases: expected alias map shape not found')
   }
   const named = migrated.replace(
     'cshSafeModelAliases=new Map;function cshNormalizeControlText',
     `cshSafeModelAliases=${aliasMap};/* ${DSH_IM_NATURAL_MODEL_ALIASES_PATCH_MARKER}: bundled current */function cshNormalizeControlText`,
   )
-  if (named !== migrated) return named
+  if (named !== migrated) return patchDshImBundledModelLookupSuffix(named)
 
   const minified = migrated.replace(
     /(Hce=new Set\(\["有哪些模型"[\s\S]{0,1200}?xce=Object\.freeze\(\[[\s\S]{0,1200}?\]\),)([A-Za-z_$][\w$]*)=new Map;function /,
     `$1$2=${aliasMap};/* ${DSH_IM_NATURAL_MODEL_ALIASES_PATCH_MARKER}: bundled current */function `,
   )
-  if (minified !== migrated) return minified
+  if (minified !== migrated) return patchDshImBundledModelLookupSuffix(minified)
 
   if (source.includes('可以切换模型吗') && source.includes('deepseek-official-v4-pro')) {
     throw new Error('cannot patch bundled dsh-im natural model aliases: expected alias map shape not found')
   }
-  return source
+  return patchDshImBundledModelLookupSuffix(source)
+}
+
+function patchDshImBundledModelLookupSuffix(source) {
+  if (source.includes('cshStripModelLookupSuffix')) return source
+  return replaceAny(
+    source,
+    [
+      [
+        'function sf(n){return Kc(n,{allowPolitePrefix:!1})?.replace(/[\\s-]+/gu,"")??null}',
+        'function sf(n){let t=Kc(n,{allowPolitePrefix:!1});if(!t)return null;for(let o of["模型","model"])if(t.endsWith(o)){let i=t.slice(0,-o.length).trim();if(i)t=i}return t.replace(/[\\s_.-]+/gu,"")}/* cshStripModelLookupSuffix */',
+      ],
+      [
+        'function cshNormalizeModelLookup(n){let t=cshNormalizeControlText(n).toLocaleLowerCase("en-US");return t.replace(/[\\s_]+/g,"-").replace(/[._]+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"")}',
+        'function cshNormalizeModelLookup(n){let t=cshNormalizeControlText(n).toLocaleLowerCase("en-US");for(let o of["模型","model"])if(t.endsWith(o)){let i=t.slice(0,-o.length).trim();if(i)t=i}return t.replace(/[\\s_.-]+/g,"")}/* cshStripModelLookupSuffix */',
+      ],
+    ],
+    'bundled dsh-im model lookup suffix normalization',
+  )
 }
 
 function patchDshImBundledProductModelCatalog(source) {
   if (source.includes(`${DSH_IM_MODEL_CATALOG_PATCH_MARKER}: bundled current`)) {
-    return source
+    return patchDshImBundledProductRuntimeModel(source)
   }
   if (source.includes('cshNaturalModelList=new Set(["有哪些模型","列出所有可用模型"')) {
     source = replaceExact(
@@ -3538,7 +3788,7 @@ function patchDshImBundledProductModelCatalog(source) {
     ],
     'bundled dsh-im product model catalog loader',
   )
-  return replaceAny(
+  source = replaceAny(
     source,
     [
       [
@@ -3551,6 +3801,17 @@ function patchDshImBundledProductModelCatalog(source) {
       ],
     ],
     'bundled dsh-im natural product model list action',
+  )
+  return patchDshImBundledProductRuntimeModel(source)
+}
+
+function patchDshImBundledProductRuntimeModel(source) {
+  if (source.includes('runtimeModel:cshProductText')) return source
+  return replaceExact(
+    source,
+    'return{id:r,label:cshProductText(A.label||A.name||r),provider:cshProductText(A.provider||""),configured:A.configured===!0,default:A.default===!0,supportsSwitch:A.supports_switch===!0||A.supportsSwitch===!0}',
+    'return{id:r,label:cshProductText(A.label||A.name||r),provider:cshProductText(A.provider||""),type:cshProductText(A.type||o.id||""),runtimeModel:cshProductText(A.runtime_model||A.runtimeModel||""),configured:A.configured===!0,default:A.default===!0,supportsSwitch:A.supports_switch===!0||A.supportsSwitch===!0}',
+    'bundled dsh-im product runtime model field',
   )
 }
 
