@@ -19,6 +19,7 @@ const { createBackendController } = require('./backendController')
 const { createLifecycleController } = require('./lifecycleController')
 const { stopManagedChrome: stopManagedChromeFromState } = require('./managedChrome')
 const { startDesktopServices } = require('./startupServices')
+const { waitForServiceReadiness } = require('./serviceReadiness')
 const {
   requestBackendApi,
   resolveAiVideoCapabilityPath,
@@ -1550,6 +1551,8 @@ function apiCall(method, urlPath, body = null, options = {}) {
     port: apiPort,
     token: getApiToken(),
     tokenHeader: API_TOKEN_HEADER,
+    getPort: () => apiPort,
+    getToken: getApiToken,
     method,
     urlPath,
     body,
@@ -2314,7 +2317,12 @@ async function switchApiEndpoint() {
 
 function sendStatus(key, value) {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('status', { key, value })
+    const payload = { key, value }
+    if (key === 'api' || key === 'apiState') {
+      payload.apiPort = apiPort
+      payload.apiBase = `http://127.0.0.1:${apiPort}`
+    }
+    mainWindow.webContents.send('status', payload)
   }
 }
 
@@ -2708,6 +2716,11 @@ configureSingleInstance({
 // ── IPC handlers ──────────────────────────────────────────────────────────────
 
 async function getDesktopStatus() {
+  await waitForServiceReadiness({
+    recoveryBarrier: backendRecoveryBarrier,
+    startupPromise: desktopServicesStartupPromise,
+    ensureServices: ensureDesktopServicesStarted,
+  })
   const backendHealth = await getBackendHealth()
   const backendAvailability = classifyBackendHealth(backendHealth, isCompatibleBackendRuntime)
   const chromeAvailable = (await probeChromeCdp()).ok

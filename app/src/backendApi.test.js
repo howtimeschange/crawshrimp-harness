@@ -102,3 +102,31 @@ test('requestBackendApi preserves structured AI video error messages', async () 
     )
   })
 })
+
+test('requestBackendApi resolves the port and token after the readiness barrier', async () => {
+  await withServer((req, res) => {
+    assert.equal(req.headers['x-crawshrimp-token'], 'fresh-token')
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: true }))
+  }, async (port) => {
+    let currentPort = 1
+    let currentToken = 'stale-token'
+    const result = await requestBackendApi({
+      http,
+      port: 1,
+      token: 'stale-token',
+      getPort: () => currentPort,
+      getToken: () => currentToken,
+      tokenHeader: 'X-Crawshrimp-Token',
+      method: 'GET',
+      urlPath: '/after-readiness',
+      runWhenReady: async operation => {
+        currentPort = port
+        currentToken = 'fresh-token'
+        return operation()
+      },
+    })
+
+    assert.deepEqual(result, { ok: true })
+  })
+})

@@ -219,6 +219,8 @@ function requestBackendApi({
   port,
   token,
   tokenHeader,
+  getPort,
+  getToken,
   method,
   urlPath,
   body = null,
@@ -231,15 +233,17 @@ function requestBackendApi({
   const timeoutMs = Math.max(0, Number(options.timeoutMs || 0))
 
   const doRequest = () => new Promise((resolve, reject) => {
+    const requestPort = typeof getPort === 'function' ? getPort() : port
+    const requestToken = typeof getToken === 'function' ? getToken() : token
     const bodyStr = body ? JSON.stringify(body) : null
     const opts = {
       hostname: '127.0.0.1',
-      port,
+      port: requestPort,
       path: urlPath,
       method,
       headers: {
         'Content-Type': 'application/json',
-        [tokenHeader]: token,
+        [tokenHeader]: requestToken,
         ...(bodyStr ? { 'Content-Length': Buffer.byteLength(bodyStr) } : {}),
       },
     }

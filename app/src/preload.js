@@ -1,6 +1,46 @@
 'use strict'
 const { contextBridge, ipcRenderer } = require('electron')
 
+// Electron sandboxed preloads can require Electron and Node built-ins, but not
+// sibling application modules. Keep this tiny connection gate inline so the
+// preload can always finish and expose window.cs in packaged builds.
+function createApiConnection({ synchronize, request }) {
+  if (typeof synchronize !== 'function') throw new TypeError('synchronize is required')
+  if (typeof request !== 'function') throw new TypeError('request is required')
+
+  let synchronized = false
+  let synchronizationPromise = null
+
+  async function ensureSynchronized() {
+    if (synchronized) return
+    if (!synchronizationPromise) {
+      synchronizationPromise = Promise.resolve()
+        .then(() => synchronize())
+        .then(() => {
+          synchronized = true
+        })
+        .finally(() => {
+          synchronizationPromise = null
+        })
+    }
+    await synchronizationPromise
+  }
+
+  return {
+    ready: ensureSynchronized,
+    call: async (...args) => {
+      await ensureSynchronized()
+      return request(...args)
+    },
+    markSynchronized: () => {
+      synchronized = true
+    },
+    reset: () => {
+      synchronized = false
+    },
+  }
+}
+
 const DEFAULT_API_BASE = 'http://127.0.0.1:18765'
 const TOKEN_STORAGE_KEY = 'crawshrimp.apiToken'
 const API_BASE_STORAGE_KEY = 'crawshrimp.apiBase'
@@ -87,7 +127,7 @@ async function parseResponse(response) {
   return text
 }
 
-async function apiCall(method, requestPath, body) {
+async function requestApi(method, requestPath, body) {
   const headers = { Accept: 'application/json' }
   const token = apiToken()
   if (token) headers['X-Crawshrimp-Token'] = token
@@ -130,8 +170,32 @@ function queryString(query = {}) {
   ).toString()
 }
 
+const agentApiConnection = createApiConnection({
+  synchronize: async () => {
+    const status = await ipcRenderer.invoke('get-status')
+    rememberApiConnectionFromStatus(status)
+    if (status?.api === false) {
+      const error = new Error('核心服务尚未就绪，请稍后重试')
+      error.code = 'CORE_NOT_READY'
+      throw error
+    }
+  },
+  request: requestApi,
+})
+
+async function apiCall(method, requestPath, body) {
+  return agentApiConnection.call(method, requestPath, body)
+}
+
 async function agentApi(method, requestPath, body) {
   return apiCall(method, requestPath, body)
+}
+
+function rememberAndMarkApiConnection(status) {
+  const publicStatus = rememberApiConnectionFromStatus(status)
+  if (publicStatus?.api === false) agentApiConnection.reset()
+  else agentApiConnection.markSynchronized()
+  return publicStatus
 }
 
 /**
@@ -139,11 +203,11 @@ async function agentApi(method, requestPath, body) {
  * 每个 URL 使用后端签发的短期 capability，绑定 path/entry/expiry；master token 不进 URL。
  */
 async function agentMediaUrl(path, entry) {
-  const base = apiBase()
   const signed = await agentApi('POST', '/agent/artifacts/sign', {
     path: String(path || ''),
     entry: String(entry || ''),
   })
+  const base = apiBase()
   const query = new URLSearchParams({
     path: String(signed?.path || path || ''),
     expires: String(signed?.expires || ''),
@@ -162,13 +226,15 @@ async function agentMediaUrl(path, entry) {
  */
 function streamAgentEvents(sessionId, afterSeq, handlers = {}) {
   const controller = new AbortController()
-  const url = buildUrl(`/agent/sessions/${encodePathPart(sessionId)}/events?after_seq=${Number(afterSeq) || 0}`)
-  const headers = { Accept: 'text/event-stream' }
-  const token = apiToken()
-  if (token) headers['X-Crawshrimp-Token'] = token
 
   void (async () => {
     try {
+      await agentApiConnection.ready()
+      if (controller.signal.aborted) return
+      const url = buildUrl(`/agent/sessions/${encodePathPart(sessionId)}/events?after_seq=${Number(afterSeq) || 0}`)
+      const headers = { Accept: 'text/event-stream' }
+      const token = apiToken()
+      if (token) headers['X-Crawshrimp-Token'] = token
       const response = await fetch(url, { headers, signal: controller.signal })
       if (!response.ok || !response.body) {
         handlers.onError?.(new Error(`SSE 连接失败: ${response.status}`))
@@ -215,13 +281,15 @@ function streamAgentEvents(sessionId, afterSeq, handlers = {}) {
  */
 function streamGlobalAgentEvents(afterSeq, handlers = {}) {
   const controller = new AbortController()
-  const url = buildUrl(`/agent/events?after_seq=${Number(afterSeq) || 0}`)
-  const headers = { Accept: 'text/event-stream' }
-  const token = apiToken()
-  if (token) headers['X-Crawshrimp-Token'] = token
 
   void (async () => {
     try {
+      await agentApiConnection.ready()
+      if (controller.signal.aborted) return
+      const url = buildUrl(`/agent/events?after_seq=${Number(afterSeq) || 0}`)
+      const headers = { Accept: 'text/event-stream' }
+      const token = apiToken()
+      if (token) headers['X-Crawshrimp-Token'] = token
       const response = await fetch(url, { headers, signal: controller.signal })
       if (!response.ok || !response.body) {
         handlers.onError?.(new Error(`SSE 连接失败: ${response.status}`))
@@ -402,8 +470,8 @@ function createLocalPromptFallbackLibrary(payload = {}) {
 }
 
 contextBridge.exposeInMainWorld('cs', {
-  getStatus:       () => ipcRenderer.invoke('get-status').then(rememberApiConnectionFromStatus),
-  restartBackend:  () => ipcRenderer.invoke('restart-backend').then(rememberApiConnectionFromStatus),
+  getStatus:       () => ipcRenderer.invoke('get-status').then(rememberAndMarkApiConnection),
+  restartBackend:  () => ipcRenderer.invoke('restart-backend').then(rememberAndMarkApiConnection),
   openDiagnosticLog: () => ipcRenderer.invoke('open-diagnostic-log'),
   getUpdateStatus: () => ipcRenderer.invoke('update:get-status'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
@@ -668,7 +736,11 @@ contextBridge.exposeInMainWorld('cs', {
   saveAdapterTemplate: (adapterId, templateFile, templatePath) => ipcRenderer.invoke('save-adapter-template', adapterId, templateFile, templatePath),
 
   onLog:    (cb) => ipcRenderer.on('log', (_, msg) => cb(msg)),
-  onStatus: (cb) => ipcRenderer.on('status', (_, data) => cb(data)),
+  onStatus: (cb) => ipcRenderer.on('status', (_, data) => {
+    const publicStatus = rememberApiConnectionFromStatus(data)
+    if (data?.key === 'api' && data?.value === false) agentApiConnection.reset()
+    cb(publicStatus)
+  }),
   offLog:   ()   => ipcRenderer.removeAllListeners('log'),
   offStatus:()   => ipcRenderer.removeAllListeners('status'),
 })
