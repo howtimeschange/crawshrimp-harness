@@ -274,6 +274,16 @@ test('agent iframe can load backend candidate URL while web verification settles
   assert.match(webView, /Windows packaged builds can serve the first page slowly/)
 })
 
+test('agent runtime failures leave the loading screen and expose a retry action', () => {
+  const webView = readFileSync(resolve(appRoot, 'src/renderer/views/AgentWebView.vue'), 'utf8')
+  assert.match(webView, /const runtimeNeedsAttention = computed\(\(\) => \{[\s\S]*?return Boolean\(error\.value\)/)
+  assert.match(webView, /\['starting', 'ready'\]\.includes\(lastRuntimeState\.value\)/)
+  assert.match(webView, /error\.value \|\| '正在准备会话环境,请稍候片刻。'/)
+  assert.match(webView, /state === 'disabled_until_manual_restart'/)
+  assert.match(webView, /重新连接智能体/)
+  assert.match(webView, /lastRuntimeState\.value === 'needs_configuration' \|\| lastRuntimeState\.value === 'disabled_until_manual_restart'/)
+})
+
 test('agent runtime missing model keys still opens DSH and gates composer with configuration modal', () => {
   const webView = readFileSync(resolve(appRoot, 'src/renderer/views/AgentWebView.vue'), 'utf8')
   const settings = readFileSync(resolve(appRoot, 'src/renderer/views/SettingsPage.vue'), 'utf8')

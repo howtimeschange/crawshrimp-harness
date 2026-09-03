@@ -246,6 +246,10 @@ function requireDeepseekHarnessBundle(resourcesPath, expectedTarget = {}) {
   }
 }
 
+function deepseekHarnessStageKey(electronPlatformName, archName) {
+  return `${electronPlatformName}-${archName}`
+}
+
 async function afterPack(context) {
   const { electronPlatformName, arch, appOutDir } = context
   // arch: 0=ia32, 1=x64, 2=armv7l, 3=arm64
@@ -280,11 +284,12 @@ async function afterPack(context) {
 
   // DeepSeek Harness:与 Python 同模式 —— stage 脚本编排生产闭包,
   // afterPack 负责拷入 Resources 并校验(extraResources 默认排除 node_modules)。
-  const stageHarness = path.join(scriptDir, '..', 'build-staging', 'deepseek-harness')
+  const stageKey = deepseekHarnessStageKey(electronPlatformName, archName)
+  const stageHarness = path.join(scriptDir, '..', 'build-staging', 'deepseek-harness', stageKey)
   if (!fs.existsSync(stageHarness)) {
     throw new Error(
-      `[after-pack] deepseek-harness staging 不存在: ${stageHarness}。` +
-      '请先运行 node integrations/deepseek-harness/scripts/stage-runtime.mjs。'
+      `[after-pack] deepseek-harness ${stageKey} staging 不存在: ${stageHarness}。` +
+      '请先运行对应目标的 stage-runtime-targets.mjs。'
     )
   }
   const destHarness = path.join(resourcesPath, 'deepseek-harness')
@@ -293,7 +298,7 @@ async function afterPack(context) {
   copyDirSync(stageHarness, destHarness)
   requireDeepseekHarnessBundle(resourcesPath, {
     platform: electronPlatformName,
-    arch: electronPlatformName === 'win32' ? archName : '',
+    arch: archName,
   })
   console.log('[after-pack] deepseek-harness bundled')
 
@@ -340,6 +345,7 @@ exports.requirePythonBundle = requirePythonBundle
 exports.requirePythonScriptsBundle = requirePythonScriptsBundle
 exports.requireDeepseekHarnessBundle = requireDeepseekHarnessBundle
 exports.requireNativeRuntimePackages = requireNativeRuntimePackages
+exports.deepseekHarnessStageKey = deepseekHarnessStageKey
 exports.REQUIRED_BACKEND_IMPORTS = REQUIRED_BACKEND_IMPORTS
 exports.REQUIRED_WINDOWS_BACKEND_PATHS = REQUIRED_WINDOWS_BACKEND_PATHS
 exports.REQUIRED_VIDEO_INTEGRATION_FILES = REQUIRED_VIDEO_INTEGRATION_FILES

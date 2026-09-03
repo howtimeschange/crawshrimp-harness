@@ -66,7 +66,10 @@
             <div class="placeholder-title">{{ placeholderTitle }}</div>
             <div class="placeholder-text">{{ placeholderText }}</div>
             <div class="placeholder-actions">
-              <span class="recover-state">{{ placeholderStateText }}</span>
+              <span :class="['recover-state', { muted: runtimeNeedsAttention }]">{{ placeholderStateText }}</span>
+              <button v-if="runtimeNeedsAttention" class="placeholder-btn primary" type="button" @click="retryLoad">
+                重新连接智能体
+              </button>
             </div>
           </section>
         </div>
@@ -241,17 +244,32 @@ const browserToggleTitle = computed(() => {
   return '当前会话暂无实时浏览器'
 })
 const isRuntimeNeedsConfiguration = computed(() => lastRuntimeState.value === 'needs_configuration')
+const isRuntimeDisabled = computed(() => lastRuntimeState.value === 'disabled_until_manual_restart')
+const runtimeNeedsAttention = computed(() => {
+  if (isRuntimeNeedsConfiguration.value || ['starting', 'ready'].includes(lastRuntimeState.value)) return false
+  return Boolean(error.value)
+})
 const showFallbackNav = computed(() => Boolean(isRuntimeNeedsConfiguration.value && !webUrl.value && props.navItems?.length))
 const expandedFallbackNavGroupIds = ref(new Set(['ai_workflows']))
-const placeholderIcon = computed(() => isRuntimeNeedsConfiguration.value ? '钥' : '…')
-const placeholderTitle = computed(() => isRuntimeNeedsConfiguration.value ? '智能体待配置' : '智能体启动中…')
+const placeholderIcon = computed(() => {
+  if (isRuntimeNeedsConfiguration.value) return '钥'
+  return runtimeNeedsAttention.value ? '!' : '…'
+})
+const placeholderTitle = computed(() => {
+  if (isRuntimeNeedsConfiguration.value) return '智能体待配置'
+  if (isRuntimeDisabled.value) return '智能体核心已暂停'
+  if (runtimeNeedsAttention.value) return '智能体启动失败'
+  return '智能体启动中…'
+})
 const placeholderText = computed(() => (
   isRuntimeNeedsConfiguration.value
     ? normalizeModelConfigMessage(error.value)
-    : '正在准备会话环境,请稍候片刻。'
+    : error.value || '正在准备会话环境,请稍候片刻。'
 ))
 const placeholderStateText = computed(() => (
-  isRuntimeNeedsConfiguration.value ? '等待模型配置' : '自动就绪中,无需操作'
+  isRuntimeNeedsConfiguration.value
+    ? '等待模型配置'
+    : runtimeNeedsAttention.value ? '需要重新连接' : '自动就绪中,无需操作'
 ))
 const runtimeNeedsModelKey = ref(false)
 const inlineLlmModalOpen = ref(false)
@@ -317,8 +335,11 @@ async function loadRuntime() {
       loading.value = false
       return false
     }
-    if (state === 'failed' || state === 'crashed' || result?.error) {
+    if (state === 'failed' || state === 'crashed' || state === 'disabled_until_manual_restart' || result?.error) {
       error.value = result.error || '运行时启动失败'
+      if (state === 'disabled_until_manual_restart' && !result?.error) {
+        error.value = '核心服务连续崩溃，已暂停自动重试。请点击“重新连接智能体”或重启核心服务。'
+      }
       loading.value = false
     } else if (result?.enabled !== false && !result?.active_run && ['stopped', 'unknown', ''].includes(state)) {
       // 预热:web host 未起(首轮会话前)→ 拉起 runtime
@@ -347,7 +368,7 @@ async function loadRuntime() {
 
 // 自动恢复:DSH 运行时不可用/后端掉线时循环自愈,不交给用户操作
 async function autoRecover() {
-  if (lastRuntimeState.value === 'needs_configuration') return
+  if (lastRuntimeState.value === 'needs_configuration' || lastRuntimeState.value === 'disabled_until_manual_restart') return
   if (recovering) return
   recovering = true
   try {
@@ -375,10 +396,24 @@ async function autoRecover() {
   }
 }
 
-function retryLoad() {
+async function retryLoad() {
   warmStarted = false
   error.value = ''
-  loadRuntime()
+  recoverAttempts.value = 0
+  if (lastRuntimeState.value === 'disabled_until_manual_restart') {
+    try {
+      const restarted = await window.cs.agentApi('POST', '/agent/runtime/restart')
+      if (restarted?.state) lastRuntimeState.value = String(restarted.state)
+      if (!restarted?.ok && restarted?.state === 'disabled_until_manual_restart') {
+        error.value = restarted.error || '核心服务仍处于暂停状态，请重启核心服务后再试。'
+        return
+      }
+    } catch (err) {
+      error.value = err?.message || '无法重启智能体运行时'
+      return
+    }
+  }
+  await autoRecover()
 }
 
 function selectFallbackNav(item) {

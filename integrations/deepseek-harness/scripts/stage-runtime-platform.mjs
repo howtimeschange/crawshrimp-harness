@@ -6,6 +6,69 @@ export function stageTargetKey({ platform, arch }) {
   return platform + '-' + arch
 }
 
+const VALID_STAGE_PLATFORMS = new Set(['darwin', 'linux', 'win32'])
+const VALID_STAGE_ARCHES = new Set(['arm64', 'x64', 'ia32', 'arm', 'armv7l'])
+
+export function normalizeStageTarget(target = {}) {
+  const platform = String(target.platform || '').trim()
+  const arch = String(target.arch || '').trim()
+  if (!VALID_STAGE_PLATFORMS.has(platform)) {
+    throw new Error(`unsupported staging platform: ${platform || '(empty)'}`)
+  }
+  if (!VALID_STAGE_ARCHES.has(arch)) {
+    throw new Error(`unsupported staging architecture: ${arch || '(empty)'}`)
+  }
+  return { platform, arch }
+}
+
+export function parseStageTarget(args = [], hostTarget = {
+  platform: process.platform,
+  arch: process.arch,
+}) {
+  let targetValue = ''
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = String(args[index] || '')
+    if (arg === '--target') {
+      targetValue = String(args[index + 1] || '')
+      index += 1
+      break
+    }
+    if (arg.startsWith('--target=')) {
+      targetValue = arg.slice('--target='.length)
+      break
+    }
+  }
+  if (!targetValue) return normalizeStageTarget(hostTarget)
+  const separator = targetValue.indexOf('-')
+  if (separator <= 0 || separator === targetValue.length - 1) {
+    throw new Error(`invalid staging target: ${targetValue}; expected <platform>-<arch>`)
+  }
+  return normalizeStageTarget({
+    platform: targetValue.slice(0, separator),
+    arch: targetValue.slice(separator + 1),
+  })
+}
+
+export function isCrossStageTarget(target, hostTarget = {
+  platform: process.platform,
+  arch: process.arch,
+}) {
+  return target.platform !== hostTarget.platform || target.arch !== hostTarget.arch
+}
+
+export function targetInstallEnvironment(target, baseEnv = process.env) {
+  const normalized = normalizeStageTarget(target)
+  return {
+    ...baseEnv,
+    // npm uses these config values when resolving optionalDependencies with
+    // os/cpu constraints. Keep both names for npm versions used locally/CI.
+    npm_config_platform: normalized.platform,
+    npm_config_arch: normalized.arch,
+    npm_config_os: normalized.platform,
+    npm_config_cpu: normalized.arch,
+  }
+}
+
 export function getRequiredNativeRuntimePackages({ platform, arch }) {
   const suffix = platform + '-' + arch
   return [

@@ -116,6 +116,6 @@ git diff --check
 ## 8. 构建边界
 
 - `npm --prefix app run vite:build` 验证前端生产构建。
-- `npm --prefix app run stage:harness` 生成 DSH 生产闭包并运行 Electron-as-Node boot check。
+- `npm --prefix app run stage:harness` 生成当前主机目标的 DSH 生产闭包并运行 Electron-as-Node boot check；正式 macOS 双架构构建会分别生成 `build-staging/deepseek-harness/darwin-arm64` 与 `darwin-x64`。
 - `npm --prefix app run build:mac:ci` 生成 macOS 双架构产物。
 - Windows NSIS 应在 Windows 构建机执行 `npm --prefix app run build:win`；macOS 上的 win-unpacked 不能替代安装器 E2E。

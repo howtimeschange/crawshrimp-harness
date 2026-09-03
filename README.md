@@ -15,6 +15,12 @@ Crawshrimp Harness 把抓虾桌面应用与 DeepSeek Harness（DSH）组合成�
 
 ## 版本记录
 
+### v0.1.12
+
+- 修复 macOS Intel 版误携带 arm64 DSH 原生依赖导致智能体页面持续停留在启动态、核心服务反复崩溃的问题。
+- macOS arm64/x64 分别生成并校验 sharp、koffi、ripgrep 运行时依赖；打包钩子按 Electron 目标架构选择对应 staging。
+- 运行时启动失败不再伪装成无限“启动中”，会展示错误原因并提供重新连接入口。
+
 ### v0.1.11
 
 - 增强 IM 自然语言控制：支持在会话里列出/切换模型，并识别抓虾、GPT-5、Claude、Gemini、DeepSeek 等常用模型别名。

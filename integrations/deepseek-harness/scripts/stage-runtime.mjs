@@ -17,9 +17,12 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   getRequiredNativeRuntimePackages,
+  isCrossStageTarget,
+  parseStageTarget,
   resolveElectronExecutable,
   shouldSkipBootCheck,
   stageTargetKey,
+  targetInstallEnvironment,
 } from './stage-runtime-platform.mjs'
 import { patchRuntimeDependencies } from './patch-runtime-dependencies.mjs'
 
@@ -27,9 +30,16 @@ const here = dirname(fileURLToPath(import.meta.url))
 const sourceRoot = resolve(here, '..')
 const repoRoot = resolve(sourceRoot, '../..')
 const appRoot = join(repoRoot, 'app')
-const stageRoot = join(repoRoot, 'build-staging', 'deepseek-harness')
-const stageTarget = { platform: process.platform, arch: process.arch }
+const stageRootBase = join(repoRoot, 'build-staging', 'deepseek-harness')
+const args = process.argv.slice(2)
+let stageTarget
+try {
+  stageTarget = parseStageTarget(args)
+} catch (error) {
+  fail(error.message)
+}
 const stageTargetId = stageTargetKey(stageTarget)
+const stageRoot = join(stageRootBase, stageTargetId)
 const runtimeTargetMarkerName = '.crawshrimp-runtime-target.json'
 const runtimeTargetMarkerFile = join(stageRoot, runtimeTargetMarkerName)
 
@@ -78,9 +88,9 @@ const REQUIRED_STAGE_FILES = [
   'web-cordis.yml',
 ]
 
-const args = process.argv.slice(2)
 const force = args.includes('--force')
-const skipBootCheck = shouldSkipBootCheck({ args })
+const crossTarget = isCrossStageTarget(stageTarget)
+const skipBootCheck = shouldSkipBootCheck({ args }) || crossTarget
 
 function fail(message) {
   console.error(`[stage-runtime] FAILED: ${message}`)
@@ -190,6 +200,7 @@ if (!upToDate) {
   const install = spawnSync('npm', ['ci', '--omit=dev', '--no-audit', '--no-fund'], {
     cwd: stageRoot,
     stdio: 'inherit',
+    env: targetInstallEnvironment(stageTarget),
     shell: process.platform === 'win32',
   })
   if (install.status !== 0) fail(`npm ci --omit=dev exited ${install.status}`)
@@ -264,7 +275,7 @@ const BANNED_PACKAGES = [
 }
 
 if (skipBootCheck) {
-  console.log('[stage-runtime] boot check skipped (flag)')
+  console.log(`[stage-runtime] boot check skipped (${crossTarget ? `cross-target ${stageTargetId}` : 'flag'})`)
 } else {
   bootCheck()
 }

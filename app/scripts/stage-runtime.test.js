@@ -92,7 +92,11 @@ test('stage runtime rejects an Electron loader result outside the package dist d
 test('Windows staging records its target and requires Windows x64 native dependencies', async () => {
   const {
     getRequiredNativeRuntimePackages,
+    isCrossStageTarget,
+    normalizeStageTarget,
+    parseStageTarget,
     stageTargetKey,
+    targetInstallEnvironment,
   } = await import(helperUrl)
   const target = { platform: 'win32', arch: 'x64' }
 
@@ -102,4 +106,26 @@ test('Windows staging records its target and requires Windows x64 native depende
     { packagePath: '@koromix/koffi-win32-x64', artifactExtension: '.node' },
     { packagePath: '@vscode/ripgrep-win32-x64', artifactName: 'rg.exe' },
   ])
+})
+
+test('staging parses explicit macOS targets and selects target-specific npm optional dependencies', async () => {
+  const { parseStageTarget, targetInstallEnvironment, isCrossStageTarget } = await import(helperUrl)
+  const target = parseStageTarget(['--target=darwin-x64'], { platform: 'darwin', arch: 'arm64' })
+
+  assert.deepEqual(target, { platform: 'darwin', arch: 'x64' })
+  assert.equal(isCrossStageTarget(target, { platform: 'darwin', arch: 'arm64' }), true)
+  assert.deepEqual(targetInstallEnvironment(target, { PATH: '/usr/bin' }), {
+    PATH: '/usr/bin',
+    npm_config_platform: 'darwin',
+    npm_config_arch: 'x64',
+    npm_config_os: 'darwin',
+    npm_config_cpu: 'x64',
+  })
+})
+
+test('staging rejects unsafe or unsupported target values', async () => {
+  const { normalizeStageTarget, parseStageTarget } = await import(helperUrl)
+
+  assert.throws(() => normalizeStageTarget({ platform: '../../tmp', arch: 'x64' }), /unsupported staging platform/)
+  assert.throws(() => parseStageTarget(['--target', 'darwin'], { platform: 'darwin', arch: 'arm64' }), /expected <platform>-<arch>/)
 })

@@ -319,6 +319,59 @@ jobs:
               exit 1
             fi
 
+            zip_arch="${zip_file##*-mac-}"
+            zip_arch="${zip_arch%.zip}"
+            case "${zip_arch}" in
+              arm64)
+                expected_native_arch="arm64"
+                forbidden_arch="x64"
+                ;;
+              x64)
+                expected_native_arch="x86_64"
+                forbidden_arch="arm64"
+                ;;
+              *)
+                echo "::error::Unexpected macOS ZIP architecture in ${zip_file}"
+                exit 1
+                ;;
+            esac
+
+            deepseek_bundle="${app_path}/Contents/Resources/deepseek-harness"
+            marker_file="${deepseek_bundle}/.crawshrimp-runtime-target.json"
+            if [ ! -s "${marker_file}" ]; then
+              echo "::error::Missing DSH runtime target marker in ${zip_file}: ${marker_file}"
+              exit 1
+            fi
+            marker_target=$(node -e "const fs=require('fs');const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));process.stdout.write(String(m.platform)+'-'+String(m.arch))" "${marker_file}")
+            if [ "${marker_target}" != "darwin-${zip_arch}" ]; then
+              echo "::error::DSH runtime target ${marker_target} does not match darwin-${zip_arch} in ${zip_file}"
+              exit 1
+            fi
+            for native_package in "@img/sharp-darwin-${zip_arch}" "@koromix/koffi-darwin-${zip_arch}" "@vscode/ripgrep-darwin-${zip_arch}"; do
+              native_root="${deepseek_bundle}/node_modules/${native_package}"
+              if [ ! -d "${native_root}" ]; then
+                echo "::error::Missing DSH native package ${native_package} in ${zip_file}"
+                exit 1
+              fi
+              native_file=$(find "${native_root}" -type f \( -name '*.node' -o -name rg \) -print -quit)
+              if [ -z "${native_file}" ]; then
+                echo "::error::Missing native artifact in ${native_package} in ${zip_file}"
+                exit 1
+              fi
+              native_description=$(file "${native_file}")
+              if ! grep -q "${expected_native_arch}" <<< "${native_description}"; then
+                echo "::error::Native artifact architecture mismatch in ${zip_file}: ${native_description}"
+                exit 1
+              fi
+            done
+            for forbidden_package in "@img/sharp-darwin-${forbidden_arch}" "@koromix/koffi-darwin-${forbidden_arch}" "@vscode/ripgrep-darwin-${forbidden_arch}"; do
+              if [ -e "${deepseek_bundle}/node_modules/${forbidden_package}" ]; then
+                echo "::error::Unexpected opposite-architecture DSH package ${forbidden_package} in ${zip_file}"
+                exit 1
+              fi
+            done
+            echo "Validated DSH runtime architecture for ${zip_file}: ${marker_target} (${expected_native_arch})"
+
             echo "Validating notarized app extracted from ${zip_file}: ${app_path}"
             codesign --verify --deep --strict --verbose=2 "${app_path}"
             codesign -dv --verbose=4 "${app_path}" 2>&1 | tee "${extract_dir}/codesign-details.log"

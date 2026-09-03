@@ -7,6 +7,7 @@ const path = require('node:path')
 const {
   copyDirSync,
   requireDeepseekHarnessBundle,
+  deepseekHarnessStageKey,
   requireNativeRuntimePackages,
   requirePythonBundle,
   requirePythonScriptsBundle,
@@ -315,6 +316,27 @@ test('requireDeepseekHarnessBundle rejects staging built for the wrong platform'
     assert.throws(
       () => requireDeepseekHarnessBundle(tmp, { platform: 'win32', arch: 'x64' }),
       /target.*darwin-arm64.*win32-x64/i
+    )
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('requireDeepseekHarnessBundle rejects staging built for the wrong macOS architecture', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-dsh-target-'))
+
+  try {
+    const bundleRoot = path.join(tmp, 'deepseek-harness')
+    fs.mkdirSync(bundleRoot, { recursive: true })
+    fs.writeFileSync(
+      path.join(bundleRoot, '.crawshrimp-runtime-target.json'),
+      JSON.stringify({ platform: 'darwin', arch: 'arm64' })
+    )
+
+    assert.equal(deepseekHarnessStageKey('darwin', 'x64'), 'darwin-x64')
+    assert.throws(
+      () => requireDeepseekHarnessBundle(tmp, { platform: 'darwin', arch: 'x64' }),
+      /target.*darwin-arm64.*darwin-x64/i
     )
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })

@@ -1,6 +1,6 @@
 {
   "name": "crawshrimp-harness",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Crawshrimp Harness: DeepSeek Harness powered browser-automation agent desktop app",
   "author": "howtimeschange",
   "license": "Apache-2.0",
@@ -8,10 +8,10 @@
   "main": "src/main.js",
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",
-    "build": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime.mjs && node scripts/run-electron-builder.js --publish=never",
-    "build:mac": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime.mjs && node scripts/run-electron-builder.js --mac --publish=never",
-    "build:mac:ci": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime.mjs && node scripts/run-electron-builder.js --mac --publish=never",
-    "build:win": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime.mjs && node scripts/run-electron-builder.js --win --publish=never",
+    "build": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime-targets.mjs && node scripts/run-electron-builder.js --publish=never",
+    "build:mac": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime-targets.mjs darwin-arm64 darwin-x64 && node scripts/run-electron-builder.js --mac --publish=never",
+    "build:mac:ci": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime-targets.mjs darwin-arm64 darwin-x64 && node scripts/run-electron-builder.js --mac --publish=never",
+    "build:win": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime-targets.mjs win32-x64 && node scripts/run-electron-builder.js --win --publish=never",
     "stage:harness": "node ../integrations/deepseek-harness/scripts/stage-runtime.mjs",
     "pretest": "node ../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs",
     "vite:build": "vite build",
