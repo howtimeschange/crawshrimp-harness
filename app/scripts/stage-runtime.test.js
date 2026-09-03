@@ -109,7 +109,7 @@ test('Windows staging records its target and requires Windows x64 native depende
 })
 
 test('staging parses explicit macOS targets and selects target-specific npm optional dependencies', async () => {
-  const { parseStageTarget, targetInstallEnvironment, isCrossStageTarget } = await import(helperUrl)
+  const { parseStageTarget, targetInstallEnvironment, isCrossStageTarget, runtimeInstallArgs } = await import(helperUrl)
   const target = parseStageTarget(['--target=darwin-x64'], { platform: 'darwin', arch: 'arm64' })
 
   assert.deepEqual(target, { platform: 'darwin', arch: 'x64' })
@@ -121,6 +121,12 @@ test('staging parses explicit macOS targets and selects target-specific npm opti
     npm_config_os: 'darwin',
     npm_config_cpu: 'x64',
   })
+  assert.deepEqual(runtimeInstallArgs({ crossTarget: true }), [
+    'ci', '--omit=dev', '--no-audit', '--no-fund', '--ignore-scripts',
+  ])
+  assert.deepEqual(runtimeInstallArgs({ crossTarget: false }), [
+    'ci', '--omit=dev', '--no-audit', '--no-fund',
+  ])
 })
 
 test('staging rejects unsafe or unsupported target values', async () => {

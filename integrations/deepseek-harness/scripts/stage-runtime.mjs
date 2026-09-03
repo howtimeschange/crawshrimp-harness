@@ -20,6 +20,7 @@ import {
   isCrossStageTarget,
   parseStageTarget,
   resolveElectronExecutable,
+  runtimeInstallArgs,
   shouldSkipBootCheck,
   stageTargetKey,
   targetInstallEnvironment,
@@ -197,7 +198,7 @@ if (!upToDate) {
   copyFileSync(join(sourceRoot, 'package.json'), join(stageRoot, 'package.json'))
   copyFileSync(join(sourceRoot, 'package-lock.json'), join(stageRoot, 'package-lock.json'))
 
-  const install = spawnSync('npm', ['ci', '--omit=dev', '--no-audit', '--no-fund'], {
+  const install = spawnSync('npm', runtimeInstallArgs({ crossTarget }), {
     cwd: stageRoot,
     stdio: 'inherit',
     env: targetInstallEnvironment(stageTarget),

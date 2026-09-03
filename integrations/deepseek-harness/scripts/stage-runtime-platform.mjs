@@ -69,6 +69,16 @@ export function targetInstallEnvironment(target, baseEnv = process.env) {
   }
 }
 
+export function runtimeInstallArgs({ crossTarget = false } = {}) {
+  return [
+    'ci',
+    '--omit=dev',
+    '--no-audit',
+    '--no-fund',
+    ...(crossTarget ? ['--ignore-scripts'] : []),
+  ]
+}
+
 export function getRequiredNativeRuntimePackages({ platform, arch }) {
   const suffix = platform + '-' + arch
   return [
