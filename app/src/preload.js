@@ -107,6 +107,12 @@ function rememberApiConnectionFromStatus(status) {
   return publicStatus
 }
 
+function isMissingIpcHandlerError(error, channel) {
+  const message = String(error?.message || error || '')
+  return message.includes(`No handler registered for '${channel}'`)
+    || message.includes(`No handler registered for "${channel}"`)
+}
+
 function apiToken() {
   return readStorageValue(TOKEN_STORAGE_KEY)
 }
@@ -172,7 +178,15 @@ function queryString(query = {}) {
 
 const agentApiConnection = createApiConnection({
   synchronize: async () => {
-    const status = await ipcRenderer.invoke('get-status')
+    let status
+    try {
+      status = await ipcRenderer.invoke('get-status')
+    } catch (error) {
+      // Older/test shells may not expose get-status yet. Preserve the HTTP
+      // fallback for those shells while surfacing every other IPC failure.
+      if (!isMissingIpcHandlerError(error, 'get-status')) throw error
+      return
+    }
     rememberApiConnectionFromStatus(status)
     if (status?.api === false) {
       const error = new Error('核心服务尚未就绪，请稍后重试')
