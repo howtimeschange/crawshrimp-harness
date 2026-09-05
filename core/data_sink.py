@@ -2792,6 +2792,37 @@ def list_agent_automation_runs(automation_uid: str, limit: int = 100) -> list[di
     return [_agent_automation_run_detail(row) for row in rows]
 
 
+def has_active_agent_automation_run(
+    automation_uid: str,
+    *,
+    exclude_run_uid: str = "",
+) -> bool:
+    """Return whether an Automation has a durable in-flight run.
+
+    The status allowlist is deliberately explicit.  Terminal records such as
+    ``needs_review`` and ``skipped_overlap`` must never block a later trigger,
+    while the Controller can exclude the run it just claimed before checking
+    for an older overlapping run.
+    """
+    uid = str(automation_uid or "").strip()
+    excluded = str(exclude_run_uid or "").strip()
+    active_statuses = ("claimed", "queued", "running", "retry_scheduled")
+    placeholders = ", ".join("?" for _ in active_statuses)
+    with _get_conn() as conn:
+        row = conn.execute(
+            f"""
+            SELECT 1
+            FROM agent_automation_runs
+            WHERE automation_uid=?
+              AND status IN ({placeholders})
+              AND run_uid != ?
+            LIMIT 1
+            """,
+            (uid, *active_statuses, excluded),
+        ).fetchone()
+    return row is not None
+
+
 def link_agent_automation_run(
     run_uid: str,
     link_kind: str,

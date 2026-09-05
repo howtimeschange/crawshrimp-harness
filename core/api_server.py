@@ -68,6 +68,7 @@ from core import data_sink
 from core import notifier
 from core import odps_sync
 from core import scheduler as sched_module
+from core.automation_controller import AutomationController
 from core.cdp_bridge import CDPBridge, get_bridge, reset_bridge
 from core.browser_session import open_browser_session
 from core.dev_harness import run_harness_capture, run_harness_eval, run_harness_snapshot
@@ -9384,6 +9385,19 @@ async def lifespan(app: FastAPI):
             logger.info("agent service started")
         except Exception:
             logger.exception("agent service startup failed; continuing without agent")
+        # Agent Automations have their own durable Controller and scheduler
+        # namespace.  AgentService does not expose the Automation callbacks
+        # yet, so leave executors injectable and do not emulate external work.
+        try:
+            automation_controller = AutomationController(
+                getattr(app.state, "agent_service", None),
+                sched_module,
+            )
+            app.state.automation_controller = automation_controller
+            automation_controller.restore()
+        except Exception:
+            app.state.automation_controller = None
+            logger.exception("agent automation controller startup failed; continuing without automations")
     logger.info("crawshrimp core started")
     try:
         yield
@@ -9404,6 +9418,7 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.exception("ai video worker shutdown failed")
         app.state.owns_backend_instance = False
+        app.state.automation_controller = None
         instance_lock.close()
 
 

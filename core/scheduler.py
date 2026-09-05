@@ -11,12 +11,16 @@ Design:
 import asyncio
 import inspect
 import logging
+import math
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 
 from core.models import AdapterManifest, TriggerType
 
@@ -26,8 +30,12 @@ APP_TIMEZONE = timezone(timedelta(hours=8), "UTC+08:00")
 # job_id format: "{adapter_id}::{task_id}"
 _scheduler: Optional[AsyncIOScheduler] = None
 _task_callbacks: Dict[str, Callable] = {}  # job_id -> async callable
+_automation_callbacks: Dict[str, Callable] = {}  # automation_uid -> async callable
+_automation_callback_tokens: Dict[str, str] = {}
 _begin_runtime_operation: Callable[[str, str, str, str], str] | None = None
 _end_runtime_operation: Callable[[str], None] | None = None
+AUTOMATION_JOB_PREFIX = "automation::"
+DEFAULT_AUTOMATION_TIMEZONE = "Asia/Shanghai"
 WEEKDAY_NAMES = {
     1: "mon",
     2: "tue",
@@ -68,6 +76,20 @@ def job_id(adapter_id: str, task_id: str) -> str:
 
 def schedule_job_id(schedule_uid: str) -> str:
     return f"schedule::{str(schedule_uid or '').strip()}"
+
+
+def automation_job_id(automation_uid: str) -> str:
+    """Return the isolated APScheduler id for one Agent Automation.
+
+    Automation jobs deliberately use a namespace disjoint from both manifest
+    jobs (``adapter::task``) and persisted Adapter Task Schedules
+    (``schedule::uid``).  The scheduler is only a wake-up mechanism; the
+    Controller remains the authority for claiming and executing a trigger.
+    """
+    uid = str(automation_uid or "").strip()
+    if not uid:
+        raise ValueError("automation_uid is required")
+    return f"{AUTOMATION_JOB_PREFIX}{uid}"
 
 
 def set_runtime_operation_hooks(begin_operation=None, end_operation=None) -> None:
@@ -244,6 +266,270 @@ def unregister_task_schedule(schedule_uid: str) -> int:
         removed = 1
     _task_callbacks.pop(jid, None)
     return removed
+
+
+def _automation_schedule_value(automation: dict) -> dict:
+    schedule = (automation or {}).get("schedule")
+    return schedule if isinstance(schedule, dict) else {}
+
+
+def _automation_timezone(schedule: dict) -> ZoneInfo:
+    name = str(
+        (schedule or {}).get("timezone")
+        or (schedule or {}).get("iana_timezone")
+        or (schedule or {}).get("tz")
+        or DEFAULT_AUTOMATION_TIMEZONE
+    ).strip()
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"automation schedule timezone must be an IANA name: {name}") from exc
+
+
+def _automation_datetime(value, timezone_value: ZoneInfo, *, field_name: str) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value or "").strip()
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field_name} must be an ISO-8601 datetime") from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone_value)
+    return parsed.astimezone(timezone_value)
+
+
+def _automation_now(timezone_value: ZoneInfo) -> datetime:
+    return datetime.now(timezone_value)
+
+
+def _positive_seconds(schedule: dict) -> int:
+    candidates = (
+        (schedule or {}).get("seconds"),
+        (schedule or {}).get("interval_seconds"),
+        (schedule or {}).get("every_seconds"),
+        (schedule or {}).get("interval"),
+    )
+    for candidate in candidates:
+        if candidate is None or str(candidate).strip() == "":
+            continue
+        try:
+            seconds = int(float(candidate))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("every schedule interval must be a positive number of seconds") from exc
+        if seconds > 0:
+            return seconds
+    for key, multiplier in (("minutes", 60), ("interval_minutes", 60), ("hours", 3600)):
+        candidate = (schedule or {}).get(key)
+        if candidate is None or str(candidate).strip() == "":
+            continue
+        try:
+            seconds = int(float(candidate) * multiplier)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("every schedule interval must be a positive number") from exc
+        if seconds > 0:
+            return seconds
+    value = str((schedule or {}).get("value") or "").strip().lower()
+    if value:
+        try:
+            if value.endswith("h"):
+                seconds = int(float(value[:-1]) * 3600)
+            elif value.endswith("m"):
+                seconds = int(float(value[:-1]) * 60)
+            elif value.endswith("s"):
+                seconds = int(float(value[:-1]))
+            else:
+                seconds = int(float(value))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("every schedule interval must be a positive duration") from exc
+        if seconds > 0:
+            return seconds
+    raise ValueError("every schedule requires a positive interval")
+
+
+def _every_next_boundary(schedule: dict, now: Optional[datetime] = None) -> datetime:
+    timezone_value = _automation_timezone(schedule)
+    current = now.astimezone(timezone_value) if isinstance(now, datetime) and now.tzinfo else now
+    if not isinstance(current, datetime):
+        current = _automation_now(timezone_value)
+    elif current.tzinfo is None:
+        current = current.replace(tzinfo=timezone_value)
+    seconds = _positive_seconds(schedule)
+    anchor_value = (
+        (schedule or {}).get("anchor")
+        or (schedule or {}).get("anchor_at")
+        or (schedule or {}).get("start_at")
+        or (schedule or {}).get("first_run_at")
+    )
+    anchor = _automation_datetime(anchor_value, timezone_value, field_name="every anchor") if anchor_value else current
+    if anchor > current:
+        return anchor
+    elapsed = max(0.0, (current - anchor).total_seconds())
+    periods = math.floor(elapsed / seconds) + 1
+    return anchor + timedelta(seconds=periods * seconds)
+
+
+def _automation_trigger(automation: dict, *, now: Optional[datetime] = None):
+    """Build an APScheduler trigger and its first persisted boundary.
+
+    This helper intentionally accepts the normalized Automation detail rather
+    than raw API payloads.  It still tolerates the small aliases used by early
+    persisted rows so a restart can safely reconstruct jobs created by an
+    earlier build.
+    """
+    schedule = _automation_schedule_value(automation)
+    kind = str(schedule.get("kind") or schedule.get("type") or "").strip().lower()
+    timezone_value = _automation_timezone(schedule)
+    if str((automation or {}).get("automation_kind") or "").strip().lower() == "loop":
+        kind = "loop"
+
+    if kind == "at":
+        run_value = (
+            schedule.get("value")
+            or schedule.get("at")
+            or schedule.get("run_at")
+            or (automation or {}).get("next_run_at")
+        )
+        run_at = _automation_datetime(run_value, timezone_value, field_name="at value")
+        return DateTrigger(run_date=run_at, timezone=timezone_value), run_at
+
+    if kind == "every":
+        current = now
+        if current is None:
+            persisted = str((automation or {}).get("next_run_at") or "").strip()
+            if persisted:
+                # A persisted next_run_at is a useful lower bound, but the
+                # anchor remains the source of truth for calculating the next
+                # non-past boundary.
+                current = _automation_now(timezone_value)
+        next_at = _every_next_boundary(schedule, current)
+        interval = _positive_seconds(schedule)
+        return (
+            IntervalTrigger(seconds=interval, start_date=next_at, timezone=timezone_value),
+            next_at,
+        )
+
+    if kind == "cron":
+        expression = str(
+            schedule.get("value") or schedule.get("cron") or schedule.get("expression") or ""
+        ).strip()
+        if len(expression.split()) != 5:
+            raise ValueError("cron schedule requires a five-field expression")
+        return CronTrigger.from_crontab(expression, timezone=timezone_value), None
+
+    if kind == "loop":
+        run_value = str((automation or {}).get("next_run_at") or "").strip()
+        if not run_value:
+            raise ValueError("loop schedule requires next_run_at")
+        run_at = _automation_datetime(run_value, timezone_value, field_name="next_run_at")
+        return DateTrigger(run_date=run_at, timezone=timezone_value), run_at
+
+    raise ValueError("automation schedule kind must be at, every, or cron")
+
+
+def register_automation_schedule(automation: dict, callback: Callable) -> int:
+    """Register one Agent Automation wake-up in its isolated job namespace.
+
+    The callback receives only ``automation_uid``.  It must claim the durable
+    trigger through the Controller before doing any work.  Replacing a job
+    rotates a private generation token, so a callback already queued by an old
+    APScheduler job cannot run after cancellation/re-registration.
+    """
+    automation_uid = str((automation or {}).get("automation_uid") or "").strip()
+    if not automation_uid:
+        raise ValueError("automation_uid is required")
+    if not callable(callback):
+        raise TypeError("automation callback must be callable")
+    jid = automation_job_id(automation_uid)
+    sched = get_scheduler()
+
+    # Remove the old callback before touching the scheduler.  This ordering is
+    # important when a running DateTrigger is concurrently canceled.
+    _automation_callback_tokens.pop(automation_uid, None)
+    _automation_callbacks.pop(automation_uid, None)
+    try:
+        if sched.get_job(jid):
+            sched.remove_job(jid)
+    except Exception:
+        logger.debug("Automation job %s disappeared while replacing", jid, exc_info=True)
+
+    token = uuid.uuid4().hex
+    _automation_callback_tokens[automation_uid] = token
+    _automation_callbacks[automation_uid] = callback
+    if int((automation or {}).get("enabled") or 0) != 1 or int((automation or {}).get("archived") or 0) == 1:
+        return 0
+
+    trigger, _ = _automation_trigger(automation)
+
+    async def _job(uid=automation_uid, generation=token):
+        if _automation_callback_tokens.get(uid) != generation:
+            return
+        current_callback = _automation_callbacks.get(uid)
+        if current_callback is None:
+            return
+        try:
+            result = current_callback(uid)
+            if inspect.isawaitable(result):
+                await result
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("Scheduled Agent Automation %s failed: %s", uid, exc)
+
+    sched.add_job(_job, trigger=trigger, id=jid, replace_existing=True)
+    logger.info("Registered Agent Automation job %s", jid)
+    return 1
+
+
+def unregister_automation_schedule(automation_uid: str) -> int:
+    """Cancel one Automation wake-up, even if its APScheduler job is racing."""
+    uid = str(automation_uid or "").strip()
+    if not uid:
+        return 0
+    jid = automation_job_id(uid)
+    _automation_callback_tokens.pop(uid, None)
+    _automation_callbacks.pop(uid, None)
+    sched = get_scheduler()
+    try:
+        if sched.get_job(jid):
+            sched.remove_job(jid)
+            return 1
+    except Exception:
+        # JobLookupError and scheduler shutdown races are cancellation-safe:
+        # callback state has already been revoked above.
+        logger.debug("Automation job %s disappeared during unregister", jid, exc_info=True)
+    return 0
+
+
+def list_automation_next_runs() -> list[dict]:
+    """List only Agent Automation jobs; fixed Task Schedule jobs stay separate."""
+    result = []
+    for job in get_scheduler().get_jobs():
+        if not job.id.startswith(AUTOMATION_JOB_PREFIX):
+            continue
+        try:
+            next_run = job.next_run_time
+        except AttributeError:
+            # APScheduler keeps jobs pending until the scheduler starts and
+            # consequently does not expose ``next_run_time`` yet.  The
+            # trigger still contains enough information for an accurate
+            # read-only projection, which is useful to the Automation Center
+            # before backend startup completes.
+            trigger = getattr(job, "trigger", None)
+            next_run = getattr(trigger, "start_date", None) or getattr(trigger, "run_date", None)
+            if next_run is None and isinstance(trigger, CronTrigger):
+                zone = getattr(trigger, "timezone", timezone.utc)
+                next_run = trigger.get_next_fire_time(None, datetime.now(zone))
+        result.append({
+            "job_id": job.id,
+            "kind": "agent_automation",
+            "automation_uid": job.id[len(AUTOMATION_JOB_PREFIX):],
+            "next_run": next_run.isoformat() if next_run else None,
+        })
+    return result
 
 
 async def trigger_now(adapter_id: str, task_id: str):
