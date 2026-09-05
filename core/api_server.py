@@ -12686,6 +12686,46 @@ class TaskSchedulePatchRequest(BaseModel):
     notify_template: Optional[str] = None
 
 
+class AutomationCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=120)
+    objective_prompt: str = Field(min_length=1, max_length=20_000)
+    automation_kind: str
+    context_mode: str = "isolated"
+    source_session_id: str = ""
+    source_runtime_session_id: str = ""
+    schedule: dict = Field(default_factory=dict)
+    loop_policy: dict = Field(default_factory=dict)
+    execution_policy: dict = Field(default_factory=dict)
+    program: Optional[dict] = None
+    enabled: bool = True
+
+
+class AutomationPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    objective_prompt: Optional[str] = Field(default=None, min_length=1, max_length=20_000)
+    automation_kind: Optional[str] = None
+    context_mode: Optional[str] = None
+    source_session_id: Optional[str] = None
+    source_runtime_session_id: Optional[str] = None
+    schedule: Optional[dict] = None
+    loop_policy: Optional[dict] = None
+    execution_policy: Optional[dict] = None
+    program: Optional[dict] = None
+    enabled: Optional[bool] = None
+
+
+class AutomationProgramTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    program: dict
+    facts: dict = Field(default_factory=dict)
+    checkpoint: dict = Field(default_factory=dict)
+
+
 class ProbeTaskParamsRequest(BaseModel):
     params: Optional[dict] = None
     current_tab_id: Optional[str] = None
@@ -12722,6 +12762,122 @@ def _serialize_task_schedule(row: dict, next_runs: Optional[dict[str, str]] = No
     next_runs = next_runs if next_runs is not None else _schedule_next_run_map()
     data["next_run"] = next_runs.get(str(data.get("schedule_uid") or ""), "")
     return data
+
+
+def get_automation_controller() -> AutomationController:
+    controller = getattr(app.state, "automation_controller", None)
+    if controller is None:
+        raise HTTPException(503, "Automation controller not ready")
+    return controller
+
+
+def _serialize_automation(row: dict) -> dict:
+    data = dict(row or {})
+    data["enabled"] = bool(data.get("enabled"))
+    data["archived"] = bool(data.get("archived"))
+    for key in ("schedule", "loop_policy", "execution_policy", "checkpoint", "program", "facts_summary", "checkpoint_before", "checkpoint_after", "result_summary"):
+        if not isinstance(data.get(key), dict):
+            data[key] = {}
+    return data
+
+
+def _validate_automation_inherited_session(values: dict, *, existing: Optional[dict] = None) -> None:
+    context_mode = str(values.get("context_mode") if "context_mode" in values else (existing or {}).get("context_mode") or "isolated").strip().lower()
+    if context_mode != "inherited":
+        return
+    source_session_id = str(values.get("source_session_id") if "source_session_id" in values else (existing or {}).get("source_session_id") or "").strip()
+    if not source_session_id or not agent_db.get_session(source_session_id):
+        raise HTTPException(422, "inherited Automation requires an existing source_session_id")
+
+
+@app.post("/automations/program-test")
+def test_automation_program_endpoint(req: AutomationProgramTestRequest):
+    from core.automation_program import ProgramValidationError, evaluate_program
+
+    try:
+        return {"result": evaluate_program(req.program, facts=req.facts, checkpoint=req.checkpoint, now=datetime.now().astimezone().isoformat())}
+    except ProgramValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/automations")
+def list_automations_endpoint(include_archived: bool = False):
+    return {"items": [_serialize_automation(item) for item in get_automation_controller().list(include_archived=include_archived)]}
+
+
+@app.post("/automations", status_code=201)
+def create_automation_endpoint(req: AutomationCreateRequest):
+    values = req.model_dump()
+    _validate_automation_inherited_session(values)
+    try:
+        automation = get_automation_controller().create(values)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"automation": _serialize_automation(automation)}
+
+
+@app.get("/automations/{automation_uid}")
+def get_automation_endpoint(automation_uid: str):
+    try:
+        return {"automation": _serialize_automation(get_automation_controller().get(automation_uid))}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.patch("/automations/{automation_uid}")
+def patch_automation_endpoint(automation_uid: str, req: AutomationPatchRequest):
+    controller = get_automation_controller()
+    try:
+        existing = controller.get(automation_uid)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    values = _model_patch(req)
+    _validate_automation_inherited_session(values, existing=existing)
+    try:
+        return {"automation": _serialize_automation(controller.update(automation_uid, values))}
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.delete("/automations/{automation_uid}")
+def archive_automation_endpoint(automation_uid: str):
+    try:
+        automation = get_automation_controller().archive(automation_uid)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"ok": True, "automation": _serialize_automation(automation)}
+
+
+@app.post("/automations/{automation_uid}/run-now")
+async def run_automation_now_endpoint(automation_uid: str, request_uid: str = ""):
+    try:
+        return {"run": _serialize_automation(await get_automation_controller().run_now(automation_uid, request_uid=request_uid))}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/automations/{automation_uid}/pause")
+def pause_automation_endpoint(automation_uid: str):
+    try:
+        return {"automation": _serialize_automation(get_automation_controller().pause(automation_uid))}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/automations/{automation_uid}/resume")
+def resume_automation_endpoint(automation_uid: str):
+    try:
+        return {"automation": _serialize_automation(get_automation_controller().resume(automation_uid))}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.get("/automations/{automation_uid}/runs")
+def list_automation_runs_endpoint(automation_uid: str, limit: int = 50):
+    try:
+        return {"items": [_serialize_automation(item) for item in get_automation_controller().runs(automation_uid, limit=limit)]}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 def _model_patch(req: BaseModel) -> dict:
