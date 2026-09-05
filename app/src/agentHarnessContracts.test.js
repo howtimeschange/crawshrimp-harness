@@ -2,6 +2,7 @@ const assert = require('node:assert/strict')
 const { existsSync, readFileSync } = require('node:fs')
 const { resolve } = require('node:path')
 const test = require('node:test')
+const { pathToFileURL } = require('node:url')
 const { inflateSync } = require('node:zlib')
 
 const appRoot = resolve(__dirname, '..')
@@ -218,6 +219,14 @@ test('rc.1 Web transport keeps image input and session-follow without reviving t
   assert.match(client, /type\s*===\s*['"]snapshot['"]/)
   assert.match(profile, /id:\s*deepseek-v4-flash-vision-exp[\s\S]*input:\s*\[text, image\]/)
   assert.doesNotMatch(client, /dsh-sdk-jsonrpc-demo/)
+})
+
+test('Web startup diagnostics redact every one-time launch URL query parameter', async () => {
+  const clientUrl = pathToFileURL(resolve(appRoot, '../integrations/deepseek-harness/worker/web-rpc-client.mjs'))
+  const { redactWebDiagnostic } = await import(`${clientUrl.href}?diagnostic-redaction=${Date.now()}`)
+  const diagnostic = redactWebDiagnostic('dsh web: http://127.0.0.1:19077/launch?temporary_launch_capability=secret-value&token=also-secret')
+  assert.match(diagnostic, /http:\/\/127\.0\.0\.1:19077\/launch\?<redacted>/)
+  assert.doesNotMatch(diagnostic, /secret-value|also-secret/)
 })
 
 test('desktop dev shell patches DSH runtime dependencies before backend launch', () => {

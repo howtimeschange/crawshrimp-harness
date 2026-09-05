@@ -136,33 +136,26 @@ def test_approval_persistence_and_broadcast_are_redacted(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_native_approval_bridge_payload_has_call_id_and_redacted_display_arguments(monkeypatch):
+def test_native_approval_bridge_uses_authenticated_worker_and_redacts_display_arguments(monkeypatch):
     async def scenario():
         service = AgentService()
-        service.web_port = 19065
-        captured = {}
-
-        class FakeResponse:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args):
-                return False
-
-            def read(self):
-                return b'{"ok": true, "outcome": "allowed-once"}'
-
-        def fake_urlopen(req, timeout):
-            captured["url"] = req.full_url
-            captured["timeout"] = timeout
-            captured["body"] = json.loads(req.data.decode("utf-8"))
-            return FakeResponse()
+        service.runtime_state = "ready"
+        worker_request = AsyncMock(return_value={
+            "ok": True,
+            "result": {"ok": True, "outcome": "allowed-once"},
+        })
+        service.worker = SimpleNamespace(request=worker_request)
 
         monkeypatch.setattr(
             "core.agent.service.db.get_session",
             lambda _session_id: {"runtime_session_id": "runtime-session"},
         )
-        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("native approval must use the Worker-authenticated Web request")
+            ),
+        )
         previous_run = mcp_gateway.ctx.active_run
         previous_call_id = mcp_gateway.ctx.current_tool_call_id
         mcp_gateway.ctx.active_run = {"run_id": "run-1", "session_id": "session-1"}
@@ -179,8 +172,10 @@ def test_native_approval_bridge_payload_has_call_id_and_redacted_display_argumen
             mcp_gateway.ctx.current_tool_call_id = previous_call_id
 
         assert decision == "approved"
-        assert captured["url"] == "http://127.0.0.1:19065/api/crawshrimp/approval/request"
-        body = captured["body"]
+        worker_request.assert_awaited_once()
+        method, body = worker_request.await_args.args
+        assert method == "worker.request_approval"
+        assert worker_request.await_args.kwargs["timeout"] > 0
         assert body["sessionId"] == "runtime-session"
         assert body["callId"] == "call-1"
         assert isinstance(body["arguments"], str)

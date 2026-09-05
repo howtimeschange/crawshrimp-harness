@@ -164,9 +164,12 @@ window.__ModuleLoader__.load({
         .find((button) => /^(plugins|插件)$/i.test(String(button.textContent || '').trim()))
       if (pluginNav && pluginNav.getAttribute('aria-current') !== 'true') pluginNav.click()
 
-      const imTab = [...overlay.querySelectorAll('[role="tab"]')]
+      // rc.8 exposed the plugin section as an ARIA tab. rc.1's settings
+      // navigator uses labelled VOzbGW nav cells and aria-current instead.
+      // Keep this embedded IM surface independent of that presentation detail.
+      const imTab = [...overlay.querySelectorAll('[role="tab"], .VOzbGW_navCell')]
         .find((button) => /^IM\s*(?:机器人|bots?)$/i.test(String(button.textContent || '').trim()))
-      if (imTab && imTab.getAttribute('aria-selected') !== 'true') imTab.click()
+      if (imTab && imTab.getAttribute('aria-selected') !== 'true' && imTab.getAttribute('aria-current') !== 'true') imTab.click()
       const surfaceReady = isolateCrawshrimpImSurface(overlay)
       if (surfaceReady && !crawshrimpImSettingsReadyPublished) {
         crawshrimpImSettingsReadyPublished = true

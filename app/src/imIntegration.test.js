@@ -55,6 +55,8 @@ test('Crawshrimp settings keeps the dsh-im management surface mounted across nav
   assert.match(slots, /function openCrawshrimpImSettings\(/)
   assert.match(slots, /function isolateCrawshrimpImSurface\(overlay\)/)
   assert.match(slots, /postToShell\(\{ __crawshrimp: 'im-settings-ready' \}\)/)
+  assert.match(slots, /\[role="tab"\], \.VOzbGW_navCell/)
+  assert.match(slots, /getAttribute\('aria-current'\) !== 'true'/)
 })
 
 test('IM policy confines returned files to the active workspace, including symlink escapes', async (t) => {

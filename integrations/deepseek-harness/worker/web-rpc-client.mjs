@@ -69,8 +69,20 @@ export function ensureWebProfile({ runtimeRoot, dshHome }) {
   return destination
 }
 
-function redacted(value) {
-  return String(value).replace(/([?&]token=)[^\s)]+/gu, '$1<redacted>')
+/**
+ * Startup output is normally the only place the one-time browser launch URL
+ * can surface before its cookie exchange.  Its query-key name is an upstream
+ * detail, so redact the entire query rather than betting on `token`.
+ */
+export function redactWebDiagnostic(value) {
+  return String(value).replace(/https?:\/\/[^\s)]+/gu, (rawUrl) => {
+    try {
+      const url = new URL(rawUrl)
+      return url.search ? `${url.origin}${url.pathname}?<redacted>` : rawUrl
+    } catch {
+      return rawUrl.replace(/\?.*$/u, '?<redacted>')
+    }
+  })
 }
 
 function childExit(child) {
@@ -147,7 +159,7 @@ export class DshWebRuntime {
         rejectReady(error)
       }
       const timer = setTimeout(() => {
-        fail(new Error('DSH Web startup timed out: ' + redacted(output).slice(-4000)))
+        fail(new Error('DSH Web startup timed out: ' + redactWebDiagnostic(output).slice(-4000)))
       }, timeoutMs)
       const append = (chunk) => {
         output = (output + String(chunk)).slice(-20000)
@@ -161,7 +173,7 @@ export class DshWebRuntime {
       child.stderr.on('data', append)
       child.once('error', fail)
       child.once('exit', (code, signal) => {
-        fail(new Error('DSH Web exited before ready: ' + String(code) + '/' + String(signal) + '\n' + redacted(output).slice(-4000)))
+        fail(new Error('DSH Web exited before ready: ' + String(code) + '/' + String(signal) + '\n' + redactWebDiagnostic(output).slice(-4000)))
       })
     })
 

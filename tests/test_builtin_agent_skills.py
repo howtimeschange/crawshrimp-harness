@@ -98,11 +98,18 @@ def test_general_builtin_skills_avoid_external_install_paths():
 
 def test_general_builtin_skills_are_part_of_staging_contract():
     stage = (HARNESS_ROOT / "scripts" / "stage-runtime.mjs").read_text(encoding="utf-8")
-    hash_block = stage.split("const sourceAssetsHash =", 1)[1].split("]", 1)[0]
-    copy_block = stage.split("for (const dir of", 1)[1].split("])", 1)[0]
-    assert "'skills'" in hash_block
-    assert "'skills'" in copy_block
+    assert "hashTree(join(sourceRoot, 'skills'))" in stage
+    assert "'worker', 'skills', 'crawshrimp-launcher'" in stage
+    assert "cpSync(source, join(stageRoot, name)" in stage
 
-    web_cordis = (HARNESS_ROOT / "web-cordis.yml").read_text(encoding="utf-8")
-    for skill in BUILTIN_GENERAL_SKILLS:
-        assert skill in web_cordis
+    # rc.1 Web profiles deliberately avoid a flat web-cordis.yml tool list.
+    # Each Web session mounts DSH's complete standard preset, which discovers
+    # all staged local skills rather than hard-coding individual package names.
+    worker = (HARNESS_ROOT / "worker" / "worker.mjs").read_text(encoding="utf-8")
+    standard_preset = (
+        HARNESS_ROOT / "node_modules" / "@deepseek-ai" / "dsh-agent-presets"
+        / "presets" / "standard" / "agent.cordis.yml"
+    ).read_text(encoding="utf-8")
+    assert "agentPreset: 'standard'" in worker
+    assert "name: '@deepseek-ai/dsh-skill-filesystem'" in standard_preset
+    assert "name: '@deepseek-ai/dsh-tool-skill'" in standard_preset
