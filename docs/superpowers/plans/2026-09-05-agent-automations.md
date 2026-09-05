@@ -289,7 +289,7 @@ Expected: PASS; the fixed Task Schedule tests demonstrate compatibility was pres
 - [ ] **Step 5: Commit the controller**
 
 ```bash
-git add core/automation_controller.py core/scheduler.py core/api_server.py tests/test_automation_controller.py
+git add core/automation_controller.py core/scheduler.py core/data_sink.py core/api_server.py tests/test_automation_controller.py
 git commit -m "feat: schedule agent automations"
 ```
 
