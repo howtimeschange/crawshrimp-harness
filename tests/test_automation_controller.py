@@ -228,6 +228,35 @@ def test_no_matching_branch_never_calls_action(monkeypatch, tmp_path):
     assert data_sink.get_agent_automation_run(run["run_uid"])["matched_branch"] == ""
 
 
+def test_loop_no_match_completes_and_rearms_with_checkpoint(monkeypatch, tmp_path):
+    controller, automation = _controller_with_loop(monkeypatch, tmp_path)
+    program = {
+        **_program(),
+        "checkpoint": {"last_available": {"path": "facts.inventory.available"}},
+    }
+    version = data_sink.create_agent_automation_program(automation["automation_uid"], program)
+    data_sink.update_agent_automation(
+        automation["automation_uid"],
+        active_program_version_uid=version["program_version_uid"],
+    )
+
+    run = _run(controller.run_now(automation["automation_uid"]))
+    result = _run(controller.record_observation(
+        run["run_uid"],
+        {"inventory": {"available": 99}, "sales": {"last_7_days": 0}},
+        [],
+    ))
+
+    assert result["status"] == "completed"
+    assert result["matched_branch"] == ""
+    assert result["checkpoint_after"] == {"last_available": 99}
+    persisted = data_sink.get_agent_automation(automation["automation_uid"])
+    assert persisted["checkpoint"] == {"last_available": 99}
+    assert persisted["next_run_at"]
+    assert sched_module.get_scheduler().get_job("automation::auto-loop") is not None
+    assert controller._test_executors.action_calls == []
+
+
 def test_bad_verification_does_not_commit_checkpoint_or_rearm(monkeypatch, tmp_path):
     controller, automation = _controller_with_loop(monkeypatch, tmp_path)
     run = _run(controller.run_now(automation["automation_uid"]))

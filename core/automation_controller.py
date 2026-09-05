@@ -690,6 +690,28 @@ class AutomationController:
         if not branch_id:
             if str(automation.get("automation_kind") or "").strip().lower() == "scheduled":
                 return self._finish_completed(run_uid, result_summary=summary)
+            if str(automation.get("automation_kind") or "").strip().lower() == "loop":
+                policy = automation.get("loop_policy") if isinstance(automation.get("loop_policy"), Mapping) else {}
+                candidate = dict(checkpoint_after)
+                if int(automation.get("enabled") or 0) == 1 and int(automation.get("archived") or 0) == 0:
+                    next_at = datetime.now(timezone.utc) + timedelta(seconds=_interval_seconds(policy))
+                    data_sink.update_agent_automation(
+                        automation["automation_uid"],
+                        checkpoint=candidate,
+                        next_run_at=next_at.isoformat(),
+                        last_status="completed",
+                        last_error="",
+                        loop_policy={**dict(policy), "failure_count": 0},
+                    )
+                    completed = self._finish_completed(run_uid, result_summary=summary)
+                    self.refresh(automation["automation_uid"])
+                    return completed
+                data_sink.update_agent_automation(
+                    automation["automation_uid"],
+                    checkpoint=candidate,
+                    next_run_at="",
+                )
+                return self._finish_completed(run_uid, result_summary=summary)
             return updated
         branch = self._branch_for(program, branch_id)
         toolset = self._branch_toolset(automation, branch)
