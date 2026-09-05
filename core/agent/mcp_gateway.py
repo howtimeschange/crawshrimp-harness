@@ -129,7 +129,7 @@ class ToolContext:
     def automation_policy(self) -> Optional[dict]:
         current = _TOOL_CONTEXT_CTX.get()
         value = None if current is None else current.get("automation_policy")
-        return dict(value) if isinstance(value, Mapping) else None
+        return copy.deepcopy(dict(value)) if isinstance(value, Mapping) else None
 
     @property
     def automation_run_uid(self) -> str:

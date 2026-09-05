@@ -148,3 +148,21 @@ def test_automation_policy_mismatch_marks_needs_review_without_interactive_appro
     assert controller.calls == [
         ("automation-run-1", "AUTOMATION_POLICY_DENIED", "Automation policy does not authorize fs_write with risk external_write"),
     ]
+
+
+def test_automation_policy_context_is_immutable_to_mcp_tools():
+    token = mcp_gateway.bind_tool_context({
+        "active_run": None,
+        "grant": None,
+        "current_tool_call_id": "",
+        "automation_policy": {"execution_policy": {"allowed_risks": ["local_write"]}},
+        "automation_run_uid": "automation-run-1",
+    })
+    try:
+        observed = mcp_gateway.ctx.automation_policy
+        observed["execution_policy"]["allowed_risks"].append("external_write")
+        assert mcp_gateway.ctx.automation_policy == {
+            "execution_policy": {"allowed_risks": ["local_write"]},
+        }
+    finally:
+        mcp_gateway.reset_tool_context(token)
