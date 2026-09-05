@@ -68,7 +68,7 @@ class _Executors:
         self.action_calls.append((run["run_uid"], branch["id"], list(toolset)))
 
 
-def _controller_with_loop(monkeypatch, tmp_path, *, toolset=None, next_run_at=""):
+def _controller_with_loop(monkeypatch, tmp_path, *, toolset=None, next_run_at="", failure_threshold=None):
     _use_temp_product_db(monkeypatch, tmp_path)
     values = {
         "automation_uid": "auto-loop",
@@ -77,7 +77,10 @@ def _controller_with_loop(monkeypatch, tmp_path, *, toolset=None, next_run_at=""
         "automation_kind": "loop",
         "context_mode": "isolated",
         "schedule": {},
-        "loop_policy": {"cycle_interval_seconds": 60},
+        "loop_policy": {
+            "cycle_interval_seconds": 60,
+            **({"failure_threshold": failure_threshold} if failure_threshold is not None else {}),
+        },
         "execution_policy": {
             "toolset": toolset or ["observe", "write_workspace", "notify"],
             "timeout_seconds": 300,
@@ -324,3 +327,92 @@ def test_unregister_automation_schedule_is_cancellation_safe(monkeypatch):
     assert sched_module.unregister_automation_schedule("cancel-1") == 1
     assert sched_module.unregister_automation_schedule("cancel-1") == 0
     assert sched_module.get_scheduler().get_job("automation::cancel-1") is None
+
+
+def test_ungranted_branch_moves_run_to_needs_review_without_agent_action(monkeypatch, tmp_path):
+    controller, automation = _controller_with_loop(monkeypatch, tmp_path, toolset=["observe"])
+    run = _run(controller.run_now(automation["automation_uid"]))
+
+    _run(controller.record_observation(
+        run["run_uid"],
+        {"inventory": {"available": 1}, "sales": {"last_7_days": 1}},
+        [],
+    ))
+
+    stored = data_sink.get_agent_automation_run(run["run_uid"])
+    assert stored["status"] == "needs_review"
+    assert stored["error_code"] == "UNAUTHORIZED_BRANCH_CAPABILITY"
+    assert controller._test_executors.action_calls == []
+
+
+def test_repeated_retryable_loop_failure_pauses_and_records_circuit_breaker(monkeypatch, tmp_path):
+    controller, automation = _controller_with_loop(monkeypatch, tmp_path, failure_threshold=2)
+
+    controller.record_execution_failure(automation["automation_uid"], "NETWORK", retryable=True)
+    paused = controller.record_execution_failure(automation["automation_uid"], "NETWORK", retryable=True)
+
+    assert paused["enabled"] == 0
+    assert paused["last_status"] == "paused_circuit_breaker"
+    assert paused["last_error"] == "NETWORK"
+    assert sched_module.get_scheduler().get_job("automation::auto-loop") is None
+
+
+def test_action_submission_records_agent_task_and_artifact_links(monkeypatch, tmp_path):
+    controller, automation = _controller_with_loop(monkeypatch, tmp_path)
+
+    async def linked_action(_automation, _run_value, _branch, _toolset):
+        return {
+            "run_id": "agent-run-1",
+            "session_id": "agent-session-1",
+            "task_instance_uid": "task-instance-1",
+            "artifact_uid": "artifact-1",
+            "status": "queued",
+        }
+
+    controller.action_executor = linked_action
+    run = _run(controller.run_now(automation["automation_uid"]))
+    _run(controller.record_observation(
+        run["run_uid"],
+        {"inventory": {"available": 1}, "sales": {"last_7_days": 1}},
+        [],
+    ))
+
+    links = data_sink.list_agent_automation_run_links(run["run_uid"])
+    assert {(link["link_kind"], link["link_uid"]) for link in links} == {
+        ("agent_run", "agent-run-1"),
+        ("agent_session", "agent-session-1"),
+        ("task_instance", "task-instance-1"),
+        ("artifact", "artifact-1"),
+    }
+
+
+def test_pause_cancels_linked_agent_run_and_prevents_late_observation(monkeypatch, tmp_path):
+    class CancellableAgent:
+        def __init__(self):
+            self.calls = []
+
+        async def cancel_run(self, run_id):
+            self.calls.append(run_id)
+            return {"ok": True, "status": "canceled"}
+
+    controller, automation = _controller_with_loop(monkeypatch, tmp_path)
+    agent = CancellableAgent()
+    controller.agent_service = agent
+    claimed = data_sink.claim_agent_automation_run(
+        automation["automation_uid"], "manual", "manual:cancel-me"
+    )["run"]
+    run = data_sink.update_agent_automation_run(
+        claimed["run_uid"], status="queued", agent_run_id="agent-run-cancel"
+    )
+
+    paused = _run(controller.pause(automation["automation_uid"]))
+    late = _run(controller.record_observation(
+        run["run_uid"],
+        {"inventory": {"available": 1}, "sales": {"last_7_days": 1}},
+        [],
+    ))
+
+    assert paused["enabled"] == 0
+    assert agent.calls == ["agent-run-cancel"]
+    assert late["status"] == "canceled"
+    assert controller._test_executors.action_calls == []

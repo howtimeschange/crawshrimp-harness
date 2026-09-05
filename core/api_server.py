@@ -12840,9 +12840,9 @@ def patch_automation_endpoint(automation_uid: str, req: AutomationPatchRequest):
 
 
 @app.delete("/automations/{automation_uid}")
-def archive_automation_endpoint(automation_uid: str):
+async def archive_automation_endpoint(automation_uid: str):
     try:
-        automation = get_automation_controller().archive(automation_uid)
+        automation = await get_automation_controller().archive(automation_uid)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     return {"ok": True, "automation": _serialize_automation(automation)}
@@ -12857,9 +12857,9 @@ async def run_automation_now_endpoint(automation_uid: str, request_uid: str = ""
 
 
 @app.post("/automations/{automation_uid}/pause")
-def pause_automation_endpoint(automation_uid: str):
+async def pause_automation_endpoint(automation_uid: str):
     try:
-        return {"automation": _serialize_automation(get_automation_controller().pause(automation_uid))}
+        return {"automation": _serialize_automation(await get_automation_controller().pause(automation_uid))}
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
 

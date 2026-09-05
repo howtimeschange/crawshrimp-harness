@@ -2390,6 +2390,7 @@ def _agent_automation_run_detail(row: Optional[sqlite3.Row | Mapping[str, Any]])
     detail["checkpoint_after"] = _json_loads_object(detail.pop("checkpoint_after_json", "{}"))
     detail["facts_summary"] = _json_loads_object(detail.pop("facts_summary_json", "{}"))
     detail["result_summary"] = _json_loads_object(detail.pop("result_summary_json", "{}"))
+    detail["links"] = list_agent_automation_run_links(str(detail.get("run_uid") or ""))
     return detail
 
 

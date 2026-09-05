@@ -109,3 +109,31 @@ def test_inherited_automation_requires_existing_source_session(monkeypatch, tmp_
 
     assert response.status_code == 422
     assert "source_session_id" in response.json()["detail"]
+
+
+def test_automation_runs_expose_persisted_resource_links(monkeypatch, tmp_path):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    controller = AutomationController(None, sched_module)
+    monkeypatch.setattr(api_server, "get_automation_controller", lambda: controller)
+    automation = controller.create({
+        "title": "链接回读",
+        "objective_prompt": "检查结果",
+        "automation_kind": "scheduled",
+        "context_mode": "isolated",
+        "schedule": {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+        "execution_policy": {"toolset": ["observe"]},
+    })
+    run = data_sink.create_agent_automation_run(
+        automation["automation_uid"], "manual", "manual:linked", agent_run_id="agent-run-1"
+    )
+    data_sink.link_agent_automation_run(run["run_uid"], "agent_run", "agent-run-1")
+    data_sink.link_agent_automation_run(run["run_uid"], "artifact", "artifact-1")
+
+    response = _request("GET", f"/automations/{automation['automation_uid']}/runs")
+
+    assert response.status_code == 200
+    links = response.json()["items"][0]["links"]
+    assert {(link["link_kind"], link["link_uid"]) for link in links} == {
+        ("agent_run", "agent-run-1"),
+        ("artifact", "artifact-1"),
+    }

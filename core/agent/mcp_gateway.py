@@ -263,12 +263,12 @@ def tool_automation_update(automation_uid: str, values: dict) -> dict:
         return _failed("AUTOMATION_INVALID", str(exc))
 
 
-def tool_automation_pause(automation_uid: str) -> dict:
+async def tool_automation_pause(automation_uid: str) -> dict:
     controller, error = _automation_controller_or_error()
     if error:
         return error
     try:
-        return _ok(controller.pause(automation_uid))
+        return _ok(await controller.pause(automation_uid))
     except ValueError as exc:
         return _failed("AUTOMATION_NOT_FOUND", str(exc))
 
@@ -283,12 +283,12 @@ def tool_automation_resume(automation_uid: str) -> dict:
         return _failed("AUTOMATION_NOT_FOUND", str(exc))
 
 
-def tool_automation_archive(automation_uid: str) -> dict:
+async def tool_automation_archive(automation_uid: str) -> dict:
     controller, error = _automation_controller_or_error()
     if error:
         return error
     try:
-        return _ok(controller.archive(automation_uid))
+        return _ok(await controller.archive(automation_uid))
     except ValueError as exc:
         return _failed("AUTOMATION_NOT_FOUND", str(exc))
 

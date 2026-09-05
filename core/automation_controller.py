@@ -725,6 +725,7 @@ class AutomationController:
         """Project an AgentService queue receipt into the Controller-owned Run."""
         agent_run_id = str(result.get("run_id") or "").strip()
         agent_session_id = str(result.get("session_id") or "").strip()
+        self._record_result_resource_links(run_uid, result)
         if not agent_run_id:
             return data_sink.get_agent_automation_run(run_uid)
         linked = data_sink.update_agent_automation_run(
@@ -737,6 +738,31 @@ class AutomationController:
         if agent_session_id:
             data_sink.link_agent_automation_run(run_uid, "agent_session", agent_session_id)
         return linked
+
+    @staticmethod
+    def _link_values(value: Any) -> list[str]:
+        """Normalize lightweight resource IDs without assigning new authority."""
+        source = value if isinstance(value, (list, tuple, set)) else [value]
+        values: list[str] = []
+        for item in source:
+            if isinstance(item, Mapping):
+                item = item.get("uid") or item.get("id") or item.get("artifact_uid") or item.get("task_instance_uid")
+            text = str(item or "").strip()
+            if text and text not in values:
+                values.append(text)
+        return values
+
+    def _record_result_resource_links(self, run_uid: str, result: Mapping[str, Any]) -> None:
+        """Persist result references for audit/readback, never as executable inputs."""
+        resource_fields = {
+            "task_instance": ("task_instance_uid", "task_instance_id", "task_instance_uids"),
+            "task_run": ("task_run_uid", "task_run_id", "task_run_uids"),
+            "artifact": ("artifact_uid", "artifact_id", "artifact_uids", "artifacts"),
+        }
+        for link_kind, fields in resource_fields.items():
+            for field in fields:
+                for link_uid in self._link_values(result.get(field)):
+                    data_sink.link_agent_automation_run(run_uid, link_kind, link_uid)
 
     def _finish_completed(self, run_uid: str, *, result_summary: Optional[Mapping[str, Any]] = None) -> dict:
         run = data_sink.update_agent_automation_run(
@@ -781,6 +807,8 @@ class AutomationController:
         run = data_sink.get_agent_automation_run(run_uid)
         if not run:
             raise ValueError(f"Automation run not found: {run_uid}")
+        if str(run.get("status") or "") in TERMINAL_RUN_STATUSES:
+            return run
         existing_summary = run.get("result_summary")
         if isinstance(existing_summary, Mapping) and "reason" in existing_summary:
             # Observation callbacks may report through the Controller and
@@ -892,6 +920,8 @@ class AutomationController:
         run = data_sink.get_agent_automation_run(run_uid)
         if not run:
             raise ValueError(f"Automation run not found: {run_uid}")
+        if str(run.get("status") or "") in TERMINAL_RUN_STATUSES:
+            return run
         if not isinstance(result, Mapping) or result.get("verified") is not True:
             return self.mark_needs_review(
                 run_uid,
@@ -899,6 +929,7 @@ class AutomationController:
                 "Verification must contain the boolean field verified=true",
             )
         automation = self._automation_or_raise(str(run.get("automation_uid") or ""))
+        self._record_result_resource_links(run_uid, result)
         summary = run.get("result_summary") if isinstance(run.get("result_summary"), Mapping) else {}
         summary = {**summary, "verification": copy.deepcopy(dict(result))}
         candidate = run.get("checkpoint_after") if isinstance(run.get("checkpoint_after"), Mapping) else {}
@@ -964,9 +995,73 @@ class AutomationController:
                 data_sink.update_agent_automation(uid, next_run_at="")
         return data_sink.get_agent_automation_run(run_uid)
 
-    def pause(self, uid: str) -> dict:
+    async def _cancel_active_runs(self, automation_uid: str, *, reason: str) -> None:
+        """Cancel queue-backed Agent Runs before a paused/archived definition can detach.
+
+        The Controller records cancellation itself because AgentService owns a
+        separate database.  If a linked run cannot be cancelled, it remains a
+        visible ``needs_review`` boundary rather than being silently ignored.
+        """
+        for run in data_sink.list_agent_automation_runs(automation_uid, 500):
+            if str(run.get("status") or "") not in ACTIVE_RUN_STATUSES:
+                continue
+            run_uid = str(run.get("run_uid") or "")
+            agent_run_id = str(run.get("agent_run_id") or "").strip()
+            if not agent_run_id:
+                if str(run.get("status") or "") == "claimed":
+                    data_sink.update_agent_automation_run(
+                        run_uid,
+                        status="canceled",
+                        error_code="CANCELED_BY_AUTOMATION",
+                        error_message=reason,
+                        finished_at=_iso_now(),
+                    )
+                else:
+                    self.mark_needs_review(
+                        run_uid,
+                        "AUTOMATION_CANCEL_UNAVAILABLE",
+                        f"{reason}; run has no linked Agent Run to cancel",
+                    )
+                continue
+            cancel = getattr(self.agent_service, "cancel_run", None)
+            if not callable(cancel):
+                self.mark_needs_review(
+                    run_uid,
+                    "AUTOMATION_CANCEL_UNAVAILABLE",
+                    f"{reason}; AgentService cancellation is unavailable",
+                )
+                continue
+            try:
+                result = cancel(agent_run_id)
+                if inspect.isawaitable(result):
+                    result = await result
+                status = str((result or {}).get("status") or "").strip().lower() if isinstance(result, Mapping) else ""
+                if isinstance(result, Mapping) and result.get("ok") and status == "canceled":
+                    data_sink.update_agent_automation_run(
+                        run_uid,
+                        status="canceled",
+                        error_code="CANCELED_BY_AUTOMATION",
+                        error_message=reason,
+                        finished_at=_iso_now(),
+                    )
+                else:
+                    self.mark_needs_review(
+                        run_uid,
+                        "AUTOMATION_CANCEL_UNCONFIRMED",
+                        f"{reason}; AgentService did not confirm cancellation",
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Automation Agent Run cancellation failed: %s", run_uid)
+                self.mark_needs_review(
+                    run_uid,
+                    "AUTOMATION_CANCEL_FAILED",
+                    f"{reason}; {str(exc)[:300]}",
+                )
+
+    async def pause(self, uid: str) -> dict:
         automation = self._automation_or_raise(uid)
         self.scheduler.unregister_automation_schedule(uid)
+        await self._cancel_active_runs(automation["automation_uid"], reason="Automation paused")
         return data_sink.update_agent_automation(automation["automation_uid"], enabled=False, next_run_at="")
 
     def resume(self, uid: str) -> dict:
@@ -982,8 +1077,10 @@ class AutomationController:
             automation = data_sink.update_agent_automation(uid, enabled=True)
         return self._refresh_at(automation)
 
-    def archive(self, uid: str) -> dict:
+    async def archive(self, uid: str) -> dict:
+        automation = self._automation_or_raise(uid)
         self.scheduler.unregister_automation_schedule(uid)
+        await self._cancel_active_runs(automation["automation_uid"], reason="Automation archived")
         return data_sink.archive_agent_automation(uid)
 
     def record_execution_failure(self, automation_uid: str, code: str, retryable: bool) -> dict:
