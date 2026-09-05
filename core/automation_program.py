@@ -34,7 +34,7 @@ def validate_program(program: Mapping[str, Any]) -> dict:
         branch_id = branch.get("id")
         if not isinstance(branch_id, str) or not branch_id:
             raise ProgramValidationError("branch id must be a non-empty string")
-        if "priority" in branch and not isinstance(branch["priority"], int):
+        if "priority" in branch and (not isinstance(branch["priority"], int) or isinstance(branch["priority"], bool)):
             raise ProgramValidationError("branch priority must be an integer")
         if "when" not in branch:
             raise ProgramValidationError("branch when is required")
@@ -54,19 +54,28 @@ def validate_program(program: Mapping[str, Any]) -> dict:
 
 def evaluate_program(program: Mapping[str, Any], *, facts: Mapping[str, Any], checkpoint: Mapping[str, Any], now: str) -> dict:
     normalized = validate_program(program)
-    context = {
+    base_context = {
         "config": normalized.get("config", {}),
         "facts": facts,
         "checkpoint": checkpoint,
         "now": now,
-        "_checkpoint_patch": {},
     }
 
-    matches = [branch for branch in normalized["branches"] if _truth(branch["when"], context)]
-    branch = max(matches, key=lambda item: (int(item.get("priority", 0)), item["id"]), default=None)
+    evaluated_branches = []
+    for branch in normalized["branches"]:
+        branch_context = {**base_context, "_checkpoint_patch": {}}
+        matched = _truth(branch["when"], branch_context)
+        evaluated_branches.append((branch, matched, branch_context["_checkpoint_patch"]))
 
-    checkpoint_patch = dict(context["_checkpoint_patch"])
-    _merge_patch(checkpoint_patch, _checkpoint_patch(normalized.get("checkpoint", {}), context))
+    branch, selected_patch = _selected_branch(evaluated_branches)
+
+    checkpoint_patch: dict[str, Any] = {}
+    if branch:
+        _merge_patch(checkpoint_patch, selected_patch)
+    else:
+        for _branch, _matched, branch_patch in evaluated_branches:
+            _merge_patch(checkpoint_patch, branch_patch)
+    _merge_patch(checkpoint_patch, _checkpoint_patch(normalized.get("checkpoint", {}), base_context))
 
     return {
         "matched_branch": branch["id"] if branch else "",
@@ -151,7 +160,7 @@ def _validate_consecutive_matches(value: Any) -> None:
         raise ProgramValidationError("consecutive_matches requires id, condition, threshold, and checkpoint_path")
     if not isinstance(value["id"], str) or not value["id"]:
         raise ProgramValidationError("consecutive_matches id must be a non-empty string")
-    if not isinstance(value["threshold"], int) or value["threshold"] < 1:
+    if not isinstance(value["threshold"], int) or isinstance(value["threshold"], bool) or value["threshold"] < 1:
         raise ProgramValidationError("consecutive_matches threshold must be a positive integer")
     checkpoint_path = value["checkpoint_path"]
     _validate_path(checkpoint_path)
@@ -174,9 +183,15 @@ def _validate_cooldown_elapsed(value: Any) -> None:
 def _truth(node: Mapping[str, Any], context: MutableMapping[str, Any]) -> bool:
     operator, value = next(iter(node.items()))
     if operator == "all":
-        return all(_truth(child, context) for child in value)
+        results = [_truth(child, context) for child in value]
+        matched = all(results)
+        failed_gate = any(not result and not _contains_consecutive_matches(child) for child, result in zip(value, results))
+        if failed_gate:
+            for child in value:
+                _reset_consecutive_matches(child, context)
+        return matched
     if operator == "any":
-        return any(_truth(child, context) for child in value)
+        return any([_truth(child, context) for child in value])
     if operator == "not":
         return not _truth(value, context)
     if operator in COMPARATORS:
@@ -194,6 +209,37 @@ def _truth(node: Mapping[str, Any], context: MutableMapping[str, Any]) -> bool:
     if operator == "cooldown_elapsed":
         return _cooldown_elapsed(value, context)
     raise ProgramValidationError(f"unsupported operator: {operator}")
+
+
+def _selected_branch(evaluated_branches: list[tuple[Mapping[str, Any], bool, dict]]) -> tuple[Mapping[str, Any] | None, dict]:
+    matches = [(branch, patch) for branch, matched, patch in evaluated_branches if matched]
+    if not matches:
+        return None, {}
+    return max(matches, key=lambda item: (int(item[0].get("priority", 0)), item[0]["id"]))
+
+
+def _reset_consecutive_matches(node: Mapping[str, Any], context: MutableMapping[str, Any]) -> None:
+    operator, value = next(iter(node.items()))
+    if operator == "consecutive_matches":
+        _set_patch_path(context["_checkpoint_patch"], value["checkpoint_path"], {"count": 0})
+        return
+    if operator in {"all", "any"}:
+        for child in value:
+            _reset_consecutive_matches(child, context)
+        return
+    if operator == "not":
+        _reset_consecutive_matches(value, context)
+
+
+def _contains_consecutive_matches(node: Mapping[str, Any]) -> bool:
+    operator, value = next(iter(node.items()))
+    if operator == "consecutive_matches":
+        return True
+    if operator in {"all", "any"}:
+        return any(_contains_consecutive_matches(child) for child in value)
+    if operator == "not":
+        return _contains_consecutive_matches(value)
+    return False
 
 
 def _resolve(value: Any, context: Mapping[str, Any]) -> Any:

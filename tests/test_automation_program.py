@@ -191,3 +191,103 @@ def test_evaluate_cooldown_elapsed_compares_checkpoint_timestamp_to_now():
     assert ready_result["matched_branch"] == "ready"
     assert waiting_result["matched_branch"] == ""
     assert missing_result["matched_branch"] == "ready"
+
+
+def test_all_evaluates_later_consecutive_match_and_resets_when_earlier_clause_is_false():
+    consecutive_node = {
+        "consecutive_matches": {
+            "id": "low_stock",
+            "condition": {"lt": [{"path": "facts.inventory.available"}, {"path": "config.reorder_point"}]},
+            "threshold": 3,
+            "checkpoint_path": "checkpoint.condition_state.low_stock",
+        }
+    }
+    program = {
+        "config": {"reorder_point": 20},
+        "branches": [
+            {
+                "id": "ready",
+                "when": {
+                    "all": [
+                        {"eq": [{"path": "facts.window_open"}, True]},
+                        consecutive_node,
+                    ]
+                },
+            }
+        ],
+    }
+
+    reset_result = evaluate_program(
+        program,
+        facts={"window_open": False, "inventory": {"available": 5}},
+        checkpoint={"condition_state": {"low_stock": {"count": 2}}},
+        now="2026-09-05T00:00:00+00:00",
+    )
+    next_cycle_result = evaluate_program(
+        program,
+        facts={"window_open": True, "inventory": {"available": 5}},
+        checkpoint={"condition_state": {"low_stock": {"count": 0}}},
+        now="2026-09-05T00:01:00+00:00",
+    )
+
+    assert reset_result["matched_branch"] == ""
+    assert reset_result["checkpoint_patch"] == {"condition_state": {"low_stock": {"count": 0}}}
+    assert next_cycle_result["matched_branch"] == ""
+    assert next_cycle_result["checkpoint_patch"] == {"condition_state": {"low_stock": {"count": 1}}}
+
+
+def test_selected_branch_patch_excludes_matching_lower_priority_branch_state():
+    program = {
+        "branches": [
+            {
+                "id": "lower_priority_stateful",
+                "priority": 1,
+                "when": {
+                    "consecutive_matches": {
+                        "id": "low",
+                        "condition": {"eq": [{"path": "facts.ready"}, True]},
+                        "threshold": 1,
+                        "checkpoint_path": "checkpoint.condition_state.low",
+                    }
+                },
+            },
+            {
+                "id": "higher_priority",
+                "priority": 10,
+                "when": {"eq": [{"path": "facts.ready"}, True]},
+            },
+        ],
+    }
+
+    result = evaluate_program(
+        program,
+        facts={"ready": True},
+        checkpoint={"condition_state": {"low": {"count": 0}}},
+        now="2026-09-05T00:00:00+00:00",
+    )
+
+    assert result["matched_branch"] == "higher_priority"
+    assert result["checkpoint_patch"] == {}
+
+
+def test_validate_rejects_bool_priority_and_bool_consecutive_threshold():
+    with pytest.raises(ProgramValidationError, match="branch priority must be an integer"):
+        validate_program({"branches": [{"id": "bad", "priority": True, "when": {"eq": [1, 1]}}]})
+    with pytest.raises(ProgramValidationError, match="consecutive_matches threshold must be a positive integer"):
+        validate_program(
+            {
+                "branches": [
+                    {
+                        "id": "bad",
+                        "when": {
+                            "consecutive_matches": {
+                                "id": "bad",
+                                "condition": {"eq": [1, 1]},
+                                "threshold": True,
+                                "checkpoint_path": "checkpoint.condition_state.bad",
+                            }
+                        },
+                    }
+                ]
+            }
+        )
