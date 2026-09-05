@@ -1,6 +1,7 @@
 // 抓虾产品桥(host 插件):把产品层(FastAPI/MCP 网关)的敏感操作审批
 // 接入 DSH 原生审批交互 —— ctx.approval.request 触发 approval/asked 会话事件,
-// apiproxy 建立 pending 并经原生 UI 呈现审批卡,用户决策后回传结果。
+// 现代 Web Host 的 Session Controller 建立 pending 并经原生 UI 呈现审批卡,
+// 用户决策后回传结果。
 // FastAPI 侧经 HTTP 调用本插件的 /api/crawshrimp/approval/request。
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { realpath } from 'node:fs/promises'
@@ -14,7 +15,7 @@ export const inject = [
   'agents',
   'tools',
   'connection',
-  'apiProxy',
+  'sessionController',
   'agentDefaultModel',
   'permissionPresets',
 ]
@@ -416,15 +417,6 @@ function sameSelection(left, right) {
     && left?.reasoningEffort === right?.reasoningEffort
 }
 
-function apiProxyRequest(method, payload) {
-  return {
-    type: 'client-request',
-    rpcId: `crawshrimp-${method}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    method,
-    payload,
-  }
-}
-
 function apiProxyFailure(error, fallbackCode = 'internal') {
   return {
     code: String(error?.code || error?.failure?.code || fallbackCode),
@@ -524,7 +516,7 @@ export async function selectCrawshrimpSessionModel(ctx, body) {
   if (!sessionId || !validSelection(selection)) {
     return { ok: false, status: 400, error: { code: 'bad-request', message: 'sessionId/provider/model required' } }
   }
-  if (!ctx?.apiProxy?.sessions || typeof ctx.apiProxy.sessions.selectModel !== 'function') {
+  if (!ctx?.sessionController || typeof ctx.sessionController.selectModel !== 'function') {
     return { ok: false, status: 501, error: { code: 'unsupported', message: 'session model selection is unavailable' } }
   }
   if (!ctx?.agentDefaultModel
@@ -540,12 +532,12 @@ export async function selectCrawshrimpSessionModel(ctx, body) {
 
   let response
   try {
-    response = await ctx.apiProxy.sessions.selectModel(apiProxyRequest('session.selectModel', {
+    response = await ctx.sessionController.selectModel({
       sessionId,
       provider: selection.provider,
       model: selection.model,
       ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
-    }))
+    })
   } catch (error) {
     return { ok: false, status: 500, error: apiProxyFailure(error) }
   } finally {
@@ -555,14 +547,7 @@ export async function selectCrawshrimpSessionModel(ctx, body) {
     }
   }
 
-  if (response?.result?.ok !== true) {
-    return {
-      ok: false,
-      status: 200,
-      error: apiProxyFailure(response?.result?.error, 'model-unavailable'),
-    }
-  }
-  const selected = response.result.value?.selected
+  const selected = response?.selected
   if (!validSelection(selected)) {
     return { ok: false, status: 500, error: { code: 'invalid-response', message: 'Harness returned an invalid selected model' } }
   }

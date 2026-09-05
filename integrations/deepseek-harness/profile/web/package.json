@@ -1,0 +1,20 @@
+{
+  "name": "crawshrimp-dsh-web-profile",
+  "private": true,
+  "description": "Crawshrimp's persisted DSH Web profile. Runtime links these exact staged plugins into the mutable user-data profile.",
+  "dependencies": {
+    "@xmanrui/dsh-im": "4.11.0",
+    "crawshrimp-product-bridge": "file:../../../crawshrimp-product-bridge",
+    "crawshrimp-slots": "file:../../../crawshrimp-slots"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "@xmanrui/dsh-im"
+      ],
+      "patchReload": "startup"
+    }
+  }
+}

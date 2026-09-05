@@ -21,26 +21,33 @@ function resolveDeepseekHarnessRoot({ isPackaged }) {
   return path.join(process.resourcesPath, 'deepseek-harness')
 }
 
-/** dsh-jsonrpc-agent 发布 bin 的实际入口(lib/bin.js,不经 .bin 软链)。 */
+/** 官方 DSH Web/ACP profiles 共用的 CLI 实际入口(lib/bin.js,不经 .bin 软链)。 */
 function resolveDeepseekHarnessBin(root) {
-  return path.join(root, 'node_modules', '@deepseek-ai', 'dsh-sdk-jsonrpc-demo', 'lib', 'bin.js')
+  return path.join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
 }
 
-/** 默认 cordis profile 模板;P1 起由 FastAPI 从 ai.llm 生成后落盘覆盖。 */
+/** 抓虾覆盖层；运行时由 DSH_HOME/profile 组合，不再生成 runtime-cordis.yml。 */
 function resolveDeepseekCordisTemplate(root) {
-  return path.join(root, 'spike.cordis.yml')
+  return path.join(root, 'profile', 'web', 'cordis.patch.yml')
 }
 
 /** 校验发布态闭包关键文件齐全(与 after-pack.js 校验同一清单)。 */
 function assertDeepseekHarnessBundle(root) {
   const required = [
     'package.json',
-    'node_modules/@deepseek-ai/dsh-sdk-jsonrpc-demo/lib/bin.js',
-    'node_modules/@deepseek-ai/dsh-agent-spine-demo/package.json',
+    'node_modules/@deepseek-ai/dsh/lib/bin.js',
+    'node_modules/@deepseek-ai/dsh-web-app/package.json',
+    'node_modules/@deepseek-ai/dsh-web-app/cordis.patch.yml',
+    'node_modules/@deepseek-ai/dsh-api-workspace-controller/package.json',
+    'node_modules/@deepseek-ai/dsh-cordis-host-runner/package.json',
+    'node_modules/@deepseek-ai/dsh-attachment-local/package.json',
     'node_modules/@deepseek-ai/dsh-llm-pi-ai/package.json',
-    'node_modules/@deepseek-ai/dsh-mcp-client/package.json',
-    'node_modules/@deepseek-ai/dsh-session-persistence-jsonl/package.json',
-    'spike.cordis.yml',
+    'node_modules/@deepseek-ai/dsh-time-context/package.json',
+    'node_modules/@deepseek-ai/dsh-schedule/package.json',
+    'node_modules/@deepseek-ai/dsh-acp-app/cordis.patch.yml',
+    'node_modules/@deepseek-ai/dsh-acp-app/node_modules/@deepseek-ai/dsh-acp/package.json',
+    'profiles/web/cordis.patch.yml',
+    'worker/web-rpc-client.mjs',
   ]
   const missing = required.filter((rel) => !require('fs').existsSync(path.join(root, rel)))
   if (missing.length) {

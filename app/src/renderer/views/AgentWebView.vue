@@ -304,10 +304,10 @@ function applyRuntimeSnapshot(result) {
     workspaceRoot.value = result.workspace_root
     pushWorkspace()
   }
-  // `web_url` is strict: backend only fills it after DSH HTML markers verify.
-  // Windows packaged builds can serve the first page slowly, so use the
-  // loopback candidate URL while backend verification is still settling.
-  return result?.web_url || result?.web_candidate_url || ''
+  // rc.1 Web Host requires a one-time authenticated launch URL.  It is only
+  // assigned to this trusted iframe (never rendered as text or probed with a
+  // bare fetch); the DSH redirect exchanges it for this renderer's cookie.
+  return result?.web_launch_url || ''
 }
 
 async function loadRuntime() {
@@ -676,10 +676,8 @@ async function handlePickAttachments(runtimeSessionId = '') {
 onMounted(() => {
   loadRuntime()
   window.addEventListener('message', onWindowMessage)
-  // 持续探活:runtime/后端不健康即自动恢复(webUrl 非空也检测,覆盖挂掉场景)。
-  // web_url 报告可能滞后于真实端口(DSH webserver 端口冲突内部 +1),
-  // 因此额外做 HTTP 级探活:no-cors fetch 只判可达性,不可达即触发自愈。
-  let probeFailCount = 0
+  // 持续读取受控 runtime 状态来恢复。rc.1 的 Web Host 对裸 HTTP 正确返回
+  // 401，因此不能以无 cookie 的 fetch 误判它离线。
   pollTimer = setInterval(async () => {
     try {
     const st = await window.cs.agentApi('GET', '/agent/runtime')
@@ -688,46 +686,27 @@ onMounted(() => {
       runtimeNeedsModelKey.value = st?.api_key_configured === false
       const runtimeUrl = applyRuntimeSnapshot(st)
       if (runtimeUrl && state === 'ready') {
-        let reachable = true
-        try {
-          await fetch(runtimeUrl.replace(/\/+$/, '') + '/?__probe=' + Date.now(), { mode: 'no-cors', cache: 'no-store' })
-        } catch {
-          reachable = false
-        }
-        if (reachable) {
-          probeFailCount = 0
-          if (!webUrl.value || webUrl.value !== runtimeUrl) webUrl.value = runtimeUrl
-          return
-        }
-        // 连续两次不可达才重挂 iframe,避免瞬断闪烁
-        probeFailCount += 1
-        if (probeFailCount >= 2) {
-          webUrl.value = ''
-          error.value = '智能体会话界面未就绪'
-          autoRecover()
-        }
+        if (!webUrl.value || webUrl.value !== runtimeUrl) webUrl.value = runtimeUrl
+        loading.value = false
+        error.value = ''
         return
       }
       if (state === 'starting' || state === 'ready') {
-        probeFailCount = 0
         webUrl.value = ''
         loading.value = true
         error.value = state === 'ready' ? '智能体会话界面启动中' : ''
         return
       }
       if (state === 'needs_configuration') {
-        probeFailCount = 0
         webUrl.value = ''
         loading.value = false
         error.value = normalizeModelConfigMessage(st?.error)
         return
       }
-      probeFailCount = 0
       webUrl.value = ''
       error.value = st?.error || '智能体运行时不可用'
       autoRecover()
     } catch {
-      probeFailCount = 0
       webUrl.value = ''
       error.value = '无法连接本地服务'
       autoRecover()

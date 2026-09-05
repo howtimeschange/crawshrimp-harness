@@ -508,7 +508,7 @@ class _EofStream:
 
 def _worker() -> AgentWorker:
     return AgentWorker(
-        runtime_root=".", data_root=".", cordis_path="cordis.yml",
+        runtime_root=".", data_root=".",
         mcp_url="http://127.0.0.1/mcp", session_root=".",
     )
 
@@ -556,7 +556,6 @@ def test_worker_subprocess_stream_limit_handles_vision_frames(tmp_path, monkeypa
         worker = AgentWorker(
             runtime_root=str(runtime_root),
             data_root=str(tmp_path),
-            cordis_path="cordis.yml",
             mcp_url="http://127.0.0.1/mcp",
             session_root=str(tmp_path / "sessions"),
         )
@@ -852,51 +851,10 @@ def test_reserved_port_socket_prevents_second_bind():
         reserved.close()
 
 
-def test_settle_web_port_requires_dsh_boot_and_crawshrimp_slots(monkeypatch):
-    import http.client
-
-    bodies = {
-        19300: "<script>window.__DSH_BOOT__={}</script>",
-        19301: "__DSH_BOOT__ crawshrimp-slots",
-    }
-    probed = []
-
-    class Response:
-        status = 200
-
-        def __init__(self, body):
-            self.body = body
-
-        def read(self, _limit):
-            return self.body.encode()
-
-    class Connection:
-        def __init__(self, _host, port, timeout=0):
-            self.port = port
-
-        def request(self, *_args):
-            probed.append(self.port)
-
-        def getresponse(self):
-            return Response(bodies.get(self.port, ""))
-
-        def close(self):
-            return None
-
-    monkeypatch.setattr(http.client, "HTTPConnection", Connection)
-    service = AgentService()
-    service.web_port = 19300
-    asyncio.run(service._settle_web_port(19300))
-    assert service.web_port == 19301
-    assert 19300 in probed and 19301 in probed
-
-
-def test_runtime_status_withholds_unverified_ready_web_url(monkeypatch, tmp_path):
+def test_runtime_status_withholds_ready_web_data_without_authenticated_launch_url(monkeypatch, tmp_path):
     service = AgentService()
     service.runtime_state = "ready"
     service.web_port = 19300
-    service._web_port_verified = False
-    monkeypatch.setattr("core.agent.service._find_crawshrimp_web_port", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr("core.agent.service._data_root", lambda: tmp_path)
     monkeypatch.setattr("core.agent.service.load_config", lambda: {"ai": {"llm": {}}})
 
@@ -904,32 +862,26 @@ def test_runtime_status_withholds_unverified_ready_web_url(monkeypatch, tmp_path
 
     assert status["state"] == "ready"
     assert status["web_port"] == 0
-    assert status["web_url"] == ""
-    assert status["web_candidate_port"] == 19300
-    assert status["web_candidate_url"] == "http://127.0.0.1:19300/"
+    assert status["web_origin"] == ""
+    assert status["web_launch_url"] == ""
     assert status["web_verified"] is False
-    assert status["web_verification_pending"] is True
 
 
-def test_runtime_status_repairs_and_reports_drifted_web_port(monkeypatch, tmp_path):
+def test_runtime_status_reports_the_authenticated_web_launch_contract(monkeypatch, tmp_path):
     service = AgentService()
     service.runtime_state = "ready"
     service.web_port = 19300
-    service._web_port_verified = False
-    monkeypatch.setattr("core.agent.service._find_crawshrimp_web_port", lambda *_args, **_kwargs: 19301)
+    service._web_origin = "http://127.0.0.1:19300/"
+    service._web_launch_url = "http://127.0.0.1:19300/?launch=unit-token"
     monkeypatch.setattr("core.agent.service._data_root", lambda: tmp_path)
     monkeypatch.setattr("core.agent.service.load_config", lambda: {"ai": {"llm": {}}})
 
     status = service.runtime_status()
 
-    assert status["web_port"] == 19301
-    assert status["web_url"] == "http://127.0.0.1:19301/"
-    assert status["web_candidate_port"] == 19301
-    assert status["web_candidate_url"] == "http://127.0.0.1:19301/"
+    assert status["web_port"] == 19300
+    assert status["web_origin"] == "http://127.0.0.1:19300/"
+    assert status["web_launch_url"] == "http://127.0.0.1:19300/?launch=unit-token"
     assert status["web_verified"] is True
-    assert status["web_verification_pending"] is False
-    assert service.web_port == 19301
-    assert service._web_port_verified is True
 
 
 def test_runtime_status_without_any_model_key_keeps_runtime_startable(monkeypatch):
@@ -956,7 +908,7 @@ def test_orphan_cleanup_preserves_live_parent_and_terminates_true_orphan(tmp_pat
     session_root = str(tmp_path / "agent" / "harness-sessions")
     output = "\n".join((
         f"101 201 node worker/worker.mjs {session_root}",
-        f"102 1 node dsh-sdk-jsonrpc-demo {session_root}",
+        f"102 1 node @deepseek-ai/dsh/lib/bin.js {session_root}",
     ))
     monkeypatch.setattr(
         "subprocess.run",
@@ -974,10 +926,10 @@ def test_windows_orphan_cleanup_preserves_live_parent_and_terminates_true_orphan
 
     harness_root = tmp_path / "deepseek-harness"
     worker_entry = harness_root / "worker" / "worker.mjs"
-    demo_entry = harness_root / "node_modules" / "@deepseek-ai" / "dsh-sdk-jsonrpc-demo" / "lib" / "bin.js"
+    dsh_entry = harness_root / "node_modules" / "@deepseek-ai" / "dsh" / "lib" / "bin.js"
     output = json.dumps([
         {"ProcessId": 501, "ParentProcessId": 601, "CommandLine": f"electron {worker_entry}"},
-        {"ProcessId": 502, "ParentProcessId": 1, "CommandLine": f"electron {demo_entry}"},
+        {"ProcessId": 502, "ParentProcessId": 1, "CommandLine": f"electron {dsh_entry}"},
     ])
     calls = []
 
@@ -1657,19 +1609,19 @@ def test_subprocess_output_decoder_falls_back_to_local_encoding(monkeypatch):
     assert _decode_subprocess_output("中文".encode("gbk")) == "中文"
 
 
-def test_dsh_model_catalog_declares_vision_without_widening_text_only_models():
-    from core.agent.cordis_config import build_cordis_yaml, model_capabilities
+def test_dsh_web_profile_preserves_product_model_catalog_without_widening_text_only_models():
+    from core.agent.cordis_config import model_capabilities
 
     assert model_capabilities("gpt-5.5")["input_modalities"] == ["text", "image"]
     assert model_capabilities("deepseek-official-v4-flash-vision-exp")["input_modalities"] == ["text", "image"]
     assert model_capabilities("glm-official-5.3-flash")["input_modalities"] == ["text", "image"]
     assert "input_modalities" not in model_capabilities("deepseek-v4-pro")
 
-    profile = build_cordis_yaml({"ai": {"llm": {"default_model": "gpt-5.5"}}})
+    profile = (Path(__file__).resolve().parents[1] / "integrations" / "deepseek-harness" / "profile" / "web" / "cordis.patch.yml").read_text(encoding="utf-8")
     assert re.search(r"id: gpt-5\.5[\s\S]*input: \[text, image\]", profile)
     assert re.search(r"id: deepseek-v4-pro[\s\S]*input: \[text\]", profile)
     assert re.search(r"id: deepseek-v4-flash-vision-exp[\s\S]*input: \[text, image\]", profile)
-    assert re.search(r"id: glm-5\.3-flash[\s\S]*input: \[text, image\]", profile)
+    assert re.search(r"crawshrimp-glm-official:[\s\S]*id: glm-official-5\.3-flash[\s\S]*input: \[text, image\]", profile)
 
 
 def test_dsh_native_deepseek_route_is_hidden_in_favor_of_crawshrimp_route():
@@ -1703,19 +1655,19 @@ def test_dsh_deepseek_official_models_expose_reasoning_efforts():
     assert "reasoningEfforts" not in vision_block
 
 
-def test_dsh_runtime_patch_guards_deepseek_vision_reasoning_and_image_bridge():
+def test_dsh_runtime_guard_checks_rc1_and_dsh_im_contracts_without_binary_patches():
     patcher = (Path(__file__).resolve().parents[1] / "integrations" / "deepseek-harness" / "scripts" / "patch-runtime-dependencies.mjs").read_text(encoding="utf-8")
 
-    assert "DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER" in patcher
-    assert "HOST_APIPROXY_DEEPSEEK_IMAGE_SELECTION_PATCH_MARKER" in patcher
-    assert "SDK_JSONRPC_IMAGE_ADMISSION_PATCH_MARKER" in patcher
-    assert "crawshrimpBridgeDeepSeekImages" in patcher
-    assert "deepseek-v4-flash-vision-exp" in patcher
-    assert "vision_preflight: true" in patcher
-    assert "process.stderr.write(\"crawshrimp.audit \"" in patcher
-    assert "DEEPSEEK_VISION_REASONING_GUARD_PATCH_MARKER" in patcher
-    assert "crawshrimpReasoningEffortForModel" in patcher
-    assert "resolveReasoningLevel(model, crawshrimpReasoningEffortForModel" in patcher
+    assert "RUNTIME_GUARD_MARKER" in patcher
+    assert "crawshrimp-dsh-rc1-native-runtime-guard-v1" in patcher
+    assert '"0.1.2-rc.1"' in patcher
+    assert '"4.11.0"' in patcher
+    assert "DEFAULT_INBOUND_TTL_HOURS = 168" in patcher
+    assert "harness-session-binding.mjs" in patcher
+    assert "model-setting.mjs" in patcher
+    assert "patched: false" in patcher
+    assert "DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER" not in patcher
+    assert "SDK_JSONRPC_IMAGE_ADMISSION_PATCH_MARKER" not in patcher
 
 
 def test_agent_default_model_prefers_deepseek_flash_when_key_is_configured(monkeypatch):
@@ -1938,13 +1890,11 @@ def test_agent_model_catalog_endpoint_lists_configured_product_models(monkeypatc
     assert "img-2k-secret" not in serialized
 
 
-def test_agent_start_generation_uses_packaged_web_cordis_without_install_write(tmp_path, monkeypatch):
+def test_agent_start_generation_uses_authenticated_web_profile_without_install_write(tmp_path, monkeypatch):
     from core.agent import service as service_mod
 
     harness_root = tmp_path / "Program Files" / "crawshrimp-harness" / "resources" / "deepseek-harness"
     harness_root.mkdir(parents=True)
-    web_cordis = harness_root / "web-cordis.yml"
-    web_cordis.write_text("- id: agent-default-model\n", encoding="utf-8")
     data_root = tmp_path / "LocalAppData" / "crawshrimp"
     calls = {}
 
@@ -1957,13 +1907,15 @@ def test_agent_start_generation_uses_packaged_web_cordis_without_install_write(t
 
         async def request(self, method, params, timeout=None):
             calls[method] = {"params": params, "timeout": timeout}
+            if method == "worker.start_generation":
+                return {"ok": True, "serverInfo": {
+                    "webLaunchUrl": "http://127.0.0.1:19065/?launch=unit-token",
+                    "webOrigin": "http://127.0.0.1:19065",
+                }}
             return {"ok": True}
 
         async def stop(self):
             calls["stopped"] = True
-
-    async def settle_noop(_self, _preferred):
-        calls["settled"] = True
 
     monkeypatch.setattr(service_mod, "resolve_harness_root", lambda: harness_root)
     monkeypatch.setattr(service_mod, "_data_root", lambda: data_root)
@@ -1971,7 +1923,6 @@ def test_agent_start_generation_uses_packaged_web_cordis_without_install_write(t
     monkeypatch.setattr(service_mod, "_pick_free_port", lambda port, _span: port or 19065)
     monkeypatch.setattr(service_mod, "load_config", lambda: {"ai": {"llm": {"api_key": "test-key"}}})
     monkeypatch.setattr(service_mod, "AgentWorker", FakeWorker)
-    monkeypatch.setattr(service_mod.AgentService, "_settle_web_port", settle_noop)
     monkeypatch.setenv("CRAWSHRIMP_AGENT_PROVIDER", "stale-provider")
     monkeypatch.setenv("CRAWSHRIMP_AGENT_MODEL", "stale-model")
 
@@ -1979,9 +1930,12 @@ def test_agent_start_generation_uses_packaged_web_cordis_without_install_write(t
     service.mcp_port = 18965
 
     assert asyncio.run(service.start_generation("crawshrimp-overseas-openai", "gpt-5.6-terra"))
-    assert calls["worker_kwargs"]["cordis_path"] == str(web_cordis)
-    assert calls["worker.initialize"]["params"]["cordisPath"] == str(web_cordis)
+    assert "cordis_path" not in calls["worker_kwargs"]
+    assert "cordisPath" not in calls["worker.initialize"]["params"]
     assert calls["worker.start_generation"]["params"]["model"] == "gpt-5.6-terra"
+    assert calls["worker.start_generation"]["params"]["webPort"] == 19065
+    assert service._web_origin == "http://127.0.0.1:19065/"
+    assert service._web_launch_url == "http://127.0.0.1:19065/?launch=unit-token"
     assert service_mod.os.environ["CRAWSHRIMP_AGENT_PROVIDER"] == "crawshrimp-overseas-openai"
     assert service_mod.os.environ["CRAWSHRIMP_AGENT_MODEL"] == "gpt-5.6-terra"
     assert not (harness_root / "runtime-cordis.yml").exists()
@@ -1991,8 +1945,6 @@ def test_agent_start_generation_uses_packaged_web_cordis_without_install_write(t
 def _patch_agent_generation_runtime(monkeypatch, service_mod, tmp_path, config):
     harness_root = tmp_path / "Program Files" / "crawshrimp-harness" / "resources" / "deepseek-harness"
     harness_root.mkdir(parents=True)
-    web_cordis = harness_root / "web-cordis.yml"
-    web_cordis.write_text("- id: agent-default-model\n", encoding="utf-8")
     data_root = tmp_path / "LocalAppData" / "crawshrimp"
     calls = {}
 
@@ -2005,13 +1957,15 @@ def _patch_agent_generation_runtime(monkeypatch, service_mod, tmp_path, config):
 
         async def request(self, method, params, timeout=None):
             calls[method] = {"params": params, "timeout": timeout}
+            if method == "worker.start_generation":
+                return {"ok": True, "serverInfo": {
+                    "webLaunchUrl": "http://127.0.0.1:19065/?launch=unit-token",
+                    "webOrigin": "http://127.0.0.1:19065",
+                }}
             return {"ok": True}
 
         async def stop(self):
             calls["stopped"] = True
-
-    async def settle_noop(_self, _preferred):
-        calls["settled"] = True
 
     monkeypatch.setattr(service_mod, "resolve_harness_root", lambda: harness_root)
     monkeypatch.setattr(service_mod, "_data_root", lambda: data_root)
@@ -2019,7 +1973,6 @@ def _patch_agent_generation_runtime(monkeypatch, service_mod, tmp_path, config):
     monkeypatch.setattr(service_mod, "_pick_free_port", lambda port, _span: port or 19065)
     monkeypatch.setattr(service_mod, "load_config", lambda: config)
     monkeypatch.setattr(service_mod, "AgentWorker", FakeWorker)
-    monkeypatch.setattr(service_mod.AgentService, "_settle_web_port", settle_noop)
     monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
     monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
     return calls, harness_root, data_root

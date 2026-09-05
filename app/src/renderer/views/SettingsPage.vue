@@ -521,7 +521,7 @@
                   <span class="key-pill neutral">模型 {{ agentRuntime.model || '—' }}</span>
                 </div>
                 <p class="field-hint">状态:{{ agentRuntime.state || '—' }} · 代次 {{ agentRuntime.generation }}<span v-if="agentRuntime.error"> · {{ agentRuntime.error }}</span></p>
-                <p v-if="agentRuntime.web_url" class="field-hint">会话界面:{{ agentRuntime.web_url }}</p>
+                <p v-if="agentRuntime.web_verified" class="field-hint">嵌入式 Web 会话已认证（启动地址不会显示）。</p>
               </div>
               <div class="field">
                 <label>操作</label>
@@ -1055,7 +1055,7 @@ const props = defineProps([
 ])
 const emit = defineEmits(['runtime-refresh', 'check-update', 'theme-change'])
 
-const agentRuntime = ref({ state: 'unknown', generation: 0, model: '', web_url: '', api_key_configured: false, error: '' })
+const agentRuntime = ref({ state: 'unknown', generation: 0, model: '', web_origin: '', web_verified: false, api_key_configured: false, error: '' })
 const agentBusy = ref('')
 const agentNotice = ref('')
 const imSettingsFrame = ref(null)
@@ -1069,7 +1069,10 @@ const agentRuntimeLabel = computed(() => {
   return '启动中'
 })
 const imSettingsUrl = computed(() => {
-  const raw = String(agentRuntime.value?.web_url || '').trim()
+  // AgentWebView is persistent and consumes the one-time launch URL.  This
+  // settings frame shares the renderer's authenticated loopback cookie, so it
+  // must use only the origin and never copy the token into its own URL.
+  const raw = String(agentRuntime.value?.web_origin || '').trim()
   if (!raw || agentRuntime.value?.state !== 'ready') return ''
   try {
     const url = new URL(raw)
@@ -1109,7 +1112,7 @@ async function refreshAgentRuntime() {
   try {
     agentRuntime.value = await window.cs.agentApi('GET', '/agent/runtime')
   } catch {
-    agentRuntime.value = { state: 'offline', generation: 0, model: '', web_url: '', api_key_configured: false, error: '后端不可达' }
+    agentRuntime.value = { state: 'offline', generation: 0, model: '', web_origin: '', web_verified: false, api_key_configured: false, error: '后端不可达' }
   }
 }
 

@@ -2,7 +2,7 @@
 //
 // 职责(窄 spec §10):作为 DSH runtime 的监督者——
 // - stdio NDJSON JSON-RPC 2.0(protocol_version: 1)与 FastAPI 通信;
-// - 懒启动 DSH runtime(Electron-as-Node + dsh-jsonrpc-agent);
+// - 懒启动官方 DSH Web profile，并通过受认证的 Web RPC/Session follow 监督会话；
 // - 转发 Harness 会话事件(harness.notification);
 // - 全局单 Active Run;取消、预算和绝对超时只取消当前 Session,共享 runtime/IM Host 保持常驻;
 // - stdout 仅 NDJSON JSON-RPC,诊断走 stderr。
@@ -13,17 +13,12 @@
 //   产品侧必须保证 runtime_session_id 全局唯一且不跨代复用。
 
 import readline from 'node:readline'
-import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
+import { DshWebRuntime } from './web-rpc-client.mjs'
 
 const PROTOCOL_VERSION = 1
 const MODEL_IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 
-// 影子投影转发的事件类型(web UI 原生会话 → FastAPI)
-const SHADOW_EVENT_TYPES = [
-  'turn/start', 'turn/end', 'user/message', 'assistant/message', 'assistant/chunk',
-  'tool/call', 'tool/result', 'session/title', 'session/status',
-]
 const MAX_FRAME_BYTES = 4 * 1024 * 1024
 const MCP_SETTLE_MS = Number(process.env.CRAWSHRIMP_AGENT_MCP_SETTLE_MS || 3000)
 const RUN_ABSOLUTE_TIMEOUT_MS = Number(process.env.CRAWSHRIMP_AGENT_RUN_TIMEOUT_MS || 30 * 60 * 1000)
@@ -35,13 +30,13 @@ const state = {
   runtimeRoot: null,      // 发布态 Resources/deepseek-harness
   dataRoot: null,
   nodeExecutable: null,   // Electron 可执行文件路径(发布态)
-  cordisPath: null,
   generation: 0,
   provider: null,
   model: null,
   maxTokens: null,
-  runtime: null,          // { child, sdk, alive }
-  activeRun: null,        // { runId, sessionId, resolve, timer, sawTurnEnd, sawIdle, turnEndReason, lastSeq, messageId }
+  runtime: null,          // DshWebRuntime
+  startedSessions: new Set(),
+  activeRun: null,        // { runId, sessionId, resolve, timer, turnEndReason, lastSeq, messageId, follow }
 }
 
 // ---------- stdio 帧输出 ----------
@@ -127,14 +122,11 @@ function nodeVersionOk() {
   return major > 24 || (major === 24) || (major === 22 && minor >= 19)
 }
 
-function spawnRuntime() {
-  const { nodeExecutable, runtimeRoot, cordisPath } = state
-  const demoBin = `${runtimeRoot}/node_modules/@deepseek-ai/dsh-sdk-jsonrpc-demo/lib/bin.js`
-  if (!existsSync(demoBin)) {
-    throw new Error(`dsh-jsonrpc-agent bin 不存在: ${demoBin}`)
-  }
-  if (!existsSync(cordisPath)) {
-    throw new Error(`cordis 配置不存在: ${cordisPath}`)
+async function spawnRuntime({ cwd, webPort }) {
+  const { nodeExecutable, runtimeRoot } = state
+  const dshBin = `${runtimeRoot}/node_modules/@deepseek-ai/dsh/lib/bin.js`
+  if (!existsSync(dshBin)) {
+    throw new Error(`DSH rc.1 CLI bin 不存在: ${dshBin}`)
   }
   if (!nodeVersionOk()) {
     throw new Error(`Node ${process.versions.node} 不满足 DSH engine(^22.19.0 || >=24.0.0)`)
@@ -143,36 +135,26 @@ function spawnRuntime() {
   const env = {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
-    DSH_CORDIS_CONFIG: cordisPath,
     DSH_HOME: process.env.DSH_HOME || `${state.dataRoot}/agent/dsh-home`,
     CRAWSHRIMP_SESSION_ROOT: process.env.CRAWSHRIMP_SESSION_ROOT || `${state.dataRoot}/agent/harness-sessions`,
     CRAWSHRIMP_STORAGE_ROOT: process.env.CRAWSHRIMP_STORAGE_ROOT || `${state.dataRoot}/agent/storages`,
     CRAWSHRIMP_MCP_URL: process.env.CRAWSHRIMP_MCP_URL || 'http://127.0.0.1:18965/mcp',
   }
 
-  const child = spawn(nodeExecutable, [demoBin], {
+  const runtime = await DshWebRuntime.launch({
+    runtimeRoot,
+    dshHome: env.DSH_HOME,
+    nodeExecutable,
+    cwd,
     env,
-    stdio: ['pipe', 'pipe', 'pipe'],
+    port: webPort,
+    timeoutMs: RUNTIME_BOOT_TIMEOUT_MS,
   })
-
-  const sdk = createSdkClient(child)
-  // 全局影子转发:web UI 原生会话(非 FastAPI run)的 turn 事件 → FastAPI 投影,
-  // 使其拥有 active run 语义(任务准备/审批/产物全链路可用)。
-  sdk.onEvent((method, params) => {
-    if (method !== 'session.event') return
-    const sessionId = params.sessionId
-    if (!sessionId) return
-    if (state.activeRun && sessionId === state.activeRun.sessionId) return // run 处理器已转发
-    const event = params.event || {}
-    if (SHADOW_EVENT_TYPES.includes(event.type)) notifyHarnessShadow(sessionId, event)
-  })
-  child.stderr.on('data', (chunk) => {
-    console.error(`[worker][harness] ${String(chunk).trimEnd()}`)
-  })
-  child.on('exit', (code, signal) => {
-    console.error(`[worker] harness runtime 退出 code=${code} signal=${signal}`)
+  runtime.onExit((code, signal) => {
+    console.error(`[worker] DSH Web runtime 退出 code=${code} signal=${signal}`)
     const wasActive = state.activeRun
     state.runtime = null
+    state.startedSessions.clear()
     if (wasActive) {
       console.error(`[worker] runtime 在 run ${wasActive.runId} 期间退出 code=${code} signal=${signal}`)
       finishRun({ status: 'interrupted', reason: { kind: 'interrupted', detail: `runtime exit code=${code} signal=${signal}` } })
@@ -180,58 +162,7 @@ function spawnRuntime() {
     notifyWorkerStatus('stopped', { exitCode: code, exitSignal: signal })
   })
 
-  return { child, sdk }
-}
-
-// ---------- 极简 SDK wire client(session/prompt 协议) ----------
-function createSdkClient(child) {
-  let buffer = ''
-  let nextId = 1
-  const pending = new Map()
-  const onEvent = []
-
-  child.stdout.on('data', (chunk) => {
-    buffer += String(chunk)
-    let idx
-    while ((idx = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, idx).trim()
-      buffer = buffer.slice(idx + 1)
-      if (!line) continue
-      let msg
-      try { msg = JSON.parse(line) } catch {
-        fail(`harness stdout 非 JSON,按协议错误处理: ${line.slice(0, 160)}`)
-      }
-      if (msg.id !== undefined && pending.has(msg.id)) {
-        const { resolve, reject } = pending.get(msg.id)
-        pending.delete(msg.id)
-        if (msg.error) reject(new Error(msg.error.message || JSON.stringify(msg.error)))
-        else resolve(msg.result)
-      } else if (msg.method === 'session.event' || msg.method === 'session.status') {
-        for (const handler of onEvent) {
-          try { handler(msg.method, msg.params || {}) } catch (error) {
-            console.error(`[worker] event handler error: ${error.message}`)
-          }
-        }
-      } else {
-        console.error(`[worker] harness 未知通知: ${JSON.stringify(msg).slice(0, 160)}`)
-      }
-    }
-  })
-
-  return {
-    onEvent: (handler) => onEvent.push(handler),
-    request: (method, params, timeoutMs = 30000) => new Promise((resolve, reject) => {
-      const id = nextId++
-      pending.set(id, { resolve, reject })
-      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params: params ?? {} })}\n`)
-      setTimeout(() => {
-        if (pending.has(id)) {
-          pending.delete(id)
-          reject(new Error(`sdk ${method} 超时`))
-        }
-      }, timeoutMs)
-    }),
-  }
+  return runtime
 }
 
 // ---------- Run 生命周期 ----------
@@ -240,16 +171,17 @@ function finishRun(result) {
   if (!run) return
   state.activeRun = null
   if (run.timer) clearTimeout(run.timer)
+  run.follow?.close()
   run.resolve({ ...result, runId: run.runId, sessionId: run.sessionId })
 }
 
 function attachRunEventHandlers(run) {
-  const { sdk } = state.runtime
-  sdk.onEvent((method, params) => {
-    // run 已结束的事件不再转发(handler 持续挂在 sdk 上)
-    if (state.activeRun !== run) return
-    if (method === 'session.event') {
-      const event = params.event || {}
+  const runtime = state.runtime
+  if (!runtime) throw new Error('runtime unavailable while opening Session follow stream')
+  run.follow = runtime.follow(run.sessionId, {
+    onEvent: (event) => {
+      // run 已结束后，follow 可能在关闭竞态中送达最后一个帧。
+      if (state.activeRun !== run || !event || typeof event !== 'object') return
       const seq = Number(event.seq || 0)
       if (seq > run.lastSeq) run.lastSeq = seq
       const type = event.type
@@ -287,17 +219,22 @@ function attachRunEventHandlers(run) {
       }
       notifyHarness(run.runId, event)
       if (type === 'turn/end') {
-        run.sawTurnEnd = true
         run.turnEndReason = event.data?.reason ?? null
-        if (run.sawIdle) settleRun(run)
+        settleRun(run)
       }
-    } else if (method === 'session.status') {
-      if (String(params.sessionId) === run.sessionId && params.status === 'idle') {
-        run.sawIdle = true
-      }
-      if (run.sawTurnEnd && run.sawIdle) settleRun(run)
-    }
+    },
+    onError: (error) => {
+      if (state.activeRun !== run) return
+      console.error(`[worker] run ${run.runId} Session follow 失败: ${error.message}`)
+      finishRun({
+        status: 'interrupted',
+        reason: { kind: 'interrupted', error: { code: 'SESSION_FOLLOW_FAILED', message: error.message } },
+        messageId: run.messageId,
+        lastSeq: run.lastSeq,
+      })
+    },
   })
+  return run.follow
 }
 
 function settleRun(run) {
@@ -325,15 +262,11 @@ function settleRun(run) {
 }
 
 function cancelActiveRuntimeSession(run, reason) {
-  const sdk = state.runtime?.sdk
-  if (!sdk || !run || state.activeRun !== run) return Promise.resolve({ ok: false, canceled: false })
+  const runtime = state.runtime
+  if (!runtime || !run || state.activeRun !== run) return Promise.resolve({ ok: false, canceled: false })
   if (run.cancelRequested) return run.cancelPromise || Promise.resolve({ ok: true, canceled: true })
   run.cancelRequested = true
-  run.cancelPromise = sdk.request('session/cancel', {
-    sessionId: run.sessionId,
-    reason: String(reason || 'canceled'),
-    keepInbox: true,
-  }, 30000).then((result) => ({ ok: true, canceled: true, result })).catch((error) => {
+  run.cancelPromise = runtime.cancel(run.sessionId).then((result) => ({ ok: true, canceled: true, result })).catch((error) => {
     console.error(`[worker] run ${run.runId} Session 取消失败: ${error.message}`)
     return { ok: false, canceled: false, error }
   })
@@ -359,8 +292,8 @@ function cancelOutputBudgetRun(run, message) {
 }
 
 function continueRunAfterOutputBudget(run) {
-  const sdk = state.runtime?.sdk
-  if (!sdk || run.outputBudgetSegments >= run.budget.maxOutputSegments) {
+  const runtime = state.runtime
+  if (!runtime || run.outputBudgetSegments >= run.budget.maxOutputSegments) {
     if (run.outputBudgetSegments >= run.budget.maxOutputSegments) {
       run.outputBudgetMessage = `内容已自动分段 ${run.outputBudgetSegments} 次,达到单轮安全上限`
     }
@@ -371,8 +304,6 @@ function continueRunAfterOutputBudget(run) {
   run.outputBudgetMessage = ''
   run.cancelRequested = false
   run.cancelPromise = null
-  run.sawTurnEnd = false
-  run.sawIdle = false
   run.turnEndReason = null
   run.counters.textDeltas = 0
   run.counters.outputChars = 0
@@ -382,11 +313,10 @@ function continueRunAfterOutputBudget(run) {
     `请从上一段回答中断的位置继续写第 ${segment} 段,只输出后续内容,不要重复已经写过的内容。`,
     '如果内容已经完整,请用一句话自然收尾。',
   ].join('\n')
-  sdk.request('session/prompt', {
+  runtime.prompt({
     sessionId: run.sessionId,
-    contentBlocks: [{ type: 'text', text }],
-    internal: true,
-  }, 30000).then((result) => {
+    content: [{ type: 'text', text }],
+  }).then((result) => {
     if (state.activeRun !== run) return
     if (result?.messageId) run.messageId = result.messageId
     notifyHarness(run.runId, {
@@ -492,7 +422,7 @@ async function startRun(params) {
   const budget = normalizeBudget(params.budget)
   const run = {
     runId, sessionId,
-    messageId: null, sawTurnEnd: false, sawIdle: false, turnEndReason: null, lastSeq: 0,
+    messageId: null, turnEndReason: null, lastSeq: 0, follow: null,
     outputBudgetReached: false, outputBudgetMessage: '', outputBudgetSegments: 0, cancelRequested: false, cancelPromise: null,
     outputDeltaTimes: [],
     budget, counters: { steps: 0, toolCalls: 0, observe: 0, act: 0, textDeltas: 0, outputChars: 0 },
@@ -507,7 +437,6 @@ async function startRun(params) {
   }
   const done = new Promise((resolve) => { run.resolve = resolve })
   state.activeRun = run
-  attachRunEventHandlers(run)
 
   try {
     const contentBlocks = []
@@ -528,11 +457,23 @@ async function startRun(params) {
       }
     }
     contentBlocks.push({ type: 'text', text })
-    const result = await state.runtime.sdk.request('session/prompt', {
+    if (!state.startedSessions.has(sessionId)) {
+      await state.runtime.createSession({
+        sessionId,
+        cwd: String(params.cwd || `${state.dataRoot}/agent/runtime-workdir`),
+        agentPreset: 'standard',
+      })
+      state.startedSessions.add(sessionId)
+    }
+    const follow = attachRunEventHandlers(run)
+    await follow.ready
+    const requestId = `crawshrimp-run-${runId}`
+    await state.runtime.prompt({
       sessionId,
-      contentBlocks,
-    }, 30000)
-    run.messageId = result?.messageId ?? null
+      content: contentBlocks,
+      requestId,
+    })
+    run.messageId = requestId
     notifyHarness(runId, { type: 'agent/inbox/spliced', data: { messageId: run.messageId, sessionId }, seq: 0 })
     const summary = await done
     return { ok: true, summary }
@@ -554,17 +495,30 @@ function cancelActiveRun() {
   return { ok: true, canceled: Boolean(run) }
 }
 
-function stopRuntime() {
+async function stopRuntime() {
   const runtime = state.runtime
   if (!runtime) return { ok: true, stopped: false }
   notifyWorkerStatus('stopping')
   state.runtime = null
-  try { runtime.child.stdin.end() } catch {}
+  state.startedSessions.clear()
+  if (state.activeRun) {
+    finishRun({
+      status: 'interrupted',
+      reason: { kind: 'interrupted', detail: 'runtime stopped' },
+      messageId: state.activeRun.messageId,
+      lastSeq: state.activeRun.lastSeq,
+    })
+  }
   const killTimer = setTimeout(() => {
-    try { runtime.child.kill('SIGKILL') } catch {}
+    // DshWebRuntime.stop() sends SIGTERM first. The child is intentionally
+    // private to that client, so a forced second signal remains encapsulated.
+    console.error('[worker] DSH Web runtime did not stop before grace period')
   }, RUNTIME_KILL_GRACE_MS)
-  runtime.child.once('exit', () => clearTimeout(killTimer))
-  try { runtime.child.kill('SIGTERM') } catch {}
+  try {
+    await runtime.stop()
+  } finally {
+    clearTimeout(killTimer)
+  }
   return { ok: true, stopped: true }
 }
 
@@ -576,7 +530,6 @@ async function handleRequest(method, params) {
       state.runtimeRoot = params.runtimeRoot
       state.dataRoot = params.dataRoot
       state.nodeExecutable = params.nodeExecutable || resolveNodeExecutable()
-      state.cordisPath = params.cordisPath
       if (params.mcpUrl) process.env.CRAWSHRIMP_MCP_URL = params.mcpUrl
       if (params.sessionRoot) process.env.CRAWSHRIMP_SESSION_ROOT = params.sessionRoot
       return {
@@ -587,29 +540,35 @@ async function handleRequest(method, params) {
       }
     }
     case 'worker.start_generation': {
-      if (state.runtime) stopRuntime()
+      if (state.runtime) await stopRuntime()
       state.generation = params.generation || state.generation + 1
       state.provider = params.provider
       state.model = params.model
       state.maxTokens = params.maxTokens
-      if (params.cordisPath) state.cordisPath = params.cordisPath
       notifyWorkerStatus('starting')
       try {
-        const runtime = spawnRuntime()
-        state.runtime = runtime
-        const serverInfo = await runtime.sdk.request('initialize', {
+        const runtime = await spawnRuntime({
           cwd: params.cwd || `${state.dataRoot}/agent/runtime-workdir`,
+          webPort: params.webPort || process.env.CRAWSHRIMP_WEB_PORT || 0,
+        })
+        state.runtime = runtime
+        const serverInfo = {
+          profile: 'web',
+          agentPreset: 'standard',
+          webOrigin: runtime.origin,
+          webLaunchUrl: runtime.launchUrl,
           provider: state.provider,
           model: state.model,
           maxTokens: state.maxTokens,
-        }, RUNTIME_BOOT_TIMEOUT_MS)
-        // P0 经验:等 MCP 工具发现完成,否则首条 prompt 看不到工具
-        await new Promise((r) => setTimeout(r, MCP_SETTLE_MS))
+        }
+        // Web profile 先完成 host composition，再向 Python 报告 ready；Session
+        // follow 自己会以初始 snapshot 作为每次 prompt 前的同步栅栏。
+        await new Promise((r) => setTimeout(r, Math.min(MCP_SETTLE_MS, 500)))
         notifyWorkerStatus('ready', { serverInfo })
         return { ok: true, serverInfo }
       } catch (error) {
         console.error(`[worker] start_generation 失败: ${error.message}`)
-        stopRuntime()
+        await stopRuntime()
         notifyWorkerStatus('crashed', { message: error.message })
         return { ok: false, error: { code: 'RUNTIME_BOOT_FAILED', message: error.message } }
       }
@@ -628,10 +587,22 @@ async function handleRequest(method, params) {
       return startRun(params)
     case 'worker.cancel_active':
       return cancelActiveRun()
+    case 'worker.request_approval': {
+      if (!state.runtime) {
+        return { ok: false, error: { code: 'RUNTIME_UNAVAILABLE', message: 'DSH Web runtime is not ready' } }
+      }
+      try {
+        const result = await state.runtime.requestApproval(params)
+        return { ok: true, result }
+      } catch (error) {
+        console.error(`[worker] DSH native approval route failed: ${error.message}`)
+        return { ok: false, error: { code: 'NATIVE_APPROVAL_FAILED', message: error.message } }
+      }
+    }
     case 'worker.stop_generation':
-      return stopRuntime()
+      return await stopRuntime()
     case 'worker.shutdown':
-      stopRuntime()
+      await stopRuntime()
       return { ok: true }
     default:
       return { ok: false, error: { code: 'UNKNOWN_METHOD', message: method } }
@@ -669,19 +640,16 @@ rl.on('line', (line) => {
 
 process.stdin.on('end', () => {
   console.error('[worker] stdin EOF,退出')
-  stopRuntime()
-  setTimeout(() => process.exit(0), 200)
+  stopRuntime().finally(() => setTimeout(() => process.exit(0), 200))
 })
 
 process.on('SIGTERM', () => {
   console.error('[worker] SIGTERM,有序关闭')
-  stopRuntime()
-  setTimeout(() => process.exit(0), 500)
+  stopRuntime().finally(() => setTimeout(() => process.exit(0), 500))
 })
 process.on('SIGINT', () => {
   console.error('[worker] SIGINT,有序关闭')
-  stopRuntime()
-  setTimeout(() => process.exit(0), 500)
+  stopRuntime().finally(() => setTimeout(() => process.exit(0), 500))
 })
 
 console.error(`[worker] started node=${process.versions.node} pid=${process.pid}`)

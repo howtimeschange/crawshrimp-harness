@@ -70,12 +70,11 @@ class WorkerProtocolError(Exception):
 class AgentWorker:
     """一个 Worker 子进程的异步 JSON-RPC 客户端。"""
 
-    def __init__(self, *, runtime_root: str, data_root: str, cordis_path: str,
+    def __init__(self, *, runtime_root: str, data_root: str,
                  mcp_url: str, session_root: str,
                  on_notification: Optional[NotificationHandler] = None):
         self.runtime_root = runtime_root
         self.data_root = data_root
-        self.cordis_path = cordis_path
         self.mcp_url = mcp_url
         self.session_root = session_root
         self.on_notification = on_notification

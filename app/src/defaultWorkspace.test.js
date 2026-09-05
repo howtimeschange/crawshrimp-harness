@@ -181,6 +181,8 @@ test('a late create result after timeout never opens a stale workspace session',
 test('browse picker backend accepts drive-qualified Windows paths and rejects ambiguous roots', async () => {
   const browseModule = resolve(
     __dirname,
+    // The direct dsh-web-app dependency hoists the Web Host closure to the
+    // product runtime root, where Cordis resolves profile plugins.
     '../../integrations/deepseek-harness/node_modules/@deepseek-ai/dsh-host-directory-picker-browse/lib/index.js',
   )
   const { fullyQualified } = await import(pathToFileURL(browseModule).href)

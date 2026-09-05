@@ -1,0 +1,247 @@
+# Crawshrimp's user layer over DSH 0.1.2-rc.1's official Web profile.
+# The Web bundle deliberately moves agent-plane tools behind the `standard`
+# agent preset. Do not re-enable host rows here: doing so would bypass that
+# per-session composition and duplicate the tool registry.
+
+# Keep the existing Crawshrimp identity and operating instructions, while the
+# official standard preset continues to supply its full tool and workflow
+# surface. The value comes from the desktop process and is never persisted to
+# the staged package or user profile.
+- id: system-prompt
+  config:
+    persona: !!js process.env.CRAWSHRIMP_AGENT_PERSONA ?? 'You are a Crawshrimp agent running in the Crawshrimp desktop application.'
+
+- id: agent-default-model
+  config:
+    provider: !!js process.env.CRAWSHRIMP_AGENT_PROVIDER ?? 'crawshrimp-deepseek-official'
+    model: !!js process.env.CRAWSHRIMP_AGENT_MODEL ?? 'deepseek-v4-flash'
+
+- id: llm-pi-ai
+  config:
+    providers:
+      crawshrimp-deepseek-official:
+        displayName: DeepSeek 官方
+        apiKeyEnv: CRAWSHRIMP_DEEPSEEK_API_KEY
+        api: openai-completions
+        baseURL: !!js process.env.CRAWSHRIMP_DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com'
+        reasoning: high
+        models:
+          - id: deepseek-v4-flash
+            contextWindow: 128000
+            maxTokens: 8192
+            input: [text]
+            reasoningEfforts:
+              off:
+              low: low
+              high: high
+              max: max
+          - id: deepseek-v4-pro
+            contextWindow: 128000
+            maxTokens: 16384
+            input: [text]
+            reasoningEfforts:
+              off:
+              low: low
+              high: high
+              max: max
+          - id: deepseek-v4-flash-vision-exp
+            contextWindow: 128000
+            maxTokens: 8192
+            input: [text, image]
+      crawshrimp-overseas-openai:
+        displayName: 抓虾-海外 OpenAI
+        apiKeyEnv: CRAWSHRIMP_OVERSEAS_OPENAI_API_KEY
+        api: openai-completions
+        baseURL: !!js process.env.CRAWSHRIMP_OVERSEAS_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/overseas-openai-vip/v1'
+        models:
+          - id: gpt-5.6-sol
+            contextWindow: 200000
+            maxTokens: 32000
+            input: [text, image]
+          - id: gpt-5.6-terra
+            contextWindow: 200000
+            maxTokens: 32000
+            input: [text, image]
+          - id: gpt-5.6-luna
+            contextWindow: 200000
+            maxTokens: 32000
+            input: [text, image]
+          - id: gpt-5.5
+            contextWindow: 128000
+            maxTokens: 16384
+            input: [text, image]
+          - id: gemini-3.1-pro-preview
+            contextWindow: 1000000
+            maxTokens: 65536
+            input: [text, image]
+          - id: gemini-3.5-flash
+            contextWindow: 1000000
+            maxTokens: 65536
+            input: [text, image]
+      crawshrimp-overseas-anthropic:
+        displayName: 抓虾-海外 Anthropic
+        apiKeyEnv: CRAWSHRIMP_OVERSEAS_ANTHROPIC_API_KEY
+        api: anthropic-messages
+        baseURL: !!js process.env.CRAWSHRIMP_OVERSEAS_ANTHROPIC_BASE_URL ?? 'https://ai-aigw.semir.com/overseas-anthropic-vip'
+        models:
+          - id: claude-opus-4-8
+            contextWindow: 200000
+            maxTokens: 32000
+            input: [text, image]
+          - id: claude-sonnet-5
+            contextWindow: 200000
+            maxTokens: 32000
+            input: [text, image]
+      crawshrimp-domestic-openai:
+        displayName: 抓虾-国内 OpenAI 兼容
+        apiKeyEnv: CRAWSHRIMP_DOMESTIC_OPENAI_API_KEY
+        api: openai-completions
+        baseURL: !!js process.env.CRAWSHRIMP_DOMESTIC_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/bailian-codingplan/v1'
+        models:
+          - id: qwen3.8-max-preview
+            contextWindow: 128000
+            maxTokens: 16384
+            input: [text]
+          - id: qwen3.7-plus
+            contextWindow: 128000
+            maxTokens: 16384
+            input: [text]
+          - id: deepseek-v4-flash
+            contextWindow: 128000
+            maxTokens: 8192
+            input: [text]
+          - id: deepseek-v4-pro
+            contextWindow: 128000
+            maxTokens: 16384
+            input: [text]
+          - id: glm-5.2
+            contextWindow: 128000
+            maxTokens: 16384
+            input: [text]
+          - id: kimi-k3
+            contextWindow: 128000
+            maxTokens: 16384
+            input: [text]
+          - id: kimi-k2.7-code
+            contextWindow: 128000
+            maxTokens: 16384
+            input: [text]
+      crawshrimp-glm-official:
+        displayName: 智谱官方
+        apiKeyEnv: CRAWSHRIMP_GLM_API_KEY
+        api: openai-completions
+        baseURL: !!js process.env.CRAWSHRIMP_GLM_BASE_URL ?? 'https://open.bigmodel.cn/api/paas/v4'
+        models:
+          - id: glm-official-5.3-flash
+            contextWindow: 128000
+            maxTokens: 8192
+            input: [text, image]
+          - id: glm-official-5.3
+            contextWindow: 128000
+            maxTokens: 16384
+            input: [text]
+          - id: glm-official-5.2
+            contextWindow: 128000
+            maxTokens: 16384
+            input: [text]
+
+- id: session-persistence-jsonl
+  config:
+    root: !!js process.env.CRAWSHRIMP_SESSION_ROOT ?? dshHomePath('sessions')
+
+- id: attachment-local
+  config:
+    maxImageDimension: 4096
+    maxImageBytes: 16777216
+
+- id: sandbox-policy
+  config:
+    mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
+    workspaceRoot: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+
+- id: approval
+  config:
+    policy: !!js "(process.env.DSH_PERMISSION_MODE ?? 'workspace-write') === 'danger-full-access' ? 'never' : 'ask'"
+
+- id: permission
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+
+# The official Web bundle ships the Schedule UI dormant. Crawshrimp explicitly
+# retains the full plan/task surface: durable schedules remain inside the same
+# local DSH profile and therefore share its workspace, session, approval, and
+# permission-preset boundaries. This is an enablement only; it creates no
+# schedule and sends no unattended external message by itself.
+- insert:
+    - id: time-context
+      name: '@deepseek-ai/dsh-time-context'
+
+    - id: schedule
+      name: '@deepseek-ai/dsh-schedule'
+
+- id: ui-schedule
+  disabled: false
+
+# The official wordmark is presentation-only. Keep the complete official Web
+# capability roster, but let the Crawshrimp client slot own this product's
+# visible identity.
+- id: ui-brand-official
+  disabled: true
+
+- id: xmanrui-dsh-im
+  disabled: true
+
+- insert:
+    - id: mcp-crawshrimp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        transport: streamable-http
+        serverName: crawshrimp
+        url: !!js process.env.CRAWSHRIMP_MCP_URL ?? 'http://127.0.0.1:18965/mcp'
+        headers: !!js |
+          ({ Authorization: 'Bearer ' + (process.env.CRAWSHRIMP_MCP_TOKEN ?? '') })
+        toolCallTimeoutMs: 1800000
+        failOnStartupError: !!js process.env.CRAWSHRIMP_STAGE_BOOT_CHECK !== '1'
+
+    - id: crawshrimp-product-bridge
+      name: 'crawshrimp-product-bridge'
+
+    - id: crawshrimp-slots
+      name: 'crawshrimp-slots'
+
+    # Load after the Crawshrimp Host guard, so every IM connector sees the
+    # workspace/approval policy before it registers its loopback RPC routes.
+    - id: crawshrimp-dsh-im
+      name: '@xmanrui/dsh-im'
+      config:
+        language: zh
+        rpcAuthority: loopback
+        feishu:
+          workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+        weixin:
+          workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+        dingtalk:
+          workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+        wecom:
+          workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+        qq:
+          workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+        slack:
+          workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+        telegram:
+          workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+        discord:
+          workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+        whatsapp:
+          workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+        office:
+          workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()

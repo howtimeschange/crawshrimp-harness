@@ -19,7 +19,7 @@ from core.atomic_file import atomic_write_text, remove_path_with_retry
 from core.agent import db
 from core.agent import mcp_gateway
 from core.agent.redaction import REDACTED, redact_text as _redact_secret_text, redact_value
-from core.agent.cordis_config import build_cordis_yaml, resolve_provider_for_model, model_capabilities
+from core.agent.cordis_config import AGENT_PERSONA, resolve_provider_for_model, model_capabilities
 from core.llm_gateway import (
     BUILTIN_LLM_PROVIDERS,
     DEFAULT_MODEL,
@@ -119,40 +119,6 @@ def _pick_free_port(start_port: int, max_steps: int = 8) -> int:
     raise RuntimeError(f"端口范围 {start_port}..{port - 1} 均已占用")
 
 
-_DSH_WEB_REQUIRED_MARKERS = ("__DSH_BOOT__", "crawshrimp-slots")
-
-
-def _runtime_web_probe_timeout() -> float:
-    """Windows packaged runtimes can be slow to serve the first DSH HTML."""
-    return 0.8 if os.name == "nt" else 0.25
-
-
-def _is_crawshrimp_web_host(port: int, timeout: float = 0.25) -> bool:
-    """确认端口返回的是本实例 DSH Web，而不是旧进程或普通 HTTP 页面。"""
-    import http.client as _http
-    conn = None
-    try:
-        conn = _http.HTTPConnection("127.0.0.1", int(port), timeout=timeout)
-        conn.request("GET", "/")
-        resp = conn.getresponse()
-        body = resp.read(64 * 1024).decode("utf-8", "replace")
-        return resp.status == 200 and all(marker in body for marker in _DSH_WEB_REQUIRED_MARKERS)
-    except OSError:
-        return False
-    finally:
-        if conn is not None:
-            conn.close()
-
-
-def _find_crawshrimp_web_port(preferred: int, max_steps: int = 8,
-                              timeout: float = 0.25) -> int:
-    base = max(1, int(preferred or 0))
-    for port in range(base, base + max(1, int(max_steps)) + 1):
-        if _is_crawshrimp_web_host(port, timeout=timeout):
-            return port
-    return 0
-
-
 def _reserve_free_port(start_port: int, max_steps: int = 8):
     """绑定并保留监听 socket，供 uvicorn 直接接管，消除检查后再 bind 的竞态。"""
     import socket
@@ -216,7 +182,7 @@ def _cleanup_orphan_runtimes(data_root: str) -> None:
     for line in out.splitlines():
         if session_root not in line:
             continue
-        if "dsh-sdk-jsonrpc-demo" not in line and "worker/worker.mjs" not in line:
+        if "@deepseek-ai/dsh/lib/bin.js" not in line and "worker/worker.mjs" not in line:
             continue
         fields = line.strip().split(maxsplit=2)
         if len(fields) < 3:
@@ -248,10 +214,10 @@ def _cleanup_orphan_runtimes_windows(data_root: str) -> None:
     harness_root = str(resolve_harness_root())
     needles = [
         str(Path(harness_root) / "worker" / "worker.mjs"),
-        str(Path(harness_root) / "node_modules" / "@deepseek-ai" / "dsh-sdk-jsonrpc-demo" / "lib" / "bin.js"),
+        str(Path(harness_root) / "node_modules" / "@deepseek-ai" / "dsh" / "lib" / "bin.js"),
         "worker/worker.mjs",
         "worker\\worker.mjs",
-        "dsh-sdk-jsonrpc-demo",
+        "@deepseek-ai/dsh/lib/bin.js",
     ]
     env = dict(os.environ)
     env["CRAWSHRIMP_RUNTIME_NEEDLES_JSON"] = _json.dumps(needles)
@@ -697,7 +663,11 @@ class AgentService:
         self.runtime_error_code = ""
         self.crash_budget: list[float] = []
         self.web_port = 0
-        self._web_port_verified = False
+        # rc.1 Web Host issues an authenticated, one-time iframe launch URL.
+        # It is never logged, persisted, or shown in settings; it exists only
+        # while this in-memory runtime generation is alive.
+        self._web_launch_url = ""
+        self._web_origin = ""
 
         self.queue: asyncio.Queue[dict] = asyncio.Queue()
         self.active_run: Optional[dict] = None          # run 行
@@ -1585,13 +1555,16 @@ class AgentService:
                 os.environ[env_key] = value
         os.environ["CRAWSHRIMP_AGENT_PROVIDER"] = provider_id
         os.environ["CRAWSHRIMP_AGENT_MODEL"] = runtime_model_id
+        # rc.1 Web profile owns system-prompt composition. Keep the product
+        # persona in process memory and overlay it through the profile instead
+        # of writing a mutable Cordis config into the installed runtime.
+        os.environ["CRAWSHRIMP_AGENT_PERSONA"] = AGENT_PERSONA
 
         # 轮换 runtime token
         self.runtime_token = secrets.token_hex(32)
         os.environ["CRAWSHRIMP_MCP_TOKEN"] = self.runtime_token
 
-        # Web host 端口与网关 baseURL:web-cordis.yml 经 !!js 环境表达式读取。
-        # Web host 端口取 MCP 端口 + 100(API+300),避开 main.js 端口回退区间。
+        # Web Host 端口取 MCP 端口 + 100(API+300),避开 main.js 端口回退区间。
         self.web_port = getattr(self, "web_port", 0) or (self.mcp_port + 100)
         os.environ["CRAWSHRIMP_WEB_PORT"] = str(self.web_port)
         # DSH Web UI「工作区」默认指向抓虾运行时目录(data/agent/workspace)
@@ -1626,30 +1599,15 @@ class AgentService:
         # 启动 worker 前先清理本 data 目录的孤儿 runtime(上次后端被强杀的残留),
         # 避免残留进程占用端口导致 DSH webserver 内部 +1 漂移(前端拿不到真实端口会白屏)。
         _cleanup_orphan_runtimes(str(data_root))
-        # Web host 端口自愈:清完残留再选端口,并把结果回写 self.web_port,
-        # runtime_status 必须上报与 harness 实际监听一致的端口。
+        # Worker passes this fixed loopback port to the official rc.1 Web
+        # profile.  Its authenticated launch response is the readiness proof;
+        # never probe GET / because it correctly returns 401 without a cookie.
         self.web_port = _pick_free_port(self.web_port, 8)
-        self._web_port_verified = False
         os.environ["CRAWSHRIMP_WEB_PORT"] = str(self.web_port)
-        # runtime cordis 必须位于 harness root(node_modules 旁):
-        # dsh-app-boot 以 config 所在目录为模块解析基准(ctx.baseUrl)。
-        # Windows 安装到 Program Files 后不可写,所以正常路径使用包内 web-cordis.yml,
-        # 会话级 provider/model 通过环境变量注入,避免落盘改写安装目录。
-        harness_root = resolve_harness_root()
-        cordis_path = harness_root / "web-cordis.yml"
-        if not cordis_path.exists():
-            cordis_path = harness_root / "runtime-cordis.yml"
-            try:
-                atomic_write_text(cordis_path, build_cordis_yaml(cfg, model_id))
-            except OSError as exc:
-                print(f"[agent] 无法写入 {cordis_path}({exc}),回退 legacy data 目录", flush=True)
-                cordis_path = agent_dir / "runtime-cordis.yml"
-                atomic_write_text(cordis_path, build_cordis_yaml(cfg, model_id))
 
         worker = AgentWorker(
             runtime_root=str(resolve_harness_root()),
             data_root=str(data_root),
-            cordis_path=str(cordis_path),
             mcp_url=getattr(self, "mcp_url", "http://127.0.0.1:18965/mcp"),
             session_root=str(agent_dir / "harness-sessions"),
             on_notification=self._on_worker_notification,
@@ -1659,7 +1617,6 @@ class AgentService:
             init = await worker.request("worker.initialize", {
                 "runtimeRoot": str(resolve_harness_root()),
                 "dataRoot": str(data_root),
-                "cordisPath": str(cordis_path),
                 "mcpUrl": getattr(self, "mcp_url", "http://127.0.0.1:18965/mcp"),
                 "sessionRoot": str(agent_dir / "harness-sessions"),
             }, timeout=20)
@@ -1672,17 +1629,29 @@ class AgentService:
                 "model": runtime_model_id,
                 "maxTokens": model_capabilities(model_id).get("max_output_tokens", 8192),
                 "cwd": str(agent_dir / "runtime-workdir"),
+                "webPort": self.web_port,
             }, timeout=120)
             if not gen.get("ok"):
                 raise RuntimeError(f"start_generation 失败: {gen}")
+            server_info = gen.get("serverInfo") if isinstance(gen.get("serverInfo"), dict) else {}
+            web_launch_url = str(server_info.get("webLaunchUrl") or "").strip()
+            web_origin = str(server_info.get("webOrigin") or "").strip().rstrip("/")
+            from urllib.parse import urlparse
+            launch = urlparse(web_launch_url)
+            origin = urlparse(web_origin)
+            if (
+                launch.scheme != "http" or launch.hostname != "127.0.0.1" or not launch.query
+                or origin.scheme != "http" or origin.hostname != "127.0.0.1" or launch.netloc != origin.netloc
+            ):
+                raise RuntimeError("DSH Web 未返回受控 loopback 启动地址")
+            self.web_port = int(launch.port or 0)
+            self._web_launch_url = web_launch_url
+            self._web_origin = web_origin + "/"
             self.worker = worker
             self.runtime_state = "ready"
             self.runtime_error_code = ""
             self.generation_model = model_id
             self.generation_model_provider = provider_id
-            # 端口漂移兜底:DSH webserver 在首选端口被占时会内部 +1,
-            # 后台探测真实监听端口并回写 self.web_port,前端 iframe 才能加载正确地址。
-            asyncio.get_running_loop().create_task(self._settle_web_port(self.web_port))
             return True
         except asyncio.CancelledError:
             await worker.stop()
@@ -1695,39 +1664,6 @@ class AgentService:
             await worker.stop()
             self._note_crash(str(exc))
             return False
-
-    async def _settle_web_port(self, preferred: int) -> None:
-        """探测 DSH web host 真实监听端口(webserver 内部端口冲突会 +1)。
-
-        在 [preferred, preferred+8] 范围内找第一个返回 DSH boot + 抓虾 slots
-        特征的端口并回写 self.web_port 与环境变量。Windows 发布包首次
-        解压/杀毒扫描期间响应会明显慢于 macOS/Linux，因此给更长 settle 窗口。
-        """
-        import time as _time
-        base = max(1, int(preferred or 0))
-        settle_seconds = 45 if os.name == "nt" else 15
-        deadline = _time.monotonic() + settle_seconds
-        probe_timeout = _runtime_web_probe_timeout()
-
-        while _time.monotonic() < deadline:
-            matches = await asyncio.gather(*(
-                asyncio.to_thread(
-                    lambda candidate=port: candidate
-                    if _is_crawshrimp_web_host(candidate, timeout=probe_timeout) else None
-                )
-                for port in range(base, base + 9)
-            ))
-            found = next((port for port in matches if port), None)
-            if found:
-                if found != self.web_port:
-                    print(f"[agent] web host 实际端口修正 {self.web_port}→{found}", flush=True)
-                    self.web_port = found
-                    os.environ["CRAWSHRIMP_WEB_PORT"] = str(found)
-                self._web_port_verified = True
-                return
-            self._web_port_verified = False
-            await asyncio.sleep(0.25)
-        print(f"[agent] {settle_seconds} 秒内未发现本实例 DSH web host，保留端口 {self.web_port}", flush=True)
 
     def _note_crash(self, message: str) -> None:
         import time as _time
@@ -1746,6 +1682,8 @@ class AgentService:
             except Exception:  # noqa: BLE001
                 pass
             self.worker = None
+        self._web_launch_url = ""
+        self._web_origin = ""
         self.runtime_state = "stopped"
 
     async def restart_runtime(self) -> dict:
@@ -1758,21 +1696,7 @@ class AgentService:
         cfg = load_config()
         llm = (cfg.get("ai") or {}).get("llm") or {}
         import os as _os
-        web_port = 0
-        candidate_web_port = getattr(self, "web_port", 0) or int(_os.environ.get("CRAWSHRIMP_WEB_PORT", "0") or 0)
-        if self.runtime_state == "ready" and candidate_web_port:
-            if not self._web_port_verified:
-                found = _find_crawshrimp_web_port(candidate_web_port, 8, timeout=_runtime_web_probe_timeout())
-                if found:
-                    if found != self.web_port:
-                        self.web_port = found
-                        _os.environ["CRAWSHRIMP_WEB_PORT"] = str(found)
-                    candidate_web_port = found
-                    self._web_port_verified = True
-            if self._web_port_verified:
-                web_port = int(getattr(self, "web_port", 0) or candidate_web_port)
-        candidate_web_port = int(candidate_web_port or 0) if self.runtime_state == "ready" else 0
-        candidate_web_url = f"http://127.0.0.1:{candidate_web_port}/" if candidate_web_port else ""
+        web_ready = self.runtime_state == "ready" and bool(self._web_launch_url and self._web_origin)
         gateway_key_configured = gateway_api_key_configured(cfg)
         deepseek_key_configured = deepseek_api_key_configured(cfg)
         glm_key_configured = glm_api_key_configured(cfg)
@@ -1793,13 +1717,14 @@ class AgentService:
             "queue_depth": self.queue.qsize(),
             "error": display_error,
             "node_executable": resolve_node_executable(),
-            # DSH web host(方案 §12.7):前端 iframe 嵌入的页面地址
-            "web_port": web_port,
-            "web_url": f"http://127.0.0.1:{web_port}/" if web_port else "",
-            "web_candidate_port": candidate_web_port,
-            "web_candidate_url": candidate_web_url,
-            "web_verified": bool(web_port),
-            "web_verification_pending": bool(candidate_web_port and not web_port),
+            # The launch URL is a loopback-only authentication capability for
+            # the trusted embedded iframe. Do not log or render it as text.
+            # DSH can exchange it into a separate browser cookie, while the
+            # Worker keeps its own cookie for Web RPC and native approvals.
+            "web_port": self.web_port if web_ready else 0,
+            "web_origin": self._web_origin if web_ready else "",
+            "web_launch_url": self._web_launch_url if web_ready else "",
+            "web_verified": web_ready,
             # 默认工作区(前端自动建立,不需要用户指定)
             "workspace_root": str(_data_root() / "agent" / "workspace"),
         }
@@ -2106,9 +2031,8 @@ class AgentService:
         return decision
 
     async def _ds_native_approval(self, run: dict, plan: dict, summary: dict, risk: str) -> str:
-        """经产品桥走 DSH 原生审批卡;不可达/异常时安全失败。"""
-        web_port = getattr(self, "web_port", 0) or int(os.environ.get("CRAWSHRIMP_WEB_PORT", "0") or 0)
-        if not web_port:
+        """经 Worker 的认证 Web 会话走 DSH 原生审批卡;异常时安全失败。"""
+        if self.worker is None or self.runtime_state != "ready":
             return "rejected"
         session = db.get_session((run or {}).get("session_id") or "")
         runtime_session_id = (session or {}).get("runtime_session_id") or ""
@@ -2127,33 +2051,23 @@ class AgentService:
         if call_id:
             payload["callId"] = call_id
 
-        def _post() -> str:
-            import urllib.request
-            req = urllib.request.Request(
-                f"http://127.0.0.1:{web_port}/api/crawshrimp/approval/request",
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
+        async with self._approval_slots:
             try:
-                with urllib.request.urlopen(req, timeout=APPROVAL_WAIT_SECONDS) as resp:
-                    result = json.loads(resp.read().decode("utf-8"))
-                if result.get("ok"):
+                response = await self.worker.request(
+                    "worker.request_approval", payload, timeout=APPROVAL_WAIT_SECONDS + 15,
+                )
+                result = response.get("result") if isinstance(response, dict) else {}
+                if isinstance(response, dict) and response.get("ok") and isinstance(result, dict):
                     outcome = str(result.get("outcome") or "rejected")
                     # DSH 原生审批结果词汇:allowed-once(批准一次)/rejected/cancelled/unavailable
                     if outcome == "allowed-once":
                         return "approved"
                     if outcome == "cancelled":
                         return "expired"
-                    return "rejected"
                 return "rejected"
             except Exception as exc:  # noqa: BLE001
                 print(f"[agent] DSH 原生审批桥不可用({exc}),安全失败", flush=True)
                 return "rejected"
-
-        async with self._approval_slots:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(_APPROVAL_EXECUTOR, _post)
 
     async def clear_agent_data(self) -> dict:
         """清除智能体投影及其受控附件、草稿、运行日志和智能体发布适配包。"""
