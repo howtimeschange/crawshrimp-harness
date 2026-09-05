@@ -223,12 +223,14 @@ git commit -m "feat: add pure automation condition runtime"
 **Files:**
 - Create: `core/automation_controller.py`
 - Modify: `core/scheduler.py:1-260`
+- Modify: `core/data_sink.py:2310-2860`
 - Modify: `core/api_server.py:9320-9390`
 - Create: `tests/test_automation_controller.py`
 
 **Interfaces:**
 - Produces `AutomationController(agent_service, scheduler_module)` with `restore()`, `refresh(automation_uid)`, `run_now(automation_uid)`, `pause(uid)`, `resume(uid)`, `archive(uid)`, `record_observation(run_uid, facts, evidence_refs)`, `record_verification(run_uid, result)`, `mark_needs_review(run_uid, code, message)`, and `record_execution_failure(automation_uid, code, retryable)`.
 - Adds scheduler-only `register_automation_schedule(automation, callback)`, `unregister_automation_schedule(uid)`, and `list_automation_next_runs()`; no existing `register_task_schedule` call changes.
+- Adds `data_sink.has_active_agent_automation_run(automation_uid, *, exclude_run_uid="") -> bool`, where active means only `claimed`, `queued`, `running`, or `retry_scheduled`; the Controller must exclude its newly claimed run before applying the single-flight check.
 - Calls an injected observer executor for every Program run, calls the injected action executor only after a branch match (or for a `scheduled` definition with no Program), and records `missed` on startup instead of calling either executor for overdue triggers. The observer executor gets a read-only policy and must call `record_observation`; a completed observer without facts is converted to `needs_review`.
 
 - [ ] **Step 1: Write failing controller/scheduler tests**
@@ -266,7 +268,7 @@ async def _claim_and_start(self, automation_uid: str, trigger_kind: str, trigger
     run = claimed["run"]
     if not claimed["created"]:
         return run
-    if data_sink.has_running_agent_automation_run(automation_uid):
+    if data_sink.has_active_agent_automation_run(automation_uid, exclude_run_uid=run["run_uid"]):
         return data_sink.update_agent_automation_run(run["run_uid"], status="skipped_overlap", finished_at=_now_iso())
     return await self._start_run(run)
 
