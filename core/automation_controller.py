@@ -21,7 +21,7 @@ from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from core import data_sink
-from core.automation_program import ProgramValidationError, evaluate_program
+from core.automation_program import ProgramValidationError, evaluate_program, validate_program
 
 
 logger = logging.getLogger(__name__)
@@ -267,6 +267,119 @@ class AutomationController:
         if not automation:
             raise ValueError(f"Automation not found: {uid}")
         return automation
+
+    @staticmethod
+    def _normalized_definition(values: Mapping[str, Any], *, now: Any = None) -> dict:
+        """Validate the durable definition shape before it reaches SQLite."""
+        source = copy.deepcopy(dict(values or {}))
+        kind = str(source.get("automation_kind") or "").strip().lower()
+        if kind not in {"scheduled", "loop"}:
+            raise ValueError("automation_kind must be scheduled or loop")
+        context_mode = str(source.get("context_mode") or "isolated").strip().lower()
+        if context_mode not in {"isolated", "inherited"}:
+            raise ValueError("context_mode must be isolated or inherited")
+        source["context_mode"] = context_mode
+        schedule = source.get("schedule")
+        if schedule is None:
+            schedule = {}
+        if not isinstance(schedule, Mapping):
+            raise ValueError("schedule must be an object")
+        normalized_schedule = dict(schedule)
+        normalized_schedule.setdefault("timezone", DEFAULT_TIMEZONE)
+        _timezone(normalized_schedule)
+        if kind == "scheduled":
+            schedule_kind = str(normalized_schedule.get("kind") or normalized_schedule.get("type") or "").strip().lower()
+            if schedule_kind not in {"at", "every", "cron"}:
+                raise ValueError("scheduled Automation requires schedule kind at, every, or cron")
+            normalized_schedule["kind"] = schedule_kind
+            if schedule_kind == "every" and not any(normalized_schedule.get(key) for key in ("anchor", "anchor_at", "start_at", "first_run_at")):
+                normalized_schedule["anchor"] = _now_datetime(now, _timezone(normalized_schedule)).isoformat()
+            probe = {"automation_kind": "scheduled", "schedule": normalized_schedule, "next_run_at": source.get("next_run_at") or ""}
+            # Reuse the scheduler parser so cron grammar, at values, and every
+            # duration stay identical at API/MCP/controller boundaries.
+            from core import scheduler as scheduler_module
+            scheduler_module._automation_trigger(probe, now=_now_datetime(now, _timezone(normalized_schedule)))
+        source["schedule"] = normalized_schedule
+        loop_policy = source.get("loop_policy")
+        if loop_policy is None:
+            loop_policy = {}
+        if not isinstance(loop_policy, Mapping):
+            raise ValueError("loop_policy must be an object")
+        source["loop_policy"] = dict(loop_policy)
+        execution_policy = source.get("execution_policy")
+        if execution_policy is None:
+            execution_policy = {}
+        if not isinstance(execution_policy, Mapping):
+            raise ValueError("execution_policy must be an object")
+        source["execution_policy"] = dict(execution_policy)
+        program = source.get("program")
+        if program is not None:
+            if not isinstance(program, Mapping):
+                raise ProgramValidationError("program must be an object")
+            source["program"] = validate_program(program)
+        if kind == "loop" and not source.get("program") and not source.get("active_program_version_uid"):
+            raise ValueError("loop Automation requires a Program")
+        return source
+
+    def create(self, values: Mapping[str, Any], *, now: Any = None) -> dict:
+        """Persist a normalized definition, version its Program, then register it."""
+        normalized = self._normalized_definition(values, now=now)
+        program = normalized.pop("program", None)
+        if normalized.get("automation_kind") == "loop" and not str(normalized.get("next_run_at") or "").strip():
+            zone = _timezone(normalized["schedule"])
+            normalized["next_run_at"] = (
+                _now_datetime(now, zone) + timedelta(seconds=_interval_seconds(normalized["loop_policy"]))
+            ).isoformat()
+        automation = data_sink.create_agent_automation(normalized)
+        if program:
+            version = data_sink.create_agent_automation_program(
+                automation["automation_uid"],
+                program,
+                created_by_session_id=str(normalized.get("source_session_id") or ""),
+            )
+            automation = data_sink.update_agent_automation(
+                automation["automation_uid"],
+                active_program_version_uid=version["program_version_uid"],
+            )
+        return self._refresh_at(automation, now=now)
+
+    def update(self, automation_uid: str, values: Mapping[str, Any], *, now: Any = None) -> dict:
+        """Update a definition through the Controller and version a new Program."""
+        existing = self._automation_or_raise(automation_uid)
+        candidate = {**existing, **copy.deepcopy(dict(values or {}))}
+        normalized = self._normalized_definition(candidate, now=now)
+        program = normalized.pop("program", None)
+        update_fields = {
+            key: normalized[key]
+            for key in (
+                "title", "objective_prompt", "automation_kind", "enabled", "archived", "context_mode",
+                "source_session_id", "source_runtime_session_id", "schedule", "loop_policy", "execution_policy",
+                "next_run_at",
+            )
+            if key in normalized
+        }
+        automation = data_sink.update_agent_automation(automation_uid, **update_fields)
+        if program and program != existing.get("program"):
+            version = data_sink.create_agent_automation_program(
+                automation_uid,
+                program,
+                created_by_session_id=str(automation.get("source_session_id") or ""),
+            )
+            automation = data_sink.update_agent_automation(
+                automation_uid,
+                active_program_version_uid=version["program_version_uid"],
+            )
+        return self._refresh_at(automation, now=now)
+
+    def get(self, automation_uid: str) -> dict:
+        return self._automation_or_raise(automation_uid)
+
+    def list(self, *, include_archived: bool = False) -> list[dict]:
+        return data_sink.list_agent_automations(include_archived=include_archived)
+
+    def runs(self, automation_uid: str, *, limit: int = 50) -> list[dict]:
+        self._automation_or_raise(automation_uid)
+        return data_sink.list_agent_automation_runs(automation_uid, limit)
 
     def _trigger_time(self, automation: Mapping[str, Any], *, now: Any = None) -> Optional[datetime]:
         schedule = _schedule(automation)
@@ -529,6 +642,7 @@ class AutomationController:
             try:
                 result = await _invoke(executor, (automation, started, policy), aliases)
                 if isinstance(result, Mapping):
+                    self._record_agent_submission(run_uid, result)
                     facts = result.get("facts")
                     if isinstance(facts, Mapping):
                         return await self.record_observation(run_uid, facts, result.get("evidence_refs") or [])
@@ -576,6 +690,8 @@ class AutomationController:
         }
         try:
             result = await _invoke(executor, (automation, started, branch, toolset), aliases)
+            if isinstance(result, Mapping):
+                self._record_agent_submission(run_uid, result)
             if isinstance(result, Mapping) and str(result.get("status") or "").strip().lower() in {
                 "queued", "running", "pending", "retry_scheduled"
             }:
@@ -604,6 +720,23 @@ class AutomationController:
                 last_error=code,
             )
         return run
+
+    def _record_agent_submission(self, run_uid: str, result: Mapping[str, Any]) -> dict:
+        """Project an AgentService queue receipt into the Controller-owned Run."""
+        agent_run_id = str(result.get("run_id") or "").strip()
+        agent_session_id = str(result.get("session_id") or "").strip()
+        if not agent_run_id:
+            return data_sink.get_agent_automation_run(run_uid)
+        linked = data_sink.update_agent_automation_run(
+            run_uid,
+            status="queued",
+            agent_run_id=agent_run_id,
+            agent_session_id=agent_session_id,
+        )
+        data_sink.link_agent_automation_run(run_uid, "agent_run", agent_run_id)
+        if agent_session_id:
+            data_sink.link_agent_automation_run(run_uid, "agent_session", agent_session_id)
+        return linked
 
     def _finish_completed(self, run_uid: str, *, result_summary: Optional[Mapping[str, Any]] = None) -> dict:
         run = data_sink.update_agent_automation_run(
@@ -737,6 +870,7 @@ class AutomationController:
         try:
             action_result = await _invoke(executor, (automation, updated, branch, toolset), aliases)
             if isinstance(action_result, Mapping):
+                self._record_agent_submission(run_uid, action_result)
                 summary = {**summary, "action": dict(action_result)}
                 if str(action_result.get("status") or "").strip().lower() in {"failed", "error"}:
                     return self._record_run_failure(

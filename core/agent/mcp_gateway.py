@@ -14,6 +14,7 @@ import json
 import re
 import time
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Optional
 
@@ -25,6 +26,7 @@ from core.agent import db
 from core.agent.cdp import CdpClient
 from core.agent.cordis_config import model_capabilities
 from core.agent.redaction import contains_redaction, redact_value
+from core.automation_program import ProgramValidationError, evaluate_program
 
 PREVIEW_MAX_ROWS = 200
 PREVIEW_MAX_COLS = 50
@@ -64,7 +66,13 @@ _TOOL_CONTEXT_CTX: contextvars.ContextVar[Optional[dict]] = contextvars.ContextV
 def _ensure_tool_context() -> dict:
     current = _TOOL_CONTEXT_CTX.get()
     if current is None:
-        current = {"active_run": None, "grant": None, "current_tool_call_id": ""}
+        current = {
+            "active_run": None,
+            "grant": None,
+            "current_tool_call_id": "",
+            "automation_policy": None,
+            "automation_run_uid": "",
+        }
         _TOOL_CONTEXT_CTX.set(current)
     return current
 
@@ -88,6 +96,7 @@ class ToolContext:
         # 执行计划的秘密参数只驻留进程内；SQLite 仅保存结构化脱敏副本与原文哈希。
         # 进程重启后含秘密的短时计划安全失效，不从磁盘恢复明文。
         self.plan_params: dict[str, dict] = {}
+        self.automation_controller = None
 
     @property
     def active_run(self) -> Optional[dict]:
@@ -116,8 +125,24 @@ class ToolContext:
     def current_tool_call_id(self, value: str) -> None:
         _ensure_tool_context()["current_tool_call_id"] = str(value or "")
 
+    @property
+    def automation_policy(self) -> Optional[dict]:
+        current = _TOOL_CONTEXT_CTX.get()
+        value = None if current is None else current.get("automation_policy")
+        return dict(value) if isinstance(value, Mapping) else None
+
+    @property
+    def automation_run_uid(self) -> str:
+        current = _TOOL_CONTEXT_CTX.get()
+        return "" if current is None else str(current.get("automation_run_uid") or "")
+
 
 ctx = ToolContext()
+
+
+def set_automation_controller(controller: Any) -> None:
+    """Inject the Controller-owned automation control plane into MCP tools."""
+    ctx.automation_controller = controller
 
 
 def bind_tool_context(context: dict) -> contextvars.Token:
@@ -178,6 +203,167 @@ def _require_run() -> Optional[dict]:
 def _tool_call_prefix() -> tuple[Optional[str], Optional[str]]:
     run = ctx.active_run or {}
     return run.get("run_id"), None
+
+
+# ---------- Automation control plane ----------
+
+def _automation_controller_or_error():
+    controller = getattr(ctx, "automation_controller", None)
+    if controller is None:
+        return None, _failed("AUTOMATION_CONTROLLER_UNAVAILABLE", "自动化控制器未就绪")
+    return controller, None
+
+
+def _automation_json_object(value: Any, *, field_name: str):
+    if not isinstance(value, Mapping):
+        return None, _failed("INVALID_PARAMETERS", f"{field_name} 必须是 JSON 对象")
+    return dict(value), None
+
+
+def tool_automation_list(include_archived: bool = False) -> dict:
+    controller, error = _automation_controller_or_error()
+    if error:
+        return error
+    return _ok(controller.list(include_archived=bool(include_archived)))
+
+
+def tool_automation_get(automation_uid: str) -> dict:
+    controller, error = _automation_controller_or_error()
+    if error:
+        return error
+    try:
+        return _ok(controller.get(automation_uid))
+    except ValueError as exc:
+        return _failed("AUTOMATION_NOT_FOUND", str(exc))
+
+
+def tool_automation_create(values: dict) -> dict:
+    payload, error = _automation_json_object(values, field_name="values")
+    if error:
+        return error
+    controller, error = _automation_controller_or_error()
+    if error:
+        return error
+    try:
+        return _ok(controller.create(payload))
+    except (TypeError, ValueError, ProgramValidationError) as exc:
+        return _failed("AUTOMATION_INVALID", str(exc))
+
+
+def tool_automation_update(automation_uid: str, values: dict) -> dict:
+    payload, error = _automation_json_object(values, field_name="values")
+    if error:
+        return error
+    controller, error = _automation_controller_or_error()
+    if error:
+        return error
+    try:
+        return _ok(controller.update(automation_uid, payload))
+    except (TypeError, ValueError, ProgramValidationError) as exc:
+        return _failed("AUTOMATION_INVALID", str(exc))
+
+
+def tool_automation_pause(automation_uid: str) -> dict:
+    controller, error = _automation_controller_or_error()
+    if error:
+        return error
+    try:
+        return _ok(controller.pause(automation_uid))
+    except ValueError as exc:
+        return _failed("AUTOMATION_NOT_FOUND", str(exc))
+
+
+def tool_automation_resume(automation_uid: str) -> dict:
+    controller, error = _automation_controller_or_error()
+    if error:
+        return error
+    try:
+        return _ok(controller.resume(automation_uid))
+    except ValueError as exc:
+        return _failed("AUTOMATION_NOT_FOUND", str(exc))
+
+
+def tool_automation_archive(automation_uid: str) -> dict:
+    controller, error = _automation_controller_or_error()
+    if error:
+        return error
+    try:
+        return _ok(controller.archive(automation_uid))
+    except ValueError as exc:
+        return _failed("AUTOMATION_NOT_FOUND", str(exc))
+
+
+async def tool_automation_run_now(automation_uid: str, request_uid: str = "") -> dict:
+    controller, error = _automation_controller_or_error()
+    if error:
+        return error
+    try:
+        return _ok(await controller.run_now(automation_uid, request_uid=request_uid))
+    except ValueError as exc:
+        return _failed("AUTOMATION_INVALID", str(exc))
+
+
+def tool_automation_runs(automation_uid: str, limit: int = 50) -> dict:
+    controller, error = _automation_controller_or_error()
+    if error:
+        return error
+    try:
+        return _ok(controller.runs(automation_uid, limit=limit))
+    except ValueError as exc:
+        return _failed("AUTOMATION_NOT_FOUND", str(exc))
+
+
+def tool_automation_program_test(program: dict, facts: dict, checkpoint: dict | None = None) -> dict:
+    program_value, error = _automation_json_object(program, field_name="program")
+    if error:
+        return error
+    facts_value, error = _automation_json_object(facts, field_name="facts")
+    if error:
+        return error
+    checkpoint_value, error = _automation_json_object(checkpoint or {}, field_name="checkpoint")
+    if error:
+        return error
+    try:
+        return _ok(evaluate_program(program_value, facts=facts_value, checkpoint=checkpoint_value, now=db._now_iso()))
+    except ProgramValidationError as exc:
+        return _failed("PROGRAM_INVALID", str(exc))
+
+
+def _automation_run_guard():
+    guard = _require_run()
+    if guard:
+        return None, None, guard
+    automation_run_uid = str(ctx.automation_run_uid or "").strip()
+    if not automation_run_uid:
+        return None, None, _failed("AUTOMATION_RUN_REQUIRED", "当前智能体运行不属于 Automation")
+    automation_run = data_sink.get_agent_automation_run(automation_run_uid)
+    active_run_id = str((ctx.active_run or {}).get("run_id") or "").strip()
+    if not automation_run or not active_run_id or str(automation_run.get("agent_run_id") or "") != active_run_id:
+        return None, None, _failed("AUTOMATION_RUN_LINK_MISMATCH", "Automation Run 与当前 Agent Run 不匹配")
+    controller, error = _automation_controller_or_error()
+    return controller, automation_run, error
+
+
+async def tool_automation_record_observation(facts: dict, evidence_refs: list | None = None) -> dict:
+    facts_value, error = _automation_json_object(facts, field_name="facts")
+    if error:
+        return error
+    if evidence_refs is not None and not isinstance(evidence_refs, list):
+        return _failed("INVALID_PARAMETERS", "evidence_refs 必须是 JSON 数组")
+    controller, automation_run, error = _automation_run_guard()
+    if error:
+        return error
+    return _ok(await controller.record_observation(automation_run["run_uid"], facts_value, list(evidence_refs or [])))
+
+
+async def tool_automation_record_verification(result: dict) -> dict:
+    result_value, error = _automation_json_object(result, field_name="result")
+    if error:
+        return error
+    controller, automation_run, error = _automation_run_guard()
+    if error:
+        return error
+    return _ok(await controller.record_verification(automation_run["run_uid"], result_value))
 
 
 # ---------- 任务目录 ----------
@@ -529,6 +715,9 @@ def _await_approval_blocking(plan: dict, summary: dict) -> str:
 
     审批 Future 创建于服务主循环,必须在同一循环中 await。
     """
+    automation_decision = _automation_approval_decision(plan, summary)
+    if automation_decision is not None:
+        return automation_decision
     if ctx.request_approval is None:
         return "rejected"
     coro = ctx.request_approval(None, plan, summary, plan["risk"])
@@ -554,6 +743,9 @@ async def _await_approval_async(plan: dict, summary: dict) -> str:
     browser_* 工具由 MCP ASGI 与 AgentService 共用事件循环；若在这里使用
     run_coroutine_threadsafe(...).result()，会阻塞唯一事件循环并造成审批死锁。
     """
+    automation_decision = _automation_approval_decision(plan, summary)
+    if automation_decision is not None:
+        return automation_decision
     if ctx.request_approval is None:
         return "rejected"
     try:
@@ -567,6 +759,66 @@ async def _await_approval_async(plan: dict, summary: dict) -> str:
         raise
     except Exception:  # noqa: BLE001
         return "canceled"
+
+
+_AUTOMATION_TOOL_BY_SUMMARY_KIND = {
+    "task": "task_run",
+    "data_export": "data_export",
+    "fs_write": "fs_write",
+    "fs_exec": "fs_exec",
+    "repo_install": "repo_install",
+    "repo_update": "repo_update",
+    "repo_learn": "repo_learn",
+    "capability_upgrade": "browser_act",
+    "sensitive_click": "browser_act",
+    "script_publish": "script_publish",
+}
+
+
+def _automation_policy_values(policy: Mapping[str, Any], key: str) -> set[str]:
+    raw = policy.get(key)
+    if raw is None and isinstance(policy.get("execution_policy"), Mapping):
+        raw = policy["execution_policy"].get(key)
+    if not isinstance(raw, (list, tuple, set)):
+        return set()
+    return {str(item).strip() for item in raw if str(item).strip()}
+
+
+def _automation_approval_decision(plan: dict, summary: dict) -> Optional[str]:
+    """Resolve unattended approval without changing interactive semantics.
+
+    A policy is intentionally strict: it must name both the exact registered
+    MCP tool and the requested risk.  Any mismatch becomes a durable
+    ``needs_review`` result instead of creating an approval card that no
+    unattended user can answer.
+    """
+    policy = ctx.automation_policy
+    if not isinstance(policy, Mapping):
+        return None
+    automation_run_uid = str(ctx.automation_run_uid or "").strip()
+    tool_name = str((summary or {}).get("tool_name") or "").strip()
+    if not tool_name:
+        tool_name = _AUTOMATION_TOOL_BY_SUMMARY_KIND.get(str((summary or {}).get("kind") or "").strip(), "")
+    if not tool_name and str((plan or {}).get("task_id") or "").strip():
+        tool_name = "task_run"
+    risk = str((plan or {}).get("risk") or (summary or {}).get("risk") or "").strip()
+    allowed_tools = _automation_policy_values(policy, "allowed_tools")
+    allowed_risks = _automation_policy_values(policy, "allowed_risks")
+    if tool_name in allowed_tools and risk in allowed_risks:
+        return "approved"
+    controller = getattr(ctx, "automation_controller", None)
+    if controller is not None and automation_run_uid:
+        try:
+            controller.mark_needs_review(
+                automation_run_uid,
+                "AUTOMATION_POLICY_DENIED",
+                f"Automation policy does not authorize {tool_name or 'unknown tool'} with risk {risk or 'unknown'}",
+            )
+        except Exception:
+            # Failure to project the state must not fall through into an
+            # interactive approval request for an unattended run.
+            pass
+    return "rejected"
 
 
 def _execute_plan(plan: dict, params: dict) -> dict:
@@ -2108,6 +2360,10 @@ EXPECTED_TOOLS = [
     "fs_read", "fs_list", "fs_write", "fs_exec",
     "image_generate", "image_assets", "video_generate", "video_assets",
     "repo_install", "repo_update", "repo_list", "repo_learn",
+    "automation_list", "automation_get", "automation_create", "automation_update",
+    "automation_pause", "automation_resume", "automation_archive", "automation_run_now",
+    "automation_runs", "automation_program_test", "automation_record_observation",
+    "automation_record_verification",
 ]
 
 
@@ -2188,6 +2444,19 @@ def create_agent_mcp_server() -> MCPServer:
                  description="列出已安装的代码仓库与远端地址")
     mcp.add_tool(tool_repo_learn, name="repo_learn",
                  description="为已安装仓库生成技能包(SKILL.md),使智能体可学习调用")
+
+    mcp.add_tool(tool_automation_list, name="automation_list", description="列出 Agent Automations")
+    mcp.add_tool(tool_automation_get, name="automation_get", description="读取一个 Agent Automation 与当前 Program")
+    mcp.add_tool(tool_automation_create, name="automation_create", description="创建由 Automation Controller 托管的定时或循环自动化")
+    mcp.add_tool(tool_automation_update, name="automation_update", description="更新 Automation 定义；Program 更新会生成新版本")
+    mcp.add_tool(tool_automation_pause, name="automation_pause", description="暂停一个 Automation 并取消未开始的唤醒")
+    mcp.add_tool(tool_automation_resume, name="automation_resume", description="恢复一个暂停的 Automation")
+    mcp.add_tool(tool_automation_archive, name="automation_archive", description="归档 Automation，保留运行历史")
+    mcp.add_tool(tool_automation_run_now, name="automation_run_now", description="立即运行一次 Automation")
+    mcp.add_tool(tool_automation_runs, name="automation_runs", description="列出 Automation 的持久化运行记录与证据")
+    mcp.add_tool(tool_automation_program_test, name="automation_program_test", description="在纯 facts/checkpoint 上测试受限条件 Program")
+    mcp.add_tool(tool_automation_record_observation, name="automation_record_observation", description="仅当前关联 Automation Agent Run 可提交 JSON facts")
+    mcp.add_tool(tool_automation_record_verification, name="automation_record_verification", description="仅当前关联 Automation Agent Run 可提交验证结果")
 
     # 注册表快照断言(方案 §6.2):模型可见工具集合必须与清单完全一致
     actual = set(_registered)

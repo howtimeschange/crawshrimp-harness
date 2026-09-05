@@ -6,6 +6,7 @@ MCP 工具调用通过会话上下文 lease 绑定正确 run。业务 Task Insta
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import os
 import secrets
@@ -804,6 +805,8 @@ class AgentService:
             "active_run": dict(run),
             "grant": self.grants_by_run.get(run_id),
             "current_tool_call_id": f"{run_id}:{call_text}" if run_id and call_text else "",
+            "automation_policy": copy.deepcopy(run.get("automation_policy")) if isinstance(run.get("automation_policy"), dict) else None,
+            "automation_run_uid": str(run.get("automation_run_uid") or "").strip(),
             "created_at": _now_iso(),
         }
         self._mcp_context_leases[lease_id] = lease
@@ -1276,7 +1279,9 @@ class AgentService:
     async def submit_turn(self, session_id: str, text: str,
                           context_refs: Optional[list[dict]] = None,
                           attachment_ids: Optional[list[str]] = None,
-                          grant_prefs: Optional[dict] = None) -> dict:
+                          grant_prefs: Optional[dict] = None,
+                          automation_policy: Optional[dict] = None,
+                          automation_run_uid: str = "") -> dict:
         session = db.get_session(session_id)
         if not session:
             raise ValueError(f"会话不存在: {session_id}")
@@ -1323,10 +1328,62 @@ class AgentService:
             "run_id": run_id, "session_id": session_id, "turn_id": turn_id,
             "text": final_text, "message_id": message_id, "model_id": model_id,
             "provider_id": provider_id, "context_refs": context_refs or [],
-            "grant_prefs": grant_prefs or {}, "image_attachments": image_attachments,
+            "grant_prefs": copy.deepcopy(grant_prefs or {}),
+            "automation_policy": copy.deepcopy(automation_policy) if isinstance(automation_policy, dict) else None,
+            "automation_run_uid": str(automation_run_uid or "").strip(),
+            "image_attachments": image_attachments,
         })
         return {"turn_id": turn_id, "run_id": run_id, "queued": True,
                 "queue_depth": self.queue.qsize() + (1 if self.active_run else 0)}
+
+    async def submit_automation_turn(
+        self,
+        automation: dict,
+        run: dict,
+        prompt: str,
+        toolset: list[str],
+    ) -> dict:
+        """Queue one Controller-owned turn with an immutable automation policy.
+
+        This bridge deliberately keeps the Automation authority separate from
+        interactive grant state.  A missing browser reference therefore does
+        not create a broad grant; the request-scoped MCP policy remains the
+        sole unattended-approval source.
+        """
+        automation_uid = str((automation or {}).get("automation_uid") or "").strip()
+        automation_run_uid = str((run or {}).get("run_uid") or "").strip()
+        if not automation_uid or not automation_run_uid:
+            raise ValueError("automation_uid and automation run_uid are required")
+        normalized_toolset = sorted({str(item).strip() for item in toolset or [] if str(item).strip()})
+        context_mode = str((automation or {}).get("context_mode") or "isolated").strip().lower()
+        if context_mode == "inherited":
+            session_id = str((automation or {}).get("source_session_id") or "").strip()
+            if not session_id or not db.get_session(session_id):
+                raise ValueError("inherited Automation requires an existing source session")
+        elif context_mode == "isolated":
+            session_id = f"automation:{automation_uid}:{automation_run_uid}"
+            if not db.get_session(session_id):
+                db.create_session(session_id, f"dsh-{uuid.uuid4().hex}", f"自动化：{str((automation or {}).get('title') or '').strip() or automation_uid}")
+        else:
+            raise ValueError("automation context_mode must be isolated or inherited")
+
+        execution_policy = (automation or {}).get("execution_policy")
+        policy = {
+            "toolset": list(normalized_toolset),
+            "execution_policy": copy.deepcopy(execution_policy) if isinstance(execution_policy, dict) else {},
+        }
+        queued = await self.submit_turn(
+            session_id,
+            str(prompt or ""),
+            grant_prefs={"toolset": list(normalized_toolset)},
+            automation_policy=policy,
+            automation_run_uid=automation_run_uid,
+        )
+        # The Controller projects this queued Agent Run onto its durable
+        # Automation Run.  The Agent service deliberately does not update the
+        # Automation tables itself, preserving the Controller as lifecycle
+        # owner.
+        return {**queued, "session_id": session_id}
 
     def _resolve_model(self, session_id: Optional[str] = None) -> tuple[str, str]:
         cfg = load_config()
@@ -1383,7 +1440,10 @@ class AgentService:
         # 同步 HTTP(CDP bridge)不得阻塞事件循环 → to_thread
         grant = await asyncio.to_thread(self._grant_for_run, item)
         runtime_session_ids = {self._runtime_session_id(session_id)}
-        self.register_run_context(next(iter(runtime_session_ids)), db.get_run(run_id), grant)
+        run_context = dict(db.get_run(run_id) or {})
+        run_context["automation_policy"] = copy.deepcopy(item.get("automation_policy")) if isinstance(item.get("automation_policy"), dict) else None
+        run_context["automation_run_uid"] = str(item.get("automation_run_uid") or "").strip()
+        self.register_run_context(next(iter(runtime_session_ids)), run_context, grant)
 
         status: Optional[str] = None
         try:
@@ -1414,7 +1474,10 @@ class AgentService:
                 for old_sid in tuple(runtime_session_ids):
                     self.unregister_run_context(old_sid, run_id)
                 runtime_session_ids = {new_sid}
-                self.register_run_context(new_sid, db.get_run(run_id), grant)
+                retry_context = dict(db.get_run(run_id) or {})
+                retry_context["automation_policy"] = copy.deepcopy(item.get("automation_policy")) if isinstance(item.get("automation_policy"), dict) else None
+                retry_context["automation_run_uid"] = str(item.get("automation_run_uid") or "").strip()
+                self.register_run_context(new_sid, retry_context, grant)
                 notice = "智能体运行时已重启,上一轮对话上下文无法继续恢复;已开启新上下文继续本轮。"
                 db.create_message(f"{run_id}:notice", session_id, turn_id, run_id, "system", "notice", {"text": notice})
                 await self.broadcast(session_id, 0, "session.updated",

@@ -48,6 +48,7 @@ from core import bala_ai_video_review
 from core import buyer_show_service
 from core.agent import db as agent_db
 from core.agent import api as agent_api
+from core.agent import mcp_gateway as agent_mcp_gateway
 from core.agent.service import AgentService
 from core.config import load_config, patch_config, save_config
 from core.atomic_file import atomic_write_json, atomic_write_text, remove_path_with_retry, replace_with_retry
@@ -9394,9 +9395,11 @@ async def lifespan(app: FastAPI):
                 sched_module,
             )
             app.state.automation_controller = automation_controller
+            agent_mcp_gateway.set_automation_controller(automation_controller)
             automation_controller.restore()
         except Exception:
             app.state.automation_controller = None
+            agent_mcp_gateway.set_automation_controller(None)
             logger.exception("agent automation controller startup failed; continuing without automations")
     logger.info("crawshrimp core started")
     try:
@@ -9419,6 +9422,7 @@ async def lifespan(app: FastAPI):
             logger.exception("ai video worker shutdown failed")
         app.state.owns_backend_instance = False
         app.state.automation_controller = None
+        agent_mcp_gateway.set_automation_controller(None)
         instance_lock.close()
 
 
