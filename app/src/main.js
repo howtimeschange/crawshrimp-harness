@@ -2958,6 +2958,28 @@ secureHandle('delete-task-schedule', async (_, scheduleUid) =>
   apiCall('DELETE', `/task-schedules/${encodeURIComponent(String(scheduleUid || ''))}`))
 secureHandle('run-task-schedule-now', async (_, scheduleUid) =>
   apiCall('POST', `/task-schedules/${encodeURIComponent(String(scheduleUid || ''))}/run-now`, {}))
+secureHandle('list-automations', async (_, query = {}) =>
+  apiCall('GET', `/automations?${new URLSearchParams(query || {})}`))
+secureHandle('create-automation', async (_, payload) =>
+  apiCall('POST', '/automations', payload || {}))
+secureHandle('get-automation', async (_, automationUid) =>
+  apiCall('GET', `/automations/${encodeURIComponent(String(automationUid || ''))}`))
+secureHandle('update-automation', async (_, automationUid, payload) =>
+  apiCall('PATCH', `/automations/${encodeURIComponent(String(automationUid || ''))}`, payload || {}))
+secureHandle('archive-automation', async (_, automationUid) =>
+  apiCall('DELETE', `/automations/${encodeURIComponent(String(automationUid || ''))}`))
+secureHandle('pause-automation', async (_, automationUid) =>
+  apiCall('POST', `/automations/${encodeURIComponent(String(automationUid || ''))}/pause`, {}))
+secureHandle('resume-automation', async (_, automationUid) =>
+  apiCall('POST', `/automations/${encodeURIComponent(String(automationUid || ''))}/resume`, {}))
+secureHandle('run-automation-now', async (_, automationUid, requestUid = '') => {
+  const query = requestUid ? `?request_uid=${encodeURIComponent(String(requestUid))}` : ''
+  return apiCall('POST', `/automations/${encodeURIComponent(String(automationUid || ''))}/run-now${query}`, {})
+})
+secureHandle('list-automation-runs', async (_, automationUid, limit = 20) =>
+  apiCall('GET', `/automations/${encodeURIComponent(String(automationUid || ''))}/runs?limit=${encodeURIComponent(String(limit || 20))}`))
+secureHandle('automation-program-test', async (_, payload) =>
+  apiCall('POST', '/automations/program-test', payload || {}))
 secureHandle('list-ai-image-jobs', async () =>
   apiCall('GET', '/ai-image/jobs'))
 secureHandle('create-ai-image-job', async (_, payload) =>
