@@ -194,6 +194,98 @@ def init_db():
             ON task_schedules (adapter_id, task_id, enabled, archived, updated_at)
         """)
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_automations (
+                automation_uid TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                objective_prompt TEXT NOT NULL,
+                automation_kind TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                archived INTEGER NOT NULL DEFAULT 0,
+                context_mode TEXT NOT NULL,
+                source_session_id TEXT NOT NULL DEFAULT '',
+                source_runtime_session_id TEXT NOT NULL DEFAULT '',
+                schedule_json TEXT NOT NULL DEFAULT '{}',
+                loop_policy_json TEXT NOT NULL DEFAULT '{}',
+                execution_policy_json TEXT NOT NULL DEFAULT '{}',
+                active_program_version_uid TEXT NOT NULL DEFAULT '',
+                checkpoint_json TEXT NOT NULL DEFAULT '{}',
+                next_run_at TEXT NOT NULL DEFAULT '',
+                cycle_seq INTEGER NOT NULL DEFAULT 0,
+                last_run_uid TEXT NOT NULL DEFAULT '',
+                last_status TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',
+                last_triggered_at TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_agent_automations_enabled
+            ON agent_automations (enabled, archived, next_run_at, updated_at)
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_automation_runs (
+                run_uid TEXT PRIMARY KEY,
+                automation_uid TEXT NOT NULL,
+                trigger_kind TEXT NOT NULL,
+                trigger_uid TEXT NOT NULL,
+                trigger_at TEXT NOT NULL,
+                cycle_seq INTEGER,
+                status TEXT NOT NULL,
+                attempt INTEGER NOT NULL DEFAULT 0,
+                program_version_uid TEXT NOT NULL DEFAULT '',
+                agent_session_id TEXT NOT NULL DEFAULT '',
+                agent_run_id TEXT NOT NULL DEFAULT '',
+                execution_policy_snapshot_json TEXT NOT NULL DEFAULT '{}',
+                checkpoint_before_json TEXT NOT NULL DEFAULT '{}',
+                checkpoint_after_json TEXT NOT NULL DEFAULT '{}',
+                facts_summary_json TEXT NOT NULL DEFAULT '{}',
+                matched_branch TEXT NOT NULL DEFAULT '',
+                result_summary_json TEXT NOT NULL DEFAULT '{}',
+                error_code TEXT NOT NULL DEFAULT '',
+                error_message TEXT NOT NULL DEFAULT '',
+                notification_status TEXT NOT NULL DEFAULT '',
+                scheduled_at TEXT NOT NULL DEFAULT '',
+                started_at TEXT NOT NULL DEFAULT '',
+                finished_at TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(automation_uid, trigger_uid)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_agent_automation_runs_automation
+            ON agent_automation_runs (automation_uid, created_at)
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_automation_program_versions (
+                program_version_uid TEXT PRIMARY KEY,
+                automation_uid TEXT NOT NULL,
+                program_json TEXT NOT NULL,
+                created_by_session_id TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_agent_automation_program_versions_automation
+            ON agent_automation_program_versions (automation_uid, created_at)
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_automation_run_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_uid TEXT NOT NULL,
+                link_kind TEXT NOT NULL,
+                link_uid TEXT NOT NULL,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                UNIQUE(run_uid, link_kind, link_uid)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_agent_automation_run_links_run
+            ON agent_automation_run_links (run_uid, created_at)
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS cloud_machine_credentials (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 machine_id TEXT NOT NULL DEFAULT '',
@@ -2261,6 +2353,500 @@ def record_task_schedule_run(
     if run_id is not None:
         fields["last_run_id"] = int(run_id)
     return update_task_schedule(schedule_uid, **fields)
+
+
+def _agent_automation_detail(row: Optional[sqlite3.Row | Mapping[str, Any]]) -> dict:
+    if not row:
+        return {}
+    detail = dict(row)
+    detail["schedule"] = _json_loads_object(detail.pop("schedule_json", "{}"))
+    detail["loop_policy"] = _json_loads_object(detail.pop("loop_policy_json", "{}"))
+    detail["execution_policy"] = _json_loads_object(detail.pop("execution_policy_json", "{}"))
+    detail["checkpoint"] = _json_loads_object(detail.pop("checkpoint_json", "{}"))
+    detail["program"] = {}
+    version_uid = str(detail.get("active_program_version_uid") or "").strip()
+    if version_uid:
+        program = get_agent_automation_program(version_uid)
+        detail["program"] = program.get("program", {}) if program else {}
+    return detail
+
+
+def _agent_automation_program_detail(row: Optional[sqlite3.Row | Mapping[str, Any]]) -> dict:
+    if not row:
+        return {}
+    detail = dict(row)
+    detail["program"] = _json_loads_object(detail.pop("program_json", "{}"))
+    return detail
+
+
+def _agent_automation_run_detail(row: Optional[sqlite3.Row | Mapping[str, Any]]) -> dict:
+    if not row:
+        return {}
+    detail = dict(row)
+    detail["execution_policy_snapshot"] = _json_loads_object(
+        detail.pop("execution_policy_snapshot_json", "{}")
+    )
+    detail["checkpoint_before"] = _json_loads_object(detail.pop("checkpoint_before_json", "{}"))
+    detail["checkpoint_after"] = _json_loads_object(detail.pop("checkpoint_after_json", "{}"))
+    detail["facts_summary"] = _json_loads_object(detail.pop("facts_summary_json", "{}"))
+    detail["result_summary"] = _json_loads_object(detail.pop("result_summary_json", "{}"))
+    return detail
+
+
+def create_agent_automation(values: Mapping[str, Any]) -> dict:
+    """Insert a normalized agent automation definition and return public detail."""
+    source = dict(values or {})
+    now = _now_iso()
+    automation_uid = str(source.get("automation_uid") or "").strip() or uuid.uuid4().hex
+    with _get_conn() as conn:
+        conn.execute("""
+            INSERT INTO agent_automations (
+                automation_uid, title, objective_prompt, automation_kind, enabled,
+                archived, context_mode, source_session_id, source_runtime_session_id,
+                schedule_json, loop_policy_json, execution_policy_json,
+                active_program_version_uid, checkpoint_json, next_run_at, cycle_seq,
+                last_run_uid, last_status, last_error, last_triggered_at,
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            automation_uid,
+            str(source.get("title") or "").strip() or "未命名自动化",
+            str(source.get("objective_prompt") or "").strip(),
+            str(source.get("automation_kind") or "").strip() or "scheduled",
+            1 if source.get("enabled", True) else 0,
+            1 if source.get("archived", False) else 0,
+            str(source.get("context_mode") or "").strip() or "isolated",
+            str(source.get("source_session_id") or "").strip(),
+            str(source.get("source_runtime_session_id") or "").strip(),
+            _json_dumps(source.get("schedule") if isinstance(source.get("schedule"), Mapping) else {}),
+            _json_dumps(source.get("loop_policy") if isinstance(source.get("loop_policy"), Mapping) else {}),
+            _json_dumps(source.get("execution_policy") if isinstance(source.get("execution_policy"), Mapping) else {}),
+            str(source.get("active_program_version_uid") or "").strip(),
+            _json_dumps(source.get("checkpoint") if isinstance(source.get("checkpoint"), Mapping) else {}),
+            str(source.get("next_run_at") or "").strip(),
+            int(source.get("cycle_seq") or 0),
+            str(source.get("last_run_uid") or "").strip(),
+            str(source.get("last_status") or "").strip(),
+            str(source.get("last_error") or "").strip(),
+            str(source.get("last_triggered_at") or "").strip(),
+            now,
+            now,
+        ))
+        conn.commit()
+    return get_agent_automation(automation_uid)
+
+
+def get_agent_automation(uid: str) -> dict:
+    """Return one agent automation definition with decoded JSON fields."""
+    automation_uid = str(uid or "").strip()
+    with _get_conn() as conn:
+        row = conn.execute("""
+            SELECT *
+            FROM agent_automations
+            WHERE automation_uid=?
+            LIMIT 1
+        """, (automation_uid,)).fetchone()
+    return _agent_automation_detail(row)
+
+
+def list_agent_automations(
+    *,
+    enabled: Optional[bool] = None,
+    keyword: str = "",
+    include_archived: bool = False,
+    limit: int = 100,
+) -> list[dict]:
+    """List agent automations with optional lightweight filtering."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    if not include_archived:
+        clauses.append("archived=0")
+    if enabled is not None:
+        clauses.append("enabled=?")
+        params.append(1 if enabled else 0)
+    term = str(keyword or "").strip()
+    if term:
+        clauses.append("(title LIKE ? OR automation_uid LIKE ? OR objective_prompt LIKE ?)")
+        like = f"%{term}%"
+        params.extend([like, like, like])
+    try:
+        safe_limit = max(1, min(int(limit), 500))
+    except Exception:
+        safe_limit = 100
+    where = " AND ".join(clauses) if clauses else "1=1"
+    with _get_conn() as conn:
+        rows = conn.execute(f"""
+            SELECT *
+            FROM agent_automations
+            WHERE {where}
+            ORDER BY updated_at DESC
+            LIMIT ?
+        """, [*params, safe_limit]).fetchall()
+    return [_agent_automation_detail(row) for row in rows]
+
+
+def update_agent_automation(uid: str, **fields) -> dict:
+    """Update allowed automation fields and return decoded public detail."""
+    allowed = {
+        "title",
+        "objective_prompt",
+        "automation_kind",
+        "enabled",
+        "archived",
+        "context_mode",
+        "source_session_id",
+        "source_runtime_session_id",
+        "schedule_json",
+        "loop_policy_json",
+        "execution_policy_json",
+        "active_program_version_uid",
+        "checkpoint_json",
+        "next_run_at",
+        "cycle_seq",
+        "last_run_uid",
+        "last_status",
+        "last_error",
+        "last_triggered_at",
+    }
+    updates: dict[str, Any] = {}
+    for key, value in fields.items():
+        if key == "schedule":
+            updates["schedule_json"] = _json_dumps(value if isinstance(value, Mapping) else {})
+        elif key == "loop_policy":
+            updates["loop_policy_json"] = _json_dumps(value if isinstance(value, Mapping) else {})
+        elif key == "execution_policy":
+            updates["execution_policy_json"] = _json_dumps(value if isinstance(value, Mapping) else {})
+        elif key == "checkpoint":
+            updates["checkpoint_json"] = _json_dumps(value if isinstance(value, Mapping) else {})
+        elif key in {"enabled", "archived"}:
+            updates[key] = 1 if value else 0
+        elif key == "cycle_seq":
+            updates[key] = int(value or 0)
+        elif key in allowed:
+            updates[key] = value
+    updates["updated_at"] = _now_iso()
+    assignments = ", ".join(f"{key}=?" for key in updates.keys())
+    automation_uid = str(uid or "").strip()
+    with _get_conn() as conn:
+        conn.execute(
+            f"UPDATE agent_automations SET {assignments} WHERE automation_uid=?",
+            [*updates.values(), automation_uid],
+        )
+        conn.commit()
+    return get_agent_automation(automation_uid)
+
+
+def archive_agent_automation(uid: str) -> dict:
+    """Archive and disable one automation definition."""
+    return update_agent_automation(uid, archived=True, enabled=False)
+
+
+def create_agent_automation_program(
+    automation_uid: str,
+    program: Mapping[str, Any],
+    *,
+    created_by_session_id: str = "",
+) -> dict:
+    """Persist an immutable automation program version."""
+    version_uid = uuid.uuid4().hex
+    now = _now_iso()
+    with _get_conn() as conn:
+        conn.execute("""
+            INSERT INTO agent_automation_program_versions (
+                program_version_uid, automation_uid, program_json,
+                created_by_session_id, created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            version_uid,
+            str(automation_uid or "").strip(),
+            _json_dumps(program if isinstance(program, Mapping) else {}),
+            str(created_by_session_id or "").strip(),
+            now,
+        ))
+        conn.commit()
+    return get_agent_automation_program(version_uid)
+
+
+def get_agent_automation_program(version_uid: str) -> dict:
+    """Return one automation program version with decoded program JSON."""
+    uid = str(version_uid or "").strip()
+    with _get_conn() as conn:
+        row = conn.execute("""
+            SELECT *
+            FROM agent_automation_program_versions
+            WHERE program_version_uid=?
+            LIMIT 1
+        """, (uid,)).fetchone()
+    return _agent_automation_program_detail(row)
+
+
+def create_agent_automation_run(
+    automation_uid: str,
+    trigger_kind: str,
+    trigger_uid: str,
+    *,
+    trigger_at: str = "",
+    cycle_seq: Optional[int] = None,
+    status: str = "claimed",
+    attempt: int = 0,
+    program_version_uid: str = "",
+    agent_session_id: str = "",
+    agent_run_id: str = "",
+    execution_policy_snapshot: Optional[Mapping[str, Any]] = None,
+    checkpoint_before: Optional[Mapping[str, Any]] = None,
+    checkpoint_after: Optional[Mapping[str, Any]] = None,
+    facts_summary: Optional[Mapping[str, Any]] = None,
+    matched_branch: str = "",
+    result_summary: Optional[Mapping[str, Any]] = None,
+    error_code: str = "",
+    error_message: str = "",
+    notification_status: str = "",
+    scheduled_at: str = "",
+    started_at: str = "",
+    finished_at: str = "",
+) -> dict:
+    """Create one automation run row."""
+    now = _now_iso()
+    run_uid = uuid.uuid4().hex
+    with _get_conn() as conn:
+        conn.execute("""
+            INSERT INTO agent_automation_runs (
+                run_uid, automation_uid, trigger_kind, trigger_uid, trigger_at,
+                cycle_seq, status, attempt, program_version_uid, agent_session_id,
+                agent_run_id, execution_policy_snapshot_json, checkpoint_before_json,
+                checkpoint_after_json, facts_summary_json, matched_branch,
+                result_summary_json, error_code, error_message, notification_status,
+                scheduled_at, started_at, finished_at, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            run_uid,
+            str(automation_uid or "").strip(),
+            str(trigger_kind or "").strip(),
+            str(trigger_uid or "").strip(),
+            str(trigger_at or "").strip(),
+            cycle_seq,
+            str(status or "").strip() or "claimed",
+            int(attempt or 0),
+            str(program_version_uid or "").strip(),
+            str(agent_session_id or "").strip(),
+            str(agent_run_id or "").strip(),
+            _json_dumps(execution_policy_snapshot if isinstance(execution_policy_snapshot, Mapping) else {}),
+            _json_dumps(checkpoint_before if isinstance(checkpoint_before, Mapping) else {}),
+            _json_dumps(checkpoint_after if isinstance(checkpoint_after, Mapping) else {}),
+            _json_dumps(facts_summary if isinstance(facts_summary, Mapping) else {}),
+            str(matched_branch or "").strip(),
+            _json_dumps(result_summary if isinstance(result_summary, Mapping) else {}),
+            str(error_code or "").strip(),
+            str(error_message or "").strip(),
+            str(notification_status or "").strip(),
+            str(scheduled_at or "").strip(),
+            str(started_at or "").strip(),
+            str(finished_at or "").strip(),
+            now,
+            now,
+        ))
+        conn.commit()
+    return get_agent_automation_run(run_uid)
+
+
+def get_agent_automation_run(run_uid: str) -> dict:
+    """Return one automation run with decoded JSON fields."""
+    uid = str(run_uid or "").strip()
+    with _get_conn() as conn:
+        row = conn.execute("""
+            SELECT *
+            FROM agent_automation_runs
+            WHERE run_uid=?
+            LIMIT 1
+        """, (uid,)).fetchone()
+    return _agent_automation_run_detail(row)
+
+
+def claim_agent_automation_run(
+    automation_uid: str,
+    trigger_kind: str,
+    trigger_uid: str,
+    *,
+    trigger_at: str = "",
+    scheduled_at: str = "",
+) -> dict:
+    """Idempotently claim a trigger and return whether this call inserted it."""
+    uid = str(automation_uid or "").strip()
+    trigger = str(trigger_uid or "").strip()
+    automation = get_agent_automation(uid)
+    now = _now_iso()
+    run_uid = uuid.uuid4().hex
+    effective_trigger_at = str(trigger_at or trigger or now).strip()
+    with _get_conn() as conn:
+        cursor = conn.execute("""
+            INSERT INTO agent_automation_runs (
+                run_uid, automation_uid, trigger_kind, trigger_uid, trigger_at,
+                cycle_seq, status, attempt, program_version_uid,
+                execution_policy_snapshot_json, checkpoint_before_json,
+                scheduled_at, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 'claimed', 0, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(automation_uid, trigger_uid) DO NOTHING
+        """, (
+            run_uid,
+            uid,
+            str(trigger_kind or "").strip(),
+            trigger,
+            effective_trigger_at,
+            automation.get("cycle_seq"),
+            str(automation.get("active_program_version_uid") or "").strip(),
+            _json_dumps(automation.get("execution_policy") if isinstance(automation.get("execution_policy"), Mapping) else {}),
+            _json_dumps(automation.get("checkpoint") if isinstance(automation.get("checkpoint"), Mapping) else {}),
+            str(scheduled_at or "").strip(),
+            now,
+            now,
+        ))
+        created = cursor.rowcount == 1
+        row = conn.execute("""
+            SELECT *
+            FROM agent_automation_runs
+            WHERE automation_uid=? AND trigger_uid=?
+            LIMIT 1
+        """, (uid, trigger)).fetchone()
+        if created:
+            conn.execute("""
+                UPDATE agent_automations
+                SET last_run_uid=?, last_status='claimed', last_error='',
+                    last_triggered_at=?, updated_at=?
+                WHERE automation_uid=?
+            """, (dict(row)["run_uid"] if row else run_uid, effective_trigger_at, now, uid))
+        conn.commit()
+    return {"created": created, "run": _agent_automation_run_detail(row)}
+
+
+def update_agent_automation_run(run_uid: str, **fields) -> dict:
+    """Update allowed run fields and return decoded public detail."""
+    allowed = {
+        "trigger_kind",
+        "trigger_uid",
+        "trigger_at",
+        "cycle_seq",
+        "status",
+        "attempt",
+        "program_version_uid",
+        "agent_session_id",
+        "agent_run_id",
+        "execution_policy_snapshot_json",
+        "checkpoint_before_json",
+        "checkpoint_after_json",
+        "facts_summary_json",
+        "matched_branch",
+        "result_summary_json",
+        "error_code",
+        "error_message",
+        "notification_status",
+        "scheduled_at",
+        "started_at",
+        "finished_at",
+    }
+    updates: dict[str, Any] = {}
+    for key, value in fields.items():
+        if key == "execution_policy_snapshot":
+            updates["execution_policy_snapshot_json"] = _json_dumps(value if isinstance(value, Mapping) else {})
+        elif key == "checkpoint_before":
+            updates["checkpoint_before_json"] = _json_dumps(value if isinstance(value, Mapping) else {})
+        elif key == "checkpoint_after":
+            updates["checkpoint_after_json"] = _json_dumps(value if isinstance(value, Mapping) else {})
+        elif key == "facts_summary":
+            updates["facts_summary_json"] = _json_dumps(value if isinstance(value, Mapping) else {})
+        elif key == "result_summary":
+            updates["result_summary_json"] = _json_dumps(value if isinstance(value, Mapping) else {})
+        elif key in {"cycle_seq", "attempt"}:
+            updates[key] = int(value or 0)
+        elif key in allowed:
+            updates[key] = value
+    updates["updated_at"] = _now_iso()
+    assignments = ", ".join(f"{key}=?" for key in updates.keys())
+    uid = str(run_uid or "").strip()
+    with _get_conn() as conn:
+        conn.execute(
+            f"UPDATE agent_automation_runs SET {assignments} WHERE run_uid=?",
+            [*updates.values(), uid],
+        )
+        conn.commit()
+    return get_agent_automation_run(uid)
+
+
+def list_agent_automation_runs(automation_uid: str, limit: int = 100) -> list[dict]:
+    """List recent runs for one automation."""
+    try:
+        safe_limit = max(1, min(int(limit), 500))
+    except Exception:
+        safe_limit = 100
+    with _get_conn() as conn:
+        rows = conn.execute("""
+            SELECT *
+            FROM agent_automation_runs
+            WHERE automation_uid=?
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (str(automation_uid or "").strip(), safe_limit)).fetchall()
+    return [_agent_automation_run_detail(row) for row in rows]
+
+
+def link_agent_automation_run(
+    run_uid: str,
+    link_kind: str,
+    link_uid: str,
+    metadata: Optional[Mapping[str, Any]] = None,
+) -> dict:
+    """Attach an idempotent resource link to an automation run."""
+    now = _now_iso()
+    with _get_conn() as conn:
+        conn.execute("""
+            INSERT INTO agent_automation_run_links (
+                run_uid, link_kind, link_uid, metadata_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(run_uid, link_kind, link_uid) DO UPDATE SET
+                metadata_json = excluded.metadata_json
+        """, (
+            str(run_uid or "").strip(),
+            str(link_kind or "").strip(),
+            str(link_uid or "").strip(),
+            _json_dumps(metadata if isinstance(metadata, Mapping) else {}),
+            now,
+        ))
+        row = conn.execute("""
+            SELECT *
+            FROM agent_automation_run_links
+            WHERE run_uid=? AND link_kind=? AND link_uid=?
+            LIMIT 1
+        """, (
+            str(run_uid or "").strip(),
+            str(link_kind or "").strip(),
+            str(link_uid or "").strip(),
+        )).fetchone()
+        conn.commit()
+    detail = dict(row) if row else {}
+    if detail:
+        detail["metadata"] = _json_loads_object(detail.pop("metadata_json", "{}"))
+    return detail
+
+
+def list_agent_automation_run_links(run_uid: str) -> list[dict]:
+    """List resource links attached to a run."""
+    with _get_conn() as conn:
+        rows = conn.execute("""
+            SELECT *
+            FROM agent_automation_run_links
+            WHERE run_uid=?
+            ORDER BY created_at ASC, id ASC
+        """, (str(run_uid or "").strip(),)).fetchall()
+    details = []
+    for row in rows:
+        detail = dict(row)
+        detail["metadata"] = _json_loads_object(detail.pop("metadata_json", "{}"))
+        details.append(detail)
+    return details
 
 
 def begin_run(adapter_id: str, task_id: str) -> int:
