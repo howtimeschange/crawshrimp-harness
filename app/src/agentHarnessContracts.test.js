@@ -207,6 +207,29 @@ test('standard rc.1 Web profile retains the full DSH operational surface', () =>
   assert.match(standardPreset, /id: tool-web[\s\S]*fetch: true/)
   assert.match(patch, /id: approval/)
   assert.match(patch, /id: permission/)
+  for (const id of [
+    'agent-instructions',
+    'command-goal',
+    'plan-mode',
+    'skill-filesystem',
+    'tool-bash',
+    'tool-fs',
+    'tool-fs-search',
+    'tool-str-replace-editor',
+    'tool-skill',
+    'tool-goal',
+    'tool-todo',
+    'tool-jobs',
+    'tool-subagent',
+    'tool-subagent-fork',
+    'tool-subagent-control',
+    'tool-subagent-list-agents',
+    'tool-workflow',
+    'workflow-worker-thread',
+    'tool-web',
+  ]) {
+    assert.match(patch, new RegExp(`- id: ${id}\\s+disabled: false`), `${id} must be enabled in Crawshrimp's Web profile`)
+  }
 })
 
 test('rc.1 Web transport keeps image input and session-follow without reviving the old SDK patch', () => {
@@ -317,14 +340,17 @@ test('agent runtime failures leave the loading screen and expose a retry action'
   assert.match(webView, /lastRuntimeState\.value === 'needs_configuration' \|\| lastRuntimeState\.value === 'disabled_until_manual_restart'/)
 })
 
-test('agent runtime missing model keys still opens DSH and gates composer with configuration modal', () => {
+test('agent runtime missing model keys suppresses upstream onboarding and opens Crawshrimp provider configuration', () => {
   const webView = readFileSync(resolve(appRoot, 'src/renderer/views/AgentWebView.vue'), 'utf8')
   const settings = readFileSync(resolve(appRoot, 'src/renderer/views/SettingsPage.vue'), 'utf8')
   const slots = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-slots/lib/client.js'), 'utf8')
+  const profile = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/cordis.patch.yml'), 'utf8')
   const service = readFileSync(resolve(appRoot, '../core/agent/service.py'), 'utf8')
   const app = readFileSync(resolve(appRoot, 'src/renderer/App.vue'), 'utf8')
   assert.match(webView, /csNeedsModelKey/)
-  assert.match(webView, /runtimeNeedsModelKey\.value = result\?\.api_key_configured === false/)
+  assert.match(webView, /function syncRuntimeModelConfiguration\(result\)/)
+  assert.match(webView, /const needsModelKey = result\?\.api_key_configured === false/)
+  assert.match(webView, /llmConfigPromptedAutomatically = true[\s\S]*?inlineLlmModalOpen\.value = true/)
   assert.match(webView, /data\.__crawshrimp === 'llm-config-request'/)
   assert.match(webView, /openInlineLlmModal/)
   assert.match(webView, /配置大模型供应商/)
@@ -350,6 +376,7 @@ test('agent runtime missing model keys still opens DSH and gates composer with c
   assert.match(slots, /csNeedsModelKey/)
   assert.match(slots, /llm-config-request/)
   assert.match(slots, /requestLlmConfigFromComposer/)
+  assert.match(profile, /- id: ui-settings-models\s+disabled: true/)
   assert.match(service, /CRAWSHRIMP_LLM_CONFIG_REQUIRED/)
   assert.match(app, /@open-settings="openSettingsPanel"/)
   assert.match(app, /const panelId = target && typeof target === 'object'[\s\S]*?target\.panelId \|\| target\.id/)

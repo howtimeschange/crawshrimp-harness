@@ -1,7 +1,4 @@
 # Crawshrimp's user layer over DSH 0.1.2-rc.1's official Web profile.
-# The Web bundle deliberately moves agent-plane tools behind the `standard`
-# agent preset. Do not re-enable host rows here: doing so would bypass that
-# per-session composition and duplicate the tool registry.
 
 # Keep the existing Crawshrimp identity and operating instructions, while the
 # official standard preset continues to supply its full tool and workflow
@@ -191,10 +188,85 @@
 - id: ui-schedule
   disabled: false
 
+# The upstream Web profile hides the operational rows until a host opts in.
+# Crawshrimp's standard agent is a real local workbench, not a chat-only Web
+# shell: restore the complete user-requested execution plane while retaining
+# the existing sandbox, approval and permission-preset controls above.
+#
+# Keep the platform-specific PowerShell implementation and internal HMR /
+# compaction helpers at their upstream defaults.  The enabled rows below cover
+# Bash, file read/write/search, instructions, tasks/plans, skills, workflows,
+# subagents and Web Preview / web_fetch.
+- id: agent-instructions
+  disabled: false
+
+- id: command-goal
+  disabled: false
+
+- id: plan-mode
+  disabled: false
+
+- id: skill-filesystem
+  disabled: false
+
+- id: tool-bash
+  disabled: false
+
+- id: tool-fs
+  disabled: false
+
+- id: tool-fs-search
+  disabled: false
+
+- id: tool-str-replace-editor
+  disabled: false
+
+- id: tool-skill
+  disabled: false
+
+- id: tool-goal
+  disabled: false
+
+- id: tool-todo
+  disabled: false
+
+- id: tool-jobs
+  disabled: false
+
+- id: tool-subagent
+  disabled: false
+
+- id: tool-subagent-fork
+  disabled: false
+
+- id: tool-subagent-control
+  disabled: false
+
+- id: tool-subagent-list-agents
+  disabled: false
+
+- id: tool-workflow
+  disabled: false
+
+- id: workflow-worker-thread
+  disabled: false
+
+- id: tool-web
+  disabled: false
+
 # The official wordmark is presentation-only. Keep the complete official Web
 # capability roster, but let the Crawshrimp client slot own this product's
 # visible identity.
 - id: ui-brand-official
+  disabled: true
+
+# Crawshrimp owns model-provider setup and credential storage.  The upstream
+# Models client registers its own first-run internal-test notice and a
+# DeepSeek-only key dialog, neither of which describes the product's provider
+# choices.  Disabling the browser-only row leaves the full runtime model
+# routing in llm-pi-ai intact; the shell presents Crawshrimp's provider guide
+# and opens its existing settings UI instead.
+- id: ui-settings-models
   disabled: true
 
 - id: xmanrui-dsh-im

@@ -273,6 +273,25 @@ const placeholderStateText = computed(() => (
 ))
 const runtimeNeedsModelKey = ref(false)
 const inlineLlmModalOpen = ref(false)
+let llmConfigPromptedAutomatically = false
+
+function syncRuntimeModelConfiguration(result) {
+  const needsModelKey = result?.api_key_configured === false
+  runtimeNeedsModelKey.value = needsModelKey
+  if (!needsModelKey) {
+    llmConfigPromptedAutomatically = false
+    inlineLlmModalOpen.value = false
+    return
+  }
+  // The DSH upstream Models screen is intentionally disabled for Crawshrimp:
+  // it offers a DeepSeek-only first-run dialog. Show the existing product
+  // provider guide once on first entry instead, without trapping a user who
+  // explicitly closes it and continues to inspect the workspace.
+  if (!llmConfigPromptedAutomatically) {
+    llmConfigPromptedAutomatically = true
+    inlineLlmModalOpen.value = true
+  }
+}
 
 function loadBrowserLayoutPreference() {
   try {
@@ -315,7 +334,7 @@ async function loadRuntime() {
     const result = await window.cs.agentApi('GET', '/agent/runtime')
     const state = String(result?.state || '')
     lastRuntimeState.value = state
-    runtimeNeedsModelKey.value = result?.api_key_configured === false
+    syncRuntimeModelConfiguration(result)
     const url = applyRuntimeSnapshot(result)
     if (url && state === 'ready') {
       webUrl.value = url
@@ -680,10 +699,10 @@ onMounted(() => {
   // 401，因此不能以无 cookie 的 fetch 误判它离线。
   pollTimer = setInterval(async () => {
     try {
-    const st = await window.cs.agentApi('GET', '/agent/runtime')
+      const st = await window.cs.agentApi('GET', '/agent/runtime')
       const state = String(st?.state || '')
       lastRuntimeState.value = state
-      runtimeNeedsModelKey.value = st?.api_key_configured === false
+      syncRuntimeModelConfiguration(st)
       const runtimeUrl = applyRuntimeSnapshot(st)
       if (runtimeUrl && state === 'ready') {
         if (!webUrl.value || webUrl.value !== runtimeUrl) webUrl.value = runtimeUrl
