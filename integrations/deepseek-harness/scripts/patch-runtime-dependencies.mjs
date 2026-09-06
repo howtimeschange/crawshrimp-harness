@@ -65,19 +65,33 @@ function assertEffectiveProfileRootClosure(root) {
   return [...packages].sort()
 }
 
-/** The product always creates the official `standard` preset, whose dynamic
- * loader uses the same runtime-root resolution as the host profile. */
+/** Verify a preset composition against the runtime-root package closure. */
 function assertStandardPresetRootClosure(root) {
-  const relativePath = 'node_modules/@deepseek-ai/dsh-agent-presets/presets/standard/agent.cordis.yml'
-  const source = readFileSync(requireFile(root, relativePath), 'utf8')
+  const standardPath = 'node_modules/@deepseek-ai/dsh-agent-presets/presets/standard/agent.cordis.yml'
+  // Source development runtime keeps the profile under `profile/web`; the
+  // package staging step copies it to `profiles/web`. Both execute this same
+  // guard, so resolve the actual layout before checking the preset closure.
+  const crawshrimpPath = [
+    'profiles/web/agent-presets/crawshrimp-standard/agent.cordis.yml',
+    'profile/web/agent-presets/crawshrimp-standard/agent.cordis.yml',
+  ].find((relativePath) => existsSync(join(root, relativePath)))
+  if (!crawshrimpPath) {
+    throw new Error('DSH rc.1 product Crawshrimp standard preset is missing from the runtime')
+  }
+  const sources = [
+    readFileSync(requireFile(root, standardPath), 'utf8'),
+    readFileSync(requireFile(root, crawshrimpPath), 'utf8'),
+  ]
   const packages = new Set()
-  for (const match of source.matchAll(/^\s+name:\s+['"]([^'"]+)['"]\s*$/gmu)) {
-    packages.add(packageNameFromLoaderName(match[1]))
+  for (const source of sources) {
+    for (const match of source.matchAll(/^\s+name:\s+['"]([^'"]+)['"]\s*$/gmu)) {
+      packages.add(packageNameFromLoaderName(match[1]))
+    }
   }
   for (const packageName of packages) {
     requireFile(root, `node_modules/${packageName}/package.json`)
   }
-  return [...packages].sort()
+  return { packages: [...packages].sort(), standardPath, crawshrimpPath }
 }
 
 /**
@@ -107,7 +121,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const dshImManifest = requireText(root, 'node_modules/@xmanrui/dsh-im/package.json', '"4.11.0"')
   const dshImEntry = requireFile(root, 'node_modules/@xmanrui/dsh-im/lib/index.js')
   const profilePackages = assertEffectiveProfileRootClosure(root)
-  const standardPresetPackages = assertStandardPresetRootClosure(root)
+  const standardPreset = assertStandardPresetRootClosure(root)
   const inboundTtl = requireText(
     root,
     'node_modules/@xmanrui/dsh-im/src/channels/shared/inbound-ttl.mjs',
@@ -138,7 +152,8 @@ export function patchRuntimeDependencies(runtimeRoot) {
     dshImManifest,
     dshImEntry,
     profilePackages,
-    standardPresetPackages,
+    standardPresetPackages: standardPreset.packages,
+    crawshrimpPreset: standardPreset.crawshrimpPath,
     inboundTtl,
     sessionBinding,
     modelSetting,

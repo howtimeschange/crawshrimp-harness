@@ -2838,9 +2838,10 @@ secureHandle('agent:browser:stream:state', async () => getAgentBrowserState())
 
 secureHandle('agent:pick-attachments', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: '选择附件(表格/文本/数据文件)',
+    title: '选择图片或附件',
     properties: ['openFile', 'multiSelections'],
     filters: [
+      { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
       { name: '数据与文本文件', extensions: ['csv', 'xlsx', 'json', 'txt', 'md', 'pdf'] },
       { name: '所有文件', extensions: ['*'] },
     ],
@@ -2910,6 +2911,29 @@ secureHandle('agent:read-image-dataurl', async (_, filePath) => {
     else if (buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') mime = 'image/webp'
     if (!mime) return { ok: false, error: '文件内容不是受支持的图片格式' }
     return { ok: true, dataUrl: `data:${mime};base64,${buffer.toString('base64')}` }
+  } catch (error) {
+    return { ok: false, error: String(error.message || error) }
+  }
+})
+
+// DSH's Web composer needs actual File bytes to create its durable native
+// draft-image record. Keep that byte handoff inside Electron IPC and verify
+// the image signature before the iframe receives it; no data URL fallback.
+secureHandle('agent:read-attachment', async (_, filePath) => {
+  try {
+    const stats = await fs.promises.stat(filePath)
+    const MAX_DSH_NATIVE_IMAGE_BYTES = 16 * 1024 * 1024
+    if (!stats.isFile() || stats.size > MAX_DSH_NATIVE_IMAGE_BYTES) {
+      return { ok: false, error: '图片超过 DSH 原生附件 16MB 上限' }
+    }
+    const bytes = await fs.promises.readFile(filePath)
+    let mime = ''
+    if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) mime = 'image/png'
+    else if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) mime = 'image/jpeg'
+    else if (bytes.subarray(0, 6).toString('ascii') === 'GIF87a' || bytes.subarray(0, 6).toString('ascii') === 'GIF89a') mime = 'image/gif'
+    else if (bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP') mime = 'image/webp'
+    if (!mime) return { ok: false, error: '文件内容不是受支持的图片格式' }
+    return { ok: true, bytes: new Uint8Array(bytes), mime, name: path.basename(filePath) }
   } catch (error) {
     return { ok: false, error: String(error.message || error) }
   }

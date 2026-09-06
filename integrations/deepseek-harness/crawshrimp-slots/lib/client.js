@@ -37,7 +37,97 @@ window.__ModuleLoader__.load({
 
     let currentRuntimeSessionId = ''
     let lastPublishedRuntimeSessionId = ''
+    let shellRequiresLlmConfig = false
+    let crawshrimpContext = null
     const pendingAttachmentHintsBySession = new Map()
+
+    // DSH ships four developer-oriented agent presets.  They remain selectable
+    // and retain their upstream capabilities; this product-only display layer
+    // makes that boundary explicit and marks Crawshrimp's full preset as the
+    // normal choice for scripts, data, browser and content work.
+    const CRAWSHRIMP_AGENT_PRESET_COPY = Object.freeze({
+      'crawshrimp-standard': Object.freeze({
+        id: 'crawshrimp-standard',
+        name: '抓虾工作模式（推荐）',
+        description: '适合日常抓虾任务：脚本、附件与数据分析、实时浏览器、文件、AI 内容、计划和子代理均可使用；涉及改动时仍会请求确认。',
+      }),
+      standard: Object.freeze({
+        id: 'standard',
+        name: '通用开发模式',
+        description: 'DSH 上游的完整开发模式，不是抓虾专用；适合通用代码与文件任务，抓虾日常工作推荐使用「抓虾工作模式」。',
+      }),
+      ptc: Object.freeze({
+        id: 'ptc',
+        name: '开发者编排模式',
+        description: 'DSH 上游高级模式，不是抓虾专用；面向需要用 TypeScript 编排多步工具调用的开发者，日常任务不推荐。',
+      }),
+      minimal: Object.freeze({
+        id: 'minimal',
+        name: '轻量开发模式',
+        description: 'DSH 上游的最小开发模式，不是抓虾专用；仅保留 Shell 与代码替换工具，适合排查或小型脚本。',
+      }),
+      cordis: Object.freeze({
+        id: 'cordis',
+        name: 'Agent 定制模式',
+        description: 'DSH 上游的预设创作模式，不是抓虾专用；用于定制 Agent 插件与能力组合，普通业务任务不推荐。',
+      }),
+    })
+
+    const CRAWSHRIMP_AGENT_PRESET_ALIASES = Object.freeze({
+      'crawshrimp-standard': 'crawshrimp-standard',
+      '抓虾工作模式（推荐）': 'crawshrimp-standard',
+      standard: 'standard',
+      '标准模式': 'standard',
+      '通用开发模式': 'standard',
+      ptc: 'ptc',
+      'PTC 模式': 'ptc',
+      '开发者编排模式': 'ptc',
+      minimal: 'minimal',
+      '极简模式': 'minimal',
+      '轻量开发模式': 'minimal',
+      cordis: 'cordis',
+      '创造模式': 'cordis',
+      'Agent 定制模式': 'cordis',
+    })
+
+    function agentPresetDisplayCopy(value) {
+      const text = String(value || '').trim()
+      const id = CRAWSHRIMP_AGENT_PRESET_ALIASES[text]
+      return id ? CRAWSHRIMP_AGENT_PRESET_COPY[id] : undefined
+    }
+
+    function normalizeAgentPresetPickerCopy(root = document) {
+      if (!root || typeof root.querySelectorAll !== 'function') return
+
+      const menus = []
+      if (typeof root.matches === 'function' && root.matches('[role="menuitem"]')) menus.push(root)
+      menus.push(...root.querySelectorAll('[role="menuitem"]'))
+      for (const menuItem of menus) {
+        const nameNode = [...menuItem.querySelectorAll('span')].find((node) => (
+          node.children.length === 0 && agentPresetDisplayCopy(node.textContent)
+        ))
+        const copy = agentPresetDisplayCopy(nameNode?.textContent)
+        if (!copy || !nameNode) continue
+        if (nameNode.textContent !== copy.name) nameNode.textContent = copy.name
+        const description = nameNode.nextElementSibling
+        if (description && description.textContent !== copy.description) description.textContent = copy.description
+        menuItem.dataset.csAgentPreset = copy.id
+      }
+
+      const labels = []
+      if (typeof root.matches === 'function' && root.matches('button[aria-haspopup="menu"], [title]')) labels.push(root)
+      labels.push(...root.querySelectorAll('button[aria-haspopup="menu"], [title]'))
+      for (const label of labels) {
+        const textNode = [...label.childNodes].find((node) => (
+          node.nodeType === 3 && agentPresetDisplayCopy(node.textContent)
+        ))
+        const copy = agentPresetDisplayCopy(textNode?.textContent)
+        if (!copy || !textNode) continue
+        if (textNode.textContent !== copy.name) textNode.textContent = copy.name
+        label.setAttribute('title', copy.description)
+        label.dataset.csAgentPreset = copy.id
+      }
+    }
 
     function persistedRuntimeSessionId() {
       // 新建会话在发送首条消息前，sessions.list 的 current 仍可能为空；
@@ -79,11 +169,22 @@ window.__ModuleLoader__.load({
     }
 
     function llmConfigRequired() {
+      if (shellRequiresLlmConfig) return true
       try {
         return new URLSearchParams(window.location.search || '').get('csNeedsModelKey') === '1'
       } catch (error) {
         return false
       }
+    }
+
+    function updateRuntimeModelConfiguration(data) {
+      shellRequiresLlmConfig = data?.apiKeyConfigured === false
+      if (typeof document === 'undefined' || !document.documentElement) return
+      if (!shellRequiresLlmConfig) {
+        delete document.documentElement.dataset.csLlmConfigRequired
+        return
+      }
+      installLlmConfigGate()
     }
 
     function crawshrimpImSettingsEnabled() {
@@ -103,7 +204,7 @@ window.__ModuleLoader__.load({
       '.VOzbGW_content { width: 100% !important; min-width: 0 !important; background: var(--dsw-alias-bg-base, #f7f7f8) !important; }',
       '.VOzbGW_options { width: 100% !important; min-width: 0 !important; height: 100% !important; padding: 0 !important; overflow: hidden !important; background: var(--dsw-alias-bg-base, #f7f7f8) !important; }',
       '[data-cs-im-surface-root="1"], [data-cs-im-surface-path="1"] { display: block !important; width: 100% !important; height: 100% !important; min-height: 0 !important; }',
-      '[data-cs-im-surface-root="1"] > :not([data-cs-im-surface-path="1"]), [data-cs-im-surface-path="1"] > :not([data-cs-im-surface-path="1"]):not(.dim-page) { display: none !important; }',
+      '[data-cs-im-surface-root="1"] > :not([data-cs-im-surface-path="1"]), [data-cs-im-surface-path="1"]:not(.dim-page) > :not([data-cs-im-surface-path="1"]):not(.dim-page) { display: none !important; }',
       '.dim-page { --dim-crawshrimp-accent: var(--dsw-alias-state-business-primary, #FF5000); --dim-crawshrimp-accent-soft: color-mix(in srgb, var(--dim-crawshrimp-accent) 11%, transparent); --dim-blue: var(--dim-crawshrimp-accent) !important; width: 100% !important; max-width: none !important; height: 100% !important; min-height: 0 !important; padding: 0 !important; }',
       '.dim-title { display: none !important; }',
       '.dim-layout { grid-template-columns: 174px 1px minmax(0, 1fr) !important; align-items: stretch !important; gap: 22px !important; width: 100% !important; height: 100% !important; min-height: 0 !important; padding: 20px !important; }',
@@ -138,7 +239,11 @@ window.__ModuleLoader__.load({
         delete node.dataset.csImSurfacePath
       })
       root.dataset.csImSurfaceRoot = '1'
-      let node = page.parentElement
+      // dsh-im 4.11 may render .dim-page directly below the registered
+      // settings root.  Mark the page itself as part of the allow-listed
+      // path; otherwise the root sibling-hiding rule hides that direct child
+      // and the embedded surface becomes an opaque black frame.
+      let node = page
       while (node && node !== root) {
         node.dataset.csImSurfacePath = '1'
         node = node.parentElement
@@ -147,6 +252,13 @@ window.__ModuleLoader__.load({
     }
 
     let crawshrimpImSettingsReadyPublished = false
+
+    function isCurrentSettingsNav(button) {
+      if (!button) return false
+      return button.getAttribute('aria-current') === 'true'
+        || button.getAttribute('aria-selected') === 'true'
+        || button.classList?.contains('VOzbGW_active')
+    }
 
     function openCrawshrimpImSettings() {
       if (!crawshrimpImSettingsEnabled() || typeof document === 'undefined') return false
@@ -160,16 +272,25 @@ window.__ModuleLoader__.load({
       }
       if (!overlay) return false
 
-      const pluginNav = [...overlay.querySelectorAll('.VOzbGW_navCell')]
-        .find((button) => /^(plugins|插件)$/i.test(String(button.textContent || '').trim()))
-      if (pluginNav && pluginNav.getAttribute('aria-current') !== 'true') pluginNav.click()
-
       // rc.8 exposed the plugin section as an ARIA tab. rc.1's settings
       // navigator uses labelled VOzbGW nav cells and aria-current instead.
-      // Keep this embedded IM surface independent of that presentation detail.
+      // Prefer the product IM section directly.  Clicking "插件" first on
+      // every periodic reconciliation races React's asynchronous navigation
+      // and keeps the iframe oscillating between the generic plugin page and
+      // dsh-im.  Retain it only as a fallback for an older shell that has not
+      // exposed the IM item yet.
       const imTab = [...overlay.querySelectorAll('[role="tab"], .VOzbGW_navCell')]
         .find((button) => /^IM\s*(?:机器人|bots?)$/i.test(String(button.textContent || '').trim()))
-      if (imTab && imTab.getAttribute('aria-selected') !== 'true' && imTab.getAttribute('aria-current') !== 'true') imTab.click()
+      if (!imTab) {
+        const pluginNav = [...overlay.querySelectorAll('.VOzbGW_navCell')]
+          .find((button) => /^(plugins|插件)$/i.test(String(button.textContent || '').trim()))
+        if (pluginNav && !isCurrentSettingsNav(pluginNav)) pluginNav.click()
+        return false
+      }
+      if (!isCurrentSettingsNav(imTab)) {
+        imTab.click()
+        return false
+      }
       const surfaceReady = isolateCrawshrimpImSurface(overlay)
       if (surfaceReady && !crawshrimpImSettingsReadyPublished) {
         crawshrimpImSettingsReadyPublished = true
@@ -387,10 +508,16 @@ window.__ModuleLoader__.load({
       '.hHd-Xa_collapsed .hHd-Xa_toggle, .hHd-Xa_collapsed .hHd-Xa_iconButton { width: 32px !important; height: 32px !important; }',
       // 3) 隐藏 DSH 设置入口(模型/外观由抓虾原生 UI 负责)
       '.hHd-Xa_settingsArea { display: none !important; }',
-      // 4) 运行中状态文案 "Deep diving..." → 「抓虾中...」(硬编码字符串,CSS 替换)
-      '.Md3f7G_turnStatus { font-size: 0 !important; }',
-      '.Md3f7G_turnStatus::before { content: "抓虾中..."; font-size: 12px; }',
-      '.Md3f7G_turnStatus .Md3f7G_turnStatusClock { font-size: 12px; }',
+      // 4) 只替换由 rc.1 的实时 turn-status 标记确认的运行态；不能用已废弃
+      // 的哈希 class，也不能误伤错误、重试等其他 role=status 提示。
+      // Keep rc.1's active-turn shimmer.  Only the underlying localized text
+      // is hidden; the Crawshrimp replacement owns the same animated
+      // background-clip treatment and honors reduced-motion preferences.
+      '[data-cs-running-status="1"] { font-size: 0 !important; }',
+      '[data-cs-running-status="1"]::before { content: "抓虾中..."; display: inline-block; font: var(--dsw-font-s-strong-14); font-size: var(--dsh-content-font-size, 14px); line-height: calc(22px + var(--dsh-content-font-delta, 0px)); background: linear-gradient(90deg, var(--dsw-alias-state-business-primary) 0%, var(--dsw-alias-state-business-primary) 40%, color-mix(in srgb, var(--dsw-alias-state-business-primary) 26%, white) 50%, var(--dsw-alias-state-business-primary) 60%, var(--dsw-alias-state-business-primary) 100%); color: #0000; -webkit-text-fill-color: transparent; background-position: 100% 0; background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; animation: 1.8s linear infinite cs-running-status-shimmer; }',
+      '[data-cs-running-status-clock="1"] { font-size: var(--dsh-content-font-size-secondary, 13px) !important; color: var(--dsw-alias-label-caption) !important; -webkit-text-fill-color: var(--dsw-alias-label-caption) !important; }',
+      '@keyframes cs-running-status-shimmer { to { background-position: 0 0; } }',
+      '@media (prefers-reduced-motion: reduce) { [data-cs-running-status="1"]::before { background-position: 0 0; background-size: 100% 100%; animation: none; } }',
       // 5) 新会话空状态 hero:去 DeepSeek 鱼 logo 与文案,替换为抓虾
       'svg[viewBox="0 0 23.16 17.04"] { display: none !important; }',
       '.pXSMma_headlineText { display: inline-flex !important; align-items: baseline; justify-content: center; gap: 0; font-size: 0 !important; line-height: 1.3; white-space: nowrap; }',
@@ -444,6 +571,46 @@ window.__ModuleLoader__.load({
         if (document.title !== CRAWSHRIMP_BRAND_NAME) document.title = CRAWSHRIMP_BRAND_NAME
       } catch (error) {
         // 忽略
+      }
+    }
+
+    // rc.1 renders an active turn as `<div class="EvIC1a_turnStatus"
+    // role="status">深度求索中...</div>`.  The class hash may change on a
+    // later compatible build, so require both the live-region semantics and
+    // the stable class suffix/text contract.  Other `role=status` rows are
+    // terminal errors/retries and must retain their original wording.
+    function isRunningStatusNode(node) {
+      if (!node || node.getAttribute?.('role') !== 'status') return false
+      const className = typeof node.className === 'string' ? node.className : ''
+      if (!/(?:^|\s)(?:EvIC1a_turnStatus|[^\s]*turnStatus)(?:\s|$)/.test(className)) return false
+      const text = String(node.textContent || '').replace(/\s+/g, ' ').trim()
+      return /(?:深度求索中|Deep diving|抓虾中)\.\.\./iu.test(text)
+    }
+
+    function runningStatusCandidates(root = document) {
+      if (!root) return []
+      const nodes = []
+      if (typeof root.matches === 'function' && root.matches('[role="status"]')) nodes.push(root)
+      if (typeof root.querySelectorAll === 'function') nodes.push(...root.querySelectorAll('[role="status"]'))
+      return nodes
+    }
+
+    function normalizeRunningStatus(root = document) {
+      for (const node of runningStatusCandidates(root)) {
+        if (!isRunningStatusNode(node)) {
+          delete node.dataset.csRunningStatus
+          for (const clock of node.querySelectorAll?.('[class*="turnStatusClock"]') || []) {
+            delete clock.dataset.csRunningStatusClock
+          }
+          continue
+        }
+        node.dataset.csRunningStatus = '1'
+        // The visual replacement is CSS-based.  Keep assistive technology in
+        // sync with it instead of announcing the upstream brand string.
+        node.setAttribute('aria-label', '抓虾中...')
+        for (const clock of node.querySelectorAll?.('[class*="turnStatusClock"]') || []) {
+          clock.dataset.csRunningStatusClock = '1'
+        }
       }
     }
 
@@ -914,6 +1081,54 @@ window.__ModuleLoader__.load({
       return Array.from(files || []).filter((file) => file && !isImageFile(file))
     }
 
+    const NATIVE_DRAFT_IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+
+    // This calls DSH's public conversation API, rather than sneaking a data
+    // URL into a prompt.  As a result, the native composer owns preview,
+    // removal, validation and final model serialization just like an image
+    // selected through DSH's original image rail.
+    function installNativeImageDraft(ctx, data) {
+      const sessionId = String(data?.runtimeSessionId || '').trim()
+      const mime = String(data?.mime || '').toLowerCase()
+      if (!ctx?.sessions || typeof ctx.sessions.scope !== 'function' || !sessionId || !NATIVE_DRAFT_IMAGE_MEDIA_TYPES.has(mime)) return false
+      if (sessionId !== activeRuntimeSessionId() || typeof File !== 'function' || data?.bytes == null) return false
+
+      let conversation
+      let drafts = []
+      try {
+        const image = new File([data.bytes], data.name, { type: data.mime })
+        const scoped = ctx.sessions.scope(sessionId)
+        if (!scoped || typeof scoped.get !== 'function') return false
+        conversation = scoped.get('conversation')
+        if (!conversation || typeof conversation.createDraftImages !== 'function' || typeof conversation.input?.for !== 'function') return false
+        drafts = Array.from(conversation.createDraftImages([image]) || [])
+        if (!drafts.length) return false
+        const inserted = conversation.input.for(scoped).addImages(drafts.map((draft) => draft.id))
+        if (inserted) return true
+      } catch (error) {
+        // The exact failure is already surfaced by DSH when the composer can
+        // accept the file itself.  Never synthesize a text-only replacement.
+      }
+      if (drafts.length && typeof conversation?.releaseDraftImages === 'function') {
+        try { conversation.releaseDraftImages(drafts) } catch (error) { /* best-effort object URL cleanup */ }
+      }
+      return false
+    }
+
+    function installNativeImageFiles(ctx, files) {
+      const images = Array.from(files || []).filter(isImageFile)
+      // `true` means that this handler has actually claimed at least one
+      // image. Text-only paste and ordinary clipboard content must keep
+      // flowing to DSH's native composer listener.
+      if (!images.length) return false
+      return images.every((file) => installNativeImageDraft(ctx, {
+        runtimeSessionId: activeRuntimeSessionId(),
+        name: file.name,
+        mime: file.type,
+        bytes: file,
+      }))
+    }
+
     function postAttachmentFiles(files) {
       for (const file of nonImageFiles(files)) {
         postToShell({ __crawshrimp: 'upload-attachment', file, runtimeSessionId: activeRuntimeSessionId() })
@@ -930,23 +1145,36 @@ window.__ModuleLoader__.load({
         if (file) files.push(file)
       }
       const attachments = nonImageFiles(files)
-      if (!attachments.length) return
+      const imagesInstalled = installNativeImageFiles(crawshrimpContext, files)
+      if (!attachments.length && !imagesInstalled) return
+      // If the native draft API is unavailable, let DSH's own paste listener
+      // retain its image behavior.  Regular files are still sent to the
+      // Crawshrimp attachment store without consuming that native event.
+      if (!imagesInstalled) {
+        if (attachments.length) postAttachmentFiles(attachments)
+        return
+      }
       event.preventDefault()
       event.stopPropagation()
       event.stopImmediatePropagation?.()
-      postAttachmentFiles(attachments)
+      if (attachments.length) postAttachmentFiles(attachments)
     }
 
     function handleDropAttachments(event) {
       const files = (event.dataTransfer || {}).files
       if (!files || !files.length) return
       const attachments = nonImageFiles(files)
-      if (!attachments.length) return
+      const imagesInstalled = installNativeImageFiles(crawshrimpContext, files)
+      if (!attachments.length && !imagesInstalled) return
+      if (!imagesInstalled) {
+        if (attachments.length) postAttachmentFiles(attachments)
+        return
+      }
       event.preventDefault()
       event.stopPropagation()
       event.stopImmediatePropagation?.()
       try {
-        postAttachmentFiles(attachments)
+        if (attachments.length) postAttachmentFiles(attachments)
       } finally {
         resetNativeDropOverlay()
       }
@@ -1048,14 +1276,36 @@ window.__ModuleLoader__.load({
     }
 
     function insertAttachmentHint(name, attachmentId) {
-      const ta = document.querySelector('textarea')
-      if (!ta) return
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
       const hint = `[附件: ${name} (attachment_id: ${attachmentId})]`
-      const current = ta.value || ''
-      setter.call(ta, current ? current + '\n' + hint : hint)
-      ta.dispatchEvent(new Event('input', { bubbles: true }))
-      ta.focus()
+      const ta = document.querySelector('textarea')
+      if (ta) {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
+        const current = ta.value || ''
+        setter.call(ta, current ? current + '\n' + hint : hint)
+        ta.dispatchEvent(new Event('input', { bubbles: true }))
+        ta.focus()
+        return true
+      }
+
+      // rc.1's Web composer is a contenteditable div instead of the old
+      // textarea.  The attachment stays registered in the product inbox, but
+      // without this input event the native session never receives its
+      // attachment_id and therefore cannot call attachment_read.
+      const editor = document.querySelector('[contenteditable="true"]')
+      if (!editor) return false
+      const current = String(editor.textContent || '').trim()
+      editor.textContent = current ? `${current}\n${hint}` : hint
+      try {
+        editor.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          inputType: 'insertText',
+          data: hint,
+        }))
+      } catch (error) {
+        editor.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      editor.focus()
+      return true
     }
 
     function queueAttachmentHint(sessionId, name, attachmentId) {
@@ -1280,7 +1530,12 @@ window.__ModuleLoader__.load({
 
     function isAllowedNoKeyComposerControl(target) {
       return !!(target && typeof target.closest === 'function' && target.closest(
-        '.cs-attach-btn, .uV2eYG_add[data-cs-upload-button="1"], .uV2eYG_add.cs-cmd-at-btn',
+        // The picker controls live inside rc.1's composer seat.  A no-model
+        // guard must not claim those clicks: users still need to inspect or
+        // select a workspace, Agent mode, access mode, attachment command, or
+        // model before configuring a provider.  The text-entry canvas remains
+        // the intentional entry point for the Crawshrimp model dialog.
+        '.cs-attach-btn, .uV2eYG_add[data-cs-upload-button="1"], .uV2eYG_add.cs-cmd-at-btn, button, [role="button"], a, [aria-haspopup]',
       ))
     }
 
@@ -1308,7 +1563,10 @@ window.__ModuleLoader__.load({
       injectAttachCss()
       if (document.__csLlmConfigGate) return
       document.__csLlmConfigGate = true
-      for (const type of ['pointerdown', 'click', 'keydown', 'beforeinput', 'paste']) {
+      // pointerdown claims mouse, touch, and pen activation before the native
+      // editor focuses.  Listening to click as well would emit the same
+      // configuration request twice for one physical gesture.
+      for (const type of ['pointerdown', 'keydown', 'beforeinput', 'paste']) {
         document.addEventListener(type, requestLlmConfigFromComposer, true)
       }
       document.addEventListener('focusin', (event) => {
@@ -1348,7 +1606,7 @@ window.__ModuleLoader__.load({
       run.result = result
       if (run.retryTimer) clearTimeout(run.retryTimer)
       if (run.deadlineTimer) clearTimeout(run.deadlineTimer)
-      if (run.unsubscribe) run.unsubscribe()
+      for (const unsubscribe of run.unsubscribes || []) unsubscribe()
       run.resolve(result)
     }
 
@@ -1363,6 +1621,30 @@ window.__ModuleLoader__.load({
       }, delayMs)
     }
 
+    function defaultWorkspaceBaselinesReady(ctx, workspaceSnapshot) {
+      // rc.1 replaced the rc.8 `baselinesReady` flag with independent
+      // `phase: 'ready'` snapshots. Waiting on only the removed rc.8 flag
+      // leaves first-run workspaces permanently unbound.
+      const workspaceReady = workspaceSnapshot?.phase === 'ready' || workspaceSnapshot?.baselinesReady === true
+      const sessionSnapshot = ctx.sessions?.list?.getSnapshot?.() || {}
+      const sessionReady = sessionSnapshot.phase === undefined || sessionSnapshot.phase === 'ready'
+      return { ready: workspaceReady && sessionReady, sessionSnapshot }
+    }
+
+    function defaultWorkspaceNavigator(ctx) {
+      if (typeof ctx?.uiWorkspace?.connectWorkspace === 'function') return ctx.uiWorkspace
+      try {
+        const navigation = ctx?.get?.('uiWorkspace')
+        if (typeof navigation?.connectWorkspace === 'function') return navigation
+      } catch (error) {
+        // 插件依赖图尚未完成时交给下一次 baseline 订阅重试。
+      }
+      // Compatibility with the pre-rc.1 client contract. rc.1 exposes this
+      // method through uiWorkspace, not the raw workspaces controller.
+      if (typeof ctx?.workspaces?.connectWorkspace === 'function') return ctx.workspaces
+      return null
+    }
+
     async function reconcileDefaultWorkspace(ctx, run) {
       if (run.done || run.inFlight || defaultWorkspaceRuns.get(ctx) !== run) return
       if (run.nextAttemptAt && Date.now() < run.nextAttemptAt) return
@@ -1373,7 +1655,8 @@ window.__ModuleLoader__.load({
         finishDefaultWorkspaceRun(ctx, run, { status: 'existing', workspaceId: items[0]?.workspaceId || '' })
         return
       }
-      if (!snap.baselinesReady) return
+      const { ready: baselinesReady, sessionSnapshot } = defaultWorkspaceBaselinesReady(ctx, snap)
+      if (!baselinesReady) return
 
       run.inFlight = true
       run.attempts += 1
@@ -1399,9 +1682,10 @@ window.__ModuleLoader__.load({
           .find((item) => item.workspaceId === run.workspaceId)
         if (!projected) throw new Error('workspace create succeeded without list projection')
 
-        let sessionId = ctx.sessions?.list?.getSnapshot?.().current
-        if (!sessionId && typeof ctx.workspaces.connectWorkspace === 'function' && ctx.sessions) {
-          sessionId = await ctx.workspaces.connectWorkspace(projected.workspaceId)
+        let sessionId = sessionSnapshot.current
+        const navigation = defaultWorkspaceNavigator(ctx)
+        if (!sessionId && navigation && ctx.sessions) {
+          sessionId = await navigation.connectWorkspace(projected.workspaceId)
           if (run.done || defaultWorkspaceRuns.get(ctx) !== run) {
             run.inFlight = false
             return
@@ -1463,7 +1747,7 @@ window.__ModuleLoader__.load({
         lastError: '',
         retryTimer: null,
         deadlineTimer: null,
-        unsubscribe: null,
+        unsubscribes: [],
         nextAttemptAt: 0,
         resolve: (result) => resolveRun(result),
         promise: null,
@@ -1471,7 +1755,10 @@ window.__ModuleLoader__.load({
       run.promise = new Promise((resolve) => { resolveRun = resolve })
       defaultWorkspaceRuns.set(ctx, run)
       if (typeof ctx.workspaces.list.subscribe === 'function') {
-        run.unsubscribe = ctx.workspaces.list.subscribe(() => reconcileDefaultWorkspace(ctx, run))
+        run.unsubscribes.push(ctx.workspaces.list.subscribe(() => reconcileDefaultWorkspace(ctx, run)))
+      }
+      if (typeof ctx.sessions?.list?.subscribe === 'function') {
+        run.unsubscribes.push(ctx.sessions.list.subscribe(() => reconcileDefaultWorkspace(ctx, run)))
       }
       run.deadlineTimer = setTimeout(() => {
         if (run.done) return
@@ -1483,6 +1770,46 @@ window.__ModuleLoader__.load({
       }, timeoutMs)
       reconcileDefaultWorkspace(ctx, run)
       return run.promise
+    }
+
+    // The Web app initializes this plugin after the iframe load event. Keep
+    // the Shell bridge as a single, testable unit so that the ready signal is
+    // emitted only after the listener which consumes the replay is active.
+    function applyShellTheme(ctx, theme) {
+      if (theme !== 'light' && theme !== 'dark') return
+      try {
+        ctx.theme.setTheme(theme)
+      } catch (error) {
+        // 已是当前主题或不可写,忽略
+      }
+    }
+
+    function installShellMessageBridge(ctx) {
+      const onMessage = (event) => {
+        const expectedOrigin = shellOrigin()
+        if (event.source !== window.parent || (expectedOrigin !== '*' && event.origin !== expectedOrigin)) return
+        const data = event && event.data
+        if (data && data.__crawshrimp === 'theme') applyShellTheme(ctx, data.theme)
+        if (data && data.__crawshrimp === 'nav') renderNav(data.items, data.active)
+        if (data && data.__crawshrimp === 'app-version') publishCrawshrimpAppVersion(data.version)
+        if (data && data.__crawshrimp === 'workspace') ensureDefaultWorkspace(ctx, data.root)
+        if (data && data.__crawshrimp === 'runtime-model-configuration') updateRuntimeModelConfiguration(data)
+        if (data && data.__crawshrimp === 'workspace-directory-picked') handleWorkspaceDirectoryPicked(data)
+        if (data && data.__crawshrimp === 'artifact-show') renderArtifactShow(data)
+        if (data && data.__crawshrimp === 'native-image-attachment') {
+          installNativeImageDraft(ctx, data)
+        }
+        if (data && data.__crawshrimp === 'attachment-added') {
+          const sessionId = String(data.runtimeSessionId || currentRuntimeSessionId || '')
+          queueAttachmentHint(sessionId, data.name, data.attachmentId)
+        }
+        if (data && data.__crawshrimp === 'open-runtime-session' && data.runtimeSessionId) {
+          try { ctx.sessions.open(String(data.runtimeSessionId)) } catch (error) { /* 会话已删除 */ }
+        }
+      }
+      window.addEventListener('message', onMessage)
+      postToShell({ __crawshrimp: 'workspace-ready' })
+      return () => window.removeEventListener('message', onMessage)
     }
 
     function publishCurrentSession(ctx) {
@@ -1500,46 +1827,24 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
+      crawshrimpContext = ctx
       registerCrawshrimpBrandSlots(ctx)
       registerCrawshrimpDirectoryFlow(ctx)
       ctx.theme.overrideTokens('crawshrimp', CRAWSHRIMP_TOKENS)
       injectBrandCss()
+      normalizeAgentPresetPickerCopy()
       openCrawshrimpImSettings()
       // 浏览器标题:去 DeepSeek(DocumentTitle 组件会在会话切换后重新拼后缀,需持续兜底)
       normalizeDocumentTitle()
+      normalizeRunningStatus()
       setInterval(normalizeDocumentTitle, 1000)
-      const adopt = (theme) => {
-        if (theme !== 'light' && theme !== 'dark') return
-        try {
-          ctx.theme.setTheme(theme)
-        } catch (error) {
-          // 已是当前主题或不可写,忽略
-        }
-      }
       try {
         const query = new URLSearchParams(window.location.search).get('theme')
-        if (query) adopt(query)
+        if (query) applyShellTheme(ctx, query)
       } catch (error) {
         // 无 URL 参数,交给 shell 的 postMessage
       }
-      window.addEventListener('message', (event) => {
-        const expectedOrigin = shellOrigin()
-        if (event.source !== window.parent || (expectedOrigin !== '*' && event.origin !== expectedOrigin)) return
-        const data = event && event.data
-        if (data && data.__crawshrimp === 'theme') adopt(data.theme)
-        if (data && data.__crawshrimp === 'nav') renderNav(data.items, data.active)
-        if (data && data.__crawshrimp === 'app-version') publishCrawshrimpAppVersion(data.version)
-        if (data && data.__crawshrimp === 'workspace') ensureDefaultWorkspace(ctx, data.root)
-        if (data && data.__crawshrimp === 'workspace-directory-picked') handleWorkspaceDirectoryPicked(data)
-        if (data && data.__crawshrimp === 'artifact-show') renderArtifactShow(data)
-        if (data && data.__crawshrimp === 'attachment-added') {
-          const sessionId = String(data.runtimeSessionId || currentRuntimeSessionId || '')
-          queueAttachmentHint(sessionId, data.name, data.attachmentId)
-        }
-        if (data && data.__crawshrimp === 'open-runtime-session' && data.runtimeSessionId) {
-          try { ctx.sessions.open(String(data.runtimeSessionId)) } catch (error) { /* 会话已删除 */ }
-        }
-      })
+      installShellMessageBridge(ctx)
       // apply 时 DOM 可能尚未就绪:轮询挂载(幂等),保证附件入口一定出现
       setInterval(() => {
         mountAttachmentCapture()
@@ -1547,6 +1852,8 @@ window.__ModuleLoader__.load({
         installLlmConfigGate()
         publishCurrentSession(ctx)
         openCrawshrimpImSettings()
+        normalizeRunningStatus()
+        normalizeAgentPresetPickerCopy()
       }, 1000)
       // 页面/会话重载后向 shell 请求重放产物媒体(iframe 重载期间到达的事件会丢失)
       try {
@@ -1569,6 +1876,15 @@ window.__ModuleLoader__.load({
       })
       // 侧边栏/输入区重渲染后兜底重插。属性/尺寸变化由 ResizeObserver + 周期兜底处理。
       const observer = new MutationObserver((mutations) => {
+        normalizeAgentPresetPickerCopy()
+        const runningStatusChanged = Array.from(mutations || []).some((mutation) => {
+          const target = mutation.target?.nodeType === 3 ? mutation.target.parentElement : mutation.target
+          if (target?.closest?.('[role="status"]')) return true
+          return Array.from(mutation.addedNodes || []).some((node) => (
+            node?.nodeType === 1 && (node.matches?.('[role="status"]') || node.querySelector?.('[role="status"]'))
+          ))
+        })
+        if (runningStatusChanged) normalizeRunningStatus()
         if (!mutationsTouchShellMountPoints(mutations)) return
         const rail = document.querySelector('.hHd-Xa_root')
         const region = rail && rail.querySelector('.hHd-Xa_regionArea')
@@ -1603,8 +1919,13 @@ window.__ModuleLoader__.load({
     exports.apply = apply
     // 可执行契约测试直接调用真实实现，避免退化为源码字符串匹配。
     exports.ensureDefaultWorkspace = ensureDefaultWorkspace
-    // kernel 服务依赖声明:apply 内访问 ctx.theme/ctx.workspaces/ctx.sessions/ctx.slots 必须显式 inject
-    exports.inject = ['theme', 'workspaces', 'sessions', 'slots']
+    exports.installShellMessageBridge = installShellMessageBridge
+    exports.requestLlmConfigFromComposer = requestLlmConfigFromComposer
+    exports.handlePasteAttachments = handlePasteAttachments
+    exports.insertAttachmentHint = insertAttachmentHint
+    exports.agentPresetDisplayCopy = agentPresetDisplayCopy
+    // kernel 服务依赖声明:rc.1 的会话创建在 uiWorkspace，不在原始 workspaces controller。
+    exports.inject = ['theme', 'workspaces', 'sessions', 'slots', 'uiWorkspace']
     return module.exports
   },
 })

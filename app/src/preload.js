@@ -524,6 +524,7 @@ contextBridge.exposeInMainWorld('cs', {
   saveAgentClipboardImage: (payload) => ipcRenderer.invoke('agent:save-clipboard-image', payload),
   saveAgentAttachment: (payload) => ipcRenderer.invoke('agent:save-attachment', payload),
   readAgentImageDataUrl: (filePath) => ipcRenderer.invoke('agent:read-image-dataurl', filePath),
+  readAgentAttachment: (filePath) => ipcRenderer.invoke('agent:read-attachment', filePath),
 
   getAdapters:     () => ipcRenderer.invoke('get-adapters'),
   showOperatorAlert: (payload) => ipcRenderer.invoke('show-operator-alert', payload || {}),

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import secrets
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -38,6 +39,8 @@ from core.config import load_config
 APPROVAL_WAIT_SECONDS = 15 * 60
 APPROVAL_MAX_CONCURRENCY = 4
 MCP_CONTEXT_LEASE_MAX_SECONDS = 30 * 60
+NATIVE_WEB_CONTEXT_FOLLOW_TIMEOUT_SECONDS = 3
+NATIVE_WEB_CONTEXT_PROJECTION_WAIT_SECONDS = 1.5
 
 # 审批桥最长会阻塞十五分钟，绝不能占用 asyncio 默认线程池（否则普通
 # to_thread 文件/CDP 操作会被审批等待饿死）。并发槽在提交 executor 前获取，
@@ -53,6 +56,17 @@ AUTO_APPROVE_TASK_IDS = frozenset({"batch_image_download", "cloud_folder_downloa
 
 class AgentModelConfigurationError(RuntimeError):
     """Raised when no configured model route can safely start the DSH runtime."""
+
+
+class McpContextUnavailableError(LookupError):
+    """A scoped native-Web session did not produce its own shadow run in time."""
+
+    code = "RUNTIME_SESSION_CONTEXT_UNAVAILABLE"
+
+    def __init__(self, runtime_session_id: str, reason: str = "") -> None:
+        runtime_id = str(runtime_session_id or "").strip()
+        suffix = f" ({reason})" if reason else ""
+        super().__init__(f"{self.code}: runtime session 没有可用的 active run: {runtime_id}{suffix}")
 
 
 def _auto_approve_task(task_id: str, risk: str) -> bool:
@@ -450,8 +464,6 @@ def _dsh_llm_pi_ai_settings(cfg: dict, custom_provider_profiles: list[dict[str, 
             "baseURL": base_url,
             "models": models,
         }
-        if provider.get("official_deepseek"):
-            entry["reasoning"] = "high"
         providers[provider_id] = entry
     for provider in custom_provider_profiles:
         provider_id = _compact_text(provider.get("id"))
@@ -488,6 +500,19 @@ def _sync_dsh_default_model_settings(
     current = settings.get("agent-default-model")
     entry = dict(current) if isinstance(current, dict) else {}
     entry.update({"provider": provider_id, "model": runtime_model_id})
+    # DSH persists the complete default selection.  A previous text-only
+    # selection may carry `reasoningEffort: high`; carrying it into a vision
+    # route makes DeepSeek reject the first image turn.  The generated
+    # Crawshrimp catalog only exposes reasoning controls for text-only routes,
+    # so remove that stale field whenever the new model is multimodal.
+    runtime_is_multimodal = (
+        "image" in list(model_capabilities(runtime_model_id).get("input_modalities") or [])
+        # Official DeepSeek provider IDs are normalized before entering DSH,
+        # while the product capability table uses the `official` prefix.
+        or runtime_model_id.endswith("-vision-exp")
+    )
+    if runtime_is_multimodal:
+        entry.pop("reasoningEffort", None)
     settings["agent-default-model"] = entry
     settings["llm-pi-ai"] = _dsh_llm_pi_ai_settings(
         cfg if isinstance(cfg, dict) else {},
@@ -694,6 +719,10 @@ class AgentService:
         self._runtime_mutation_lock = asyncio.Lock()
         self._mcp_context_leases: dict[str, dict] = {}
         self._mcp_lease_expiry_tasks: dict[str, asyncio.Task] = {}
+        # The first native-Web tool can arrive before the renderer's initial
+        # follow is projected. These waiters recover only that exact session.
+        self._native_web_context_events: dict[str, asyncio.Event] = {}
+        self._native_web_context_recovery_locks: dict[str, asyncio.Lock] = {}
 
         self._mcp_app = None
         self._mcp_uvicorn = None
@@ -727,6 +756,7 @@ class AgentService:
         if not runtime_id or not run_id:
             raise ValueError("runtime_session_id/run_id 必填")
         self.active_runs_by_runtime[runtime_id] = dict(run)
+        self._native_web_context_events.setdefault(runtime_id, asyncio.Event()).set()
         if grant:
             self.grants_by_run[run_id] = dict(grant)
 
@@ -740,6 +770,9 @@ class AgentService:
         if expected_run_id and str(current.get("run_id") or "") != expected_run_id:
             return
         removed = self.active_runs_by_runtime.pop(runtime_id, None) or {}
+        event = self._native_web_context_events.get(runtime_id)
+        if event is not None:
+            event.clear()
         for lease_id, lease in list(self._mcp_context_leases.items()):
             if lease.get("runtime_session_id") == runtime_id:
                 self.release_mcp_context(lease_id)
@@ -764,7 +797,7 @@ class AgentService:
         runtime_id = str(runtime_session_id or "").strip()
         run = self.active_runs_by_runtime.get(runtime_id)
         if not run:
-            raise LookupError(f"runtime session 没有 active run: {runtime_id}")
+            run = await self._recover_native_web_mcp_context(runtime_id)
         run_id = str(run.get("run_id") or "").strip()
         call_text = str(call_id or "").strip()
         lease_id = f"lease-{uuid.uuid4().hex[:16]}"
@@ -786,6 +819,46 @@ class AgentService:
             "session_id": run.get("session_id"),
             "call_id": call_text,
         }
+
+    async def _recover_native_web_mcp_context(self, runtime_session_id: str) -> dict:
+        """Refresh one named Web follow and wait briefly for its shadow run.
+
+        The worker receives only the runtime session supplied by DSH. There is
+        deliberately no latest-run or cross-session fallback here.
+        """
+        runtime_id = str(runtime_session_id or "").strip()
+        if not runtime_id:
+            raise McpContextUnavailableError(runtime_id, "INVALID_SESSION_ID")
+        lock = self._native_web_context_recovery_locks.setdefault(runtime_id, asyncio.Lock())
+        async with lock:
+            run = self.active_runs_by_runtime.get(runtime_id)
+            if run:
+                return run
+            projected = self._native_web_context_events.setdefault(runtime_id, asyncio.Event())
+            projected.clear()
+            response = await self.observe_native_web_session(
+                runtime_id,
+                refresh=True,
+                timeout=NATIVE_WEB_CONTEXT_FOLLOW_TIMEOUT_SECONDS,
+            )
+            run = self.active_runs_by_runtime.get(runtime_id)
+            if run:
+                return run
+            if not isinstance(response, dict) or response.get("ok") is not True:
+                raw_error = response.get("error") if isinstance(response, dict) else "INVALID_WORKER_RESPONSE"
+                if isinstance(raw_error, dict):
+                    reason = str(raw_error.get("code") or raw_error.get("message") or "SESSION_FOLLOW_FAILED")
+                else:
+                    reason = str(raw_error or "SESSION_FOLLOW_FAILED")
+                raise McpContextUnavailableError(runtime_id, reason[:120])
+            try:
+                await asyncio.wait_for(projected.wait(), timeout=NATIVE_WEB_CONTEXT_PROJECTION_WAIT_SECONDS)
+            except TimeoutError as exc:
+                raise McpContextUnavailableError(runtime_id, "SHADOW_RUN_NOT_PROJECTED") from exc
+            run = self.active_runs_by_runtime.get(runtime_id)
+            if not run:
+                raise McpContextUnavailableError(runtime_id, "SHADOW_RUN_NOT_PROJECTED")
+            return run
 
     async def _expire_mcp_context_lease(self, lease_id: str) -> None:
         try:
@@ -985,6 +1058,8 @@ class AgentService:
             self.release_mcp_context(lease_id)
         self.active_runs_by_runtime.clear()
         self.grants_by_run.clear()
+        self._native_web_context_events.clear()
+        self._native_web_context_recovery_locks.clear()
 
     def _recover_on_startup(self) -> None:
         for run in db.list_nonterminal_runs():
@@ -1370,6 +1445,12 @@ class AgentService:
                 "sessionId": self._runtime_session_id(session_id),
                 "text": item["text"],
                 "images": item.get("image_attachments") or [],
+                # A DSH runtime may recreate a persisted Session after a
+                # generation restart. Keep the product's per-session model
+                # authoritative so a previous text-only selection cannot
+                # reject a newly attached image.
+                "provider": item["provider_id"],
+                "model": official_real_model(item["model_id"]),
                 "budget": budget,
             }, timeout=30 * 60 + 60)
 
@@ -1394,6 +1475,8 @@ class AgentService:
                     "sessionId": new_sid,
                     "text": item["text"],
                     "images": item.get("image_attachments") or [],
+                    "provider": item["provider_id"],
+                    "model": official_real_model(item["model_id"]),
                     "budget": budget,
                 }, timeout=30 * 60 + 60)
                 result = (summary or {}).get("summary") or {}
@@ -1548,7 +1631,12 @@ class AgentService:
             cfg_key = str(provider.get("api_key_key") or "")
             if not env_key or not cfg_key:
                 continue
-            value = os.environ.get(env_key, "").strip() or str(llm.get(cfg_key) or "").strip()
+            # A value saved through the Crawshrimp settings UI is the current
+            # local-user choice and must replace any value this long-lived
+            # backend exported for the previous runtime generation.  An
+            # externally supplied environment variable remains the fallback
+            # when the product configuration is blank.
+            value = str(llm.get(cfg_key) or "").strip() or os.environ.get(env_key, "").strip()
             if not value and provider.get("legacy_gateway"):
                 value = legacy_gateway_key
             if value:
@@ -1582,6 +1670,24 @@ class AgentService:
             value = str(base.get(cfg_key) or "").strip()
             if value:
                 os.environ[env_key] = value
+        # The profile deliberately suppresses DSH's generic `llm-deepseek`
+        # adapter in favor of the Crawshrimp-owned pi-ai route.  Keep a
+        # process-only compatibility alias nonetheless: an existing DSH
+        # session/config can briefly retain the upstream route while the Web
+        # host reloads, and it must resolve the same official credential rather
+        # than emit a false MISSING_CREDENTIAL error.  Do not persist either
+        # alias, and remove only aliases this service created on a later empty
+        # configuration so an externally supplied environment remains intact.
+        deepseek_key = os.environ.get("CRAWSHRIMP_DEEPSEEK_API_KEY", "").strip()
+        deepseek_base_url = os.environ.get("CRAWSHRIMP_DEEPSEEK_BASE_URL", "").strip()
+        if deepseek_key:
+            os.environ["DEEPSEEK_API_KEY"] = deepseek_key
+            os.environ["CRAWSHRIMP_DEEPSEEK_COMPAT_ALIAS"] = "1"
+            if deepseek_base_url:
+                os.environ["DEEPSEEK_BASE_URL"] = deepseek_base_url
+        elif os.environ.pop("CRAWSHRIMP_DEEPSEEK_COMPAT_ALIAS", "") == "1":
+            os.environ.pop("DEEPSEEK_API_KEY", None)
+            os.environ.pop("DEEPSEEK_BASE_URL", None)
         custom_providers, custom_env = custom_providers_runtime_payload(cfg)
         for key, value in custom_env.items():
             os.environ[key] = value
@@ -1691,6 +1797,33 @@ class AgentService:
             return {"ok": False, "error": "ACTIVE_RUN", "message": "存在 active run,无法重启"}
         ok = await self.start_generation()
         return {"ok": ok, "state": self.runtime_state, "error": self.runtime_error}
+
+    async def observe_native_web_session(self, runtime_session_id: str,
+                                         *, refresh: bool = False, timeout: int = 15) -> dict:
+        """Open one scoped shadow follow for a renderer-announced Web session.
+
+        A native DSH Web session is not interchangeable with a product API run:
+        it must explicitly identify itself before its MCP calls can obtain a
+        context lease.  This endpoint therefore never chooses a recent or
+        currently active run as a fallback.
+        """
+        runtime_id = str(runtime_session_id or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}", runtime_id):
+            return {"ok": False, "error": "INVALID_SESSION_ID"}
+        if self.runtime_state != "ready" or self.worker is None:
+            return {"ok": False, "error": "RUNTIME_UNAVAILABLE"}
+        try:
+            params = {"sessionId": runtime_id}
+            if refresh:
+                params["refresh"] = True
+            response = await self.worker.request(
+                "worker.observe_web_session", params, timeout=timeout,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": "SESSION_FOLLOW_FAILED", "message": str(exc)[:300]}
+        if not isinstance(response, dict):
+            return {"ok": False, "error": "INVALID_WORKER_RESPONSE"}
+        return response
 
     def runtime_status(self) -> dict:
         cfg = load_config()

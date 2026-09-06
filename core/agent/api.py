@@ -39,6 +39,10 @@ class SessionCreateRequest(BaseModel):
     title: str = "新会话"
 
 
+class RuntimeSessionObserveRequest(BaseModel):
+    runtime_session_id: str
+
+
 class TurnCreateRequest(BaseModel):
     text: str
     context_refs: Optional[list[dict]] = None
@@ -85,6 +89,12 @@ def runtime_status() -> dict:
 @router.post("/runtime/restart")
 async def runtime_restart() -> dict:
     return await get_agent_service().restart_runtime()
+
+
+@router.post("/runtime/web-session")
+async def observe_runtime_web_session(req: RuntimeSessionObserveRequest) -> dict:
+    """Start the session-specific follow used by native Web MCP calls."""
+    return await get_agent_service().observe_native_web_session(req.runtime_session_id)
 
 
 # ---------- 模型(参考 DSH 的模型切换交互) ----------
@@ -1220,7 +1230,12 @@ def build_agent_mcp_asgi(token_provider, context_acquirer=None,
                     )
                     return JSONResponse({"ok": True, **lease})
                 except LookupError as exc:
-                    return JSONResponse({"detail": str(exc)}, status_code=409)
+                    return JSONResponse({
+                        "detail": {
+                            "code": str(getattr(exc, "code", "MCP_CONTEXT_UNAVAILABLE")),
+                            "message": str(exc),
+                        },
+                    }, status_code=409)
                 except Exception as exc:  # noqa: BLE001
                     return JSONResponse({"detail": str(exc)}, status_code=500)
             if path == "/context/release" and request.method == "POST":

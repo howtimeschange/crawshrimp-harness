@@ -858,6 +858,19 @@
             </div>
           </div>
         </section>
+        <!--
+          The IM panel stays outside this Transition so its authenticated
+          iframe survives settings navigation.  A concrete, non-rendering
+          branch still has to become the Transition child when IM is active:
+          without it Vue retains the previously visible panel beside the
+          persistent IM panel and shrinks the iframe to a narrow strip.
+        -->
+        <span
+          v-else-if="activePanelId === 'im-bots'"
+          key="im-bots-transition-anchor"
+          class="im-panel-transition-anchor"
+          aria-hidden="true"
+        ></span>
         </Transition>
         <section
           v-if="imSettingsPanelMountedOnce"
@@ -2340,6 +2353,15 @@ watch(imSettingsUrl, () => {
   flex-direction: column;
   gap: 20px;
   transform-origin: top left;
+}
+
+.im-panel-transition-anchor {
+  display: block;
+  flex: 0 0 0;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .agent-op-row { display: flex; flex-wrap: wrap; gap: 10px; }

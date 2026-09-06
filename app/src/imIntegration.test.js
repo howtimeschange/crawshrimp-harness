@@ -50,13 +50,22 @@ test('Crawshrimp settings keeps the dsh-im management surface mounted across nav
   assert.match(settings, /children: \[\{ id: 'im-bots', label: '机器人接入'/)
   assert.match(settings, /const imSettingsPanelMountedOnce = ref/)
   assert.match(settings, /v-show="activePanelId === 'im-bots'"/)
+  assert.match(settings, /v-else-if="activePanelId === 'im-bots'"[\s\S]*key="im-bots-transition-anchor"/)
+  assert.match(settings, /\.im-panel-transition-anchor\s*\{\s*display:\s*block;[\s\S]*flex:\s*0\s+0\s+0;[\s\S]*width:\s*0;[\s\S]*height:\s*0;/)
   assert.match(settings, /event\.origin !== new URL\(imSettingsUrl\.value\)\.origin/)
   assert.match(settings, /event\.data\?\.__crawshrimp === 'im-settings-ready'/)
   assert.match(slots, /function openCrawshrimpImSettings\(/)
   assert.match(slots, /function isolateCrawshrimpImSurface\(overlay\)/)
+  assert.match(slots, /let node = page\s*\n\s*while \(node && node !== root\)/)
+  assert.match(slots, /node\.dataset\.csImSurfacePath = '1'/)
+  assert.match(slots, /\[data-cs-im-surface-path="1"\]:not\(\.dim-page\) > :not\(\[data-cs-im-surface-path="1"\]\):not\(\.dim-page\)/)
+  assert.match(slots, /function isCurrentSettingsNav\(button\)/)
+  assert.match(slots, /button\.classList\?\.contains\('VOzbGW_active'\)/)
+  assert.match(slots, /if \(!imTab\) \{[\s\S]*pluginNav[\s\S]*return false/)
+  assert.match(slots, /if \(!isCurrentSettingsNav\(imTab\)\) \{\s*imTab\.click\(\)\s*return false/)
   assert.match(slots, /postToShell\(\{ __crawshrimp: 'im-settings-ready' \}\)/)
   assert.match(slots, /\[role="tab"\], \.VOzbGW_navCell/)
-  assert.match(slots, /getAttribute\('aria-current'\) !== 'true'/)
+  assert.match(slots, /getAttribute\('aria-current'\) === 'true'/)
 })
 
 test('IM policy confines returned files to the active workspace, including symlink escapes', async (t) => {
@@ -74,6 +83,40 @@ test('IM policy confines returned files to the active workspace, including symli
   assert.equal(await bridge.isImArtifactPathAllowed(workspace, 'inside.txt'), true)
   assert.equal(await bridge.isImArtifactPathAllowed(workspace, join(outside, 'outside.txt')), false)
   assert.equal(await bridge.isImArtifactPathAllowed(workspace, 'escape.txt'), false)
+})
+
+test('MCP context acquire reports structured backend failures without an object-string error', async (t) => {
+  const bridge = await import(`${pathToFileURL(resolve(harnessRoot, 'crawshrimp-product-bridge/lib/index.js')).href}?context-error=${Date.now()}`)
+  const originalFetch = globalThis.fetch
+  const originalUrl = process.env.CRAWSHRIMP_MCP_URL
+  const originalToken = process.env.CRAWSHRIMP_MCP_TOKEN
+  process.env.CRAWSHRIMP_MCP_URL = 'http://127.0.0.1:18965/mcp'
+  process.env.CRAWSHRIMP_MCP_TOKEN = 'test-token'
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    detail: {
+      code: 'RUNTIME_SESSION_CONTEXT_UNAVAILABLE',
+      message: 'runtime session 没有可用的 active run: session-example',
+    },
+  }), { status: 409, headers: { 'content-type': 'application/json' } })
+  t.after(() => {
+    globalThis.fetch = originalFetch
+    if (originalUrl === undefined) delete process.env.CRAWSHRIMP_MCP_URL
+    else process.env.CRAWSHRIMP_MCP_URL = originalUrl
+    if (originalToken === undefined) delete process.env.CRAWSHRIMP_MCP_TOKEN
+    else process.env.CRAWSHRIMP_MCP_TOKEN = originalToken
+  })
+
+  await assert.rejects(
+    bridge.postMcpContext('acquire', { runtime_session_id: 'session-example' }),
+    error => {
+      assert.equal(error.code, 'RUNTIME_SESSION_CONTEXT_UNAVAILABLE')
+      assert.equal(error.status, 409)
+      assert.match(error.message, /Crawshrimp MCP context acquire failed \[RUNTIME_SESSION_CONTEXT_UNAVAILABLE\]/)
+      assert.match(error.message, /active run/)
+      assert.doesNotMatch(String(error), /\[object Object\]/)
+      return true
+    },
+  )
 })
 
 test('IM fetch policy locks workspace creation and only registers sessions after a valid in-root read', async (t) => {
