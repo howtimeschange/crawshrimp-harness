@@ -378,6 +378,31 @@ def update_run(run_id: str, **fields: Any) -> None:
             conn.close()
 
 
+def cancel_queued_run(run_id: str, *, error_code: str = "", error_message: str = "") -> bool:
+    """Atomically cancel one queued Agent Run without racing its queue consumer.
+
+    The inherited-Automation wait boundary must never cancel a turn that has
+    just started.  A read followed by ``update_run`` is not sufficient here:
+    the single consumer can switch the status to ``starting`` between those
+    two operations.  SQLite performs the compare-and-set in one statement.
+    """
+    with _lock:
+        conn = _conn()
+        try:
+            cursor = conn.execute(
+                """
+                UPDATE agent_runs
+                SET status='canceled', error_code=?, error_message=?, finished_at=?
+                WHERE run_id=? AND status='queued'
+                """,
+                (str(error_code or ""), str(error_message or "")[:500], _now_iso(), run_id),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
+        finally:
+            conn.close()
+
+
 def get_run(run_id: str) -> Optional[dict]:
     with _lock:
         conn = _conn()
@@ -612,6 +637,20 @@ def get_tool_call(run_id: str, dsh_call_id: str) -> Optional[dict]:
             return _row(conn.execute(
                 "SELECT * FROM agent_tool_calls WHERE run_id = ? AND dsh_call_id = ?", (run_id, dsh_call_id)
             ).fetchone())
+        finally:
+            conn.close()
+
+
+def list_tool_calls_for_run(run_id: str) -> list[dict]:
+    """Return persisted tool-call projections in their execution order."""
+    with _lock:
+        conn = _conn()
+        try:
+            return _fetch(
+                conn,
+                "SELECT * FROM agent_tool_calls WHERE run_id = ? ORDER BY created_at, tool_call_id",
+                (str(run_id or ""),),
+            )
         finally:
             conn.close()
 

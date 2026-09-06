@@ -1,8 +1,14 @@
+import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
 
-import quick_validate
+
+_VALIDATOR_PATH = Path(__file__).resolve().parents[1] / "quick_validate.py"
+_VALIDATOR_SPEC = importlib.util.spec_from_file_location("crawshrimp_skill_quick_validate", _VALIDATOR_PATH)
+assert _VALIDATOR_SPEC and _VALIDATOR_SPEC.loader
+quick_validate = importlib.util.module_from_spec(_VALIDATOR_SPEC)
+_VALIDATOR_SPEC.loader.exec_module(quick_validate)
 
 
 def make_skill_root(tmpdir: str, skill_text: str) -> Path:

@@ -31,7 +31,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, List, Mapping, Optional
 from urllib.parse import urlencode, parse_qs, urlparse, unquote
 from uuid import uuid4
 
@@ -48,6 +48,7 @@ from core import bala_ai_video_review
 from core import buyer_show_service
 from core.agent import db as agent_db
 from core.agent import api as agent_api
+from core.agent import mcp_gateway as agent_mcp_gateway
 from core.agent.service import AgentService
 from core.config import load_config, patch_config, save_config
 from core.atomic_file import atomic_write_json, atomic_write_text, remove_path_with_retry, replace_with_retry
@@ -68,6 +69,8 @@ from core import data_sink
 from core import notifier
 from core import odps_sync
 from core import scheduler as sched_module
+from core.automation_controller import AutomationController
+from core.automation_program_proofs import consume_program_test_proof, issue_program_test_proof
 from core.cdp_bridge import CDPBridge, get_bridge, reset_bridge
 from core.browser_session import open_browser_session
 from core.dev_harness import run_harness_capture, run_harness_eval, run_harness_snapshot
@@ -546,6 +549,18 @@ def _schedule_next_run_map() -> dict[str, str]:
             str(job.get("schedule_uid") or ""): str(job.get("next_run") or "")
             for job in sched_module.list_jobs()
             if str(job.get("kind") or "") == "task_schedule" and str(job.get("schedule_uid") or "")
+        }
+    except Exception:
+        return {}
+
+
+def _automation_next_run_map() -> dict[str, str]:
+    """Project only Controller-owned scheduler jobs onto Automation readbacks."""
+    try:
+        return {
+            str(job.get("automation_uid") or ""): str(job.get("next_run") or "")
+            for job in sched_module.list_automation_next_runs()
+            if str(job.get("automation_uid") or "")
         }
     except Exception:
         return {}
@@ -9384,6 +9399,29 @@ async def lifespan(app: FastAPI):
             logger.info("agent service started")
         except Exception:
             logger.exception("agent service startup failed; continuing without agent")
+        # Agent Automations have their own durable Controller and scheduler
+        # namespace.  Bind the Controller back to AgentService so every linked
+        # Agent Run is projected to a terminal Automation state.
+        try:
+            automation_controller = AutomationController(
+                getattr(app.state, "agent_service", None),
+                sched_module,
+            )
+            app.state.automation_controller = automation_controller
+            agent_service = getattr(app.state, "agent_service", None)
+            bind_controller = getattr(agent_service, "set_automation_controller", None)
+            if callable(bind_controller):
+                bind_controller(automation_controller)
+            agent_mcp_gateway.set_automation_controller(automation_controller)
+            automation_controller.reconcile_interrupted_agent_runs()
+            automation_controller.restore()
+            recover_receipts = getattr(agent_service, "recover_automation_receipts", None)
+            if callable(recover_receipts):
+                await recover_receipts()
+        except Exception:
+            app.state.automation_controller = None
+            agent_mcp_gateway.set_automation_controller(None)
+            logger.exception("agent automation controller startup failed; continuing without automations")
     logger.info("crawshrimp core started")
     try:
         yield
@@ -9404,6 +9442,8 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.exception("ai video worker shutdown failed")
         app.state.owns_backend_instance = False
+        app.state.automation_controller = None
+        agent_mcp_gateway.set_automation_controller(None)
         instance_lock.close()
 
 
@@ -12667,6 +12707,48 @@ class TaskSchedulePatchRequest(BaseModel):
     notify_template: Optional[str] = None
 
 
+class AutomationCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=120)
+    objective_prompt: str = Field(min_length=1, max_length=20_000)
+    automation_kind: str
+    context_mode: str = "isolated"
+    source_session_id: str = ""
+    source_runtime_session_id: str = ""
+    schedule: dict = Field(default_factory=dict)
+    loop_policy: dict = Field(default_factory=dict)
+    execution_policy: dict = Field(default_factory=dict)
+    program: Optional[dict] = None
+    program_test_proof: str = ""
+    enabled: bool = True
+
+
+class AutomationPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    objective_prompt: Optional[str] = Field(default=None, min_length=1, max_length=20_000)
+    automation_kind: Optional[str] = None
+    context_mode: Optional[str] = None
+    source_session_id: Optional[str] = None
+    source_runtime_session_id: Optional[str] = None
+    schedule: Optional[dict] = None
+    loop_policy: Optional[dict] = None
+    execution_policy: Optional[dict] = None
+    program: Optional[dict] = None
+    program_test_proof: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+class AutomationProgramTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    program: dict
+    facts: dict = Field(default_factory=dict)
+    checkpoint: dict = Field(default_factory=dict)
+
+
 class ProbeTaskParamsRequest(BaseModel):
     params: Optional[dict] = None
     current_tab_id: Optional[str] = None
@@ -12703,6 +12785,176 @@ def _serialize_task_schedule(row: dict, next_runs: Optional[dict[str, str]] = No
     next_runs = next_runs if next_runs is not None else _schedule_next_run_map()
     data["next_run"] = next_runs.get(str(data.get("schedule_uid") or ""), "")
     return data
+
+
+def get_automation_controller() -> AutomationController:
+    controller = getattr(app.state, "automation_controller", None)
+    if controller is None:
+        raise HTTPException(503, "Automation controller not ready")
+    return controller
+
+
+def _serialize_automation(row: dict) -> dict:
+    data = dict(row or {})
+    data["enabled"] = bool(data.get("enabled"))
+    data["archived"] = bool(data.get("archived"))
+    data["next_run"] = _automation_next_run_map().get(str(data.get("automation_uid") or ""), "")
+    for key in ("schedule", "loop_policy", "execution_policy", "checkpoint", "program", "facts_summary", "checkpoint_before", "checkpoint_after", "result_summary"):
+        if not isinstance(data.get(key), dict):
+            data[key] = {}
+    return data
+
+
+def _validate_automation_inherited_session(values: dict, *, existing: Optional[dict] = None) -> None:
+    context_mode = str(values.get("context_mode") if "context_mode" in values else (existing or {}).get("context_mode") or "isolated").strip().lower()
+    requested_source_session_id = str(values.get("source_session_id") or "").strip()
+    requested_runtime_session_id = str(values.get("source_runtime_session_id") or "").strip()
+    if context_mode != "inherited":
+        # Isolated DSH tasks receive an origin binding only inside the MCP
+        # creation tool, where it is derived from the active Agent Run.  The
+        # management HTTP API must not become an alternative way to direct a
+        # future receipt to an arbitrary local conversation.
+        if existing is None and (requested_source_session_id or requested_runtime_session_id):
+            raise HTTPException(422, "isolated Automation source session is bound by its creating conversation")
+        return
+    source_session_id = requested_source_session_id or str((existing or {}).get("source_session_id") or "").strip()
+    source_session = agent_db.get_session(source_session_id) or {}
+    if not source_session_id or not source_session:
+        raise HTTPException(422, "inherited Automation requires an existing source_session_id")
+    runtime_session_id = str(source_session.get("runtime_session_id") or "").strip()
+    if requested_runtime_session_id and requested_runtime_session_id != runtime_session_id:
+        raise HTTPException(422, "source_runtime_session_id must match the source_session_id")
+    # Keep the durable origin record canonical for HTTP-created inherited
+    # Automations.  A later receipt always looks this value up through the
+    # source session, but storing the matching id preserves audit clarity.
+    if "source_session_id" in values:
+        values["source_session_id"] = source_session_id
+    if "source_runtime_session_id" in values or existing is None:
+        values["source_runtime_session_id"] = runtime_session_id
+
+
+def _validate_automation_browser_binding(values: dict) -> None:
+    """Keep browser authority on the Agent/MCP creation path.
+
+    The management API has no request-scoped Chrome grant.  Accepting a tab id
+    here would let a caller bind an unattended run to an arbitrary live page;
+    only ``automation_create`` can derive this field from the active
+    conversation's authorized tab.
+    """
+    policy = values.get("execution_policy")
+    if isinstance(policy, Mapping) and str(policy.get("browser_tab_id") or "").strip():
+        raise HTTPException(
+            422,
+            "execution_policy.browser_tab_id can only be bound by the creating Agent conversation",
+        )
+
+
+def _consume_automation_program_test_proof(values: dict) -> None:
+    """Enforce the Program test contract on the HTTP mutation surface."""
+    program = values.get("program")
+    proof = values.pop("program_test_proof", "")
+    if not isinstance(program, dict):
+        return
+    if not consume_program_test_proof(str(proof or ""), program):
+        raise HTTPException(
+            422,
+            "保存或启用条件 Program 前，请先调用 /automations/program-test，并携带本次返回的 program_test_proof",
+        )
+
+
+@app.post("/automations/program-test")
+def test_automation_program_endpoint(req: AutomationProgramTestRequest):
+    from core.automation_program import ProgramValidationError, evaluate_program
+
+    try:
+        result = evaluate_program(req.program, facts=req.facts, checkpoint=req.checkpoint, now=datetime.now().astimezone().isoformat())
+        return {"result": {**result, "program_test_proof": issue_program_test_proof(req.program)}}
+    except ProgramValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/automations")
+def list_automations_endpoint(include_archived: bool = False):
+    return {"items": [_serialize_automation(item) for item in get_automation_controller().list(include_archived=include_archived)]}
+
+
+@app.post("/automations", status_code=201)
+def create_automation_endpoint(req: AutomationCreateRequest):
+    values = req.model_dump()
+    _validate_automation_browser_binding(values)
+    _validate_automation_inherited_session(values)
+    _consume_automation_program_test_proof(values)
+    try:
+        automation = get_automation_controller().create(values)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"automation": _serialize_automation(automation)}
+
+
+@app.get("/automations/{automation_uid}")
+def get_automation_endpoint(automation_uid: str):
+    try:
+        return {"automation": _serialize_automation(get_automation_controller().get(automation_uid))}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.patch("/automations/{automation_uid}")
+def patch_automation_endpoint(automation_uid: str, req: AutomationPatchRequest):
+    controller = get_automation_controller()
+    try:
+        existing = controller.get(automation_uid)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    values = _model_patch(req)
+    _validate_automation_browser_binding(values)
+    _validate_automation_inherited_session(values, existing=existing)
+    _consume_automation_program_test_proof(values)
+    try:
+        return {"automation": _serialize_automation(controller.update(automation_uid, values))}
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.delete("/automations/{automation_uid}")
+async def archive_automation_endpoint(automation_uid: str):
+    try:
+        automation = await get_automation_controller().archive(automation_uid)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"ok": True, "automation": _serialize_automation(automation)}
+
+
+@app.post("/automations/{automation_uid}/run-now")
+async def run_automation_now_endpoint(automation_uid: str, request_uid: str = ""):
+    try:
+        return {"run": _serialize_automation(await get_automation_controller().run_now(automation_uid, request_uid=request_uid))}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/automations/{automation_uid}/pause")
+async def pause_automation_endpoint(automation_uid: str):
+    try:
+        return {"automation": _serialize_automation(await get_automation_controller().pause(automation_uid))}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/automations/{automation_uid}/resume")
+def resume_automation_endpoint(automation_uid: str):
+    try:
+        return {"automation": _serialize_automation(get_automation_controller().resume(automation_uid))}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.get("/automations/{automation_uid}/runs")
+def list_automation_runs_endpoint(automation_uid: str, limit: int = 50):
+    try:
+        return {"items": [_serialize_automation(item) for item in get_automation_controller().runs(automation_uid, limit=limit)]}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 def _model_patch(req: BaseModel) -> dict:

@@ -4,8 +4,10 @@
 // 用户决策后回传结果。
 // FastAPI 侧经 HTTP 调用本插件的 /api/crawshrimp/approval/request。
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { timingSafeEqual } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { isAbsolute, relative, resolve } from 'node:path'
+import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 
 export const name = 'crawshrimp-product-bridge'
 
@@ -37,6 +39,10 @@ const APPROVAL_ARGUMENTS_MAX_CHARS = 4_500
 const MODEL_CATALOG_TIMEOUT_MS = 10_000
 const SESSION_SELECT_MODEL_TIMEOUT_MS = 30_000
 const SESSION_PERMISSION_TIMEOUT_MS = 10_000
+const AUTOMATION_RECEIPT_PROVIDER = 'crawshrimp-automation'
+const AUTOMATION_RECEIPT_MODEL_PREFIX = 'receipt:'
+const AUTOMATION_RECEIPT_MAX_CHARS = 2_000
+const AUTOMATION_RECEIPT_ID_MAX_CHARS = 256
 
 function imSessionRegistry() {
   if (!(globalThis[CRAWSHRIMP_IM_SESSION_REGISTRY] instanceof Set)) {
@@ -563,6 +569,123 @@ function findLiveAgent(ctx, sessionId) {
   return undefined
 }
 
+function headerValue(req, name) {
+  const headers = req?.headers
+  if (!headers) return ''
+  if (typeof headers.get === 'function') return String(headers.get(name) || '')
+  return String(headers[String(name).toLowerCase()] || '')
+}
+
+function sameSecret(left, right) {
+  const expected = Buffer.from(String(left || ''))
+  const supplied = Buffer.from(String(right || ''))
+  return expected.length > 0
+    && expected.length === supplied.length
+    && timingSafeEqual(expected, supplied)
+}
+
+function sessionHasOpenTurn(events) {
+  let open = false
+  for (const event of Array.isArray(events) ? events : []) {
+    if (event?.type === 'turn/start') open = true
+    if (event?.type === 'turn/end') open = false
+  }
+  return open
+}
+
+function receiptModel(receiptId) {
+  return `${AUTOMATION_RECEIPT_MODEL_PREFIX}${receiptId}`
+}
+
+/**
+ * Append a product-owned completion receipt to the actual DSH conversation.
+ *
+ * The source session stays idle; this creates a valid, balanced DSH turn so
+ * the Web client receives the standard `session/event` stream and renders the
+ * receipt as an assistant message. `receiptId` is a durable idempotency key:
+ * a retry or backend restart cannot duplicate a visible completion message.
+ */
+export function appendCrawshrimpAutomationReceipt(ctx, body) {
+  const sessionId = String(body?.sessionId || '').trim()
+  const receiptId = String(body?.receiptId || '').trim()
+  const text = String(body?.text || '').trim()
+  if (!sessionId || !receiptId || !text
+    || receiptId.length > AUTOMATION_RECEIPT_ID_MAX_CHARS
+    || text.length > AUTOMATION_RECEIPT_MAX_CHARS
+    || receiptId.includes('\0') || text.includes('\0')) {
+    return { ok: false, status: 400, error: { code: 'bad-request', message: 'sessionId, receiptId and receipt text are required' } }
+  }
+  const agent = findLiveAgent(ctx, sessionId)
+  if (agent === undefined) {
+    return { ok: false, status: 409, error: { code: 'NO_LIVE_AGENT', message: 'No live agent for this session' } }
+  }
+  const session = agent.session
+  const events = Array.isArray(session?.events) ? session.events : []
+  const model = receiptModel(receiptId)
+  const existing = events.find((event) => (
+    event?.type === 'assistant/message'
+      && event?.data?.message?.source?.kind === 'model'
+      && event?.data?.message?.source?.provider === AUTOMATION_RECEIPT_PROVIDER
+      && event?.data?.message?.source?.model === model
+  ))
+  if (existing) {
+    return {
+      ok: true,
+      status: 200,
+      appended: false,
+      messageId: String(existing.data.message.id || ''),
+      receiptId,
+    }
+  }
+  if (agent.status === 'running' || sessionHasOpenTurn(events)) {
+    return { ok: false, status: 409, error: { code: 'SESSION_BUSY', message: 'Source session is currently running' } }
+  }
+  if (typeof session?.append !== 'function') {
+    return { ok: false, status: 500, error: { code: 'SESSION_APPEND_UNAVAILABLE', message: 'Source session cannot append a receipt' } }
+  }
+
+  const lastTurn = events.reduce((latest, event) => (
+    event?.type === 'turn/start' && Number.isInteger(event?.data?.turn)
+      ? Math.max(latest, event.data.turn)
+      : latest
+  ), 0)
+  const turn = lastTurn + 1
+  const step = 1
+  let turnOpen = false
+  let stepOpen = false
+  try {
+    session.append('turn/start', { turn })
+    turnOpen = true
+    session.append('step/start', { turn, step })
+    stepOpen = true
+    const message = createAssistantMessage({
+      content: [{ type: 'text', text }],
+      source: { provider: AUTOMATION_RECEIPT_PROVIDER, model },
+    })
+    session.append('assistant/message', { turn, step, message }, { surfaceOp: 'append' })
+    session.append('step/end', { turn, step })
+    stepOpen = false
+    session.append('turn/end', { turn, reason: { kind: 'completed' } })
+    turnOpen = false
+    return { ok: true, status: 200, appended: true, messageId: String(message.id), receiptId }
+  } catch (error) {
+    // A partially appended receipt must never leave its source DSH session in
+    // an open turn. Best-effort closure is safe even when the message append
+    // itself succeeded: retry then finds the receipt by its durable source.
+    if (stepOpen) {
+      try { session.append('step/end', { turn, step }) } catch {}
+    }
+    if (turnOpen) {
+      try { session.append('turn/end', { turn, reason: { kind: 'failed' } }) } catch {}
+    }
+    return {
+      ok: false,
+      status: 500,
+      error: { code: 'SESSION_APPEND_FAILED', message: String(error?.message || error) },
+    }
+  }
+}
+
 export function apply(ctx) {
   const sessionRegistry = imSessionRegistry()
   const workspaceRoot = String(process.env.CRAWSHRIMP_WORKSPACE_ROOT || '').trim()
@@ -671,6 +794,28 @@ export function apply(ctx) {
               previous: result.previous,
               ...(result.policy === undefined ? {} : { policy: result.policy }),
             }
+            : { ok: false, error: result.error }))
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+          res.end(JSON.stringify({ ok: false, error: apiProxyFailure(error) }))
+        }
+        return
+      }
+      if (url.pathname === '/api/crawshrimp/session/automation-receipt' && req.method === 'POST') {
+        const token = String(process.env.CRAWSHRIMP_API_TOKEN || '').trim()
+        if (!sameSecret(token, headerValue(req, 'x-crawshrimp-token'))) {
+          res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+          res.end(JSON.stringify({ ok: false, error: { code: 'UNAUTHORIZED', message: 'Crawshrimp API token required' } }))
+          return
+        }
+        try {
+          const result = appendCrawshrimpAutomationReceipt(ctx, await readBody(req))
+          res.writeHead(result.status ?? (result.ok ? 200 : 500), {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+          })
+          res.end(JSON.stringify(result.ok
+            ? { ok: true, appended: result.appended, messageId: result.messageId, receiptId: result.receiptId }
             : { ok: false, error: result.error }))
         } catch (error) {
           res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })

@@ -113,7 +113,35 @@ git diff --check
 
 2026-08-15 Electron CDP 实测：`browser_navigate` 已改为自动执行，不再生成导航审批卡或写入 `navigate` grant toolset；其他风险操作仍按 DSH 原生权限策略处理。iframe 重启后原会话、2 个图片原图节点、菜单、`📎` 和 `@` 都恢复。当前会话两个 grant tab 生成两个实时窗口，活跃窗口位于最后绘制层并按 36px 级联；关闭精确 tab 后 2 秒内对应窗口和截图流同时消失。
 
-## 8. 构建边界
+## 8. Agent Automations（2026-09-05）
+
+本地优先的 Agent Automation 已接入 Harness：智能体会话可通过 MCP 创建、测试、运行、暂停、恢复和归档 Automation；桌面端在“任务中心 → 自动化”中提供同一套管理入口。
+
+- 触发支持一次定时、固定间隔、五字段 Cron 和 checkpoint 驱动的周期闭环；调度器不是事实来源，SQLite 中的定义、Run、Program 版本和 checkpoint 才是。
+- Condition Program 是只读的受限 JSON AST。它只从 `config`、`facts`、`checkpoint` 选择分支，不能执行脚本、网络、CDP、磁盘或进程操作，也不会扩大 Automation 的授权。
+- 启用包含 Program 的 Automation 前，桌面端必须用输入的 facts/checkpoint 调用 Program 测试并展示匹配分支；编辑 Program 或测试输入会使结果失效。
+- 有效能力为 Automation policy 与 Program 分支能力的交集。观察、授权或验证证据不足会持久化为 `needs_review`，不会生成隐藏的后台人工审批。
+- 一个 Automation 单飞；离线错过的触发记为 `missed` 而不补跑。暂停或归档会撤销调度并请求取消关联 Agent Run；取消无法确认时明确记录为 `needs_review`，迟到的 observation/verification 不会继续执行。
+- 每个 Run 回读 facts、结果、错误、Agent session/run 与已声明的 task/artifact 链接；链接仅用于审计，不会赋予执行能力。
+
+本轮实际源码验证：
+
+```bash
+/Users/xingyicheng/Documents/crawshrimp-harness/venv/bin/python -m pytest tests/ -q
+# 1407 passed, 1 skipped, 45 subtests passed
+
+cd app && npm test --ignore-scripts
+# 577 passed, 1 skipped
+
+cd app && npm run vite:build
+# exit 0
+```
+
+`npm test --ignore-scripts` 是本隔离 worktree 的确切前端验证命令：该 worktree 没有自己的 ignored runtime `node_modules`，测试期间仅复用了本机已安装依赖；跳过的 pretest 会原地修补运行时依赖，因此未把该写操作作用于主工作区。以上不等同于 Electron 窗口/CDP 实机回读。
+
+当前非目标：云端调度、远程 worker、外部 webhook、自动发布复用脚本。临时脚本仅限本次 Run；验证成功后可以建议沉淀为复用脚本，但不能自动发布。
+
+## 9. 构建边界
 
 - `npm --prefix app run vite:build` 验证前端生产构建。
 - `npm --prefix app run stage:harness` 生成当前主机目标的 DSH 生产闭包并运行 Electron-as-Node boot check；正式 macOS 双架构构建会分别生成 `build-staging/deepseek-harness/darwin-arm64` 与 `darwin-x64`。

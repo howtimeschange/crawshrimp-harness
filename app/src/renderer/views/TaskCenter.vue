@@ -5,7 +5,7 @@
         <h2>任务中心</h2>
         <p>实例化管理脚本任务、审批状态、历史结果和定时运行</p>
       </div>
-      <div class="tc-head-actions">
+      <div v-if="activeGroup !== 'automations'" class="tc-head-actions">
         <button type="button" class="tc-secondary" @click="startCreateSchedule">
           新增数据抓取定时任务
         </button>
@@ -29,7 +29,7 @@
           {{ tab.label }}
         </button>
       </div>
-      <div class="tc-search">
+      <div v-if="activeGroup !== 'automations'" class="tc-search">
         <input
           v-model.trim="keyword"
           type="search"
@@ -42,7 +42,11 @@
       </div>
     </section>
 
-    <section class="tc-content">
+    <section v-if="activeGroup === 'automations'" class="tc-automation-content">
+      <AutomationCenter />
+    </section>
+
+    <section v-else class="tc-content">
       <div v-if="error || scheduleError" class="tc-state error">{{ error || scheduleError }}</div>
       <div v-else-if="loading || schedulesLoading" class="tc-state">加载中...</div>
       <div v-else-if="!combinedItems.length" class="tc-state">暂无任务</div>
@@ -198,6 +202,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import AutomationCenter from './AutomationCenter.vue'
 
 const emit = defineEmits(['open-instance'])
 
@@ -214,6 +219,7 @@ const groups = [
   { id: 'current', label: '当前任务' },
   { id: 'pending', label: '待处理' },
   { id: 'history', label: '历史任务' },
+  { id: 'automations', label: '自动化' },
 ]
 
 const weekdays = [
@@ -663,6 +669,7 @@ function formatTime(value) {
 }
 
 watch(activeGroup, () => {
+  if (activeGroup.value === 'automations') return
   void loadInstances()
 })
 onMounted(() => {
@@ -886,6 +893,11 @@ onBeforeUnmount(stopAutoRefresh)
   min-height: 0;
   overflow-y: auto;
   padding: 12px 24px 24px;
+}
+.tc-automation-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 .tc-modal-backdrop {
   position: fixed;
