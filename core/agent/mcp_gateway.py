@@ -10,13 +10,17 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import copy
+import functools
+import inspect
 import json
 import re
 import time
 import uuid
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from mcp.server.mcpserver import MCPServer
 
@@ -27,9 +31,18 @@ from core.agent.cdp import CdpClient
 from core.agent.cordis_config import model_capabilities
 from core.agent.redaction import contains_redaction, redact_value
 from core.automation_program import ProgramValidationError, evaluate_program
+from core.automation_program_proofs import consume_program_test_proof, issue_program_test_proof
 
 PREVIEW_MAX_ROWS = 200
 PREVIEW_MAX_COLS = 50
+BROWSER_AUTOMATION_TOOLS = {
+    "browser_observe",
+    "browser_eval",
+    "browser_act",
+    "browser_verify",
+    "browser_navigate",
+    "browser_capture_requests",
+}
 PREVIEW_MAX_BYTES = 64 * 1024
 MAX_IN_MEMORY_PLAN_PARAMS = 512
 
@@ -220,11 +233,31 @@ def _automation_json_object(value: Any, *, field_name: str):
     return dict(value), None
 
 
+def _consume_automation_program_test_proof(payload: dict):
+    """Require a fresh, matching Program test at the MCP mutation boundary."""
+    program = payload.get("program")
+    proof = payload.pop("program_test_proof", "")
+    if not isinstance(program, Mapping):
+        return None
+    if consume_program_test_proof(str(proof or ""), program):
+        return None
+    return _failed(
+        "AUTOMATION_PROGRAM_TEST_REQUIRED",
+        "保存或启用条件 Program 前，必须先调用 automation_program_test，并携带本次返回的 program_test_proof",
+    )
+
+
 def tool_automation_list(include_archived: bool = False) -> dict:
     controller, error = _automation_controller_or_error()
     if error:
         return error
     return _ok(controller.list(include_archived=bool(include_archived)))
+
+
+def tool_automation_current_time() -> dict:
+    """Return the current explicit Shanghai clock for relative schedules."""
+    now = datetime.now(ZoneInfo("Asia/Shanghai")).replace(microsecond=0)
+    return _ok({"timezone": "Asia/Shanghai", "now": now.isoformat()})
 
 
 def tool_automation_get(automation_uid: str) -> dict:
@@ -241,6 +274,48 @@ def tool_automation_create(values: dict) -> dict:
     payload, error = _automation_json_object(values, field_name="values")
     if error:
         return error
+    # The model may suggest a source session in its JSON, but the actual
+    # creating conversation is request context owned by AgentService.  Bind it
+    # here so an isolated Automation can return its final receipt to the right
+    # conversation and cannot be redirected to an arbitrary session by a tool
+    # argument.
+    # These fields are never model-controlled.  Removing them before checking
+    # the request context also prevents a tool invocation outside an active
+    # Agent Run from retaining a forged receipt destination.
+    payload.pop("source_session_id", None)
+    payload.pop("source_runtime_session_id", None)
+    active_run = ctx.active_run or {}
+    source_session_id = str(active_run.get("session_id") or "").strip()
+    if source_session_id:
+        payload["source_session_id"] = source_session_id
+        source_session = db.get_session(source_session_id) or {}
+        payload["source_runtime_session_id"] = str(
+            source_session.get("runtime_session_id") or ""
+        ).strip()
+    execution_policy = payload.get("execution_policy")
+    if isinstance(execution_policy, Mapping):
+        # A durable Automation must never choose a Chrome page by positional
+        # fallback. Browser authority comes only from the creating turn's
+        # exact grant; model-supplied tab ids cannot redirect a future run.
+        execution_policy = dict(execution_policy)
+        execution_policy.pop("browser_tab_id", None)
+        requested_tools = {
+            str(item).strip()
+            for item in execution_policy.get("toolset", [])
+            if str(item).strip()
+        } if isinstance(execution_policy.get("toolset"), (list, tuple, set)) else set()
+        if requested_tools & BROWSER_AUTOMATION_TOOLS:
+            tab_id = str((ctx.grant or {}).get("tab_id") or "").strip()
+            if not tab_id:
+                return _failed(
+                    "AUTOMATION_BROWSER_CONTEXT_REQUIRED",
+                    "使用浏览器工具的自动化必须从当前对话绑定一个已授权页面",
+                )
+            execution_policy["browser_tab_id"] = tab_id
+        payload["execution_policy"] = execution_policy
+    proof_error = _consume_automation_program_test_proof(payload)
+    if proof_error:
+        return proof_error
     controller, error = _automation_controller_or_error()
     if error:
         return error
@@ -250,10 +325,48 @@ def tool_automation_create(values: dict) -> dict:
         return _failed("AUTOMATION_INVALID", str(exc))
 
 
+def automation_create_tool_description(now: Optional[datetime] = None) -> str:
+    """Return the Agent-visible creation contract.
+
+    MCP infers ``values`` as a generic JSON object.  Without a concrete
+    contract, a model may try to inspect local source files to reverse engineer
+    fields instead of directly using this safe controller API.  Keep the
+    business language here because it is an instruction to the Agent, not a
+    user-facing form or a requirement that users speak JSON.
+    """
+    return f"""由 Automation Controller 创建自动化。用户会用自然中文表达意图；你应直接理解并调用本工具，不能要求用户提供 JSON。
+
+对于“今天/明天/几点/三分钟后”等相对时间，先调用 automation_current_time 读取实时上海时间（不要根据训练数据或本工具描述猜测日期），再换算成带 +08:00 的未来 ISO-8601 时间；若用户给出的时间已过去，先追问或提出新的未来时间，不能创建已过期任务。
+
+不要为了猜字段而调用 fs_read、fs_list、fs_exec、browser_*、script_* 或 repo_*，也不要读取/修改任何文件。本工具的合同已经完整给出。
+
+调用参数只有 values 对象。所有自动化至少填写：
+- title：用户可见标题；objective_prompt：到点后智能体要做什么；automation_kind：scheduled 或 loop；context_mode：isolated 或 inherited；execution_policy：本次运行允许的工具集和限制。
+- 一次性定时（例如“今晚 22:47 提醒我”）：automation_kind="scheduled"；schedule={{"kind":"at","value":"未来 ISO-8601 时间","timezone":"Asia/Shanghai"}}；context_mode="isolated"；enabled=true。此场景不需要 Program。
+- 周期性条件闭环：automation_kind="loop"；loop_policy 包含 cycle_interval_seconds/max_cycles/failure_threshold；必须携带受限 program。先用 automation_program_test 对代表性 facts/checkpoint 校验条件和 checkpoint，再把该工具返回的 program_test_proof 原样放进 values；没有这份短时证明不能保存或启用 Program。
+
+若某项 MCP 工具在普通对话中原本需要确认，execution_policy 除 toolset 外还必须显式填写 allowed_risks（仅可为 read_only、local_write、external_write、destructive）。两者缺一不可：toolset 限定具体工具，allowed_risks 限定这次允许无人值守的风险类型。不要为普通提醒填写风险授权。
+
+无副作用的本地确认任务应明确限制 execution_policy：toolset 仅为 ["automation_record_verification"]，allowed_risks 为空，并将 allow_browser、allow_filesystem、allow_network、allow_external_messages、allow_script_publish 全部设为 false。不要为这类任务增加网页、文件、外部消息、外部服务或脚本发布。
+
+示例：用户说“今天 22:47 给我做一次本地验收提醒，到时只确认已完成，不访问网页或文件”，应创建标题“本地自动化验收提醒”的 isolated 一次性 scheduled Automation，使用 Asia/Shanghai 的未来 at 时间和上述无副作用策略。创建成功后只用返回结果向用户确认标题、运行时间、时区和安全限制。"""
+
+
 def tool_automation_update(automation_uid: str, values: dict) -> dict:
     payload, error = _automation_json_object(values, field_name="values")
     if error:
         return error
+    # The source conversation is bound by the creating request context. A
+    # later model turn may change title, schedule, Program, and policy, but it
+    # must never redirect a future receipt into another local conversation.
+    if "source_session_id" in payload or "source_runtime_session_id" in payload:
+        return _failed(
+            "AUTOMATION_SOURCE_SESSION_IMMUTABLE",
+            "source_session_id/source_runtime_session_id 只能由创建时的会话上下文绑定",
+        )
+    proof_error = _consume_automation_program_test_proof(payload)
+    if proof_error:
+        return proof_error
     controller, error = _automation_controller_or_error()
     if error:
         return error
@@ -324,7 +437,8 @@ def tool_automation_program_test(program: dict, facts: dict, checkpoint: dict | 
     if error:
         return error
     try:
-        return _ok(evaluate_program(program_value, facts=facts_value, checkpoint=checkpoint_value, now=db._now_iso()))
+        result = evaluate_program(program_value, facts=facts_value, checkpoint=checkpoint_value, now=db._now_iso())
+        return _ok({**result, "program_test_proof": issue_program_test_proof(program_value)})
     except ProgramValidationError as exc:
         return _failed("PROGRAM_INVALID", str(exc))
 
@@ -803,6 +917,13 @@ def _automation_approval_decision(plan: dict, summary: dict) -> Optional[str]:
         tool_name = "task_run"
     risk = str((plan or {}).get("risk") or (summary or {}).get("risk") or "").strip()
     allowed_tools = _automation_policy_values(policy, "allowed_tools")
+    # ``toolset`` is already the immutable exact MCP allowlist enforced by
+    # the registration wrapper. Requiring callers to repeat it under a second
+    # undocumented key made every otherwise-authorized unattended action fall
+    # into needs_review. The separate risk list remains an explicit second
+    # gate; neither list alone can approve an action.
+    if not allowed_tools:
+        allowed_tools = _automation_policy_values(policy, "toolset")
     allowed_risks = _automation_policy_values(policy, "allowed_risks")
     if tool_name in allowed_tools and risk in allowed_risks:
         return "approved"
@@ -839,6 +960,17 @@ def _execute_plan(plan: dict, params: dict) -> dict:
                                             source="agent", source_ref=tool_call_id or "",
                                             instance_uid=uid)
         uid = instance.get("uid") or instance.get("instance_uid") or uid
+        automation_run_uid = str(ctx.automation_run_uid or "").strip()
+        if automation_run_uid:
+            # Link at creation, before asynchronous task startup.  A timeout
+            # or user cancellation can then stop the exact downstream task
+            # even if worker output never returns to the Controller.
+            data_sink.link_agent_automation_run(
+                automation_run_uid,
+                "task_instance",
+                str(uid),
+                {"plan_id": str(plan.get("plan_id") or "")},
+            )
     except Exception as exc:  # noqa: BLE001
         db.update_plan(plan["plan_id"], status="failed")
         return _failed("TASK_CONFLICT", f"创建 Task Instance 失败: {exc}")
@@ -2006,6 +2138,11 @@ def _browser_tab() -> Optional[dict]:
         if match:
             return match
         return None
+    # Interactive legacy turns may still use the current first page. An
+    # Automation is unattended and must have an explicit persisted binding;
+    # otherwise a browser tool can observe or mutate an unrelated tab.
+    if isinstance(ctx.automation_policy, Mapping):
+        return None
     return pages[0]
 
 
@@ -2033,6 +2170,8 @@ def _browser_client() -> tuple[Optional[CdpClient], Optional[dict], Optional[dic
     if not tab:
         if grant and grant.get("tab_id"):
             return None, None, _failed("CONTEXT_REQUIRED", "本任务绑定的浏览器页面已关闭，请重新选择页面后再运行")
+        if isinstance(ctx.automation_policy, Mapping):
+            return None, None, _failed("CONTEXT_REQUIRED", "自动化没有已授权的浏览器页面绑定")
         return None, None, _failed("CONTEXT_REQUIRED", "9222 CDP 没有可用页面,请先启动 Chrome 并打开目标页面")
     _signal_browser_activity(tab)
     # URL 前缀是旧版抓虾二次权限层。现在 DSH 会话访问模式是唯一审批真值，
@@ -2361,10 +2500,59 @@ EXPECTED_TOOLS = [
     "image_generate", "image_assets", "video_generate", "video_assets",
     "repo_install", "repo_update", "repo_list", "repo_learn",
     "automation_list", "automation_get", "automation_create", "automation_update",
+    "automation_current_time",
     "automation_pause", "automation_resume", "automation_archive", "automation_run_now",
     "automation_runs", "automation_program_test", "automation_record_observation",
     "automation_record_verification",
 ]
+
+
+def _automation_tool_allowed(tool_name: str) -> bool:
+    """Enforce Automation's exact MCP allowlist at every registered tool.
+
+    A grant can describe browser access and the approval path can authorize a
+    risky operation, but neither is a substitute for the Automation's own
+    immutable toolset.  This guard deliberately runs before each tool body so
+    unapproved read-only helpers cannot become a side channel in unattended
+    work.
+    """
+    policy = ctx.automation_policy
+    if not isinstance(policy, Mapping):
+        return True
+    allowed_tools = _automation_policy_values(policy, "toolset")
+    if tool_name in allowed_tools:
+        return True
+    automation_run_uid = str(ctx.automation_run_uid or "").strip()
+    controller = getattr(ctx, "automation_controller", None)
+    if controller is not None and automation_run_uid:
+        try:
+            controller.mark_needs_review(
+                automation_run_uid,
+                "AUTOMATION_TOOL_DENIED",
+                f"Automation policy does not authorize MCP tool {tool_name}",
+            )
+        except Exception:
+            # Never fall through after a projection failure: the safe default
+            # is still to deny the unlisted tool.
+            pass
+    return False
+
+
+def _automation_tool_wrapper(tool_name: str, fn):
+    """Keep the original MCP input schema while adding the policy guard."""
+    @functools.wraps(fn)
+    async def guarded(*args, **kwargs):
+        if not _automation_tool_allowed(tool_name):
+            return _failed(
+                "AUTOMATION_TOOL_DENIED",
+                f"当前 Automation 未授权调用 {tool_name}",
+            )
+        result = fn(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    return guarded
 
 
 def create_agent_mcp_server() -> MCPServer:
@@ -2373,13 +2561,20 @@ def create_agent_mcp_server() -> MCPServer:
     mcp = MCPServer(
         name="crawshrimp",
         version="0.1.0",
-        instructions="抓虾智能体工具网关:浏览器自动化、任务编排、脚本与数据。所有副作用受抓虾授权与审批边界约束。",
+        instructions=(
+            "抓虾智能体工具网关:浏览器自动化、任务编排、脚本与数据。所有副作用受抓虾授权与审批边界约束。"
+            "当用户要求创建或管理自动化时，优先使用 automation_* 工具；不要通过文件、脚本或浏览器探查 Automation 的字段。"
+        ),
     )
 
     _orig_add_tool = mcp.add_tool
     def _track_add(fn, **kwargs):
-        if kwargs.get("name"):
-            _registered.add(str(kwargs["name"]))
+        tool_name = str(kwargs.get("name") or "").strip()
+        if tool_name:
+            _registered.add(tool_name)
+            # functools.wraps exposes the wrapped function's signature to MCP,
+            # so this security wrapper does not degrade its generated schema.
+            fn = _automation_tool_wrapper(tool_name, fn)
         _orig_add_tool(fn, **kwargs)
     mcp.add_tool = _track_add
 
@@ -2446,8 +2641,13 @@ def create_agent_mcp_server() -> MCPServer:
                  description="为已安装仓库生成技能包(SKILL.md),使智能体可学习调用")
 
     mcp.add_tool(tool_automation_list, name="automation_list", description="列出 Agent Automations")
+    mcp.add_tool(tool_automation_current_time, name="automation_current_time", description="读取实时上海时间；在解析今天、明天、几分钟后等相对计划前调用")
     mcp.add_tool(tool_automation_get, name="automation_get", description="读取一个 Agent Automation 与当前 Program")
-    mcp.add_tool(tool_automation_create, name="automation_create", description="创建由 Automation Controller 托管的定时或循环自动化")
+    mcp.add_tool(
+        tool_automation_create,
+        name="automation_create",
+        description=automation_create_tool_description(),
+    )
     mcp.add_tool(tool_automation_update, name="automation_update", description="更新 Automation 定义；Program 更新会生成新版本")
     mcp.add_tool(tool_automation_pause, name="automation_pause", description="暂停一个 Automation 并取消未开始的唤醒")
     mcp.add_tool(tool_automation_resume, name="automation_resume", description="恢复一个暂停的 Automation")
@@ -2456,7 +2656,15 @@ def create_agent_mcp_server() -> MCPServer:
     mcp.add_tool(tool_automation_runs, name="automation_runs", description="列出 Automation 的持久化运行记录与证据")
     mcp.add_tool(tool_automation_program_test, name="automation_program_test", description="在纯 facts/checkpoint 上测试受限条件 Program")
     mcp.add_tool(tool_automation_record_observation, name="automation_record_observation", description="仅当前关联 Automation Agent Run 可提交 JSON facts")
-    mcp.add_tool(tool_automation_record_verification, name="automation_record_verification", description="仅当前关联 Automation Agent Run 可提交验证结果")
+    mcp.add_tool(
+        tool_automation_record_verification,
+        name="automation_record_verification",
+        description=(
+            "仅当前关联 Automation Agent Run 可提交验证结果。result 必须有 verified=true；"
+            "若要回到创建对话的完成回执，使用 result.user_message 写用户应看到的最终文本"
+            "（例如“本地自动化验收已完成”），不要写工具过程、JSON 或内部说明。"
+        ),
+    )
 
     # 注册表快照断言(方案 §6.2):模型可见工具集合必须与清单完全一致
     actual = set(_registered)

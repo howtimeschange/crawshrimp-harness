@@ -468,6 +468,84 @@ def test_run_failure_before_status_assignment_keeps_original_error():
     asyncio.run(scenario())
 
 
+def test_automation_execution_timeout_cancels_the_worker_and_projects_a_timeout():
+    async def scenario():
+        service = AgentService()
+        service.worker = SimpleNamespace(request=AsyncMock(side_effect=[asyncio.TimeoutError(), {"ok": True}]))
+        service._ensure_generation = AsyncMock(return_value=True)
+        service._grant_for_run = lambda _item: None
+        service._runtime_session_id = lambda _session_id: "dsh-session-1"
+        service.broadcast = AsyncMock()
+        service._note_crash = Mock()
+        service._publish_automation_source_receipt = AsyncMock()
+        item = {
+            **_run_item(),
+            "automation_run_uid": "automation-run-1",
+            "automation_policy": {"execution_policy": {"timeout_seconds": 7}},
+        }
+        run = {"run_id": "run-1", "session_id": "session-1", "status": "queued"}
+        with (
+            patch("core.agent.service.db.get_run", return_value=run),
+            patch("core.agent.service.db.update_run") as update_run,
+            patch("core.agent.service.db.update_turn"),
+            patch("core.agent.service.db.update_session"),
+        ):
+            await service._run_one(item)
+
+        assert service.worker.request.await_args_list[0].kwargs["timeout"] == 7
+        assert service.worker.request.await_args_list[1].args == ("worker.cancel_active", {"runId": "run-1"})
+        assert service.worker.request.await_args_list[1].kwargs["timeout"] == 15
+        assert any(call.kwargs.get("error_code") == "AUTOMATION_TIMEOUT" for call in update_run.call_args_list)
+        service._note_crash.assert_not_called()
+
+    asyncio.run(scenario())
+
+
+def test_automation_worker_timeout_recovers_from_nan_policy_value():
+    from core.agent.service import _automation_worker_timeout_seconds
+
+    timeout = _automation_worker_timeout_seconds({
+        "automation_run_uid": "automation-run-1",
+        "automation_policy": {"execution_policy": {"timeout_seconds": float("nan")}},
+    })
+
+    assert timeout == 300.0
+
+
+@pytest.mark.parametrize("invalid_value", [float("inf"), 1.5])
+def test_inherited_automation_wait_recovers_from_invalid_policy_value(invalid_value):
+    from core.agent.service import _inherited_automation_wait_seconds
+
+    wait_seconds = _inherited_automation_wait_seconds({
+        "execution_policy": {"inherited_wait_seconds": invalid_value},
+    })
+
+    assert wait_seconds == 300
+
+
+def test_automation_timeout_stop_path_stops_linked_task_instances(monkeypatch, tmp_path):
+    _init_temp_agent_db(monkeypatch, tmp_path)
+    data_sink.init_db()
+    automation = data_sink.create_agent_automation({
+        "title": "下游停止", "objective_prompt": "停止下游任务", "automation_kind": "scheduled",
+        "context_mode": "isolated", "schedule": {}, "loop_policy": {}, "execution_policy": {},
+    })
+    run = data_sink.create_agent_automation_run(
+        automation["automation_uid"], "manual", "manual:stop-task", agent_run_id="agent-stop-task",
+    )
+    data_sink.link_agent_automation_run(run["run_uid"], "task_instance", "task-instance-1")
+    controlled = []
+    service = AgentService()
+
+    async def control(instance_uid, action):
+        controlled.append((instance_uid, action))
+
+    service._callbacks["control_task_instance"] = control
+    asyncio.run(service._cancel_automation_tasks_for_agent_run("agent-stop-task"))
+
+    assert controlled == [("task-instance-1", "stop")]
+
+
 def test_generation_model_configuration_error_does_not_consume_crash_budget():
     async def scenario():
         service = AgentService()

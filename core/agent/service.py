@@ -7,13 +7,15 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import inspect
 import json
+import math
 import os
 import secrets
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from core import data_sink
 from core.atomic_file import atomic_write_text, remove_path_with_retry
@@ -39,6 +41,8 @@ from core.config import load_config
 APPROVAL_WAIT_SECONDS = 15 * 60
 APPROVAL_MAX_CONCURRENCY = 4
 MCP_CONTEXT_LEASE_MAX_SECONDS = 30 * 60
+DEFAULT_INHERITED_AUTOMATION_WAIT_SECONDS = 5 * 60
+MAX_INHERITED_AUTOMATION_WAIT_SECONDS = 2 * 60 * 60
 
 # 审批桥最长会阻塞十五分钟，绝不能占用 asyncio 默认线程池（否则普通
 # to_thread 文件/CDP 操作会被审批等待饿死）。并发槽在提交 executor 前获取，
@@ -54,6 +58,58 @@ AUTO_APPROVE_TASK_IDS = frozenset({"batch_image_download", "cloud_folder_downloa
 
 class AgentModelConfigurationError(RuntimeError):
     """Raised when no configured model route can safely start the DSH runtime."""
+
+
+class AutomationRunTimeoutError(RuntimeError):
+    """A durable Automation exhausted its own configured execution budget."""
+
+
+def _automation_worker_timeout_seconds(item: dict) -> float:
+    """Return the per-run Automation deadline without changing interactive defaults.
+
+    A user-facing Automation policy is authoritative only for Controller-owned
+    turns.  Normal interactive turns intentionally retain the established
+    thirty-minute worker timeout plus protocol grace period.
+    """
+    if not str((item or {}).get("automation_run_uid") or "").strip():
+        return float(30 * 60 + 60)
+    policy = (item or {}).get("automation_policy")
+    execution_policy = policy.get("execution_policy") if isinstance(policy, dict) else {}
+    raw = execution_policy.get("timeout_seconds") if isinstance(execution_policy, dict) else None
+    if raw is None or str(raw).strip() == "":
+        # Definitions created before the timeout control existed must remain
+        # bounded too; match the Automation Center's visible default.
+        return 300.0
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 300.0
+    if not math.isfinite(value) or value <= 0:
+        return 300.0
+    # Keep malformed or hand-edited local SQLite values from creating an
+    # effectively unbounded unattended execution.  The Controller performs
+    # normal API validation for new definitions; this is a recovery guard.
+    return min(value, float(2 * 60 * 60))
+
+
+def _inherited_automation_wait_seconds(automation: dict) -> int:
+    """Return the bounded queue wait for an inherited Automation turn.
+
+    An inherited turn shares the source DSH conversation and cannot preempt an
+    interactive turn.  Old definitions predate this option, so they receive
+    the visible five-minute default instead of an unbounded queue wait.
+    """
+    policy = (automation or {}).get("execution_policy")
+    raw = policy.get("inherited_wait_seconds") if isinstance(policy, dict) else None
+    if raw is None or str(raw).strip() == "":
+        return DEFAULT_INHERITED_AUTOMATION_WAIT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_INHERITED_AUTOMATION_WAIT_SECONDS
+    if not math.isfinite(value) or not value.is_integer() or value <= 0:
+        return DEFAULT_INHERITED_AUTOMATION_WAIT_SECONDS
+    return min(int(value), MAX_INHERITED_AUTOMATION_WAIT_SECONDS)
 
 
 def _auto_approve_task(task_id: str, risk: str) -> bool:
@@ -735,6 +791,14 @@ class AgentService:
         self.generation_model: Optional[str] = None
         self.generation_model_provider: Optional[str] = None
         self._callbacks: dict[str, Any] = {}
+        self.automation_controller = None
+        self._automation_receipt_retry_tasks: dict[str, asyncio.Task] = {}
+        # Only inherited Automation turns need this deadline.  The queue is
+        # still globally serialized by the DSH worker, but this separate
+        # record makes the source-session safety guarantee observable and
+        # prevents a scheduled turn waiting behind interactive work forever.
+        self._inherited_automation_wait_tasks: dict[str, asyncio.Task] = {}
+        self._inherited_automation_waits: dict[str, dict] = {}
 
     # ---------- 初始化 / 恢复 ----------
 
@@ -750,6 +814,73 @@ class AgentService:
         mcp_gateway.ctx.write_artifact = callbacks.get("write_artifact")
         mcp_gateway.ctx.request_approval = self.request_approval
         mcp_gateway.ctx.emit_event = self._emit_tool_event_sync
+
+    def set_automation_controller(self, controller: Any) -> None:
+        """Bind the Controller that owns Automation run lifecycle state."""
+        self.automation_controller = controller
+
+    async def _project_automation_agent_terminal(
+        self,
+        item: dict,
+        *,
+        status: str,
+        error_code: str = "",
+        error_message: str = "",
+        retryable: bool = False,
+    ) -> dict:
+        """Close the durable Automation Run after its linked Agent Run ends."""
+        automation_run_uid = str(item.get("automation_run_uid") or "").strip()
+        agent_run_id = str(item.get("run_id") or "").strip()
+        if not automation_run_uid or not agent_run_id:
+            return {}
+        controller = self.automation_controller or getattr(mcp_gateway.ctx, "automation_controller", None)
+        project = getattr(controller, "project_agent_run_terminal", None)
+        if not callable(project):
+            return {}
+        try:
+            result = project(
+                automation_run_uid,
+                agent_run_id,
+                status,
+                error_code=error_code,
+                error_message=error_message,
+                retryable=retryable,
+            )
+            if inspect.isawaitable(result):
+                result = await result
+            return dict(result) if isinstance(result, dict) else {}
+        except Exception:  # noqa: BLE001
+            # The Agent run itself is already durably terminal.  Never allow a
+            # projection exception to reopen it or suppress the normal event.
+            logger.exception("Unable to project terminal Agent Run onto Automation")
+            return {}
+
+    async def _cancel_automation_task_instances(self, automation_run_uid: str) -> None:
+        """Best-effort stop for tasks created by one canceled Automation run."""
+        run_uid = str(automation_run_uid or "").strip()
+        control = self._callbacks.get("control_task_instance")
+        if not run_uid or not callable(control):
+            return
+        for link in data_sink.list_agent_automation_run_links(run_uid):
+            if str(link.get("link_kind") or "") != "task_instance":
+                continue
+            task_instance_uid = str(link.get("link_uid") or "").strip()
+            if not task_instance_uid:
+                continue
+            try:
+                result = control(task_instance_uid, "stop")
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:  # noqa: BLE001
+                # The Automation Run still records the terminal timeout or
+                # cancellation. A failed downstream stop remains observable
+                # in Task Center rather than blocking worker cleanup forever.
+                logger.exception("Unable to stop Automation task instance %s", task_instance_uid)
+
+    async def _cancel_automation_tasks_for_agent_run(self, agent_run_id: str) -> None:
+        run = data_sink.get_agent_automation_run_by_agent_run_id(agent_run_id)
+        if run:
+            await self._cancel_automation_task_instances(run.get("run_uid") or "")
 
     def register_run_context(self, runtime_session_id: str, run: dict,
                              grant: Optional[dict] = None) -> None:
@@ -1008,6 +1139,15 @@ class AgentService:
         if self.active_run_task:
             self.active_run_task.cancel()
             self.active_run_task = None
+        for task in list(self._automation_receipt_retry_tasks.values()):
+            if not task.done():
+                task.cancel()
+        self._automation_receipt_retry_tasks.clear()
+        for task in list(self._inherited_automation_wait_tasks.values()):
+            if not task.done():
+                task.cancel()
+        self._inherited_automation_wait_tasks.clear()
+        self._inherited_automation_waits.clear()
         await self._stop_worker()
         await self._stop_mcp_server()
         for fut in self.approval_waits.values():
@@ -1247,6 +1387,282 @@ class AgentService:
                              {"run_id": run["run_id"], "text": state["text"]})
         self._assistant_streams.pop(str(run["run_id"]), None)
 
+    @staticmethod
+    def _automation_receipt_text(automation: dict, agent_run_id: str) -> str:
+        """Use a structured verification message, never model/tool transcript text."""
+        for call in reversed(db.list_tool_calls_for_run(agent_run_id)):
+            if str(call.get("tool_name") or "") != "mcp__crawshrimp__automation_record_verification":
+                continue
+            if str(call.get("status") or "") != "succeeded":
+                continue
+            try:
+                arguments = json.loads(call.get("arguments_json") or "{}")
+            except (TypeError, ValueError):
+                continue
+            result = arguments.get("result") if isinstance(arguments, dict) else None
+            if not isinstance(result, dict):
+                continue
+            # ``user_message`` is the explicit durable contract.  ``message``
+            # remains supported for Automations created before this field was
+            # documented, but is still structured tool input rather than the
+            # DSH's concatenated assistant/tool transcript.
+            message = result.get("user_message") or result.get("message")
+            if isinstance(message, str) and message.strip():
+                return redact_text(message.strip())[:2000]
+        title = str(automation.get("title") or "自动化").strip() or "自动化"
+        return f"自动化「{title}」已完成。"
+
+    @staticmethod
+    def _is_persisted_automation_receipt_event(session_id: str, data: Mapping[str, Any]) -> bool:
+        """Whether a DSH message is the native mirror of an existing receipt.
+
+        The bridge writes the receipt directly into the source DSH conversation,
+        then its normal event stream is projected back into Harness.  The
+        receipt itself has already been stored by
+        ``_publish_automation_source_receipt``; treating that mirror as a new
+        assistant message would create a second, identical message in the
+        source session's durable timeline.
+        """
+        message = data.get("message") if isinstance(data.get("message"), Mapping) else {}
+        source = message.get("source") if isinstance(message.get("source"), Mapping) else {}
+        if str(source.get("provider") or "").strip() != "crawshrimp-automation":
+            return False
+        model = str(source.get("model") or "").strip()
+        if not model.startswith("receipt:"):
+            return False
+        receipt_id = model.removeprefix("receipt:").strip()
+        if not receipt_id:
+            return False
+        persisted = _get_message_by_id(receipt_id)
+        return bool(
+            persisted
+            and str(persisted.get("session_id") or "") == str(session_id)
+            and str(persisted.get("kind") or "") == "automation_receipt"
+        )
+
+    async def _publish_automation_source_receipt(
+        self,
+        automation_session_id: str,
+        run: dict,
+        *,
+        status: str,
+    ) -> None:
+        """Project a one-off Automation result into its creating conversation.
+
+        Scheduled work normally runs in an isolated Agent session.  The
+        Automation Controller remains the execution/audit owner, while this
+        product projection provides the user-facing completion receipt.  Keep
+        the first version deliberately narrow: only an ``at`` schedule can
+        create one receipt, so periodic loops and recurring schedules cannot
+        unexpectedly flood a conversation.
+        """
+        automation_run_uid = str(run.get("automation_run_uid") or "").strip()
+        agent_run_id = str(run.get("run_id") or "").strip()
+        if not automation_run_uid or not agent_run_id:
+            return
+        automation_run = data_sink.get_agent_automation_run(automation_run_uid)
+        if not automation_run or str(automation_run.get("agent_run_id") or "") != agent_run_id:
+            return
+        automation = data_sink.get_agent_automation(
+            str(automation_run.get("automation_uid") or "")
+        )
+        if not automation:
+            return
+        # A receipt belongs to the already-claimed run, not a later edited
+        # definition.  In particular, changing an at schedule into a periodic
+        # one while its isolated Agent Turn finishes must not make the original
+        # user-visible one-off receipt disappear.
+        definition = automation_run.get("definition_snapshot")
+        definition = definition if isinstance(definition, dict) else {}
+        schedule = definition.get("schedule") if isinstance(definition.get("schedule"), dict) else {}
+        if not schedule:
+            schedule = automation.get("schedule") if isinstance(automation.get("schedule"), dict) else {}
+        automation_kind = str(
+            definition.get("automation_kind") or automation.get("automation_kind") or ""
+        ).strip().lower()
+        if (
+            automation_kind != "scheduled"
+            or str(schedule.get("kind") or "").strip().lower() != "at"
+        ):
+            return
+        # A transient error may have scheduled a retry for this exact durable
+        # run.  Sending an early failure reply would contradict that state.
+        if status == "retry_scheduled":
+            return
+        durable_status = str(automation_run.get("status") or "").strip()
+        # Agent and Automation lifecycles are deliberately separate. Do not
+        # tell the creating conversation a run failed until the Controller has
+        # recorded its terminal outcome; an unavailable Controller can leave a
+        # linked Agent failure queued for repair or retry.
+        if durable_status not in {"completed", "failed", "canceled", "needs_review"}:
+            return
+        if status == "completed" and durable_status != "completed":
+            return
+        source_session_id = str(automation.get("source_session_id") or "").strip()
+        if not source_session_id or source_session_id == str(automation_session_id or ""):
+            return
+        if not db.get_session(source_session_id):
+            return
+
+        receipt_id = f"{agent_run_id}:automation-source-receipt"
+        if _get_message_by_id(receipt_id):
+            data_sink.update_agent_automation_run(automation_run_uid, notification_status="delivered")
+            return
+        title = str(definition.get("title") or automation.get("title") or "自动化").strip() or "自动化"
+        if status == "completed":
+            receipt_text = self._automation_receipt_text({**automation, **definition}, agent_run_id)
+        else:
+            # Do not expose provider/internal error details in the source chat.
+            receipt_text = f"自动化「{title}」未能完成。请在自动化中心查看详情。"
+        delivered = await self._project_automation_receipt_to_runtime(
+            source_session_id,
+            receipt_id,
+            receipt_text,
+        )
+        if not delivered:
+            # A source DSH session may be actively answering the user.  Keep
+            # delivery separate from Automation execution: persist a pending
+            # receipt and retry the projection later without repeating tools
+            # or mutating the Automation Run.
+            data_sink.update_agent_automation_run(
+                automation_run_uid,
+                notification_status="pending_source_receipt",
+            )
+            self._schedule_automation_receipt_retry(
+                automation_session_id,
+                {"run_id": agent_run_id, "automation_run_uid": automation_run_uid},
+                status=status,
+            )
+            return
+        data_sink.update_agent_automation_run(automation_run_uid, notification_status="delivered")
+        db.create_message(
+            receipt_id,
+            source_session_id,
+            None,
+            agent_run_id,
+            "assistant",
+            "automation_receipt",
+            {
+                "text": receipt_text,
+                "automation_uid": str(automation.get("automation_uid") or ""),
+                "automation_run_uid": automation_run_uid,
+                "status": status,
+            },
+        )
+        await self.broadcast(source_session_id, 0, "assistant.completed", {
+            "run_id": agent_run_id,
+            "text": receipt_text,
+            "automation_receipt": True,
+            "automation_uid": str(automation.get("automation_uid") or ""),
+            "automation_run_uid": automation_run_uid,
+        })
+
+    def _schedule_automation_receipt_retry(self, automation_session_id: str, run: dict, *, status: str) -> None:
+        """Retry a source-chat receipt without replaying the Automation action."""
+        automation_run_uid = str(run.get("automation_run_uid") or "").strip()
+        agent_run_id = str(run.get("run_id") or "").strip()
+        key = f"{automation_run_uid}:{agent_run_id}"
+        existing = self._automation_receipt_retry_tasks.get(key)
+        if existing is not None and not existing.done():
+            return
+
+        async def _retry() -> None:
+            try:
+                # Enough time for an active source turn to settle, without a
+                # tight poll. A restart retains pending_source_receipt and
+                # requeues it through recover_automation_receipts().
+                for delay_seconds in (2, 5, 15, 30, 60):
+                    await asyncio.sleep(delay_seconds)
+                    if _get_message_by_id(f"{agent_run_id}:automation-source-receipt"):
+                        return
+                    await self._publish_automation_source_receipt(
+                        automation_session_id,
+                        run,
+                        status=status,
+                    )
+                    if _get_message_by_id(f"{agent_run_id}:automation-source-receipt"):
+                        return
+            except asyncio.CancelledError:
+                raise
+            finally:
+                self._automation_receipt_retry_tasks.pop(key, None)
+
+        self._automation_receipt_retry_tasks[key] = asyncio.create_task(_retry())
+
+    async def recover_automation_receipts(self) -> None:
+        """Requeue pending one-off receipts after backend or DSH restart."""
+        for automation in data_sink.list_agent_automations(include_archived=True, limit=500):
+            for run in data_sink.list_agent_automation_runs(str(automation.get("automation_uid") or ""), 500):
+                if str(run.get("notification_status") or "") != "pending_source_receipt":
+                    continue
+                definition = run.get("definition_snapshot")
+                definition = definition if isinstance(definition, dict) else {}
+                schedule = definition.get("schedule") if isinstance(definition.get("schedule"), dict) else {}
+                if not schedule:
+                    schedule = automation.get("schedule") if isinstance(automation.get("schedule"), dict) else {}
+                automation_kind = str(
+                    definition.get("automation_kind") or automation.get("automation_kind") or ""
+                ).lower()
+                if automation_kind != "scheduled" or str(schedule.get("kind") or "").lower() != "at":
+                    continue
+                agent_run_id = str(run.get("agent_run_id") or "").strip()
+                if not agent_run_id:
+                    continue
+                await self._publish_automation_source_receipt(
+                    "",
+                    {"run_id": agent_run_id, "automation_run_uid": run["run_uid"]},
+                    status=str(run.get("status") or "needs_review"),
+                )
+
+    async def _project_automation_receipt_to_runtime(
+        self,
+        source_session_id: str,
+        receipt_id: str,
+        receipt_text: str,
+    ) -> bool:
+        """Append a one-off receipt to the source DSH Web session when available.
+
+        Harness SQLite/SSE is a product projection, while the embedded DSH Web
+        client renders its own session event log. Post through the local,
+        token-protected product bridge so both stores show the same receipt.
+        A failed projection intentionally does not block durable Harness audit
+        persistence; it is logged without leaking the underlying error into
+        the user-visible message.
+        """
+        source = db.get_session(source_session_id) or {}
+        runtime_session_id = str(source.get("runtime_session_id") or "").strip()
+        port = int(getattr(self, "web_port", 0) or 0)
+        token = str(os.environ.get("CRAWSHRIMP_API_TOKEN") or "").strip()
+        if not runtime_session_id or not port or not token:
+            return False
+        payload = {
+            "sessionId": runtime_session_id,
+            "receiptId": receipt_id,
+            "text": receipt_text,
+        }
+
+        def _post() -> bool:
+            import urllib.request
+
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/crawshrimp/session/automation-receipt",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Crawshrimp-Token": token,
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    result = json.loads(response.read().decode("utf-8"))
+                return bool(result.get("ok"))
+            except Exception as exc:  # noqa: BLE001
+                print(f"[agent] 自动化回执未写回 DSH 会话({type(exc).__name__})", flush=True)
+                return False
+
+        return await asyncio.to_thread(_post)
+
     async def _checkpoint_interrupted_assistant_message(self, session_id: str, run: dict, text: str) -> None:
         state = self._assistant_stream_state(session_id, run)
         self._cancel_assistant_flush_task(state)
@@ -1368,6 +1784,13 @@ class AgentService:
             raise ValueError("automation context_mode must be isolated or inherited")
 
         execution_policy = (automation or {}).get("execution_policy")
+        browser_tab_id = str(
+            execution_policy.get("browser_tab_id") if isinstance(execution_policy, dict) else ""
+        ).strip()
+        context_refs = (
+            [{"type": "browser_tab", "id": browser_tab_id}]
+            if browser_tab_id else []
+        )
         policy = {
             "toolset": list(normalized_toolset),
             "execution_policy": copy.deepcopy(execution_policy) if isinstance(execution_policy, dict) else {},
@@ -1375,15 +1798,123 @@ class AgentService:
         queued = await self.submit_turn(
             session_id,
             str(prompt or ""),
+            context_refs=context_refs,
             grant_prefs={"toolset": list(normalized_toolset)},
             automation_policy=policy,
             automation_run_uid=automation_run_uid,
         )
+        if context_mode == "inherited":
+            self._schedule_inherited_automation_wait(
+                agent_run_id=str(queued.get("run_id") or ""),
+                automation_run_uid=automation_run_uid,
+                source_session_id=session_id,
+                wait_seconds=_inherited_automation_wait_seconds(automation),
+            )
         # The Controller projects this queued Agent Run onto its durable
         # Automation Run.  The Agent service deliberately does not update the
         # Automation tables itself, preserving the Controller as lifecycle
         # owner.
-        return {**queued, "session_id": session_id}
+        # Keep a stable explicit status for Controller integrations. The
+        # ``queued`` boolean remains for compatibility with existing callers.
+        return {**queued, "session_id": session_id, "status": "queued"}
+
+    def _schedule_inherited_automation_wait(
+        self,
+        *,
+        agent_run_id: str,
+        automation_run_uid: str,
+        source_session_id: str,
+        wait_seconds: int,
+    ) -> None:
+        """Schedule the source-session queue deadline for one inherited turn."""
+        run_id = str(agent_run_id or "").strip()
+        if not run_id:
+            return
+        existing = self._inherited_automation_wait_tasks.pop(run_id, None)
+        if existing and not existing.done():
+            existing.cancel()
+        seconds = max(1, min(int(wait_seconds or DEFAULT_INHERITED_AUTOMATION_WAIT_SECONDS), MAX_INHERITED_AUTOMATION_WAIT_SECONDS))
+        self._inherited_automation_waits[run_id] = {
+            "automation_run_uid": str(automation_run_uid or "").strip(),
+            "source_session_id": str(source_session_id or "").strip(),
+            "wait_seconds": seconds,
+        }
+
+        async def _wait() -> None:
+            try:
+                await asyncio.sleep(seconds)
+                await self._expire_inherited_automation_wait(
+                    run_id,
+                    str(automation_run_uid or "").strip(),
+                    str(source_session_id or "").strip(),
+                )
+            except asyncio.CancelledError:
+                return
+            finally:
+                if self._inherited_automation_wait_tasks.get(run_id) is asyncio.current_task():
+                    self._inherited_automation_wait_tasks.pop(run_id, None)
+                self._inherited_automation_waits.pop(run_id, None)
+
+        self._inherited_automation_wait_tasks[run_id] = asyncio.create_task(_wait())
+
+    def _clear_inherited_automation_wait(self, agent_run_id: str) -> None:
+        """Cancel the deadline once a queued inherited turn starts or ends."""
+        run_id = str(agent_run_id or "").strip()
+        self._inherited_automation_waits.pop(run_id, None)
+        task = self._inherited_automation_wait_tasks.pop(run_id, None)
+        if task and not task.done() and task is not asyncio.current_task():
+            task.cancel()
+
+    async def _expire_inherited_automation_wait(
+        self,
+        agent_run_id: str,
+        automation_run_uid: str,
+        source_session_id: str,
+    ) -> bool:
+        """Turn an expired inherited queue wait into durable ``skipped_overlap``.
+
+        The Agent Run is compare-and-set from queued to canceled before the
+        Automation projection.  Therefore a queue consumer that already began
+        the turn wins the race and this method becomes a no-op; a stale timeout
+        can never stop a live action.
+        """
+        run_id = str(agent_run_id or "").strip()
+        wait = self._inherited_automation_waits.get(run_id) or {}
+        seconds = int(wait.get("wait_seconds") or DEFAULT_INHERITED_AUTOMATION_WAIT_SECONDS)
+        run_uid = str(automation_run_uid or wait.get("automation_run_uid") or "").strip()
+        session_id = str(source_session_id or wait.get("source_session_id") or "").strip()
+        if not run_id or not run_uid:
+            return False
+        message = f"继承会话在 {seconds} 秒内未空闲，本次自动化已跳过"
+        if not db.cancel_queued_run(
+            run_id,
+            error_code="INHERITED_CONTEXT_WAIT_TIMEOUT",
+            error_message=message,
+        ):
+            return False
+        run = db.get_run(run_id) or {}
+        db.update_turn(str(run.get("turn_id") or ""), status="canceled", completed_at=_now_iso())
+        if session_id:
+            await self.broadcast(session_id, 0, "run.canceled", {
+                "run_id": run_id,
+                "error_code": "INHERITED_CONTEXT_WAIT_TIMEOUT",
+                "error": message,
+            })
+        controller = self.automation_controller or getattr(mcp_gateway.ctx, "automation_controller", None)
+        mark = getattr(controller, "mark_inherited_wait_timeout", None)
+        if not callable(mark):
+            # The run is safely canceled and cannot execute. Startup
+            # reconciliation will surface it if the Controller was unavailable
+            # during a teardown race; do not fabricate a completed Automation.
+            return False
+        try:
+            projected = mark(run_uid, run_id, message)
+            if inspect.isawaitable(projected):
+                projected = await projected
+            return isinstance(projected, dict) and str(projected.get("status") or "") == "skipped_overlap"
+        except Exception:  # noqa: BLE001
+            logger.exception("Unable to project inherited Automation queue timeout")
+            return False
 
     def _resolve_model(self, session_id: Optional[str] = None) -> tuple[str, str]:
         cfg = load_config()
@@ -1421,6 +1952,18 @@ class AgentService:
                     db.update_turn(item.get("turn_id"), status="failed", completed_at=_now_iso())
                     await self.broadcast(item.get("session_id"), 0, "run.failed",
                                          {"run_id": item.get("run_id"), "error": str(exc)[:300]})
+                    projected = await self._project_automation_agent_terminal(
+                        item,
+                        status="failed",
+                        error_code="INTERNAL_ERROR",
+                        error_message=str(exc),
+                        retryable=True,
+                    )
+                    await self._publish_automation_source_receipt(
+                        str(item.get("session_id") or ""),
+                        {"run_id": item.get("run_id"), "automation_run_uid": item.get("automation_run_uid")},
+                        status=str(projected.get("status") or "failed"),
+                    )
                 except Exception:  # noqa: BLE001
                     pass
                 self.active_run = None
@@ -1430,6 +1973,7 @@ class AgentService:
     async def _run_one(self, item: dict) -> None:
         run_id, session_id, turn_id = item["run_id"], item["session_id"], item["turn_id"]
         run = db.get_run(run_id)
+        self._clear_inherited_automation_wait(run_id)
         if not run or run["status"] in RUN_FINAL_STATUSES:
             return
         self.active_run = run
@@ -1455,13 +1999,30 @@ class AgentService:
                 raise RuntimeError(message)
 
             budget = BUDGET_PROFILES["browser"] if self._is_browser_run(item) else BUDGET_PROFILES["default"]
-            summary = await self.worker.request("worker.run", {
+            worker_payload = {
                 "runId": run_id,
                 "sessionId": self._runtime_session_id(session_id),
                 "text": item["text"],
                 "images": item.get("image_attachments") or [],
                 "budget": budget,
-            }, timeout=30 * 60 + 60)
+            }
+            worker_timeout = _automation_worker_timeout_seconds(item)
+            try:
+                summary = await self.worker.request("worker.run", worker_payload, timeout=worker_timeout)
+            except asyncio.TimeoutError as exc:
+                if not str(item.get("automation_run_uid") or "").strip():
+                    raise
+                # The worker may still be processing the turn after its RPC
+                # response times out. Cancel it before publishing a durable
+                # failure so no timed-out Automation keeps operating unseen.
+                try:
+                    await self.worker.request("worker.cancel_active", {"runId": run_id}, timeout=15)
+                except Exception:  # noqa: BLE001
+                    pass
+                await self._cancel_automation_task_instances(item.get("automation_run_uid") or "")
+                raise AutomationRunTimeoutError(
+                    f"Automation execution exceeded its {int(worker_timeout)}-second timeout"
+                ) from exc
 
             result = (summary or {}).get("summary") or {}
 
@@ -1482,13 +2043,25 @@ class AgentService:
                 db.create_message(f"{run_id}:notice", session_id, turn_id, run_id, "system", "notice", {"text": notice})
                 await self.broadcast(session_id, 0, "session.updated",
                                      {"session_id": session_id, "notice": notice, "new_context": True})
-                summary = await self.worker.request("worker.run", {
+                try:
+                    summary = await self.worker.request("worker.run", {
                     "runId": run_id,
                     "sessionId": new_sid,
                     "text": item["text"],
                     "images": item.get("image_attachments") or [],
                     "budget": budget,
-                }, timeout=30 * 60 + 60)
+                    }, timeout=worker_timeout)
+                except asyncio.TimeoutError as exc:
+                    if not str(item.get("automation_run_uid") or "").strip():
+                        raise
+                    try:
+                        await self.worker.request("worker.cancel_active", {"runId": run_id}, timeout=15)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    await self._cancel_automation_task_instances(item.get("automation_run_uid") or "")
+                    raise AutomationRunTimeoutError(
+                        f"Automation execution exceeded its {int(worker_timeout)}-second timeout"
+                    ) from exc
                 result = (summary or {}).get("summary") or {}
             status = result.get("status")
             if status not in RUN_FINAL_STATUSES:
@@ -1520,18 +2093,78 @@ class AgentService:
             await self.broadcast(session_id, 0, event_type, event_payload)
             if status == "completed":
                 await self._broadcast_run_artifacts(run_id, session_id)
+            projected = await self._project_automation_agent_terminal(
+                item,
+                status=status,
+                error_code=error_code or "",
+                error_message=error_message or "",
+                retryable=(status == "failed" and str(error_code or "").upper() in {
+                    "NETWORK", "NETWORK_ERROR", "TIMEOUT", "TIMEOUT_ERROR", "WORKER_ERROR", "RUNTIME_ERROR",
+                }),
+            )
+            await self._publish_automation_source_receipt(
+                session_id,
+                {"run_id": run_id, "automation_run_uid": item.get("automation_run_uid")},
+                status=str(projected.get("status") or status),
+            )
+        except AutomationRunTimeoutError as exc:
+            await self._finalize_assistant_stream(run_id, mark_complete=True)
+            db.update_run(run_id, status="failed", finished_at=_now_iso(),
+                          error_code="AUTOMATION_TIMEOUT", error_message=str(exc)[:500])
+            db.update_turn(turn_id, status="failed", completed_at=_now_iso())
+            await self.broadcast(session_id, 0, "run.failed", {
+                "run_id": run_id,
+                "error_code": "AUTOMATION_TIMEOUT",
+                "error": "自动化执行超时，已请求停止运行",
+            })
+            projected = await self._project_automation_agent_terminal(
+                item,
+                status="failed",
+                error_code="AUTOMATION_TIMEOUT",
+                error_message=str(exc),
+                retryable=True,
+            )
+            await self._publish_automation_source_receipt(
+                session_id,
+                {"run_id": run_id, "automation_run_uid": item.get("automation_run_uid")},
+                status=str(projected.get("status") or "failed"),
+            )
         except AgentModelConfigurationError as exc:
             await self._finalize_assistant_stream(run_id, mark_complete=True)
             db.update_run(run_id, status="failed", finished_at=_now_iso(),
                           error_code="MODEL_CONFIGURATION_ERROR", error_message=str(exc)[:500])
             db.update_turn(turn_id, status="failed", completed_at=_now_iso())
             await self.broadcast(session_id, 0, "run.failed", {"run_id": run_id, "error": str(exc)[:300]})
+            projected = await self._project_automation_agent_terminal(
+                item,
+                status="failed",
+                error_code="MODEL_CONFIGURATION_ERROR",
+                error_message=str(exc),
+                retryable=False,
+            )
+            await self._publish_automation_source_receipt(
+                session_id,
+                {"run_id": run_id, "automation_run_uid": item.get("automation_run_uid")},
+                status=str(projected.get("status") or "failed"),
+            )
         except Exception as exc:  # noqa: BLE001
             await self._finalize_assistant_stream(run_id, mark_complete=True)
             db.update_run(run_id, status="failed", finished_at=_now_iso(),
                           error_code="WORKER_ERROR", error_message=str(exc)[:500])
             db.update_turn(turn_id, status="failed", completed_at=_now_iso())
             await self.broadcast(session_id, 0, "run.failed", {"run_id": run_id, "error": str(exc)[:300]})
+            projected = await self._project_automation_agent_terminal(
+                item,
+                status="failed",
+                error_code="WORKER_ERROR",
+                error_message=str(exc),
+                retryable=True,
+            )
+            await self._publish_automation_source_receipt(
+                session_id,
+                {"run_id": run_id, "automation_run_uid": item.get("automation_run_uid")},
+                status=str(projected.get("status") or "failed"),
+            )
             self._note_crash(str(exc))
         finally:
             for runtime_sid in runtime_session_ids:
@@ -2052,6 +2685,8 @@ class AgentService:
             return
 
         if event_type == "assistant/message":
+            if self._is_persisted_automation_receipt_event(session_id, data):
+                return
             text = _extract_text(data)
             if text:
                 if data.get("interrupted"):
@@ -2295,8 +2930,10 @@ class AgentService:
             return {"ok": False, "error": "NOT_FOUND"}
         if run["status"] == "queued":
             # 从队列取消(惰性:标记 canceled,出队时跳过)
+            self._clear_inherited_automation_wait(run_id)
             db.update_run(run_id, status="canceled", finished_at=_now_iso())
             db.update_turn(run.get("turn_id") or "", status="canceled", completed_at=_now_iso())
+            await self._cancel_automation_tasks_for_agent_run(run_id)
             await self.broadcast(run["session_id"], 0, "run.canceled", {"run_id": run_id})
             return {"ok": True, "status": "canceled"}
         if run["status"] in RUN_FINAL_STATUSES:
@@ -2306,6 +2943,7 @@ class AgentService:
             await self._finalize_assistant_stream(run_id, mark_complete=True)
             db.update_run(run_id, status="canceled", finished_at=_now_iso())
             db.update_turn(run.get("turn_id") or "", status="canceled", completed_at=_now_iso())
+            await self._cancel_automation_tasks_for_agent_run(run_id)
             await self.broadcast(run["session_id"], 0, "run.canceled", {"run_id": run_id})
             return {"ok": True, "status": "canceled"}
         return {"ok": False, "error": "NOT_ACTIVE"}

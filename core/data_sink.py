@@ -210,6 +210,7 @@ def init_db():
                 active_program_version_uid TEXT NOT NULL DEFAULT '',
                 checkpoint_json TEXT NOT NULL DEFAULT '{}',
                 next_run_at TEXT NOT NULL DEFAULT '',
+                retry_at TEXT NOT NULL DEFAULT '',
                 cycle_seq INTEGER NOT NULL DEFAULT 0,
                 last_run_uid TEXT NOT NULL DEFAULT '',
                 last_status TEXT NOT NULL DEFAULT '',
@@ -223,6 +224,7 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_agent_automations_enabled
             ON agent_automations (enabled, archived, next_run_at, updated_at)
         """)
+        _ensure_column(conn, "agent_automations", "retry_at", "TEXT NOT NULL DEFAULT ''")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS agent_automation_runs (
                 run_uid TEXT PRIMARY KEY,
@@ -237,6 +239,7 @@ def init_db():
                 agent_session_id TEXT NOT NULL DEFAULT '',
                 agent_run_id TEXT NOT NULL DEFAULT '',
                 execution_policy_snapshot_json TEXT NOT NULL DEFAULT '{}',
+                definition_snapshot_json TEXT NOT NULL DEFAULT '{}',
                 checkpoint_before_json TEXT NOT NULL DEFAULT '{}',
                 checkpoint_after_json TEXT NOT NULL DEFAULT '{}',
                 facts_summary_json TEXT NOT NULL DEFAULT '{}',
@@ -253,9 +256,14 @@ def init_db():
                 UNIQUE(automation_uid, trigger_uid)
             )
         """)
+        _ensure_column(conn, "agent_automation_runs", "definition_snapshot_json", "TEXT NOT NULL DEFAULT '{}'")
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_agent_automation_runs_automation
             ON agent_automation_runs (automation_uid, created_at)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_agent_automation_runs_agent_run
+            ON agent_automation_runs (agent_run_id, updated_at)
         """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS agent_automation_program_versions (
@@ -2386,12 +2394,37 @@ def _agent_automation_run_detail(row: Optional[sqlite3.Row | Mapping[str, Any]])
     detail["execution_policy_snapshot"] = _json_loads_object(
         detail.pop("execution_policy_snapshot_json", "{}")
     )
+    detail["definition_snapshot"] = _json_loads_object(detail.pop("definition_snapshot_json", "{}"))
     detail["checkpoint_before"] = _json_loads_object(detail.pop("checkpoint_before_json", "{}"))
     detail["checkpoint_after"] = _json_loads_object(detail.pop("checkpoint_after_json", "{}"))
     detail["facts_summary"] = _json_loads_object(detail.pop("facts_summary_json", "{}"))
     detail["result_summary"] = _json_loads_object(detail.pop("result_summary_json", "{}"))
     detail["links"] = list_agent_automation_run_links(str(detail.get("run_uid") or ""))
     return detail
+
+
+_AUTOMATION_RUN_DEFINITION_FIELDS = (
+    "title",
+    "objective_prompt",
+    "automation_kind",
+    "context_mode",
+    "source_session_id",
+    "source_runtime_session_id",
+    "schedule",
+    "loop_policy",
+)
+
+
+def _automation_run_definition_snapshot(automation: Mapping[str, Any]) -> dict:
+    """Freeze execution inputs that Program and policy snapshots do not cover."""
+    source = {
+        field: automation.get(field)
+        for field in _AUTOMATION_RUN_DEFINITION_FIELDS
+        if field in automation
+    }
+    # Round-trip through the project JSON codec to create an independent,
+    # SQLite-safe snapshot without retaining mutable nested dictionaries.
+    return _json_loads_object(_json_dumps(source))
 
 
 def create_agent_automation(values: Mapping[str, Any]) -> dict:
@@ -2405,11 +2438,11 @@ def create_agent_automation(values: Mapping[str, Any]) -> dict:
                 automation_uid, title, objective_prompt, automation_kind, enabled,
                 archived, context_mode, source_session_id, source_runtime_session_id,
                 schedule_json, loop_policy_json, execution_policy_json,
-                active_program_version_uid, checkpoint_json, next_run_at, cycle_seq,
+                active_program_version_uid, checkpoint_json, next_run_at, retry_at, cycle_seq,
                 last_run_uid, last_status, last_error, last_triggered_at,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             automation_uid,
             str(source.get("title") or "").strip() or "未命名自动化",
@@ -2426,6 +2459,7 @@ def create_agent_automation(values: Mapping[str, Any]) -> dict:
             str(source.get("active_program_version_uid") or "").strip(),
             _json_dumps(source.get("checkpoint") if isinstance(source.get("checkpoint"), Mapping) else {}),
             str(source.get("next_run_at") or "").strip(),
+            str(source.get("retry_at") or "").strip(),
             int(source.get("cycle_seq") or 0),
             str(source.get("last_run_uid") or "").strip(),
             str(source.get("last_status") or "").strip(),
@@ -2504,6 +2538,7 @@ def update_agent_automation(uid: str, **fields) -> dict:
         "active_program_version_uid",
         "checkpoint_json",
         "next_run_at",
+        "retry_at",
         "cycle_seq",
         "last_run_uid",
         "last_status",
@@ -2596,6 +2631,7 @@ def create_agent_automation_run(
     agent_session_id: str = "",
     agent_run_id: str = "",
     execution_policy_snapshot: Optional[Mapping[str, Any]] = None,
+    definition_snapshot: Optional[Mapping[str, Any]] = None,
     checkpoint_before: Optional[Mapping[str, Any]] = None,
     checkpoint_after: Optional[Mapping[str, Any]] = None,
     facts_summary: Optional[Mapping[str, Any]] = None,
@@ -2616,12 +2652,12 @@ def create_agent_automation_run(
             INSERT INTO agent_automation_runs (
                 run_uid, automation_uid, trigger_kind, trigger_uid, trigger_at,
                 cycle_seq, status, attempt, program_version_uid, agent_session_id,
-                agent_run_id, execution_policy_snapshot_json, checkpoint_before_json,
+                agent_run_id, execution_policy_snapshot_json, definition_snapshot_json, checkpoint_before_json,
                 checkpoint_after_json, facts_summary_json, matched_branch,
                 result_summary_json, error_code, error_message, notification_status,
                 scheduled_at, started_at, finished_at, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             run_uid,
             str(automation_uid or "").strip(),
@@ -2635,6 +2671,7 @@ def create_agent_automation_run(
             str(agent_session_id or "").strip(),
             str(agent_run_id or "").strip(),
             _json_dumps(execution_policy_snapshot if isinstance(execution_policy_snapshot, Mapping) else {}),
+            _json_dumps(definition_snapshot if isinstance(definition_snapshot, Mapping) else {}),
             _json_dumps(checkpoint_before if isinstance(checkpoint_before, Mapping) else {}),
             _json_dumps(checkpoint_after if isinstance(checkpoint_after, Mapping) else {}),
             _json_dumps(facts_summary if isinstance(facts_summary, Mapping) else {}),
@@ -2666,6 +2703,22 @@ def get_agent_automation_run(run_uid: str) -> dict:
     return _agent_automation_run_detail(row)
 
 
+def get_agent_automation_run_by_agent_run_id(agent_run_id: str) -> dict:
+    """Resolve the durable Automation owner of one Agent Run, if any."""
+    uid = str(agent_run_id or "").strip()
+    if not uid:
+        return {}
+    with _get_conn() as conn:
+        row = conn.execute("""
+            SELECT *
+            FROM agent_automation_runs
+            WHERE agent_run_id=?
+            ORDER BY updated_at DESC
+            LIMIT 1
+        """, (uid,)).fetchone()
+    return _agent_automation_run_detail(row)
+
+
 def claim_agent_automation_run(
     automation_uid: str,
     trigger_kind: str,
@@ -2686,10 +2739,10 @@ def claim_agent_automation_run(
             INSERT INTO agent_automation_runs (
                 run_uid, automation_uid, trigger_kind, trigger_uid, trigger_at,
                 cycle_seq, status, attempt, program_version_uid,
-                execution_policy_snapshot_json, checkpoint_before_json,
+                execution_policy_snapshot_json, definition_snapshot_json, checkpoint_before_json,
                 scheduled_at, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'claimed', 0, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 'claimed', 0, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(automation_uid, trigger_uid) DO NOTHING
         """, (
             run_uid,
@@ -2700,6 +2753,7 @@ def claim_agent_automation_run(
             automation.get("cycle_seq"),
             str(automation.get("active_program_version_uid") or "").strip(),
             _json_dumps(automation.get("execution_policy") if isinstance(automation.get("execution_policy"), Mapping) else {}),
+            _json_dumps(_automation_run_definition_snapshot(automation)),
             _json_dumps(automation.get("checkpoint") if isinstance(automation.get("checkpoint"), Mapping) else {}),
             str(scheduled_at or "").strip(),
             now,
@@ -2736,6 +2790,7 @@ def update_agent_automation_run(run_uid: str, **fields) -> dict:
         "agent_session_id",
         "agent_run_id",
         "execution_policy_snapshot_json",
+        "definition_snapshot_json",
         "checkpoint_before_json",
         "checkpoint_after_json",
         "facts_summary_json",
@@ -2752,6 +2807,8 @@ def update_agent_automation_run(run_uid: str, **fields) -> dict:
     for key, value in fields.items():
         if key == "execution_policy_snapshot":
             updates["execution_policy_snapshot_json"] = _json_dumps(value if isinstance(value, Mapping) else {})
+        elif key == "definition_snapshot":
+            updates["definition_snapshot_json"] = _json_dumps(value if isinstance(value, Mapping) else {})
         elif key == "checkpoint_before":
             updates["checkpoint_before_json"] = _json_dumps(value if isinstance(value, Mapping) else {})
         elif key == "checkpoint_after":

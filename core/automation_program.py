@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from datetime import datetime, timezone
 from typing import Any, Mapping, MutableMapping
 
@@ -24,21 +25,37 @@ MISSING = _Missing()
 def validate_program(program: Mapping[str, Any]) -> dict:
     if not isinstance(program, Mapping):
         raise ProgramValidationError("program must be an object")
+    # Program versions are persisted and fingerprinted as strict JSON.  Check
+    # every field up front, not only operands reached by the evaluator: a
+    # non-finite value in config or a cooldown setting otherwise becomes a
+    # non-standard NaN/Infinity SQLite payload or fails later during proof
+    # issuance instead of producing a clear validation error.
+    _validate_json_value(program, "program")
     branches = program.get("branches")
     if not isinstance(branches, list) or not branches:
         raise ProgramValidationError("program must include branches")
 
+    branch_ids: set[str] = set()
+    consecutive_ids: set[str] = set()
+    consecutive_paths: set[str] = set()
     for branch in branches:
         if not isinstance(branch, Mapping):
             raise ProgramValidationError("branch must be an object")
         branch_id = branch.get("id")
         if not isinstance(branch_id, str) or not branch_id:
             raise ProgramValidationError("branch id must be a non-empty string")
+        if branch_id in branch_ids:
+            raise ProgramValidationError("branch ids must be unique")
+        branch_ids.add(branch_id)
         if "priority" in branch and (not isinstance(branch["priority"], int) or isinstance(branch["priority"], bool)):
             raise ProgramValidationError("branch priority must be an integer")
         if "when" not in branch:
             raise ProgramValidationError("branch when is required")
         _validate_node(branch["when"], "when")
+        _validate_stateful_nodes(branch["when"], consecutive_ids, consecutive_paths)
+
+    if "config" in program and not isinstance(program.get("config"), Mapping):
+        raise ProgramValidationError("config must be an object")
 
     checkpoint = program.get("checkpoint", {})
     if checkpoint is not None:
@@ -50,6 +67,27 @@ def validate_program(program: Mapping[str, Any]) -> dict:
             _validate_operand(operand)
 
     return copy.deepcopy(dict(program))
+
+
+def _validate_json_value(value: Any, field_name: str) -> None:
+    """Reject values that cannot survive strict JSON persistence unchanged."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ProgramValidationError("program must not contain non-finite numbers")
+        return
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if not isinstance(key, str):
+                raise ProgramValidationError(f"{field_name} object keys must be strings")
+            _validate_json_value(child, f"{field_name}.{key}")
+        return
+    if isinstance(value, list):
+        for index, child in enumerate(value):
+            _validate_json_value(child, f"{field_name}[{index}]")
+        return
+    raise ProgramValidationError(f"{field_name} must contain only JSON values")
 
 
 def evaluate_program(program: Mapping[str, Any], *, facts: Mapping[str, Any], checkpoint: Mapping[str, Any], now: str) -> dict:
@@ -98,8 +136,8 @@ def _validate_node(node: Any, field_name: str = "node") -> None:
         raise ProgramValidationError(f"unsupported operator: {operator}")
 
     if operator in {"all", "any"}:
-        if not isinstance(value, list):
-            raise ProgramValidationError(f"{operator} requires a list")
+        if not isinstance(value, list) or not value:
+            raise ProgramValidationError(f"{operator} requires a non-empty list")
         for child in value:
             _validate_node(child)
         return
@@ -141,6 +179,8 @@ def _validate_operand(value: Any) -> None:
     elif isinstance(value, list):
         for child in value:
             _validate_operand(child)
+    elif isinstance(value, float) and not math.isfinite(value):
+        raise ProgramValidationError("operands must not contain non-finite numbers")
 
 
 def _validate_path(path: Any) -> None:
@@ -178,6 +218,28 @@ def _validate_cooldown_elapsed(value: Any) -> None:
     seconds = value["seconds"]
     if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds < 0:
         raise ProgramValidationError("cooldown_elapsed seconds must be a non-negative number")
+
+
+def _validate_stateful_nodes(node: Mapping[str, Any], ids: set[str], paths: set[str]) -> None:
+    """Reject ambiguous shared counters before they can mutate checkpoint state."""
+    operator, value = next(iter(node.items()))
+    if operator == "consecutive_matches":
+        node_id = str(value["id"])
+        checkpoint_path = str(value["checkpoint_path"])
+        if node_id in ids:
+            raise ProgramValidationError("consecutive_matches ids must be unique")
+        if checkpoint_path in paths:
+            raise ProgramValidationError("consecutive_matches checkpoint_path must be unique")
+        ids.add(node_id)
+        paths.add(checkpoint_path)
+        _validate_stateful_nodes(value["condition"], ids, paths)
+        return
+    if operator in {"all", "any"}:
+        for child in value:
+            _validate_stateful_nodes(child, ids, paths)
+        return
+    if operator == "not":
+        _validate_stateful_nodes(value, ids, paths)
 
 
 def _truth(node: Mapping[str, Any], context: MutableMapping[str, Any]) -> bool:
@@ -265,7 +327,14 @@ def _compare(operator: str, left: Any, right: Any) -> bool:
         return left != right
     if operator == "in":
         if isinstance(right, (str, list, tuple, set, frozenset, dict)):
-            return left in right
+            # Facts are dynamic JSON supplied by an observer.  Membership of
+            # a list/dict fact in a string/dict container can raise TypeError
+            # (for example, an unhashable list as a dict key); that is a
+            # non-match, never a reason to crash the Automation run.
+            try:
+                return left in right
+            except TypeError:
+                return False
         return False
     if not _comparable(left, right):
         return False

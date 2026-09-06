@@ -32,9 +32,12 @@ _scheduler: Optional[AsyncIOScheduler] = None
 _task_callbacks: Dict[str, Callable] = {}  # job_id -> async callable
 _automation_callbacks: Dict[str, Callable] = {}  # automation_uid -> async callable
 _automation_callback_tokens: Dict[str, str] = {}
+_automation_retry_callbacks: Dict[str, Callable] = {}  # automation_uid -> async callable
+_automation_retry_callback_tokens: Dict[str, str] = {}
 _begin_runtime_operation: Callable[[str, str, str, str], str] | None = None
 _end_runtime_operation: Callable[[str], None] | None = None
 AUTOMATION_JOB_PREFIX = "automation::"
+AUTOMATION_RETRY_JOB_PREFIX = "automation-retry::"
 DEFAULT_AUTOMATION_TIMEZONE = "Asia/Shanghai"
 WEEKDAY_NAMES = {
     1: "mon",
@@ -90,6 +93,19 @@ def automation_job_id(automation_uid: str) -> str:
     if not uid:
         raise ValueError("automation_uid is required")
     return f"{AUTOMATION_JOB_PREFIX}{uid}"
+
+
+def automation_retry_job_id(automation_uid: str) -> str:
+    """Return the separate retry wake-up id for one Agent Automation.
+
+    The regular recurring schedule must remain armed while a transient failure
+    waits to retry, so a retry cannot replace or shift the next cron/interval
+    boundary.
+    """
+    uid = str(automation_uid or "").strip()
+    if not uid:
+        raise ValueError("automation_uid is required")
+    return f"{AUTOMATION_RETRY_JOB_PREFIX}{uid}"
 
 
 def set_runtime_operation_hooks(begin_operation=None, end_operation=None) -> None:
@@ -307,6 +323,20 @@ def _automation_now(timezone_value: ZoneInfo) -> datetime:
 
 
 def _positive_seconds(schedule: dict) -> int:
+    def _parse(value, message: str) -> int:
+        if isinstance(value, bool):
+            raise ValueError(message)
+        try:
+            seconds_float = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(message) from exc
+        if not math.isfinite(seconds_float) or not seconds_float.is_integer():
+            raise ValueError(message)
+        seconds = int(seconds_float)
+        if seconds <= 0:
+            raise ValueError(message)
+        return seconds
+
     candidates = (
         (schedule or {}).get("seconds"),
         (schedule or {}).get("interval_seconds"),
@@ -316,37 +346,27 @@ def _positive_seconds(schedule: dict) -> int:
     for candidate in candidates:
         if candidate is None or str(candidate).strip() == "":
             continue
-        try:
-            seconds = int(float(candidate))
-        except (TypeError, ValueError) as exc:
-            raise ValueError("every schedule interval must be a positive number of seconds") from exc
-        if seconds > 0:
-            return seconds
+        return _parse(candidate, "every schedule interval must be a positive integer number of seconds")
     for key, multiplier in (("minutes", 60), ("interval_minutes", 60), ("hours", 3600)):
         candidate = (schedule or {}).get(key)
         if candidate is None or str(candidate).strip() == "":
             continue
         try:
-            seconds = int(float(candidate) * multiplier)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("every schedule interval must be a positive number") from exc
-        if seconds > 0:
-            return seconds
+            return _parse(float(candidate) * multiplier, "every schedule interval must be a positive integer number of seconds")
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("every schedule interval must be a positive integer number of seconds") from exc
     value = str((schedule or {}).get("value") or "").strip().lower()
     if value:
         try:
             if value.endswith("h"):
-                seconds = int(float(value[:-1]) * 3600)
-            elif value.endswith("m"):
-                seconds = int(float(value[:-1]) * 60)
-            elif value.endswith("s"):
-                seconds = int(float(value[:-1]))
-            else:
-                seconds = int(float(value))
-        except (TypeError, ValueError) as exc:
-            raise ValueError("every schedule interval must be a positive duration") from exc
-        if seconds > 0:
-            return seconds
+                return _parse(float(value[:-1]) * 3600, "every schedule interval must be a positive integer duration")
+            if value.endswith("m"):
+                return _parse(float(value[:-1]) * 60, "every schedule interval must be a positive integer duration")
+            if value.endswith("s"):
+                return _parse(value[:-1], "every schedule interval must be a positive integer duration")
+            return _parse(value, "every schedule interval must be a positive integer duration")
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("every schedule interval must be a positive integer duration") from exc
     raise ValueError("every schedule requires a positive interval")
 
 
@@ -504,11 +524,78 @@ def unregister_automation_schedule(automation_uid: str) -> int:
     return 0
 
 
+def register_automation_retry(automation: dict, callback: Callable) -> int:
+    """Register a durable one-shot retry without replacing the normal schedule."""
+    automation_uid = str((automation or {}).get("automation_uid") or "").strip()
+    retry_at = str((automation or {}).get("retry_at") or "").strip()
+    if not automation_uid or not retry_at or not callable(callback):
+        return 0
+    if int((automation or {}).get("enabled") or 0) != 1 or int((automation or {}).get("archived") or 0) == 1:
+        return 0
+    timezone_value = _automation_timezone(_automation_schedule_value(automation))
+    run_at = _automation_datetime(retry_at, timezone_value, field_name="retry_at")
+    jid = automation_retry_job_id(automation_uid)
+    sched = get_scheduler()
+    _automation_retry_callback_tokens.pop(automation_uid, None)
+    _automation_retry_callbacks.pop(automation_uid, None)
+    try:
+        if sched.get_job(jid):
+            sched.remove_job(jid)
+    except Exception:
+        logger.debug("Automation retry job %s disappeared while replacing", jid, exc_info=True)
+    token = uuid.uuid4().hex
+    _automation_retry_callback_tokens[automation_uid] = token
+    _automation_retry_callbacks[automation_uid] = callback
+
+    async def _job(uid=automation_uid, generation=token):
+        if _automation_retry_callback_tokens.get(uid) != generation:
+            return
+        current_callback = _automation_retry_callbacks.get(uid)
+        if current_callback is None:
+            return
+        try:
+            result = current_callback(uid)
+            if inspect.isawaitable(result):
+                await result
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("Scheduled Agent Automation retry %s failed: %s", uid, exc)
+
+    sched.add_job(_job, trigger=DateTrigger(run_date=run_at, timezone=timezone_value), id=jid, replace_existing=True)
+    logger.info("Registered Agent Automation retry job %s", jid)
+    return 1
+
+
+def unregister_automation_retry(automation_uid: str) -> int:
+    """Cancel one pending retry; normal Automation schedule remains untouched."""
+    uid = str(automation_uid or "").strip()
+    if not uid:
+        return 0
+    jid = automation_retry_job_id(uid)
+    _automation_retry_callback_tokens.pop(uid, None)
+    _automation_retry_callbacks.pop(uid, None)
+    sched = get_scheduler()
+    try:
+        if sched.get_job(jid):
+            sched.remove_job(jid)
+            return 1
+    except Exception:
+        logger.debug("Automation retry job %s disappeared during unregister", jid, exc_info=True)
+    return 0
+
+
 def list_automation_next_runs() -> list[dict]:
     """List only Agent Automation jobs; fixed Task Schedule jobs stay separate."""
     result = []
     for job in get_scheduler().get_jobs():
-        if not job.id.startswith(AUTOMATION_JOB_PREFIX):
+        if job.id.startswith(AUTOMATION_JOB_PREFIX):
+            job_kind = "agent_automation"
+            automation_uid = job.id[len(AUTOMATION_JOB_PREFIX):]
+        elif job.id.startswith(AUTOMATION_RETRY_JOB_PREFIX):
+            job_kind = "agent_automation_retry"
+            automation_uid = job.id[len(AUTOMATION_RETRY_JOB_PREFIX):]
+        else:
             continue
         try:
             next_run = job.next_run_time
@@ -525,8 +612,8 @@ def list_automation_next_runs() -> list[dict]:
                 next_run = trigger.get_next_fire_time(None, datetime.now(zone))
         result.append({
             "job_id": job.id,
-            "kind": "agent_automation",
-            "automation_uid": job.id[len(AUTOMATION_JOB_PREFIX):],
+            "kind": job_kind,
+            "automation_uid": automation_uid,
             "next_run": next_run.isoformat() if next_run else None,
         })
     return result
@@ -554,6 +641,26 @@ def list_jobs() -> list:
                 "schedule_uid": job.id.split("::", 1)[1],
                 "adapter_id": "",
                 "task_id": "",
+                "next_run": next_run.isoformat() if next_run else None,
+            })
+        elif job.id.startswith(AUTOMATION_JOB_PREFIX):
+            result.append({
+                "job_id": job.id,
+                "kind": "agent_automation",
+                "automation_uid": job.id[len(AUTOMATION_JOB_PREFIX):],
+                "adapter_id": "",
+                "task_id": "",
+                "schedule_uid": "",
+                "next_run": next_run.isoformat() if next_run else None,
+            })
+        elif job.id.startswith(AUTOMATION_RETRY_JOB_PREFIX):
+            result.append({
+                "job_id": job.id,
+                "kind": "agent_automation_retry",
+                "automation_uid": job.id[len(AUTOMATION_RETRY_JOB_PREFIX):],
+                "adapter_id": "",
+                "task_id": "",
+                "schedule_uid": "",
                 "next_run": next_run.isoformat() if next_run else None,
             })
         else:

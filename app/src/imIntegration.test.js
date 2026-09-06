@@ -319,6 +319,172 @@ test('IM approval route requests native approval for registered IM Sessions by d
   assert.equal(approvalRequest.agent.session.id, 'im-session')
 })
 
+test('Crawshrimp product bridge appends an idempotent receipt as one balanced DSH assistant turn', async () => {
+  const bridgeUrl = pathToFileURL(resolve(harnessRoot, 'crawshrimp-product-bridge/lib/index.js'))
+  const bridge = await import(`${bridgeUrl.href}?automation-receipt-test=${Date.now()}`)
+  const events = []
+  const session = {
+    id: 'dsh-source',
+    events,
+    append(type, data, options = {}) {
+      const event = { type, data, ...options }
+      events.push(event)
+      return event
+    },
+  }
+  const ctx = {
+    agents: { roots: () => [{ status: 'idle', session }] },
+  }
+
+  const first = bridge.appendCrawshrimpAutomationReceipt(ctx, {
+    sessionId: 'dsh-source',
+    receiptId: 'automation-run-1:source-receipt',
+    text: '本地自动化验收已完成',
+  })
+  const repeated = bridge.appendCrawshrimpAutomationReceipt(ctx, {
+    sessionId: 'dsh-source',
+    receiptId: 'automation-run-1:source-receipt',
+    text: '本地自动化验收已完成',
+  })
+
+  assert.equal(first.ok, true)
+  assert.equal(first.appended, true)
+  assert.equal(repeated.ok, true)
+  assert.equal(repeated.appended, false)
+  assert.deepEqual(events.map(event => event.type), [
+    'turn/start', 'step/start', 'assistant/message', 'step/end', 'turn/end',
+  ])
+  assert.equal(events[2].surfaceOp, 'append')
+  assert.equal(events[2].data.message.content[0].text, '本地自动化验收已完成')
+  assert.equal(events[2].data.message.source.provider, 'crawshrimp-automation')
+})
+
+test('Crawshrimp receipt bridge closes a partially appended turn when a DSH append fails', async () => {
+  const bridgeUrl = pathToFileURL(resolve(harnessRoot, 'crawshrimp-product-bridge/lib/index.js'))
+  const bridge = await import(`${bridgeUrl.href}?automation-receipt-failure-test=${Date.now()}`)
+  const events = []
+  const session = {
+    id: 'dsh-source',
+    events,
+    append(type, data, options = {}) {
+      if (type === 'assistant/message') throw new Error('DSH append interrupted')
+      const event = { type, data, ...options }
+      events.push(event)
+      return event
+    },
+  }
+  const result = bridge.appendCrawshrimpAutomationReceipt({
+    agents: { roots: () => [{ status: 'idle', session }] },
+  }, {
+    sessionId: 'dsh-source',
+    receiptId: 'automation-run-2:source-receipt',
+    text: '库存核对尚未完成，请稍后查看自动化中心。',
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'SESSION_APPEND_FAILED')
+  assert.deepEqual(events.map(event => event.type), [
+    'turn/start', 'step/start', 'step/end', 'turn/end',
+  ])
+  assert.equal(events.at(-1).data.reason.kind, 'failed')
+})
+
+test('Crawshrimp automation receipt HTTP endpoint authenticates, validates, and preserves the source session state', async () => {
+  const bridgeUrl = pathToFileURL(resolve(harnessRoot, 'crawshrimp-product-bridge/lib/index.js'))
+  const bridge = await import(`${bridgeUrl.href}?automation-receipt-route-test=${Date.now()}`)
+  const events = []
+  const session = {
+    id: 'dsh-source-route',
+    events,
+    append(type, data, options = {}) {
+      const event = { type, data, ...options }
+      events.push(event)
+      return event
+    },
+  }
+  let routeHandler
+  const ctx = {
+    logger: { info() {}, error() {} },
+    connection: {},
+    agents: { roots: () => [{ status: 'idle', session }] },
+    approval: { decide: async () => 'rejected' },
+    on: () => () => {},
+    effect(fn) { return fn() },
+    webServer: {
+      register(route) {
+        routeHandler = route.handler
+        return () => {}
+      },
+    },
+  }
+  bridge.apply(ctx)
+
+  const callRoute = async ({ token, body }) => await new Promise((resolveResponse, reject) => {
+    const req = new EventEmitter()
+    req.url = '/api/crawshrimp/session/automation-receipt'
+    req.method = 'POST'
+    req.headers = { 'x-crawshrimp-token': token }
+    const res = {
+      statusCode: 0,
+      writeHead(statusCode) { this.statusCode = statusCode },
+      end(chunk = '') { resolveResponse({ statusCode: this.statusCode, body: JSON.parse(String(chunk)) }) },
+    }
+    Promise.resolve(routeHandler(req, res)).catch(reject)
+    process.nextTick(() => {
+      req.emit('data', JSON.stringify(body))
+      req.emit('end')
+    })
+  })
+
+  const previousToken = process.env.CRAWSHRIMP_API_TOKEN
+  process.env.CRAWSHRIMP_API_TOKEN = 'automation-route-test-token'
+  try {
+    const unauthorized = await callRoute({
+      token: 'wrong-token',
+      body: { sessionId: session.id, receiptId: 'receipt-1', text: '不应写入' },
+    })
+    assert.equal(unauthorized.statusCode, 401)
+    assert.equal(unauthorized.body.error.code, 'UNAUTHORIZED')
+    assert.equal(events.length, 0)
+
+    const malformed = await callRoute({
+      token: 'automation-route-test-token',
+      body: { sessionId: session.id, receiptId: 'receipt-1', text: '' },
+    })
+    assert.equal(malformed.statusCode, 400)
+    assert.equal(malformed.body.error.code, 'bad-request')
+    assert.equal(events.length, 0)
+
+    const completed = await callRoute({
+      token: 'automation-route-test-token',
+      body: { sessionId: session.id, receiptId: 'receipt-1', text: '本地自动化验收已完成' },
+    })
+    assert.equal(completed.statusCode, 200)
+    assert.equal(completed.body.appended, true)
+
+    const repeated = await callRoute({
+      token: 'automation-route-test-token',
+      body: { sessionId: session.id, receiptId: 'receipt-1', text: '本地自动化验收已完成' },
+    })
+    assert.equal(repeated.statusCode, 200)
+    assert.equal(repeated.body.appended, false)
+    assert.deepEqual(events.map((event) => event.type), [
+      'turn/start', 'step/start', 'assistant/message', 'step/end', 'turn/end',
+    ])
+
+    session.events.push({ type: 'turn/start', data: { turn: 2 } })
+    const busy = await callRoute({
+      token: 'automation-route-test-token',
+      body: { sessionId: session.id, receiptId: 'receipt-2', text: '稍后重试' },
+    })
+    assert.equal(busy.statusCode, 409)
+    assert.equal(busy.body.error.code, 'SESSION_BUSY')
+  } finally {
+    if (previousToken === undefined) delete process.env.CRAWSHRIMP_API_TOKEN
+    else process.env.CRAWSHRIMP_API_TOKEN = previousToken
+  }
+})
+
 test('Crawshrimp product bridge fetches the deterministic model catalog from the backend', async () => {
   const bridgeUrl = pathToFileURL(resolve(harnessRoot, 'crawshrimp-product-bridge/lib/index.js'))
   const bridge = await import(`${bridgeUrl.href}?model-catalog-fetch-test=${Date.now()}`)

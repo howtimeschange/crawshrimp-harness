@@ -21,7 +21,7 @@
       <div class="ac-editor-title">
         <div>
           <h3>{{ editingUid ? '编辑自动化' : '新建自动化' }}</h3>
-          <p>先以草稿保存；含 Program 的自动化必须用代表性事实测试通过后才能启用。</p>
+              <p>可先编辑草稿；含 Program 的自动化必须用代表性事实测试通过后才能保存或启用。</p>
         </div>
         <span :class="['ac-status', form.enabled ? 'active' : 'neutral']">{{ form.enabled ? '准备启用' : '草稿' }}</span>
       </div>
@@ -54,7 +54,7 @@
             </label>
             <label v-if="form.context_mode === 'inherited'">
               <span>来源会话 ID</span>
-              <input v-model.trim="form.source_session_id" placeholder="已有智能体会话 ID" />
+              <input v-model.trim="form.source_session_id" required placeholder="已有智能体会话 ID" />
             </label>
           </div>
         </section>
@@ -150,8 +150,12 @@
           <h4>执行权限与限制</h4>
           <div class="ac-grid three">
             <label class="wide">
-              <span>允许能力（逗号分隔）</span>
-              <input v-model="form.toolset_text" placeholder="observe, verify" />
+              <span>允许 MCP 工具（逗号分隔）</span>
+              <input v-model="form.toolset_text" placeholder="automation_record_observation, automation_record_verification" />
+            </label>
+            <label class="wide">
+              <span>无人值守允许风险（逗号分隔）</span>
+              <input v-model="form.allowed_risks_text" placeholder="local_write, external_write（留空则需要人工复核）" />
             </label>
             <label>
               <span>超时（秒）</span>
@@ -161,13 +165,17 @@
               <span>最大重试</span>
               <input v-model.number="form.max_retries" type="number" min="0" required />
             </label>
+            <label v-if="form.context_mode === 'inherited'">
+              <span>继承会话最长等待（秒）</span>
+              <input v-model.number="form.inherited_wait_seconds" type="number" min="1" required />
+            </label>
           </div>
           <label class="ac-check">
             <input v-model="form.enabled" type="checkbox" />
             <span>启用此自动化</span>
           </label>
-          <p v-if="form.enabled && hasProgram && !hasSuccessfulProgramTest" class="ac-policy-warning">请先测试 Program；已编辑的 Program 或测试输入会使原测试结果失效。</p>
-          <p class="ac-help">有效工具集是自动化策略与 Program 分支允许能力的交集。缺少观察、授权或验证证据时，运行将停在 needs_review。</p>
+          <p v-if="hasProgram && !hasSuccessfulProgramTest" class="ac-policy-warning">请先测试 Program；已编辑的 Program 或测试输入会使原测试结果失效。</p>
+          <p class="ac-help">填写实际 MCP 工具名，而不是“观察、验证”等抽象能力。例如闭环观察用 automation_record_observation，完成回执用 automation_record_verification。需要原本审批的操作，还必须填写具体风险类别：read_only、local_write、external_write 或 destructive；工具和风险必须同时匹配才会无人值守执行。策略与 Program 分支允许工具的交集之外，一律拒绝并转人工复核。继承会话会等待原会话空闲；超时会记录为“因并发跳过”，不会抢占用户对话。</p>
         </section>
 
         <div class="ac-form-actions">
@@ -278,6 +286,8 @@ const error = ref('')
 const programTest = ref(null)
 const programTestError = ref('')
 const testedProgramFingerprint = ref('')
+const programTestProof = ref('')
+const initialExampleProgramText = JSON.stringify(exampleProgram(), null, 2)
 let refreshTimer = null
 
 function exampleProgram() {
@@ -287,7 +297,7 @@ function exampleProgram() {
       id: 'inventory_below_reorder_point',
       priority: 10,
       when: { lt: [{ path: 'facts.inventory.available' }, { path: 'config.reorder_point' }] },
-      allowed_capabilities: ['observe', 'verify'],
+      allowed_tools: ['automation_record_verification'],
       objective: '读取库存风险并收集可验证的处理建议；若需要写入，先记录 needs_review。',
     }],
     checkpoint: { last_available: { path: 'facts.inventory.available' } },
@@ -308,9 +318,11 @@ function defaultForm() {
     cycle_interval_seconds: 1800,
     max_cycles: 0,
     failure_threshold: 3,
-    toolset_text: 'observe, verify',
+    toolset_text: 'automation_record_observation, automation_record_verification',
+    allowed_risks_text: '',
     timeout_seconds: 300,
     max_retries: 1,
+    inherited_wait_seconds: 300,
     enabled: false,
     program_text: JSON.stringify(exampleProgram(), null, 2),
     facts_text: JSON.stringify({ inventory: { available: 5 } }, null, 2),
@@ -331,7 +343,7 @@ const hasSuccessfulProgramTest = computed(() => Boolean(
 const canSave = computed(() => {
   if (saving.value || !form.value.title.trim() || !form.value.objective_prompt.trim()) return false
   if (form.value.automation_kind === 'loop' && !hasProgram.value) return false
-  return !(form.value.enabled && hasProgram.value && !hasSuccessfulProgramTest.value)
+  return !(hasProgram.value && !hasSuccessfulProgramTest.value)
 })
 
 function compactJson(value) {
@@ -358,7 +370,11 @@ function kindLabel(automation) {
 }
 
 function nextRunLabel(automation) {
-  return `下一次：${formatDateTime(automation?.next_run_at)}`
+  // Scheduled Automations expose the live APScheduler projection as next_run;
+  // loops also persist their next-cycle cursor as next_run_at.  Prefer the
+  // live projection so a resumed cron/at/every definition never renders a
+  // misleading dash in the Automation Center.
+  return `下一次：${formatDateTime(automation?.next_run || automation?.next_run_at)}`
 }
 
 function contextLabel(value) {
@@ -404,6 +420,7 @@ function invalidateProgramTest() {
   programTest.value = null
   programTestError.value = ''
   testedProgramFingerprint.value = ''
+  programTestProof.value = ''
 }
 
 function restoreProgramExample() {
@@ -425,12 +442,14 @@ async function testProgram() {
     })
     const result = response?.result || response?.data || response
     if (!result || typeof result !== 'object') throw new Error('Program 测试没有返回结果')
+    if (!String(result.program_test_proof || '').trim()) throw new Error('Program 测试没有返回可用证明，请重新测试')
     programTest.value = result
     // Keep this explicit ref read so Program branch output stays visible in the
     // source and is never mistaken for permission to execute that branch.
     const matchedBranch = String(programTest.value.matched_branch || '')
     notice.value = matchedBranch ? `Program 测试成功，匹配分支：${matchedBranch}` : 'Program 测试成功，本次 facts 没有匹配分支'
     testedProgramFingerprint.value = programFingerprint.value
+    programTestProof.value = String(result.program_test_proof)
   } catch (err) {
     programTestError.value = err?.message || String(err)
     testedProgramFingerprint.value = ''
@@ -451,29 +470,43 @@ function payloadFromForm() {
     objective_prompt: form.value.objective_prompt.trim(),
     automation_kind: form.value.automation_kind,
     context_mode: form.value.context_mode,
-    source_session_id: form.value.context_mode === 'inherited' ? form.value.source_session_id.trim() : '',
     schedule,
     loop_policy: {
       cycle_interval_seconds: Number(form.value.cycle_interval_seconds || 0),
       max_cycles: Number(form.value.max_cycles || 0),
       failure_threshold: Number(form.value.failure_threshold || 0),
     },
-    execution_policy: {
-      toolset: splitToolset(form.value.toolset_text),
-      timeout_seconds: Number(form.value.timeout_seconds || 0),
+        execution_policy: {
+          toolset: splitToolset(form.value.toolset_text),
+          allowed_risks: splitToolset(form.value.allowed_risks_text),
+          timeout_seconds: Number(form.value.timeout_seconds || 0),
       max_retries: Number(form.value.max_retries || 0),
+      ...(form.value.context_mode === 'inherited'
+        ? { inherited_wait_seconds: Number(form.value.inherited_wait_seconds || 0) }
+        : {}),
     },
     enabled: Boolean(form.value.enabled),
   }
-  if (hasProgram.value) payload.program = parseObject(form.value.program_text, 'Program')
+  // Origin session bindings are assigned when an Automation is created and
+  // remain immutable thereafter.  In particular, MCP-created isolated tasks
+  // retain an origin session solely for their final receipt; serializing an
+  // empty field on edit would accidentally request its removal.
+  if (!editingUid.value && form.value.context_mode === 'inherited') {
+    payload.source_session_id = form.value.source_session_id.trim()
+  }
+  if (hasProgram.value) {
+    payload.program = parseObject(form.value.program_text, 'Program')
+    payload.program_test_proof = programTestProof.value
+  }
+  else if (editingUid.value) payload.program = null
   return payload
 }
 
 async function saveAutomation() {
   error.value = ''
   notice.value = ''
-  if (form.value.enabled && hasProgram.value && !hasSuccessfulProgramTest.value) {
-    error.value = '请先测试 Program，再启用自动化。'
+  if (hasProgram.value && !hasSuccessfulProgramTest.value) {
+    error.value = '请先测试 Program，再保存自动化。'
     return
   }
   saving.value = true
@@ -511,7 +544,20 @@ function closeEditor() {
 }
 
 function onKindChange() {
-  if (form.value.automation_kind === 'loop') form.value.schedule_kind = 'every'
+  if (form.value.automation_kind === 'loop') {
+    form.value.schedule_kind = 'every'
+    if (!form.value.program_text.trim()) restoreProgramExample()
+    return
+  }
+  // A freshly opened editor starts with the loop example so that the loop
+  // path is immediately explorable. Switching it to a simple scheduled task
+  // must not require users to discover and delete that untouched example.
+  // Deliberately edited Program text remains available for scheduled Program
+  // automations, which are still a supported use case.
+  if (!editingUid.value && form.value.program_text === initialExampleProgramText) {
+    form.value.program_text = ''
+    invalidateProgramTest()
+  }
 }
 
 function scheduleValueForInput(value) {
@@ -543,8 +589,10 @@ async function editAutomation(automation) {
       max_cycles: Number(loop.max_cycles || 0),
       failure_threshold: Number(loop.failure_threshold || 3),
       toolset_text: Array.isArray(policy.toolset) ? policy.toolset.join(', ') : '',
+      allowed_risks_text: Array.isArray(policy.allowed_risks) ? policy.allowed_risks.join(', ') : '',
       timeout_seconds: Number(policy.timeout_seconds || 300),
       max_retries: Number(policy.max_retries || 1),
+      inherited_wait_seconds: Number(policy.inherited_wait_seconds || 300),
       enabled: Boolean(item.enabled),
       program_text: item.program && Object.keys(item.program).length ? JSON.stringify(item.program, null, 2) : '',
       facts_text: JSON.stringify({}, null, 2),
