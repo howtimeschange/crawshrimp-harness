@@ -159,6 +159,7 @@ test('Automation native denial cancels the exact DSH agent when durable reportin
     connection: {},
     agents: { roots: () => [] },
     approval: { decide: async () => 'rejected' },
+    provide() {},
     on(event, handler) {
       if (event === 'tools/pre-execute') preExecute = handler
       return () => {}
@@ -539,6 +540,12 @@ test('natural model phrases reuse the bound IM Session and preserve the bot defa
   assert.deepEqual(controls.parseNaturalModelCommand('换成 deepseek-v4-pro'), {
     action: 'select', requested: 'deepseek-v4-pro',
   })
+  assert.deepEqual(controls.parseNaturalModelCommand('切换到v4 pro 模型'), {
+    action: 'select', requested: 'v4 pro',
+  })
+  assert.deepEqual(controls.parseNaturalModelCommand('v4pro'), {
+    action: 'select', requested: 'v4pro',
+  })
 
   let current = { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash' }
   const selected = []
@@ -554,6 +561,10 @@ test('natural model phrases reuse the bound IM Session and preserve the bot defa
           { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
           { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' },
         ],
+      }, {
+        id: 'crawshrimp-overseas-openai',
+        name: 'OpenAI 海外',
+        models: [{ id: 'gpt-5.5', name: 'GPT-5.5' }],
       }],
       failures: [],
       current,
@@ -570,18 +581,44 @@ test('natural model phrases reuse the bound IM Session and preserve the bot defa
       assert.equal(sessionId, 'im-session-1')
       return session
     },
-    listModels: async () => { throw new Error('a bound IM Session must be used') },
+    listModels: async () => { throw new Error('the product catalog must be preferred') },
+    listCrawshrimpModelCatalog: async () => ({
+      ok: true,
+      configured_count: 2,
+      total_count: 3,
+      groups: [{
+        id: 'llm', name: 'LLM 对话模型', configured_count: 1, total_count: 1,
+        models: [{
+          id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', provider: 'crawshrimp-deepseek-official',
+          configured: true, default: true, supports_switch: true,
+        }],
+      }, {
+        id: 'ai-image', name: 'AI 生图模型', configured_count: 1, total_count: 1,
+        models: [{ id: 'gpt-image-2k', label: 'GPT Image 2K', provider: '1xm', configured: true }],
+      }, {
+        id: 'ai-video', name: 'AI 生视频模型', configured_count: 0, total_count: 1,
+        models: [{ id: 'seedance', label: 'Seedance', provider: 'seedance', configured: false }],
+      }],
+    }),
     setDefaultModel: async () => { throw new Error('bot default model must not be changed') },
   }
   const state = { sessionFor: () => 'im-session-1' }
 
   const listed = await controls.runNaturalModelCommand('有哪些模型', harness, state, 'direct:merchant')
-  assert.match(listed.message, /DeepSeek 官方/)
+  assert.match(listed.message, /抓虾已支持\/已配置模型/)
+  assert.match(listed.message, /AI 生图模型/)
+  assert.match(listed.message, /AI 生视频模型/)
   const currentResult = await controls.runNaturalModelCommand('当前是什么模型', harness, state, 'direct:merchant')
   assert.match(currentResult.message, /deepseek-v4-flash/)
-  const switched = await controls.runNaturalModelCommand('换成 deepseek-v4-pro', harness, state, 'direct:merchant')
+  const switched = await controls.runNaturalModelCommand('切换到v4 pro 模型', harness, state, 'direct:merchant')
   assert.match(switched.message, /deepseek-v4-pro/)
-  assert.deepEqual(selected, [{ provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-pro' }])
+  await controls.runNaturalModelCommand('v4pro', harness, state, 'direct:merchant')
+  await controls.runNaturalModelCommand('gpt5', harness, state, 'direct:merchant')
+  assert.deepEqual(selected, [
+    { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-pro' },
+    { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-pro' },
+    { provider: 'crawshrimp-overseas-openai', model: 'gpt-5.5' },
+  ])
 })
 
 test('natural permission controls require same-user confirmation before full access', async () => {
@@ -597,6 +634,11 @@ test('natural permission controls require same-user confirmation before full acc
   assert.deepEqual(controls.parseNaturalPermissionCommand('去掉审批'), { action: 'request-full-access' })
   assert.deepEqual(controls.parseNaturalPermissionCommand('确认切换到完全访问'), {
     action: 'confirm-full-access',
+  })
+  assert.deepEqual(controls.parseNaturalPermissionCommand('现在是什么审批模式'), { action: 'query' })
+  assert.deepEqual(controls.parseNaturalPermissionCommand('关闭审批模式'), { action: 'request-full-access' })
+  assert.deepEqual(controls.parseNaturalPermissionCommand('打开审批'), {
+    action: 'select', preset: 'workspace-write',
   })
 
   let preset = 'read-only'
@@ -632,6 +674,17 @@ test('natural permission controls require same-user confirmation before full acc
   const confirmed = await manager.run('确认切换到完全访问', harness, state, 'direct:merchant', { actor: 'merchant-a' })
   assert.match(confirmed.message, /danger-full-access/)
   assert.deepEqual(changes, ['workspace-write', 'danger-full-access'])
+
+  preset = 'workspace-write'
+  const allowedAll = await manager.allowAllForCurrentApproval(
+    harness,
+    state,
+    'direct:merchant',
+    { actor: 'merchant-a' },
+  )
+  assert.match(allowedAll.message, /当前可见审批已批准/)
+  assert.match(allowedAll.message, /danger-full-access/)
+  assert.deepEqual(changes, ['workspace-write', 'danger-full-access', 'danger-full-access'])
 })
 
 test('text IM bridge handles natural permission commands locally instead of prompting the agent', async () => {
@@ -732,6 +785,9 @@ test('allow all resolves only the visible approval once and delegates scoped ele
   patcher.patchRuntimeDependencies(harnessRoot)
   const approval = await import(moduleUrl('src/channels/shared/harness-approval.mjs', 'allow-all-approval'))
   assert.equal(approval.harnessApprovalDecision('允许所有'), 'allowed-all')
+  assert.equal(approval.harnessApprovalDecision('全部允许'), 'allowed-all')
+  assert.equal(approval.harnessApprovalDecision('后续都允许。'), 'allowed-all')
+  assert.equal(approval.harnessApprovalDecision('确认执行'), 'allowed-once')
   const allowAllCalls = []
   const queue = new approval.HarnessApprovalQueue({
     label: 'telegram',
@@ -775,6 +831,103 @@ test('allow all resolves only the visible approval once and delegates scoped ele
     key: 'direct:merchant', actor: 'merchant-a', sessionId: 'im-session-1', approvalId: 'approval-1',
   }])
   assert.match(sent.at(-1), /二次确认/)
+})
+
+test('dsh-im approval presents sanitized payload arguments when the display name differs from the correlated tool call', async () => {
+  const approval = await import(moduleUrl('src/channels/shared/harness-approval.mjs', 'approval-display-name'))
+  const payload = {
+    type: 'approval/requested',
+    sessionId: 'session-73253fc7',
+    approvalId: 'approval-renner',
+    toolName: '运行任务:Renner 儿童鞋服类目调研',
+    callId: 'call-renner',
+    reason: '运行任务「Renner 儿童鞋服类目调研」。',
+    arguments: '风险:local_write\n关键参数:plan_id=plan-renner',
+  }
+  const toolCall = {
+    callId: 'call-renner',
+    name: 'mcp__crawshrimp__task_run',
+    arguments: '{"plan_id":"plan-renner"}',
+  }
+
+  const text = approval.harnessApprovalText(payload, { toolCall })
+  assert.match(text, /抓虾 Harness 需要你的审批/)
+  assert.match(text, /运行任务:Renner 儿童鞋服类目调研/)
+  assert.match(text, /风险:local_write/)
+  assert.match(text, /plan_id=plan-renner/)
+
+  const sent = []
+  const responded = []
+  const queue = new approval.HarnessApprovalQueue({ label: 'weixin-test' })
+  await queue.handleRequested({
+    kind: 'approval',
+    rpcId: 'rpc-renner',
+    sessionId: payload.sessionId,
+    payload,
+    toolCall,
+    respond: async (result) => { responded.push(result) },
+  }, {
+    key: 'direct:merchant',
+    actor: 'merchant-a',
+    send: async (message) => { sent.push(message) },
+  })
+  assert.match(sent[0], /运行任务:Renner 儿童鞋服类目调研/)
+  assert.deepEqual(responded, [])
+  const claimed = queue.claimReply({
+    key: 'direct:merchant',
+    actor: 'merchant-a',
+    text: '批准',
+    send: async (message) => { sent.push(message) },
+  })
+  assert.ok(claimed)
+  await claimed.process()
+  assert.deepEqual(responded, [{
+    ok: true,
+    value: { sessionId: payload.sessionId, approvalId: payload.approvalId, outcome: 'allowed-once' },
+  }])
+
+  assert.equal(approval.harnessApprovalText(payload, {
+    toolCall: { ...toolCall, callId: 'other-call' },
+  }), null)
+  assert.equal(approval.harnessApprovalText({ ...payload, arguments: undefined }, { toolCall }), null)
+})
+
+test('dsh-im modern approval frames preserve product-supplied sanitized arguments', () => {
+  const source = readFileSync(resolve(dshImRoot, 'plugin-src/host/modern-harness-api.mjs'), 'utf8')
+  assert.match(source, /pending\.arguments === undefined[\s\S]*arguments: pending\.arguments/)
+  assert.match(source, /arguments: request\.arguments/)
+})
+
+test('dsh-im modern host exposes the product model catalog to natural IM controls', async () => {
+  const bridgeSource = readFileSync(resolve(harnessRoot, 'crawshrimp-product-bridge/lib/index.js'), 'utf8')
+  assert.match(bridgeSource, /provide\('crawshrimpModelCatalog'/)
+  const { modernHarnessApi } = await import(moduleUrl('plugin-src/host/modern-harness-api.mjs', 'product-model-catalog'))
+  const { HarnessClient } = await import(moduleUrl('src/channels/shared/harness-client.mjs', 'product-model-catalog-client'))
+  const catalog = {
+    ok: true,
+    configured_count: 1,
+    total_count: 2,
+    groups: [{ id: 'llm', name: 'LLM 对话模型', models: [] }, {
+      id: 'ai-image', name: 'AI 生图模型', models: [],
+    }],
+  }
+  const ctx = {
+    root: {},
+    typertGateway: { async invoke() {}, async stream() {} },
+    crawshrimpModelCatalog: { list: async () => catalog },
+    on() { return () => {} },
+  }
+  const client = new HarnessClient({ apiProxy: modernHarnessApi(ctx), workspace: '/crawshrimp' })
+  assert.deepEqual(await client.listCrawshrimpModelCatalog(), catalog)
+})
+
+test('runtime dsh-im host entry is rebuilt from the product-patched 4.11 sources', () => {
+  const bundle = readFileSync(resolve(dshImRoot, 'lib/index.js'), 'utf8')
+  assert.match(bundle, /crawshrimp-dsh-im-411-built-overlay-v2/)
+  assert.match(bundle, /getSessionPermission/)
+  assert.match(bundle, /setSessionPermission/)
+  assert.match(bundle, /crawshrimp-approval-display-arguments-v4/)
+  assert.match(bundle, /允许所有|\\u5141\\u8BB8\\u6240\\u6709/)
 })
 
 test('clean dsh-im patch routes natural controls through every native channel bridge', async () => {
@@ -936,6 +1089,7 @@ test('Crawshrimp automation receipt HTTP route authenticates and rejects a busy 
     connection: {},
     agents: { roots: () => [{ status: 'idle', session }] },
     approval: { decide: async () => 'rejected' },
+    provide() {},
     on: () => () => {},
     effect(fn) { return fn() },
     webServer: {

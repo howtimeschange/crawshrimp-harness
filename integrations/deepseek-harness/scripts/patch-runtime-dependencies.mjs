@@ -10,7 +10,9 @@
  * client module that serves that copy; every change is anchored and idempotent.
  */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const RUNTIME_GUARD_MARKER = 'crawshrimp-dsh-im-411-product-patch-v1'
 const DSH_IM_RUNTIME_ROOT = 'node_modules/@xmanrui/dsh-im'
@@ -29,6 +31,10 @@ const DSH_SESSION_SYNC_LABELS = new Map([
 export const CRAWSHRIMP_DSH_IM_NATURAL_CONTROLS_MARKER = 'crawshrimp-dsh-im-411-natural-controls-v1'
 export const CRAWSHRIMP_DSH_IM_SESSION_PERMISSION_MARKER = 'crawshrimp-dsh-im-411-session-permission-v1'
 export const CRAWSHRIMP_DSH_IM_NATIVE_CONTROLS_MARKER = 'crawshrimp-dsh-im-411-native-controls-v1'
+export const CRAWSHRIMP_DSH_IM_APPROVAL_DISPLAY_ARGUMENTS_MARKER = 'crawshrimp-approval-display-arguments-v4'
+export const CRAWSHRIMP_DSH_IM_PRODUCT_MODEL_CATALOG_MARKER = 'crawshrimp-dsh-im-411-product-model-catalog-v1'
+export const CRAWSHRIMP_DSH_IM_APPROVAL_REPLIES_MARKER = 'crawshrimp-dsh-im-411-approval-replies-v2'
+export const CRAWSHRIMP_DSH_IM_BUILT_OVERLAY_MARKER = 'crawshrimp-dsh-im-411-built-overlay-v2'
 
 const NATURAL_MODEL_CONTROLS_SOURCE = `// ${CRAWSHRIMP_DSH_IM_NATURAL_CONTROLS_MARKER}
 import { runModelCommand } from './model-command.mjs';
@@ -45,6 +51,19 @@ function compactModelName(value) {
   return cleanText(value).toLowerCase().replace(/[\\s_-]+/gu, '');
 }
 
+const PRODUCT_MODEL_ALIASES = new Map([
+  ['v4pro', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-pro' }],
+  ['deepseekv4pro', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-pro' }],
+  ['v4flash', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash' }],
+  ['deepseekv4flash', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash' }],
+  ['gpt5', { provider: 'crawshrimp-overseas-openai', model: 'gpt-5.5' }],
+]);
+
+function safeDirectModelAlias(command) {
+  if (!/^[\\p{L}\\p{N}._\\s-]{1,128}$/u.test(command)) return null;
+  return PRODUCT_MODEL_ALIASES.has(compactModelName(command)) ? command : null;
+}
+
 export function parseNaturalModelCommand(text) {
   const command = cleanText(text);
   if (!command || command.startsWith('/')) return null;
@@ -54,9 +73,9 @@ export function parseNaturalModelCommand(text) {
   if (/^(?:当前|现在|目前).*(?:是什么|哪个|查看)?.*(?:大)?模型[？?]?$/u.test(command)) {
     return { action: 'current' };
   }
-  const selection = /^(?:切换(?:模型)?(?:到|为)?|换成|改成|使用(?:模型)?(?:到|为)?)[\\s：:]*([^\\s]+)$/u.exec(command);
-  if (!selection) return null;
-  return { action: 'select', requested: selection[1] };
+  const selection = /^(?:切换(?:模型)?(?:到|为)?|换成|改成|使用(?:模型)?(?:到|为)?)[\\s：:]*([^\\n]{1,128}?)(?:\\s*模型)?$/u.exec(command);
+  const requested = cleanText(selection?.[1] ?? safeDirectModelAlias(command));
+  return requested ? { action: 'select', requested } : null;
 }
 
 export function isNaturalModelCommand(text) {
@@ -75,10 +94,13 @@ async function modelSelectionFor(requested, harness, state, key, options) {
   if (!bound || typeof bound.session?.models !== 'function') return null;
   const catalog = await bound.session.models(options.signal ? { signal: options.signal } : undefined);
   const expected = compactModelName(requested);
+  const alias = PRODUCT_MODEL_ALIASES.get(expected);
   const candidates = [];
   for (const group of Array.isArray(catalog?.groups) ? catalog.groups : []) {
     for (const model of Array.isArray(group?.models) ? group.models : []) {
-      if (compactModelName(model?.id) === expected || compactModelName(model?.name) === expected) {
+      if ((alias && group?.id === alias.provider && model?.id === alias.model)
+        || compactModelName(model?.id) === expected
+        || compactModelName(model?.name) === expected) {
         candidates.push({ provider: group.id, model: model.id });
       }
     }
@@ -87,10 +109,47 @@ async function modelSelectionFor(requested, harness, state, key, options) {
   return candidates.find(({ provider }) => provider === catalog?.current?.provider) ?? candidates[0];
 }
 
+function productModelCatalogText(catalog) {
+  if (!catalog || catalog.ok !== true || !Array.isArray(catalog.groups)) {
+    throw new TypeError('抓虾产品模型目录响应无效');
+  }
+  const lines = ['抓虾已支持/已配置模型：'];
+  for (const group of catalog.groups) {
+    if (!group || typeof group !== 'object' || !Array.isArray(group.models)) continue;
+    const name = cleanText(group.name) || cleanText(group.id) || '未命名分组';
+    lines.push('', name + '：');
+    if (group.models.length === 0) {
+      lines.push('- 暂无模型');
+      continue;
+    }
+    for (const model of group.models) {
+      const label = cleanText(model?.label) || cleanText(model?.name) || cleanText(model?.id);
+      if (!label) continue;
+      const provider = cleanText(model?.provider);
+      const modelId = cleanText(model?.id);
+      const status = model?.configured === false ? '（未配置）' : '（已配置）';
+      const identity = provider && modelId ? ' · ' + provider + '/' + modelId : '';
+      lines.push('- ' + label + identity + status);
+    }
+  }
+  return lines.join('\\n');
+}
+
+async function listProductModels(harness, options) {
+  if (typeof harness?.listCrawshrimpModelCatalog !== 'function') return null;
+  const catalog = await harness.listCrawshrimpModelCatalog(
+    options.signal ? { signal: options.signal } : undefined,
+  );
+  return commandResult(productModelCatalogText(catalog));
+}
+
 export async function runNaturalModelCommand(text, harness, state, key, options = {}) {
   const command = parseNaturalModelCommand(text);
   if (!command) return null;
-  if (command.action === 'list') return runModelCommand('/models', harness, state, key, options);
+  if (command.action === 'list') {
+    return await listProductModels(harness, options)
+      ?? runModelCommand('/models', harness, state, key, options);
+  }
   if (command.action === 'current') return runModelCommand('/model', harness, state, key, options);
   const bound = boundSession(harness, state, key);
   if (!bound) {
@@ -104,14 +163,14 @@ export async function runNaturalModelCommand(text, harness, state, key, options 
 export function parseNaturalPermissionCommand(text) {
   const command = cleanText(text);
   if (!command || command.startsWith('/')) return null;
-  if (/^(?:修改|查看|查询|现在的)?(?:审批)?权限(?:是什么|如何|多少)?[？?]?$/u.test(command)) {
+  if (/^(?:(?:修改|查看|查询|现在的)?(?:审批)?权限(?:是什么|如何|多少)?|(?:当前|现在|目前)(?:是|的)?什么审批模式|(?:当前|现在|目前)审批模式(?:是什么)?)[？?]?$/u.test(command)) {
     return { action: 'query' };
   }
   if (/^(?:审批)?权限(?:改成|切换到|设为)[\\s]*工作区写入$/u.test(command)
-    || /^(?:恢复|开启)(?:审批|权限)$/u.test(command)) {
+    || /^(?:恢复|开启|打开)(?:审批|权限)(?:模式)?$/u.test(command)) {
     return { action: 'select', preset: 'workspace-write' };
   }
-  if (/^(?:去掉|关闭|取消)(?:审批|权限)$/u.test(command)
+  if (/^(?:去掉|关闭|取消)(?:审批|权限)(?:模式)?$/u.test(command)
     || /^(?:完全访问|完全开放|允许完全访问)$/u.test(command)) {
     return { action: 'request-full-access' };
   }
@@ -225,7 +284,11 @@ export class PermissionCommandManager {
   }
 
   async allowAllForCurrentApproval(harness, state, key, { actor } = {}) {
-    return this.#applyFullAccess(harness, state, key, actor, { allowAll: true });
+    if (!actor) return commandResult('无法确认当前用户，未提升完全访问。');
+    const bound = permissionSession(harness, state, key);
+    if (!bound) return commandResult('当前聊天没有支持权限控制的已绑定会话。');
+    const value = await bound.session.setPermission({ preset: 'danger-full-access' });
+    return commandResult(permissionMessage(value, '当前可见审批已批准；当前会话权限已切换为：'));
   }
 }
 
@@ -597,25 +660,25 @@ function patchDshImNaturalModelControls(root) {
 function patchDshImApprovalControls(root) {
   const approval = join(root, DSH_IM_RUNTIME_ROOT, 'src/channels/shared/harness-approval.mjs')
   let source = readFileSync(approval, 'utf8')
-  if (source.includes('#onAllowAll;')
+  if (!(source.includes('#onAllowAll;')
     && source.includes("['允许所有', 'allowed-all']")
-    && source.includes("decision === 'allowed-all'")) return approval
-  source = replaceRequired(
-    source,
-    "  ['yes', 'allowed-once'],",
-    "  ['yes', 'allowed-once'],\n  ['允许所有', 'allowed-all'],\n  ['allow all', 'allowed-all'],",
-    'HarnessApprovalQueue allow-all replies',
-  )
-  source = replaceRequired(
-    source,
-    '  #logger;\n  #byId = new Map();',
-    '  #logger;\n  #onAllowAll;\n  #byId = new Map();',
-    'HarnessApprovalQueue allow-all callback state',
-  )
-  source = replaceRequired(
-    source,
-    '  constructor({ label = \'IM\', logger = console } = {}) {\n    this.#label = label;\n    this.#logger = logger;\n  }',
-    `  constructor({ label = 'IM', logger = console, onAllowAll } = {}) {
+    && source.includes("decision === 'allowed-all'"))) {
+    source = replaceRequired(
+      source,
+      "  ['yes', 'allowed-once'],",
+      "  ['yes', 'allowed-once'],\n  ['允许所有', 'allowed-all'],\n  ['allow all', 'allowed-all'],",
+      'HarnessApprovalQueue allow-all replies',
+    )
+    source = replaceRequired(
+      source,
+      '  #logger;\n  #byId = new Map();',
+      '  #logger;\n  #onAllowAll;\n  #byId = new Map();',
+      'HarnessApprovalQueue allow-all callback state',
+    )
+    source = replaceRequired(
+      source,
+      '  constructor({ label = \'IM\', logger = console } = {}) {\n    this.#label = label;\n    this.#logger = logger;\n  }',
+      `  constructor({ label = 'IM', logger = console, onAllowAll } = {}) {
     if (onAllowAll !== undefined && typeof onAllowAll !== 'function') {
       throw new TypeError('onAllowAll must be a function');
     }
@@ -623,12 +686,12 @@ function patchDshImApprovalControls(root) {
     this.#logger = logger;
     this.#onAllowAll = onAllowAll;
   }`,
-    'HarnessApprovalQueue allow-all callback constructor',
-  )
-  source = replaceRequired(
-    source,
-    '            await this.#submit(pending, decision);',
-    `            if (decision === 'allowed-all') {
+      'HarnessApprovalQueue allow-all callback constructor',
+    )
+    source = replaceRequired(
+      source,
+      '            await this.#submit(pending, decision);',
+      `            if (decision === 'allowed-all') {
               await this.#submit(pending, 'allowed-once');
               const message = await this.#onAllowAll?.({
                 key: pending.key,
@@ -640,8 +703,100 @@ function patchDshImApprovalControls(root) {
             } else {
               await this.#submit(pending, decision);
             }`,
-    'HarnessApprovalQueue scoped allow-all submit',
-  )
+      'HarnessApprovalQueue scoped allow-all submit',
+    )
+  }
+  if (!source.includes(CRAWSHRIMP_DSH_IM_APPROVAL_REPLIES_MARKER)) {
+    source = replaceRequired(
+      source,
+      `const APPROVAL_REPLIES = new Map([
+  ['批准', 'allowed-once'],
+  ['同意', 'allowed-once'],
+  ['yes', 'allowed-once'],
+  ['允许所有', 'allowed-all'],
+  ['allow all', 'allowed-all'],
+  ['拒绝', 'rejected'],
+  ['不同意', 'rejected'],
+  ['no', 'rejected'],
+]);`,
+      `// ${CRAWSHRIMP_DSH_IM_APPROVAL_REPLIES_MARKER}
+const APPROVAL_REPLIES = new Map([
+  ['批准', 'allowed-once'],
+  ['批准执行', 'allowed-once'],
+  ['同意', 'allowed-once'],
+  ['同意执行', 'allowed-once'],
+  ['确认', 'allowed-once'],
+  ['确认执行', 'allowed-once'],
+  ['允许', 'allowed-once'],
+  ['允许执行', 'allowed-once'],
+  ['可以执行', 'allowed-once'],
+  ['继续执行', 'allowed-once'],
+  ['yes', 'allowed-once'],
+  ['ok', 'allowed-once'],
+  ['允许所有', 'allowed-all'],
+  ['全部允许', 'allowed-all'],
+  ['后续都允许', 'allowed-all'],
+  ['allow all', 'allowed-all'],
+  ['拒绝', 'rejected'],
+  ['不同意', 'rejected'],
+  ['不要执行', 'rejected'],
+  ['取消执行', 'rejected'],
+  ['no', 'rejected'],
+]);`,
+      'HarnessApprovalQueue natural approval replies',
+    )
+    source = replaceRequired(
+      source,
+      `export function harnessApprovalDecision(text) {
+  return APPROVAL_REPLIES.get(cleanText(text).toLowerCase()) ?? null;
+}`,
+      `function normalizedApprovalReply(text) {
+  return printableText(text)
+    .replace(/[？?。！!，,；;：:]+$/gu, '')
+    .replace(/\\s+/gu, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+export function harnessApprovalDecision(text) {
+  const reply = normalizedApprovalReply(text);
+  return reply ? APPROVAL_REPLIES.get(reply) ?? null : null;
+}`,
+      'HarnessApprovalQueue reply normalization',
+    )
+  }
+  if (!source.includes(CRAWSHRIMP_DSH_IM_APPROVAL_DISPLAY_ARGUMENTS_MARKER)) {
+    source = replaceRequired(
+      source,
+      `export function harnessApprovalText(payload, {
+  toolCall,
+  requiresMention = false,
+  maxArgumentsLength = 6_000,
+} = {}) {
+  if (!validHarnessApproval(payload)) return null;
+  const callId = cleanText(payload.callId);
+  if (!callId
+    || cleanText(toolCall?.callId) !== callId
+    || cleanText(toolCall?.name) !== cleanText(payload.toolName)) return null;
+  const operation = toolArguments(toolCall);
+  if (!operation || operation.length > maxArgumentsLength) return null;`,
+      `/*! ${CRAWSHRIMP_DSH_IM_APPROVAL_DISPLAY_ARGUMENTS_MARKER}: a product display name may differ from the correlated MCP tool name. */
+export function harnessApprovalText(payload, {
+  toolCall,
+  requiresMention = false,
+  maxArgumentsLength = 6_000,
+} = {}) {
+  if (!validHarnessApproval(payload)) return null;
+  const callId = cleanText(payload.callId);
+  if (!callId || cleanText(toolCall?.callId) !== callId) return null;
+  const toolNameMatches = cleanText(toolCall?.name) === cleanText(payload.toolName);
+  const operation = toolNameMatches
+    ? toolArguments(toolCall)
+    : toolArguments({ arguments: payload.arguments });
+  if (!operation || operation.length > maxArgumentsLength) return null;`,
+      'Harness approval correlated display arguments',
+    )
+  }
   writeFileSync(approval, source)
   return approval
 }
@@ -776,6 +931,37 @@ function validateSessionPermission(value, method, { requirePrevious = false } = 
     )
     writeFileSync(harnessClient, clientSource)
   }
+  clientSource = readFileSync(harnessClient, 'utf8')
+  if (!clientSource.includes(CRAWSHRIMP_DSH_IM_PRODUCT_MODEL_CATALOG_MARKER)) {
+    const productValidation = `// ${CRAWSHRIMP_DSH_IM_PRODUCT_MODEL_CATALOG_MARKER}
+function validateProductModelCatalog(value) {
+  if (!value || typeof value !== 'object' || value.ok !== true || !Array.isArray(value.groups)) {
+    throw new Error('抓虾 Harness returned an invalid response for llm.productModels');
+  }
+  return value;
+}
+`
+    clientSource = replaceRequired(
+      clientSource,
+      'function validModelReasoning(value) {',
+      productValidation + '\nfunction validModelReasoning(value) {',
+      'HarnessClient product model catalog validation',
+    )
+    clientSource = replaceRequired(
+      clientSource,
+      '  async listModels(options = {}) {',
+      `  async listCrawshrimpModelCatalog(options = {}) {
+    await this.ensureRunning(options);
+    return validateProductModelCatalog(
+      await this.rpc('llm.productModels', {}, 30_000, options),
+    );
+  }
+
+  async listModels(options = {}) {`,
+      'HarnessClient product model catalog method',
+    )
+    writeFileSync(harnessClient, clientSource)
+  }
 
   let storeSource = readFileSync(workspaceStore, 'utf8')
   if (!storeSource.includes(CRAWSHRIMP_DSH_IM_SESSION_PERMISSION_MARKER)) {
@@ -796,6 +982,22 @@ function validateSessionPermission(value, method, { requirePrevious = false } = 
               return invokeStartedSessionMutation('setSessionPermission', [preset, ...args], 'permission change');
             },`,
       'bot workspace permission facade',
+    )
+    writeFileSync(workspaceStore, storeSource)
+  }
+  storeSource = readFileSync(workspaceStore, 'utf8')
+  if (!storeSource.includes(CRAWSHRIMP_DSH_IM_PRODUCT_MODEL_CATALOG_MARKER)) {
+    storeSource = replaceRequired(
+      storeSource,
+      `      if ((property === 'listWorkspaces'
+        || property === 'listWorkspaceSessions'
+        || property === 'listModels')`,
+      `      // ${CRAWSHRIMP_DSH_IM_PRODUCT_MODEL_CATALOG_MARKER}
+      if ((property === 'listWorkspaces'
+        || property === 'listWorkspaceSessions'
+        || property === 'listModels'
+        || property === 'listCrawshrimpModelCatalog')`,
+      'bot workspace product model catalog read scope',
     )
     writeFileSync(workspaceStore, storeSource)
   }
@@ -905,8 +1107,87 @@ function permissionPresetsFor(ctx) {
     )
     writeFileSync(modernApi, modernSource)
   }
+  modernSource = readFileSync(modernApi, 'utf8')
+  if (!modernSource.includes(CRAWSHRIMP_DSH_IM_PRODUCT_MODEL_CATALOG_MARKER)) {
+    modernSource = replaceRequired(
+      modernSource,
+      `      models: (request, signal) => rpcResult(request, async () => {
+        const catalog = await this.#modelCatalog(signal);
+        return { groups: catalog.groups, failures: catalog.failures };
+      }),`,
+      `      models: (request, signal) => rpcResult(request, async () => {
+        const catalog = await this.#modelCatalog(signal);
+        return { groups: catalog.groups, failures: catalog.failures };
+      }),
+      // ${CRAWSHRIMP_DSH_IM_PRODUCT_MODEL_CATALOG_MARKER}
+      productModels: (request, signal) => rpcResult(request, () => (
+        this.#productModelCatalog(signal)
+      )),`,
+      'modern Harness product model catalog RPC',
+    )
+    const productMethod = `  async #productModelCatalog(signal) {
+    signal?.throwIfAborted();
+    const service = optionalService(this.#ctx, 'crawshrimpModelCatalog');
+    if (!service || typeof service.list !== 'function') {
+      throw permissionRpcError('unsupported', 'Crawshrimp product model catalog is unavailable');
+    }
+    const catalog = await service.list();
+    signal?.throwIfAborted();
+    if (!catalog || catalog.ok !== true || !Array.isArray(catalog.groups)) {
+      throw permissionRpcError('invalid-product-model-catalog', 'Crawshrimp product model catalog returned an invalid response');
+    }
+    return catalog;
+  }
+
+`
+    modernSource = replaceRequired(
+      modernSource,
+      '  #modelCatalog(signal) {',
+      productMethod + '  #modelCatalog(signal) {',
+      'modern Harness product model catalog implementation',
+    )
+    writeFileSync(modernApi, modernSource)
+  }
+
+  modernSource = readFileSync(modernApi, 'utf8')
+  if (!modernSource.includes(CRAWSHRIMP_DSH_IM_APPROVAL_DISPLAY_ARGUMENTS_MARKER)) {
+    modernSource = replaceRequired(
+      modernSource,
+      `        toolName: pending.toolName,
+        ...(pending.callId === undefined ? {} : { callId: pending.callId }),`,
+      `        toolName: pending.toolName,
+        // ${CRAWSHRIMP_DSH_IM_APPROVAL_DISPLAY_ARGUMENTS_MARKER}
+        ...(pending.arguments === undefined ? {} : { arguments: pending.arguments }),
+        ...(pending.callId === undefined ? {} : { callId: pending.callId }),`,
+      'modern approval frame display arguments',
+    )
+    modernSource = replaceRequired(
+      modernSource,
+      `        toolName: request.toolName,
+        callId: request.callId,`,
+      `        toolName: request.toolName,
+        arguments: request.arguments,
+        callId: request.callId,`,
+      'modern approval pending display arguments',
+    )
+    writeFileSync(modernApi, modernSource)
+  }
 
   return { harnessClient, workspaceStore, modernApi }
+}
+
+function buildPatchedDshImBundle(root) {
+  const bundle = join(root, DSH_IM_RUNTIME_ROOT, 'lib/index.js')
+  if (readFileSync(bundle, 'utf8').includes(CRAWSHRIMP_DSH_IM_BUILT_OVERLAY_MARKER)) return bundle
+  const buildScript = fileURLToPath(new URL('./build-patched-dsh-im.mjs', import.meta.url))
+  const result = spawnSync(process.execPath, [buildScript, root], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  if (result.status !== 0) {
+    throw new Error(`dsh-im host bundle build failed: ${result.stderr || result.stdout || String(result.status)}`)
+  }
+  return requireText(root, `${DSH_IM_RUNTIME_ROOT}/lib/index.js`, CRAWSHRIMP_DSH_IM_BUILT_OVERLAY_MARKER)
 }
 
 /**
@@ -996,11 +1277,14 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const dshSchedule = requireText(root, 'node_modules/@deepseek-ai/dsh-schedule/package.json', '"0.1.2-rc.1"')
   const dshImManifest = requireText(root, 'node_modules/@xmanrui/dsh-im/package.json', '"4.11.0"')
   const dshImEntry = requireFile(root, 'node_modules/@xmanrui/dsh-im/lib/index.js')
-  const dshImBrand = patchDshImUserVisibleBrand(root)
   const dshImNaturalModelControls = patchDshImNaturalModelControls(root)
   const dshImApprovalControls = patchDshImApprovalControls(root)
   const dshImNativeChannelControls = patchDshImNativeChannelControls(root)
   const dshImSessionPermission = patchDshImSessionPermissionRpc(root)
+  // Brand after every source overlay so a clean install and an already-patched
+  // development runtime produce the same user-visible source and Host bundle.
+  const dshImBrand = patchDshImUserVisibleBrand(root)
+  const dshImBuiltEntry = buildPatchedDshImBundle(root)
   const profilePackages = assertEffectiveProfileRootClosure(root)
   const standardPreset = assertStandardPresetRootClosure(root)
   const inboundTtl = requireText(
@@ -1032,6 +1316,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
     dshSchedule,
     dshImManifest,
     dshImEntry,
+    dshImBuiltEntry,
     dshImBrandFiles: dshImBrand.files,
     dshImBrandChangedFiles: dshImBrand.changed,
     dshImNaturalModelControls,

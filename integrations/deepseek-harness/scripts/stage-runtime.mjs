@@ -237,6 +237,7 @@ const hashInputs = [
   hashTree(profileSource),
   readFileSync(fileURLToPath(import.meta.url)),
   readFileSync(join(here, 'patch-runtime-dependencies.mjs')),
+  readFileSync(join(here, 'build-patched-dsh-im.mjs')),
   targetId,
 ].join('|')
 const fingerprint = createHash('sha256').update(hashInputs).digest('hex')

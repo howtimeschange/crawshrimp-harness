@@ -846,6 +846,11 @@ export async function appendCrawshrimpAutomationReceipt(ctx, body) {
 export function apply(ctx) {
   const sessionRegistry = imSessionRegistry()
   const workspaceRoot = String(process.env.CRAWSHRIMP_WORKSPACE_ROOT || '').trim()
+  ctx.provide('crawshrimpModelCatalog', Object.freeze({
+    list: (fetchImpl = globalThis.fetch, env = process.env) => (
+      fetchCrawshrimpModelCatalog(fetchImpl, env)
+    ),
+  }))
   installMcpLeaseFetchBridge(ctx)
   installImApprovalGuard(ctx.approval, sessionRegistry)
   installImConnectionRpcPolicy(ctx, workspaceRoot)
