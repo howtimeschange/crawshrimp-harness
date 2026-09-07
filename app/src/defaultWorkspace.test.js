@@ -6,6 +6,8 @@ const { pathToFileURL } = require('node:url')
 const vm = require('node:vm')
 
 const clientBundle = resolve(__dirname, '../../integrations/deepseek-harness/crawshrimp-slots/lib/client.js')
+const profilePatch = resolve(__dirname, '../../integrations/deepseek-harness/profile/web/cordis.patch.yml')
+const agentPresetUi = resolve(__dirname, '../../integrations/deepseek-harness/node_modules/@deepseek-ai/dsh-client-ui-agent-preset/lib/client.js')
 
 function loadSlotsClient({ logs = [], search = '' } = {}) {
   let declaration
@@ -61,29 +63,19 @@ function loadWorkspaceInitializer(logs = []) {
   return client.module.ensureDefaultWorkspace
 }
 
-test('Crawshrimp preset copy distinguishes the recommended product mode from upstream developer modes', () => {
-  const client = loadSlotsClient()
-  assert.equal(typeof client.module.agentPresetDisplayCopy, 'function')
+test('Crawshrimp fixes its one agent preset without a picker display layer', () => {
+  const source = readFileSync(clientBundle, 'utf8')
+  const profile = readFileSync(profilePatch, 'utf8')
+  const upstreamPresetUi = readFileSync(agentPresetUi, 'utf8')
 
-  const recommended = client.module.agentPresetDisplayCopy('crawshrimp-standard')
-  assert.deepEqual({ id: recommended.id, name: recommended.name, description: recommended.description }, {
-    id: 'crawshrimp-standard',
-    name: '抓虾工作模式（推荐）',
-    description: '适合日常抓虾任务：脚本、附件与数据分析、实时浏览器、文件、AI 内容、计划和子代理均可使用；涉及改动时仍会请求确认。',
-  })
-  const standard = client.module.agentPresetDisplayCopy('标准模式')
-  assert.deepEqual({ id: standard.id, name: standard.name, description: standard.description }, {
-    id: 'standard',
-    name: '通用开发模式',
-    description: 'DSH 上游的完整开发模式，不是抓虾专用；适合通用代码与文件任务，抓虾日常工作推荐使用「抓虾工作模式」。',
-  })
-  const ptc = client.module.agentPresetDisplayCopy('PTC 模式')
-  assert.deepEqual({ id: ptc.id, name: ptc.name, description: ptc.description }, {
-    id: 'ptc',
-    name: '开发者编排模式',
-    description: 'DSH 上游高级模式，不是抓虾专用；面向需要用 TypeScript 编排多步工具调用的开发者，日常任务不推荐。',
-  })
-  assert.equal(client.module.agentPresetDisplayCopy('不存在的模式'), undefined)
+  assert.doesNotMatch(source, /agentPresetDisplayCopy/)
+  assert.doesNotMatch(source, /normalizeAgentPresetPickerCopy/)
+  assert.match(source, /\.cubgiG_seat \{ display: none !important; \}/)
+  assert.match(upstreamPresetUi, /"seat": "cubgiG_seat"/)
+  assert.match(profile, /id: agent-presets[\s\S]*?default: crawshrimp-standard/)
+  assert.match(profile, /id: agent-presets[\s\S]*?includeShippedRoot: false/)
+  assert.match(profile, /id: agent-presets[\s\S]*?includeUserRoot: false/)
+  assert.match(profile, /id: ui-agent-preset\s+disabled: true/)
 })
 
 function snapshotStore(initial) {

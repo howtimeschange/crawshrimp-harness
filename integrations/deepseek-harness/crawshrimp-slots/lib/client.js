@@ -41,94 +41,6 @@ window.__ModuleLoader__.load({
     let crawshrimpContext = null
     const pendingAttachmentHintsBySession = new Map()
 
-    // DSH ships four developer-oriented agent presets.  They remain selectable
-    // and retain their upstream capabilities; this product-only display layer
-    // makes that boundary explicit and marks Crawshrimp's full preset as the
-    // normal choice for scripts, data, browser and content work.
-    const CRAWSHRIMP_AGENT_PRESET_COPY = Object.freeze({
-      'crawshrimp-standard': Object.freeze({
-        id: 'crawshrimp-standard',
-        name: '抓虾工作模式（推荐）',
-        description: '适合日常抓虾任务：脚本、附件与数据分析、实时浏览器、文件、AI 内容、计划和子代理均可使用；涉及改动时仍会请求确认。',
-      }),
-      standard: Object.freeze({
-        id: 'standard',
-        name: '通用开发模式',
-        description: 'DSH 上游的完整开发模式，不是抓虾专用；适合通用代码与文件任务，抓虾日常工作推荐使用「抓虾工作模式」。',
-      }),
-      ptc: Object.freeze({
-        id: 'ptc',
-        name: '开发者编排模式',
-        description: 'DSH 上游高级模式，不是抓虾专用；面向需要用 TypeScript 编排多步工具调用的开发者，日常任务不推荐。',
-      }),
-      minimal: Object.freeze({
-        id: 'minimal',
-        name: '轻量开发模式',
-        description: 'DSH 上游的最小开发模式，不是抓虾专用；仅保留 Shell 与代码替换工具，适合排查或小型脚本。',
-      }),
-      cordis: Object.freeze({
-        id: 'cordis',
-        name: 'Agent 定制模式',
-        description: 'DSH 上游的预设创作模式，不是抓虾专用；用于定制 Agent 插件与能力组合，普通业务任务不推荐。',
-      }),
-    })
-
-    const CRAWSHRIMP_AGENT_PRESET_ALIASES = Object.freeze({
-      'crawshrimp-standard': 'crawshrimp-standard',
-      '抓虾工作模式（推荐）': 'crawshrimp-standard',
-      standard: 'standard',
-      '标准模式': 'standard',
-      '通用开发模式': 'standard',
-      ptc: 'ptc',
-      'PTC 模式': 'ptc',
-      '开发者编排模式': 'ptc',
-      minimal: 'minimal',
-      '极简模式': 'minimal',
-      '轻量开发模式': 'minimal',
-      cordis: 'cordis',
-      '创造模式': 'cordis',
-      'Agent 定制模式': 'cordis',
-    })
-
-    function agentPresetDisplayCopy(value) {
-      const text = String(value || '').trim()
-      const id = CRAWSHRIMP_AGENT_PRESET_ALIASES[text]
-      return id ? CRAWSHRIMP_AGENT_PRESET_COPY[id] : undefined
-    }
-
-    function normalizeAgentPresetPickerCopy(root = document) {
-      if (!root || typeof root.querySelectorAll !== 'function') return
-
-      const menus = []
-      if (typeof root.matches === 'function' && root.matches('[role="menuitem"]')) menus.push(root)
-      menus.push(...root.querySelectorAll('[role="menuitem"]'))
-      for (const menuItem of menus) {
-        const nameNode = [...menuItem.querySelectorAll('span')].find((node) => (
-          node.children.length === 0 && agentPresetDisplayCopy(node.textContent)
-        ))
-        const copy = agentPresetDisplayCopy(nameNode?.textContent)
-        if (!copy || !nameNode) continue
-        if (nameNode.textContent !== copy.name) nameNode.textContent = copy.name
-        const description = nameNode.nextElementSibling
-        if (description && description.textContent !== copy.description) description.textContent = copy.description
-        menuItem.dataset.csAgentPreset = copy.id
-      }
-
-      const labels = []
-      if (typeof root.matches === 'function' && root.matches('button[aria-haspopup="menu"], [title]')) labels.push(root)
-      labels.push(...root.querySelectorAll('button[aria-haspopup="menu"], [title]'))
-      for (const label of labels) {
-        const textNode = [...label.childNodes].find((node) => (
-          node.nodeType === 3 && agentPresetDisplayCopy(node.textContent)
-        ))
-        const copy = agentPresetDisplayCopy(textNode?.textContent)
-        if (!copy || !textNode) continue
-        if (textNode.textContent !== copy.name) textNode.textContent = copy.name
-        label.setAttribute('title', copy.description)
-        label.dataset.csAgentPreset = copy.id
-      }
-    }
-
     function persistedRuntimeSessionId() {
       // 新建会话在发送首条消息前，sessions.list 的 current 仍可能为空；
       // 锁版 DSH 已把预分配 sessionId 写入该持久化键。附件入口必须能在
@@ -508,6 +420,9 @@ window.__ModuleLoader__.load({
       '.hHd-Xa_collapsed .hHd-Xa_toggle, .hHd-Xa_collapsed .hHd-Xa_iconButton { width: 32px !important; height: 32px !important; }',
       // 3) 隐藏 DSH 设置入口(模型/外观由抓虾原生 UI 负责)
       '.hHd-Xa_settingsArea { display: none !important; }',
+      // 3a) 产品只有一个固定的 Agent 预设。rc.1 的预设客户端仍会将这个
+      // CSS-module 座位渲染到新会话 Hero；隐藏座位本身，保留工作区和模型选择。
+      '.cubgiG_seat { display: none !important; }',
       // 4) 只替换由 rc.1 的实时 turn-status 标记确认的运行态；不能用已废弃
       // 的哈希 class，也不能误伤错误、重试等其他 role=status 提示。
       // Keep rc.1's active-turn shimmer.  Only the underlying localized text
@@ -1832,7 +1747,6 @@ window.__ModuleLoader__.load({
       registerCrawshrimpDirectoryFlow(ctx)
       ctx.theme.overrideTokens('crawshrimp', CRAWSHRIMP_TOKENS)
       injectBrandCss()
-      normalizeAgentPresetPickerCopy()
       openCrawshrimpImSettings()
       // 浏览器标题:去 DeepSeek(DocumentTitle 组件会在会话切换后重新拼后缀,需持续兜底)
       normalizeDocumentTitle()
@@ -1853,7 +1767,6 @@ window.__ModuleLoader__.load({
         publishCurrentSession(ctx)
         openCrawshrimpImSettings()
         normalizeRunningStatus()
-        normalizeAgentPresetPickerCopy()
       }, 1000)
       // 页面/会话重载后向 shell 请求重放产物媒体(iframe 重载期间到达的事件会丢失)
       try {
@@ -1876,7 +1789,6 @@ window.__ModuleLoader__.load({
       })
       // 侧边栏/输入区重渲染后兜底重插。属性/尺寸变化由 ResizeObserver + 周期兜底处理。
       const observer = new MutationObserver((mutations) => {
-        normalizeAgentPresetPickerCopy()
         const runningStatusChanged = Array.from(mutations || []).some((mutation) => {
           const target = mutation.target?.nodeType === 3 ? mutation.target.parentElement : mutation.target
           if (target?.closest?.('[role="status"]')) return true
@@ -1923,7 +1835,6 @@ window.__ModuleLoader__.load({
     exports.requestLlmConfigFromComposer = requestLlmConfigFromComposer
     exports.handlePasteAttachments = handlePasteAttachments
     exports.insertAttachmentHint = insertAttachmentHint
-    exports.agentPresetDisplayCopy = agentPresetDisplayCopy
     // kernel 服务依赖声明:rc.1 的会话创建在 uiWorkspace，不在原始 workspaces controller。
     exports.inject = ['theme', 'workspaces', 'sessions', 'slots', 'uiWorkspace']
     return module.exports

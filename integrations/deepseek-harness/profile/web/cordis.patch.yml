@@ -8,15 +8,23 @@
   config:
     persona: !!js process.env.CRAWSHRIMP_AGENT_PERSONA ?? 'You are a Crawshrimp agent running in the Crawshrimp desktop application.'
 
-# The agent-plane preset owns its scoped persona.  Mount the product-owned
-# full-capability copy from the mutable profile root before any user-authored
-# presets, leaving the upstream shipped and user preset roots available.
+# The agent plane has one product-owned composition.  Do not expose upstream
+# or user-authored presets in this consumer product: every session runs the
+# same Crawshrimp capability and persona contract.
 - id: agent-presets
   config:
     default: crawshrimp-standard
+    includeShippedRoot: false
+    includeUserRoot: false
     roots:
       - path: !!js dshHomePath('profiles/web/agent-presets')
         trust: system
+
+# The fixed product preset has no user-facing selector, session label, or
+# settings page.  Keeping the upstream host plugin disabled also prevents the
+# default preset from being changed through the embedded DSH interface.
+- id: ui-agent-preset
+  disabled: true
 
 - id: agent-default-model
   config:

@@ -651,7 +651,7 @@ test('browser windows are isolated per target and remove closed tabs', () => {
   assert.match(webView, /\.browser-docked \.web-frame-wrap[\s\S]*?min-width:\s*0/)
   assert.match(webView, /\.browser-toggle[\s\S]*?right:\s*var\(--dsh-session-header-utilities-reserve,\s*168px\)/)
   assert.match(webView, /--dsh-session-header-utilities-reserve:\s*168px/)
-  assert.match(webView, /<button\s+v-if="!hasDockedBrowserWindows"\s+:class="\['browser-toggle'/)
+  assert.match(webView, /<button\s+v-if="!hasDockedBrowserWindows && canToggleBrowserWindows"\s+:class="\['browser-toggle'/)
   assert.match(webView, /setBrowserLayout/)
   assert.match(webView, /return value === 'docked' \? 'docked' : 'floating'/)
   assert.match(webView, /toggleBrowserWindows/)

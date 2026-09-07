@@ -80,9 +80,11 @@
         <!--
           固定浏览器打开时，右侧面板自己的标题栏已经提供关闭和“脱离为浮窗”。
           不再把宿主按钮叠在变窄的 DSH 会话标题上，以免遮住提醒、Session 日志等原生控件。
+          新会话还没有浏览器上下文时也不展示一个不可用的开关；浏览器工具创建
+          标签后，仍由这个开关提供收起和重新打开能力。
         -->
         <button
-          v-if="!hasDockedBrowserWindows"
+          v-if="!hasDockedBrowserWindows && canToggleBrowserWindows"
           :class="['browser-toggle', { active: hasVisibleBrowserWindows }]"
           type="button"
           :title="browserToggleTitle"
