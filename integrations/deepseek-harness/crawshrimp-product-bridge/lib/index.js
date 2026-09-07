@@ -307,14 +307,19 @@ function installMcpLeaseFetchBridge(ctx) {
 
 function contextErrorDetail(value, fallbackCode, fallbackMessage) {
   if (value && typeof value === 'object') {
+    const retryAfterMs = Number(value.retry_after_ms)
     return {
       code: String(value.code || fallbackCode),
       message: String(value.message || value.detail || fallbackMessage),
+      retryable: value.retryable === true,
+      retryAfterMs: Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? retryAfterMs : 0,
     }
   }
   return {
     code: fallbackCode,
     message: String(value || fallbackMessage),
+    retryable: false,
+    retryAfterMs: 0,
   }
 }
 
@@ -327,6 +332,10 @@ export function mcpContextError(action, status, result) {
   const error = new Error(`Crawshrimp MCP context ${action} failed [${detail.code}]: ${detail.message}`)
   error.code = detail.code
   error.status = Number(status) || 0
+  if (detail.retryable) {
+    error.retryable = true
+    error.retryAfterMs = detail.retryAfterMs
+  }
   return error
 }
 

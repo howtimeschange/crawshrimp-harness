@@ -44,8 +44,14 @@ APPROVAL_MAX_CONCURRENCY = 4
 MCP_CONTEXT_LEASE_MAX_SECONDS = 30 * 60
 DEFAULT_INHERITED_AUTOMATION_WAIT_SECONDS = 5 * 60
 MAX_INHERITED_AUTOMATION_WAIT_SECONDS = 2 * 60 * 60
-NATIVE_WEB_CONTEXT_FOLLOW_TIMEOUT_SECONDS = 3
-NATIVE_WEB_CONTEXT_PROJECTION_WAIT_SECONDS = 1.5
+# A native DSH turn can ask for its first MCP tool immediately after the
+# renderer announces its Session.  Give the renderer-owned follow a chance to
+# project that exact turn before replacing it, then allow one bounded scoped
+# re-follow.  The whole barrier remains well below the product bridge's 30s
+# request timeout.
+NATIVE_WEB_CONTEXT_INITIAL_WAIT_SECONDS = 4
+NATIVE_WEB_CONTEXT_FOLLOW_TIMEOUT_SECONDS = 4
+NATIVE_WEB_CONTEXT_PROJECTION_WAIT_SECONDS = 6
 
 # 审批桥最长会阻塞十五分钟，绝不能占用 asyncio 默认线程池（否则普通
 # to_thread 文件/CDP 操作会被审批等待饿死）。并发槽在提交 executor 前获取，
@@ -116,14 +122,21 @@ def _inherited_automation_wait_seconds(automation: dict) -> int:
 
 
 class McpContextUnavailableError(LookupError):
-    """A scoped native-Web session did not produce its own shadow run in time."""
+    """One native-Web Session was not ready after its scoped recovery barrier."""
 
-    code = "RUNTIME_SESSION_CONTEXT_UNAVAILABLE"
+    code = "RUNTIME_SESSION_CONTEXT_NOT_READY"
+    retryable = True
+    retry_after_ms = 1500
+    public_message = "当前会话仍在建立执行上下文，请稍候重试刚才的操作。"
 
     def __init__(self, runtime_session_id: str, reason: str = "") -> None:
-        runtime_id = str(runtime_session_id or "").strip()
-        suffix = f" ({reason})" if reason else ""
-        super().__init__(f"{self.code}: runtime session 没有可用的 active run: {runtime_id}{suffix}")
+        # `reason` and the runtime id are useful for local diagnostics, but are
+        # deliberately not transported into the DSH conversation: they are
+        # implementation details and previously exposed the misleading
+        # "active run" wording to end users.
+        self.runtime_session_id = str(runtime_session_id or "").strip()
+        self.reason = str(reason or "").strip()
+        super().__init__(self.public_message)
 
 
 def _auto_approve_task(task_id: str, risk: str) -> bool:
@@ -955,7 +968,7 @@ class AgentService:
         }
 
     async def _recover_native_web_mcp_context(self, runtime_session_id: str) -> dict:
-        """Refresh one named Web follow and wait briefly for its shadow run.
+        """Wait for one named Web follow, then refresh only that Session once.
 
         The worker receives only the runtime session supplied by DSH. There is
         deliberately no latest-run or cross-session fallback here.
@@ -963,12 +976,34 @@ class AgentService:
         runtime_id = str(runtime_session_id or "").strip()
         if not runtime_id:
             raise McpContextUnavailableError(runtime_id, "INVALID_SESSION_ID")
+        # A stopped/crashed host cannot possibly emit this Session's
+        # `turn/start`; fail through the same safe retry contract instead of
+        # occupying the readiness barrier pointlessly.
+        if self.runtime_state != "ready" or self.worker is None:
+            raise McpContextUnavailableError(runtime_id, "RUNTIME_UNAVAILABLE")
         lock = self._native_web_context_recovery_locks.setdefault(runtime_id, asyncio.Lock())
         async with lock:
             run = self.active_runs_by_runtime.get(runtime_id)
             if run:
                 return run
             projected = self._native_web_context_events.setdefault(runtime_id, asyncio.Event())
+            # The renderer has already registered a follow for this exact
+            # Session. Its first `turn/start` can arrive just after the tool
+            # request, so do not tear it down immediately: wait for that
+            # projection before performing a scoped reconnect.
+            try:
+                await asyncio.wait_for(
+                    projected.wait(), timeout=NATIVE_WEB_CONTEXT_INITIAL_WAIT_SECONDS,
+                )
+            except TimeoutError:
+                pass
+            run = self.active_runs_by_runtime.get(runtime_id)
+            if run:
+                return run
+
+            # The initial follow did not materialize a turn in time. Clear the
+            # event immediately before the re-follow so only a fresh
+            # projection for this *same* runtime Session opens the barrier.
             projected.clear()
             response = await self.observe_native_web_session(
                 runtime_id,

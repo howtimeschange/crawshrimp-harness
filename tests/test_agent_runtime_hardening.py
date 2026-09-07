@@ -16,12 +16,20 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 
 from core import data_sink
 from core import runtime_paths
+from core.agent.api import build_agent_mcp_asgi
 from core.agent import mcp_gateway
 from core.agent import worker as worker_mod
-from core.agent.service import AgentService, _cleanup_orphan_runtimes, _pick_free_port, _reserve_free_port
+from core.agent.service import (
+    AgentService,
+    McpContextUnavailableError,
+    _cleanup_orphan_runtimes,
+    _pick_free_port,
+    _reserve_free_port,
+)
 from core.agent.worker import AgentWorker, WORKER_STREAM_LIMIT_BYTES, WorkerProtocolError, resolve_node_executable
 
 
@@ -87,12 +95,39 @@ def test_native_web_session_observer_leases_only_an_explicit_ready_runtime_sessi
     asyncio.run(scenario())
 
 
-def test_native_web_mcp_context_recovers_the_exact_session_after_a_missed_initial_follow():
+def test_native_web_mcp_context_waits_for_its_session_projection_before_reconnecting(monkeypatch):
+    """The first native tool waits for its renderer-owned follow before refreshing it."""
+    async def scenario():
+        service = AgentService()
+        service.runtime_state = "ready"
+        worker = SimpleNamespace(request=AsyncMock(return_value={"ok": True, "following": True}))
+        service.worker = worker
+        projected_run = {"run_id": "native-run", "session_id": "native-session", "status": "running"}
+
+        async def project_current_session():
+            await asyncio.sleep(0.01)
+            service.register_run_context("native-runtime", projected_run)
+
+        projection_task = asyncio.create_task(project_current_session())
+        lease = await service.acquire_mcp_context("native-runtime", "tool-call")
+        try:
+            assert lease["run_id"] == "native-run"
+            worker.request.assert_not_awaited()
+        finally:
+            assert service.release_mcp_context(lease["lease_id"])
+            await projection_task
+
+    asyncio.run(scenario())
+
+
+def test_native_web_mcp_context_recovers_the_exact_session_after_a_missed_initial_follow(monkeypatch):
     """A native DSH turn may reach its first MCP tool before the shell follow sticks.
 
     Recovery may only refresh the exact runtime session supplied by DSH.  It
     must not borrow a different live run merely because that run is available.
     """
+    monkeypatch.setattr("core.agent.service.NATIVE_WEB_CONTEXT_INITIAL_WAIT_SECONDS", 0.01, raising=False)
+
     async def scenario():
         service = AgentService()
         service.runtime_state = "ready"
@@ -119,12 +154,14 @@ def test_native_web_mcp_context_recovers_the_exact_session_after_a_missed_initia
             assert service._mcp_context_leases[lease["lease_id"]]["active_run"]["run_id"] == "native-run"
         finally:
             assert service.release_mcp_context(lease["lease_id"])
-        assert calls == [("worker.observe_web_session", {"sessionId": "native-runtime", "refresh": True}, 3)]
+        assert calls == [("worker.observe_web_session", {"sessionId": "native-runtime", "refresh": True}, 4)]
 
     asyncio.run(scenario())
 
 
-def test_native_web_mcp_context_never_falls_back_to_an_unrelated_live_run():
+def test_native_web_mcp_context_never_falls_back_to_an_unrelated_live_run(monkeypatch):
+    monkeypatch.setattr("core.agent.service.NATIVE_WEB_CONTEXT_INITIAL_WAIT_SECONDS", 0.01, raising=False)
+
     async def scenario():
         service = AgentService()
         service.runtime_state = "ready"
@@ -137,15 +174,43 @@ def test_native_web_mcp_context_never_falls_back_to_an_unrelated_live_run():
             "error": {"code": "SESSION_NOT_FOUND", "message": "session ended"},
         }))
         service.worker = worker
-        with pytest.raises(LookupError, match="RUNTIME_SESSION_CONTEXT_UNAVAILABLE"):
+        with pytest.raises(McpContextUnavailableError) as raised:
             await service.acquire_mcp_context("missing-runtime", "tool-call")
+        assert raised.value.code == "RUNTIME_SESSION_CONTEXT_NOT_READY"
+        assert raised.value.retryable is True
+        assert raised.value.retry_after_ms == 1500
+        assert "当前会话仍在建立执行上下文" in str(raised.value)
+        assert "active run" not in str(raised.value)
         worker.request.assert_awaited_once_with(
-            "worker.observe_web_session", {"sessionId": "missing-runtime", "refresh": True}, timeout=3,
+            "worker.observe_web_session", {"sessionId": "missing-runtime", "refresh": True}, timeout=4,
         )
         assert service._mcp_context_leases == {}
         assert service.active_runs_by_runtime["other-runtime"]["run_id"] == "other-run"
 
     asyncio.run(scenario())
+
+
+def test_mcp_context_api_hides_native_run_internals_behind_a_retryable_message():
+    async def context_acquirer(_runtime_session_id, _call_id):
+        raise McpContextUnavailableError("native-runtime", "SHADOW_RUN_NOT_PROJECTED")
+
+    app = build_agent_mcp_asgi(lambda: "test-token", context_acquirer=context_acquirer)
+    with TestClient(app) as client:
+        response = client.post(
+            "/context/acquire",
+            headers={"Authorization": "Bearer test-token"},
+            json={"runtime_session_id": "native-runtime", "call_id": "tool-call"},
+        )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": {
+            "code": "RUNTIME_SESSION_CONTEXT_NOT_READY",
+            "message": "当前会话仍在建立执行上下文，请稍候重试刚才的操作。",
+            "retryable": True,
+            "retry_after_ms": 1500,
+        },
+    }
 
 
 def test_agent_service_starts_shared_runtime_host_with_core_and_stops_it_on_shutdown(tmp_path, monkeypatch):
@@ -1096,11 +1161,25 @@ def test_plan_start_timeout_returns_starting_instead_of_failing(monkeypatch):
     assert any(update.get("status") == "consumed" for update in updates)
 
 
-def test_unknown_runtime_session_cannot_acquire_mcp_context():
+def test_unavailable_runtime_rejects_context_without_entering_the_session_barrier(monkeypatch):
+    from core.agent import service as service_module
+
+    async def unexpected_wait(*_args, **_kwargs):
+        candidate = _args[0] if _args else None
+        close = getattr(candidate, "close", None)
+        if callable(close):
+            close()
+        raise AssertionError("a stopped runtime must not wait for Session projection")
+
+    monkeypatch.setattr(service_module.asyncio, "wait_for", unexpected_wait)
+
     async def scenario():
         service = AgentService()
-        with pytest.raises(LookupError, match="active run"):
+        with pytest.raises(McpContextUnavailableError) as raised:
             await service.acquire_mcp_context("missing-runtime", "call-x")
+        assert raised.value.code == "RUNTIME_SESSION_CONTEXT_NOT_READY"
+        assert "当前会话仍在建立执行上下文" in str(raised.value)
+        assert "active run" not in str(raised.value)
         assert service._mcp_context_leases == {}
 
     asyncio.run(scenario())

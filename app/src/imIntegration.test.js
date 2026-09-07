@@ -97,7 +97,7 @@ test('IM policy confines returned files to the active workspace, including symli
   assert.equal(await bridge.isImArtifactPathAllowed(workspace, 'escape.txt'), false)
 })
 
-test('MCP context acquire reports structured backend failures without an object-string error', async (t) => {
+test('MCP context acquire exposes a user-safe retryable session-readiness error', async (t) => {
   const bridge = await import(`${pathToFileURL(resolve(harnessRoot, 'crawshrimp-product-bridge/lib/index.js')).href}?context-error=${Date.now()}`)
   const originalFetch = globalThis.fetch
   const originalUrl = process.env.CRAWSHRIMP_MCP_URL
@@ -106,8 +106,10 @@ test('MCP context acquire reports structured backend failures without an object-
   process.env.CRAWSHRIMP_MCP_TOKEN = 'test-token'
   globalThis.fetch = async () => new Response(JSON.stringify({
     detail: {
-      code: 'RUNTIME_SESSION_CONTEXT_UNAVAILABLE',
-      message: 'runtime session 没有可用的 active run: session-example',
+      code: 'RUNTIME_SESSION_CONTEXT_NOT_READY',
+      message: '当前会话仍在建立执行上下文，请稍候重试刚才的操作。',
+      retryable: true,
+      retry_after_ms: 1500,
     },
   }), { status: 409, headers: { 'content-type': 'application/json' } })
   t.after(() => {
@@ -121,10 +123,13 @@ test('MCP context acquire reports structured backend failures without an object-
   await assert.rejects(
     bridge.postMcpContext('acquire', { runtime_session_id: 'session-example' }),
     error => {
-      assert.equal(error.code, 'RUNTIME_SESSION_CONTEXT_UNAVAILABLE')
+      assert.equal(error.code, 'RUNTIME_SESSION_CONTEXT_NOT_READY')
       assert.equal(error.status, 409)
-      assert.match(error.message, /Crawshrimp MCP context acquire failed \[RUNTIME_SESSION_CONTEXT_UNAVAILABLE\]/)
-      assert.match(error.message, /active run/)
+      assert.equal(error.retryable, true)
+      assert.equal(error.retryAfterMs, 1500)
+      assert.match(error.message, /Crawshrimp MCP context acquire failed \[RUNTIME_SESSION_CONTEXT_NOT_READY\]/)
+      assert.match(error.message, /当前会话仍在建立执行上下文/)
+      assert.doesNotMatch(error.message, /active run/)
       assert.doesNotMatch(String(error), /\[object Object\]/)
       return true
     },

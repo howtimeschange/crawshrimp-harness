@@ -1115,11 +1115,17 @@ def build_agent_mcp_asgi(token_provider, context_acquirer=None,
                     )
                     return JSONResponse({"ok": True, **lease})
                 except LookupError as exc:
+                    detail = {
+                        "code": str(getattr(exc, "code", "MCP_CONTEXT_UNAVAILABLE")),
+                        "message": str(exc),
+                    }
+                    if bool(getattr(exc, "retryable", False)):
+                        detail["retryable"] = True
+                        retry_after_ms = getattr(exc, "retry_after_ms", None)
+                        if isinstance(retry_after_ms, int) and retry_after_ms > 0:
+                            detail["retry_after_ms"] = retry_after_ms
                     return JSONResponse({
-                        "detail": {
-                            "code": str(getattr(exc, "code", "MCP_CONTEXT_UNAVAILABLE")),
-                            "message": str(exc),
-                        },
+                        "detail": detail,
                     }, status_code=409)
                 except Exception as exc:  # noqa: BLE001
                     return JSONResponse({"detail": str(exc)}, status_code=500)
