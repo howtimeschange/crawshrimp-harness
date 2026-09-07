@@ -13,7 +13,7 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   getRequiredNativeRuntimePackages,
@@ -41,6 +41,7 @@ try {
 }
 const stageTargetId = stageTargetKey(stageTarget)
 const stageRoot = join(stageRootBase, stageTargetId)
+const cliSource = join(repoRoot, 'skills', 'cli')
 const runtimeTargetMarkerName = '.crawshrimp-runtime-target.json'
 const runtimeTargetMarkerFile = join(stageRoot, runtimeTargetMarkerName)
 
@@ -58,6 +59,27 @@ const PRUNABLE_NODE_MODULE_FILE_PATTERNS = [
   /\.d\.ts(?:\.map)?$/i,
   /\.(?:js|mjs|cjs)\.map$/i,
   /\.tsbuildinfo$/i,
+]
+const EXCLUDED_SOURCE_TREE_ENTRIES = new Set(['.git', 'node_modules', '.DS_Store'])
+
+// 这些 CLI 是产品公开的内置技能入口。它们的 TypeScript 源码和依赖必须在
+// 构建期变为可直接执行的 production closure，不能把 npm/pnpm install 留给用户。
+const CLI_NODE_SKILL_RUNTIMES = [
+  { directory: 'bmall-cli', packageManager: 'pnpm', entry: 'dist/cli.js' },
+  { directory: 'DeepDrawCLI', packageManager: 'npm', entry: 'dist/cli/main.js' },
+  { directory: 'semir-yunpan-cli', packageManager: 'npm', entry: 'dist/cli.js' },
+  { directory: 'tmall-cli', packageManager: 'npm', entry: 'dist/cli.js' },
+]
+
+const REQUIRED_SKILL_SOURCE_FILES = [
+  [sourceRoot, 'skills/dont-stop/SKILL.md'],
+  [sourceRoot, 'skills/crawshrimp-skill/SKILL.md'],
+  [sourceRoot, 'skills/web-automation-skill/SKILL.md'],
+  [sourceRoot, 'skills/crawshrimp-adapter-skill/SKILL.md'],
+  [sourceRoot, 'skills/crawshrimp-probe-skill/SKILL.md'],
+  [sourceRoot, 'skills/suanming/SKILL.md'],
+  [repoRoot, 'skills/cli/vipshop-hot-strategy-agent/src/vipshop_hot_strategy_agent/cli.py'],
+  ...CLI_NODE_SKILL_RUNTIMES.map(({ directory }) => [repoRoot, `skills/cli/${directory}/package.json`]),
 ]
 
 const REQUIRED_STAGE_FILES = [
@@ -87,6 +109,18 @@ const REQUIRED_STAGE_FILES = [
   'node_modules/@deepseek-ai/dsh-client-modules/package.json',
   'spike.cordis.yml',
   'web-cordis.yml',
+  'skills/dont-stop/SKILL.md',
+  'skills/crawshrimp-skill/SKILL.md',
+  'skills/web-automation-skill/SKILL.md',
+  'skills/crawshrimp-adapter-skill/SKILL.md',
+  'skills/crawshrimp-probe-skill/SKILL.md',
+  'skills/suanming/SKILL.md',
+  'skills/cli/vipshop-hot-strategy-agent/src/vipshop_hot_strategy_agent/cli.py',
+  ...CLI_NODE_SKILL_RUNTIMES.flatMap(({ directory, entry }) => [
+    `skills/cli/${directory}/package.json`,
+    `skills/cli/${directory}/${entry}`,
+    `skills/cli/${directory}/node_modules`,
+  ]),
 ]
 
 const force = args.includes('--force')
@@ -99,7 +133,14 @@ function fail(message) {
 }
 
 function copyDir(src, dest) {
-  cpSync(src, dest, { recursive: true, force: true, errorOnExist: false })
+  // Git metadata and a developer-machine node_modules must never leak into the
+  // product. CLI dependencies are rebuilt below from their lockfiles instead.
+  cpSync(src, dest, {
+    recursive: true,
+    force: true,
+    errorOnExist: false,
+    filter: (source) => !EXCLUDED_SOURCE_TREE_ENTRIES.has(basename(source)),
+  })
 }
 
 function hashOf(file) {
@@ -114,6 +155,7 @@ function hashTree(dir) {
   }
   const walk = (d) => {
     for (const name of readdirSync(d).sort()) {
+      if (EXCLUDED_SOURCE_TREE_ENTRIES.has(name)) continue
       const p = join(d, name)
       const st = statSync(p)
       if (st.isDirectory()) walk(p)
@@ -186,10 +228,55 @@ function assertNativeRuntimePackages() {
 
 const sourceAssetsHash = ['crawshrimp-launcher', 'crawshrimp-slots', 'crawshrimp-product-bridge', 'worker', 'skills', 'web-cordis.yml']
   .map((p) => hashTree(join(sourceRoot, p)))
-  .join(':') + `:${hashOf(fileURLToPath(import.meta.url))}:${hashOf(join(here, 'stage-runtime-platform.mjs'))}:${hashOf(join(here, 'patch-runtime-dependencies.mjs'))}:${STAGE_PRUNE_VERSION}`
+  .join(':') + `:${hashTree(cliSource)}:${hashOf(fileURLToPath(import.meta.url))}:${hashOf(join(here, 'stage-runtime-platform.mjs'))}:${hashOf(join(here, 'patch-runtime-dependencies.mjs'))}:${STAGE_PRUNE_VERSION}`
 const lockHash = hashOf(join(sourceRoot, 'package-lock.json')) + '|' + sourceAssetsHash + '|target:' + stageTargetId
 const markerFile = join(stageRoot, '.staged-lock-hash')
 const upToDate = !force && existsSync(markerFile) && readFileSync(markerFile, 'utf8').trim() === lockHash
+
+function assertSkillSourcesPresent() {
+  const missing = REQUIRED_SKILL_SOURCE_FILES
+    .map(([root, relative]) => join(root, relative))
+    .filter((file) => !existsSync(file))
+  if (missing.length) {
+    fail(`内置技能源码不完整: ${missing.join(', ')}. 请先执行 git submodule update --init --recursive`)
+  }
+}
+
+function runCliBuild(command, args, cwd) {
+  const result = spawnSync(command, args, {
+    cwd,
+    stdio: 'inherit',
+    env: process.env,
+    shell: process.platform === 'win32',
+  })
+  if (result.error) fail(`内置 CLI 构建无法执行 ${command}: ${result.error.message}`)
+  if (result.status !== 0) fail(`内置 CLI 构建失败: ${command} ${args.join(' ')} (exit ${result.status})`)
+}
+
+function buildCliSkillRuntimes(cliDest) {
+  for (const spec of CLI_NODE_SKILL_RUNTIMES) {
+    const skillRoot = join(cliDest, spec.directory)
+    if (!existsSync(join(skillRoot, 'package.json'))) {
+      fail(`CLI 技能包缺少 package.json: ${spec.directory}`)
+    }
+    rmSync(join(skillRoot, 'node_modules'), { recursive: true, force: true })
+    rmSync(join(skillRoot, 'dist'), { recursive: true, force: true })
+    if (spec.packageManager === 'pnpm') {
+      runCliBuild('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], skillRoot)
+      runCliBuild('pnpm', ['run', 'build'], skillRoot)
+      runCliBuild('pnpm', ['prune', '--prod', '--ignore-scripts'], skillRoot)
+    } else {
+      runCliBuild('npm', ['ci', '--ignore-scripts'], skillRoot)
+      runCliBuild('npm', ['run', 'build'], skillRoot)
+      runCliBuild('npm', ['prune', '--omit=dev', '--ignore-scripts'], skillRoot)
+    }
+    if (!existsSync(join(skillRoot, spec.entry)) || !existsSync(join(skillRoot, 'node_modules'))) {
+      fail(`CLI 技能包生产产物不完整: ${spec.directory}`)
+    }
+  }
+}
+
+assertSkillSourcesPresent()
 
 if (!upToDate) {
   console.log('[stage-runtime] staging production closure →', stageRoot)
@@ -220,12 +307,12 @@ if (!upToDate) {
   patchRuntimeDependencies(stageRoot)
   // CLI 技能包本体(项目根 skills/cli 的 submodule 内容)随安装包分发:
   // SKILL.md 内路径 skills/cli/<name> 在发布态即 Resources/deepseek-harness/skills/cli
-  const cliSource = join(repoRoot, 'skills', 'cli')
   const cliDest = join(stageRoot, 'skills', 'cli')
   if (existsSync(cliSource)) {
     mkdirSync(join(stageRoot, 'skills'), { recursive: true })
     copyDir(cliSource, cliDest)
     if (!existsSync(join(cliDest, 'tmall-cli'))) fail('CLI 技能包本体拷贝不完整')
+    buildCliSkillRuntimes(cliDest)
   }
   pruneRuntimeNodeModules(join(stageRoot, 'node_modules'))
   writeFileSync(runtimeTargetMarkerFile, JSON.stringify(stageTarget, null, 2) + '\n')

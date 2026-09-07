@@ -5,15 +5,15 @@ description: Use when the user asks to search or download image assets from the 
 
 # 森马云盘 CLI
 
-## 位置与安装
+## 内置运行时
 - 本地路径:`skills/cli/semir-yunpan-cli`(可用 `CRAWSHRIMP_CLI_ROOT` 覆盖 CLI 根)。
-- 依赖:Node 20+。首次使用 `npm install && npm run build`。
+- 抓虾 Harness 安装包已包含编译后的 `dist/` 与生产依赖；不要让最终用户执行 `npm install` 或 `npm run build`。
 
 ## 调用方式
 ```bash
 cd <CLI_ROOT>/semir-yunpan-cli
-npm run dev -- style 208326133201 --limit 10 -f table
-node dist/cli.js --help
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js style 208326133201 --limit 10 -f table
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js --help
 ```
 
 ## 使用场景

@@ -226,6 +226,21 @@ def _get_api_token() -> str:
         raise RuntimeError("Failed to prepare crawshrimp API token") from exc
 
 
+def _configure_runtime_api_token() -> str:
+    """Make the local API token available to the supervised DSH child process.
+
+    The token file is the durable source of truth for local HTTP clients.  DSH
+    runs in a child process, however, and its product bridge authenticates
+    completion receipts (and model-catalog RPCs) from its inherited environment.
+    Keeping only the file meant a normal desktop launch could authenticate the
+    FastAPI UI while every DSH-to-product bridge request failed closed.
+    """
+    token = _get_api_token()
+    if token:
+        os.environ["CRAWSHRIMP_API_TOKEN"] = token
+    return token
+
+
 def _api_auth_required() -> bool:
     return os.environ.get("CRAWSHRIMP_ALLOW_UNAUTHENTICATED") != "1"
 
@@ -9315,8 +9330,10 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     instance_lock = _acquire_backend_instance_lock()
-    if _api_auth_required():
-        _get_api_token()
+    # DSH's in-process product bridge is separately token-protected.  Seed the
+    # token before AgentService starts so its worker inherits the same local
+    # credential that the renderer receives from the token file.
+    _configure_runtime_api_token()
     # Init DB
     data_sink.init_db()
     agent_db.init_agent_db()

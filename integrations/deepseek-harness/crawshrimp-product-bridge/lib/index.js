@@ -584,6 +584,40 @@ function findLiveAgent(ctx, sessionId) {
   return undefined
 }
 
+// A one-off Automation normally completes in an isolated Agent session, then
+// projects its human-facing receipt into the originating DSH conversation.
+// Since rc.1 idle conversations can be evicted from ``agents.roots()`` while
+// their JSONL history remains durable, receipt delivery must be able to resume
+// that cold session instead of treating a healthy persisted conversation as a
+// permanently unavailable destination.  Keep concurrent recovery attempts per
+// session coalesced: retries must not race to resume the same DSH identity.
+const automationReceiptResumes = new Map()
+
+async function resolveAutomationReceiptAgent(ctx, sessionId) {
+  const id = String(sessionId || '')
+  const live = findLiveAgent(ctx, id)
+  if (live !== undefined) return live
+
+  // The product bridge uses a narrow plugin context: ``sessions`` is not
+  // injected there, and merely reading ctx.sessions can cause a Cordis fatal
+  // load error. AgentRegistry is injected and owns persistence-aware resume,
+  // so use it directly for a cold conversation.
+  const resume = ctx?.agents?.resume
+  if (typeof resume !== 'function' || !id) return undefined
+  let pending = automationReceiptResumes.get(id)
+  if (pending === undefined) {
+    pending = Promise.resolve()
+      .then(() => resume.call(ctx.agents, { resumeSessionId: id }))
+      .then((handle) => handle?.agent)
+      .catch(() => undefined)
+      .finally(() => automationReceiptResumes.delete(id))
+    automationReceiptResumes.set(id, pending)
+  }
+  return await pending
+}
+
+const automationReceiptAppends = new Map()
+
 function headerValue(req, name) {
   const headers = req?.headers
   if (!headers) return ''
@@ -620,7 +654,7 @@ function receiptModel(receiptId) {
  * receipt as an assistant message. `receiptId` is a durable idempotency key:
  * a retry or backend restart cannot duplicate a visible completion message.
  */
-export function appendCrawshrimpAutomationReceipt(ctx, body) {
+export async function appendCrawshrimpAutomationReceipt(ctx, body) {
   const sessionId = String(body?.sessionId || '').trim()
   const receiptId = String(body?.receiptId || '').trim()
   const text = String(body?.text || '').trim()
@@ -630,75 +664,84 @@ export function appendCrawshrimpAutomationReceipt(ctx, body) {
     || receiptId.includes('\0') || text.includes('\0')) {
     return { ok: false, status: 400, error: { code: 'bad-request', message: 'sessionId, receiptId and receipt text are required' } }
   }
-  const agent = findLiveAgent(ctx, sessionId)
-  if (agent === undefined) {
-    return { ok: false, status: 409, error: { code: 'NO_LIVE_AGENT', message: 'No live agent for this session' } }
-  }
-  const session = agent.session
-  const events = Array.isArray(session?.events) ? session.events : []
-  const model = receiptModel(receiptId)
-  const existing = events.find((event) => (
-    event?.type === 'assistant/message'
-      && event?.data?.message?.source?.kind === 'model'
-      && event?.data?.message?.source?.provider === AUTOMATION_RECEIPT_PROVIDER
-      && event?.data?.message?.source?.model === model
-  ))
-  if (existing) {
-    return {
-      ok: true,
-      status: 200,
-      appended: false,
-      messageId: String(existing.data.message.id || ''),
-      receiptId,
-    }
-  }
-  if (agent.status === 'running' || sessionHasOpenTurn(events)) {
-    return { ok: false, status: 409, error: { code: 'SESSION_BUSY', message: 'Source session is currently running' } }
-  }
-  if (typeof session?.append !== 'function') {
-    return { ok: false, status: 500, error: { code: 'SESSION_APPEND_UNAVAILABLE', message: 'Source session cannot append a receipt' } }
-  }
+  const key = `${sessionId}\0${receiptId}`
+  let pending = automationReceiptAppends.get(key)
+  if (pending === undefined) {
+    pending = (async () => {
+      const agent = await resolveAutomationReceiptAgent(ctx, sessionId)
+      if (agent === undefined) {
+        return { ok: false, status: 409, error: { code: 'NO_LIVE_AGENT', message: 'No live or resumable agent for this session' } }
+      }
+      const session = agent.session
+      const events = Array.isArray(session?.events) ? session.events : []
+      const model = receiptModel(receiptId)
+      const existing = events.find((event) => (
+        event?.type === 'assistant/message'
+          && event?.data?.message?.source?.kind === 'model'
+          && event?.data?.message?.source?.provider === AUTOMATION_RECEIPT_PROVIDER
+          && event?.data?.message?.source?.model === model
+      ))
+      if (existing) {
+        return {
+          ok: true,
+          status: 200,
+          appended: false,
+          messageId: String(existing.data.message.id || ''),
+          receiptId,
+        }
+      }
+      if (agent.status === 'running' || sessionHasOpenTurn(events)) {
+        return { ok: false, status: 409, error: { code: 'SESSION_BUSY', message: 'Source session is currently running' } }
+      }
+      if (typeof session?.append !== 'function') {
+        return { ok: false, status: 500, error: { code: 'SESSION_APPEND_UNAVAILABLE', message: 'Source session cannot append a receipt' } }
+      }
 
-  const lastTurn = events.reduce((latest, event) => (
-    event?.type === 'turn/start' && Number.isInteger(event?.data?.turn)
-      ? Math.max(latest, event.data.turn)
-      : latest
-  ), 0)
-  const turn = lastTurn + 1
-  const step = 1
-  let turnOpen = false
-  let stepOpen = false
-  try {
-    session.append('turn/start', { turn })
-    turnOpen = true
-    session.append('step/start', { turn, step })
-    stepOpen = true
-    const message = createAssistantMessage({
-      content: [{ type: 'text', text }],
-      source: { provider: AUTOMATION_RECEIPT_PROVIDER, model },
-    })
-    session.append('assistant/message', { turn, step, message }, { surfaceOp: 'append' })
-    session.append('step/end', { turn, step })
-    stepOpen = false
-    session.append('turn/end', { turn, reason: { kind: 'completed' } })
-    turnOpen = false
-    return { ok: true, status: 200, appended: true, messageId: String(message.id), receiptId }
-  } catch (error) {
-    // A partially appended receipt must never leave its source DSH session in
-    // an open turn. Best-effort closure is safe even when the message append
-    // itself succeeded: retry then finds the receipt by its durable source.
-    if (stepOpen) {
-      try { session.append('step/end', { turn, step }) } catch {}
-    }
-    if (turnOpen) {
-      try { session.append('turn/end', { turn, reason: { kind: 'failed' } }) } catch {}
-    }
-    return {
-      ok: false,
-      status: 500,
-      error: { code: 'SESSION_APPEND_FAILED', message: String(error?.message || error) },
-    }
+      const lastTurn = events.reduce((latest, event) => (
+        event?.type === 'turn/start' && Number.isInteger(event?.data?.turn)
+          ? Math.max(latest, event.data.turn)
+          : latest
+      ), 0)
+      const turn = lastTurn + 1
+      const step = 1
+      let turnOpen = false
+      let stepOpen = false
+      try {
+        session.append('turn/start', { turn })
+        turnOpen = true
+        session.append('step/start', { turn, step })
+        stepOpen = true
+        const message = createAssistantMessage({
+          content: [{ type: 'text', text }],
+          source: { provider: AUTOMATION_RECEIPT_PROVIDER, model },
+        })
+        session.append('assistant/message', { turn, step, message }, { surfaceOp: 'append' })
+        session.append('step/end', { turn, step })
+        stepOpen = false
+        session.append('turn/end', { turn, reason: { kind: 'completed' } })
+        turnOpen = false
+        return { ok: true, status: 200, appended: true, messageId: String(message.id), receiptId }
+      } catch (error) {
+        // A partially appended receipt must never leave its source DSH session in
+        // an open turn. Best-effort closure is safe even when the message append
+        // itself succeeded: retry then finds the receipt by its durable source.
+        if (stepOpen) {
+          try { session.append('step/end', { turn, step }) } catch {}
+        }
+        if (turnOpen) {
+          try { session.append('turn/end', { turn, reason: { kind: 'failed' } }) } catch {}
+        }
+        return {
+          ok: false,
+          status: 500,
+          error: { code: 'SESSION_APPEND_FAILED', message: String(error?.message || error) },
+        }
+      }
+    })()
+    automationReceiptAppends.set(key, pending)
+    pending.finally(() => automationReceiptAppends.delete(key))
   }
+  return await pending
 }
 
 export function apply(ctx) {
@@ -824,7 +867,7 @@ export function apply(ctx) {
           return
         }
         try {
-          const result = appendCrawshrimpAutomationReceipt(ctx, await readBody(req))
+          const result = await appendCrawshrimpAutomationReceipt(ctx, await readBody(req))
           res.writeHead(result.status ?? (result.ok ? 200 : 500), {
             'Content-Type': 'application/json',
             'Cache-Control': 'no-store',

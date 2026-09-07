@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import concurrent.futures
+import inspect
 import json
 import os
 import re
@@ -372,13 +373,18 @@ def test_missing_explicit_tab_creates_tombstone_grant(monkeypatch):
 
 
 def test_fs_write_reaches_approval_instead_of_name_error(tmp_path, monkeypatch):
+    async def reject(*_args):
+        return "rejected"
+
     previous_run = mcp_gateway.ctx.active_run
+    previous_approval = mcp_gateway.ctx.request_approval
     mcp_gateway.ctx.active_run = {"run_id": "run-write", "session_id": "session-write"}
-    monkeypatch.setattr(mcp_gateway, "_await_approval_blocking", lambda *_args: "rejected")
+    mcp_gateway.ctx.request_approval = reject
     try:
-        result = mcp_gateway.tool_fs_write(str(tmp_path / "blocked.txt"), "content")
+        result = asyncio.run(mcp_gateway.tool_fs_write(str(tmp_path / "blocked.txt"), "content"))
     finally:
         mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.request_approval = previous_approval
     assert result["status"] == "rejected"
     assert not (tmp_path / "blocked.txt").exists()
 
@@ -398,14 +404,19 @@ def test_fs_write_retries_transient_windows_sharing_violation(tmp_path, monkeypa
                 raise error
         return original_write_text(path, *args, **kwargs)
 
+    async def approve(*_args):
+        return "approved"
+
     previous_run = mcp_gateway.ctx.active_run
+    previous_approval = mcp_gateway.ctx.request_approval
     mcp_gateway.ctx.active_run = {"run_id": "run-write-retry", "session_id": "session-write-retry"}
-    monkeypatch.setattr(mcp_gateway, "_await_approval_blocking", lambda *_args: "approved")
+    mcp_gateway.ctx.request_approval = approve
     monkeypatch.setattr(Path, "write_text", transient_write_text)
     try:
-        result = mcp_gateway.tool_fs_write(str(target), "content")
+        result = asyncio.run(mcp_gateway.tool_fs_write(str(target), "content"))
     finally:
         mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.request_approval = previous_approval
 
     assert result["ok"] is True
     assert attempts == 2
@@ -604,7 +615,13 @@ def test_worker_request_timeout_removes_pending_future():
 
 def test_worker_eof_rejects_all_pending_requests():
     async def scenario():
+        exits = []
+
+        async def on_exit(message, unexpected):
+            exits.append((message, unexpected))
+
         worker = _worker()
+        worker.on_exit = on_exit
         worker.proc = SimpleNamespace(stdout=_EofStream(), stderr=_EofStream())
         future = asyncio.get_running_loop().create_future()
         worker._pending[1] = future
@@ -612,6 +629,26 @@ def test_worker_eof_rejects_all_pending_requests():
         assert worker._pending == {}
         with pytest.raises(WorkerProtocolError, match="已退出"):
             future.result()
+        assert exits and exits[0][1] is True
+
+    asyncio.run(scenario())
+
+
+def test_unexpected_worker_exit_marks_ready_runtime_crashed():
+    async def scenario():
+        service = AgentService()
+        worker = object()
+        service.worker = worker
+        service.runtime_state = "ready"
+        service._web_port_verified = True
+
+        await service._on_worker_exit(worker, "worker EOF", True)
+
+        assert service.worker is None
+        assert service.runtime_state == "crashed"
+        assert service.runtime_error_code == "WORKER_EXITED"
+        assert service.runtime_error == "worker EOF"
+        assert service._web_port_verified is False
 
     asyncio.run(scenario())
 
@@ -773,7 +810,7 @@ def test_plan_is_claimed_before_creating_task_instance(monkeypatch):
             "current_tool_call_id": "",
         })
         try:
-            return mcp_gateway.tool_task_run("plan-race")
+            return asyncio.run(mcp_gateway.tool_task_run("plan-race"))
         finally:
             mcp_gateway.reset_tool_context(token)
 
@@ -1255,6 +1292,16 @@ def test_media_signature_is_path_entry_and_expiry_bound(monkeypatch):
     )
 
 
+def test_runtime_api_token_is_injected_for_dsh_child_process(monkeypatch):
+    import core.api_server as api_server
+
+    monkeypatch.delenv("CRAWSHRIMP_API_TOKEN", raising=False)
+    monkeypatch.setattr(api_server, "_get_api_token", lambda: "local-runtime-token")
+
+    assert api_server._configure_runtime_api_token() == "local-runtime-token"
+    assert api_server.os.environ["CRAWSHRIMP_API_TOKEN"] == "local-runtime-token"
+
+
 def test_browser_navigate_does_not_request_native_approval(monkeypatch):
     class FakeClient:
         def __init__(self):
@@ -1308,11 +1355,6 @@ def test_task_control_uses_async_approval_without_blocking_event_loop(monkeypatc
         mcp_gateway.ctx.active_run = {"run_id": "run-control", "session_id": "session-control"}
         mcp_gateway.ctx.request_approval = reject
         mcp_gateway.ctx.control_task_instance = control
-        monkeypatch.setattr(
-            mcp_gateway,
-            "_await_approval_blocking",
-            lambda *_args: (_ for _ in ()).throw(AssertionError("async tool must not block")),
-        )
         try:
             result = await mcp_gateway.tool_task_control("ti-control", "stop")
         finally:
@@ -1323,6 +1365,80 @@ def test_task_control_uses_async_approval_without_blocking_event_loop(monkeypatc
         assert controlled == []
 
     asyncio.run(scenario())
+
+
+def test_fs_exec_uses_async_approval_without_blocking_event_loop(monkeypatch):
+    async def scenario():
+        previous_run = mcp_gateway.ctx.active_run
+        previous_approval = mcp_gateway.ctx.request_approval
+
+        async def reject(*_args):
+            await asyncio.sleep(0)
+            return "rejected"
+
+        mcp_gateway.ctx.active_run = {"run_id": "run-fs-exec", "session_id": "session-fs-exec"}
+        mcp_gateway.ctx.request_approval = reject
+        try:
+            result = await mcp_gateway.tool_fs_exec("printf should-not-run")
+        finally:
+            mcp_gateway.ctx.active_run = previous_run
+            mcp_gateway.ctx.request_approval = previous_approval
+
+        assert result["status"] == "rejected"
+
+    asyncio.run(scenario())
+
+
+def test_fs_exec_keeps_event_loop_responsive_while_approval_is_pending():
+    async def scenario():
+        previous_run = mcp_gateway.ctx.active_run
+        previous_approval = mcp_gateway.ctx.request_approval
+        approval_started = asyncio.Event()
+        approve = asyncio.Event()
+
+        async def wait_for_approval(*_args):
+            approval_started.set()
+            await approve.wait()
+            return "approved"
+
+        mcp_gateway.ctx.active_run = {"run_id": "run-fs-exec-pending", "session_id": "session-fs-exec-pending"}
+        mcp_gateway.ctx.request_approval = wait_for_approval
+        try:
+            command = "printf crawshrimp-skill-smoke"
+            running = asyncio.create_task(mcp_gateway.tool_fs_exec(command))
+            await asyncio.wait_for(approval_started.wait(), timeout=0.5)
+            # This represents /agent/runtime and /agent/approvals continuing
+            # to be served by the same ASGI event loop while a card is open.
+            await asyncio.wait_for(asyncio.sleep(0), timeout=0.5)
+            assert not running.done()
+            approve.set()
+            result = await asyncio.wait_for(running, timeout=2)
+        finally:
+            mcp_gateway.ctx.active_run = previous_run
+            mcp_gateway.ctx.request_approval = previous_approval
+
+        assert result["ok"] is True
+        assert result["data"]["exit_code"] == 0
+        assert result["data"]["stdout"] == "crawshrimp-skill-smoke"
+
+    asyncio.run(scenario())
+
+
+def test_all_interactive_approval_bound_mcp_tools_are_async():
+    """MCP ASGI and approval delivery share one loop, so these tools may not block it."""
+    handlers = (
+        mcp_gateway.tool_task_run,
+        mcp_gateway.tool_data_export,
+        mcp_gateway.tool_fs_write,
+        mcp_gateway.tool_fs_exec,
+        mcp_gateway.tool_repo_install,
+        mcp_gateway.tool_repo_update,
+        mcp_gateway.tool_repo_learn,
+        mcp_gateway.tool_script_publish,
+        mcp_gateway.tool_script_run,
+    )
+
+    assert all(inspect.iscoroutinefunction(handler) for handler in handlers)
 
 
 def test_browser_act_credential_fields_require_explicit_authorization(monkeypatch):
@@ -2060,6 +2176,10 @@ def test_agent_start_generation_uses_packaged_web_cordis_without_install_write(t
     assert calls["worker_kwargs"]["cordis_path"] == str(web_cordis)
     assert calls["worker.initialize"]["params"]["cordisPath"] == str(web_cordis)
     assert calls["worker.start_generation"]["params"]["model"] == "gpt-5.6-terra"
+    # DSH Web profile and the session runtime must use one workspace.  If the
+    # session launches in the historical runtime-workdir, Web cannot list the
+    # shadow session or render its native approval cards.
+    assert calls["worker.start_generation"]["params"]["cwd"] == str(data_root / "agent" / "workspace")
     assert service_mod.os.environ["CRAWSHRIMP_AGENT_PROVIDER"] == "crawshrimp-overseas-openai"
     assert service_mod.os.environ["CRAWSHRIMP_AGENT_MODEL"] == "gpt-5.6-terra"
     assert not (harness_root / "runtime-cordis.yml").exists()

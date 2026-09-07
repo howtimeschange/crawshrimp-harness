@@ -336,12 +336,12 @@ test('Crawshrimp product bridge appends an idempotent receipt as one balanced DS
     agents: { roots: () => [{ status: 'idle', session }] },
   }
 
-  const first = bridge.appendCrawshrimpAutomationReceipt(ctx, {
+  const first = await bridge.appendCrawshrimpAutomationReceipt(ctx, {
     sessionId: 'dsh-source',
     receiptId: 'automation-run-1:source-receipt',
     text: '本地自动化验收已完成',
   })
-  const repeated = bridge.appendCrawshrimpAutomationReceipt(ctx, {
+  const repeated = await bridge.appendCrawshrimpAutomationReceipt(ctx, {
     sessionId: 'dsh-source',
     receiptId: 'automation-run-1:source-receipt',
     text: '本地自动化验收已完成',
@@ -359,6 +359,65 @@ test('Crawshrimp product bridge appends an idempotent receipt as one balanced DS
   assert.equal(events[2].data.message.source.provider, 'crawshrimp-automation')
 })
 
+test('Crawshrimp receipt bridge resumes a cold persisted DSH source session once', async () => {
+  const bridgeUrl = pathToFileURL(resolve(harnessRoot, 'crawshrimp-product-bridge/lib/index.js'))
+  const bridge = await import(`${bridgeUrl.href}?automation-receipt-cold-session-test=${Date.now()}`)
+  const events = []
+  const session = {
+    id: 'dsh-cold-source',
+    events,
+    append(type, data, options = {}) {
+      const event = { type, data, ...options }
+      events.push(event)
+      return event
+    },
+  }
+  let resumeCalls = 0
+  let resumedAgent
+  const ctx = {
+    agents: {
+      roots: () => resumedAgent ? [resumedAgent] : [],
+      async resume({ resumeSessionId }) {
+        resumeCalls += 1
+        assert.equal(resumeSessionId, session.id)
+        resumedAgent = { status: 'idle', session }
+        return { agent: resumedAgent }
+      },
+    },
+  }
+  Object.defineProperty(ctx, 'sessions', {
+    get() {
+      throw new Error('sessions is intentionally not injected into the product bridge')
+    },
+  })
+
+  const [first, concurrent] = await Promise.all([
+    bridge.appendCrawshrimpAutomationReceipt(ctx, {
+      sessionId: session.id,
+      receiptId: 'automation-run-cold:source-receipt',
+      text: '冷会话回执已完成',
+    }),
+    bridge.appendCrawshrimpAutomationReceipt(ctx, {
+      sessionId: session.id,
+      receiptId: 'automation-run-cold:source-receipt',
+      text: '冷会话回执已完成',
+    }),
+  ])
+  const repeated = await bridge.appendCrawshrimpAutomationReceipt(ctx, {
+    sessionId: session.id,
+    receiptId: 'automation-run-cold:source-receipt',
+    text: '冷会话回执已完成',
+  })
+
+  assert.equal(resumeCalls, 1)
+  assert.equal(first.ok, true)
+  assert.equal(concurrent.ok, true)
+  assert.equal(repeated.appended, false)
+  assert.deepEqual(events.map(event => event.type), [
+    'turn/start', 'step/start', 'assistant/message', 'step/end', 'turn/end',
+  ])
+})
+
 test('Crawshrimp receipt bridge closes a partially appended turn when a DSH append fails', async () => {
   const bridgeUrl = pathToFileURL(resolve(harnessRoot, 'crawshrimp-product-bridge/lib/index.js'))
   const bridge = await import(`${bridgeUrl.href}?automation-receipt-failure-test=${Date.now()}`)
@@ -373,7 +432,7 @@ test('Crawshrimp receipt bridge closes a partially appended turn when a DSH appe
       return event
     },
   }
-  const result = bridge.appendCrawshrimpAutomationReceipt({
+  const result = await bridge.appendCrawshrimpAutomationReceipt({
     agents: { roots: () => [{ status: 'idle', session }] },
   }, {
     sessionId: 'dsh-source',

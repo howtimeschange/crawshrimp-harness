@@ -5,17 +5,16 @@ description: Use when the user asks to call the DeepDraw (深绘) open platform 
 
 # DeepDraw CLI(深绘开放平台 CLI)
 
-## 位置与安装
+## 内置运行时
 - 本地路径:`skills/cli/DeepDrawCLI`(可用 `CRAWSHRIMP_CLI_ROOT` 覆盖 CLI 根)。
-- 运行时:Node 20+,部分能力走 Java SDK bridge(见仓库 `java/`)。
+- 抓虾 Harness 安装包已包含编译后的 `dist/` 与生产依赖；不要让最终用户执行 `npm install` 或 `npm run build`。部分 API 的 Java SDK bridge 仍以该命令实际返回为准。
 
 ## 调用方式
 ```bash
 cd <CLI_ROOT>/DeepDrawCLI
-npm install && npm run build
-deepdraw call <api-name> --json        # 调用已注册 dp.* 接口
-deepdraw call <api-name> --dry-run     # 只检查参数,不发请求
-deepdraw plan <操作>                    # 生成执行计划(写入/付费接口必须)
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli/main.js call <api-name> --json
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli/main.js call <api-name> --dry-run
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli/main.js plan <操作>
 ```
 
 ## 使用场景

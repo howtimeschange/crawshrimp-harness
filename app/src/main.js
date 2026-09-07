@@ -1192,6 +1192,31 @@ function getDeepseekHarnessRoot() {
     : path.join(process.resourcesPath, 'deepseek-harness')
 }
 
+function getCrawshrimpCliRoot(harnessRoot) {
+  // 发布态 CLI 闭包随 DSH runtime 一起放在 skills/cli。开发态的源 submodule
+  // 只保存源码；由 dev 启动前的 staging 生成与安装包相同的 production closure。
+  const runtimeCliRoot = path.join(harnessRoot, 'skills', 'cli')
+  if (fs.existsSync(path.join(runtimeCliRoot, 'tmall-cli', 'dist', 'cli.js'))) {
+    return runtimeCliRoot
+  }
+  if (IS_DEV) {
+    const stageCliRoot = path.resolve(
+      __dirname,
+      '..',
+      '..',
+      'build-staging',
+      'deepseek-harness',
+      `${process.platform}-${process.arch}`,
+      'skills',
+      'cli',
+    )
+    if (fs.existsSync(path.join(stageCliRoot, 'tmall-cli', 'dist', 'cli.js'))) {
+      return stageCliRoot
+    }
+  }
+  return String(process.env.CRAWSHRIMP_CLI_ROOT || '').trim()
+}
+
 function patchDeepseekHarnessDevRuntime(harnessRoot) {
   if (!IS_DEV || deepseekHarnessDevRuntimePatched) return
   const patcher = path.join(harnessRoot, 'scripts', 'patch-runtime-dependencies.mjs')
@@ -1227,6 +1252,7 @@ function spawnBackendProcess() {
   resolvedCrawshrimpDataDir = getCrawshrimpDataDir()
   const apiToken = getApiToken()
   const deepseekHarnessRoot = getDeepseekHarnessRoot()
+  const cliSkillRoot = getCrawshrimpCliRoot(deepseekHarnessRoot)
 
   if (!fs.existsSync(serverScript)) {
     throw new Error(`api_server.py not found: ${serverScript}`)
@@ -1251,8 +1277,10 @@ function spawnBackendProcess() {
       CRAWSHRIMP_AGENT_ATTACHMENT_TMP_ROOT: path.join(app.getPath('userData'), 'tmp-agent-attachments'),
       CRAWSHRIMP_APP_ENV: CLOUD_APPROVAL_APP_ENV,
       CRAWSHRIMP_NODE_EXECUTABLE: process.execPath,
+      CRAWSHRIMP_PYTHON_EXECUTABLE: pythonBin,
       CRAWSHRIMP_NODE_MODULES_DIR: path.join(__dirname, '..', 'node_modules'),
       CRAWSHRIMP_HARNESS_ROOT: deepseekHarnessRoot,
+      CRAWSHRIMP_CLI_ROOT: cliSkillRoot,
       ELECTRON_RUN_AS_NODE: '',
       PYTHONPATH: scriptsDir,
     },

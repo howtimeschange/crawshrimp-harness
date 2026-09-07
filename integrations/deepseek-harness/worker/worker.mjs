@@ -169,18 +169,25 @@ function spawnRuntime() {
   child.stderr.on('data', (chunk) => {
     console.error(`[worker][harness] ${String(chunk).trimEnd()}`)
   })
+  const runtime = { child, sdk, stopping: false }
   child.on('exit', (code, signal) => {
     console.error(`[worker] harness runtime 退出 code=${code} signal=${signal}`)
+    sdk.close(new Error(`harness runtime 已退出 code=${code} signal=${signal}`))
+    const unexpected = state.runtime === runtime && !runtime.stopping
     const wasActive = state.activeRun
-    state.runtime = null
+    if (state.runtime === runtime) state.runtime = null
     if (wasActive) {
       console.error(`[worker] runtime 在 run ${wasActive.runId} 期间退出 code=${code} signal=${signal}`)
       finishRun({ status: 'interrupted', reason: { kind: 'interrupted', detail: `runtime exit code=${code} signal=${signal}` } })
     }
-    notifyWorkerStatus('stopped', { exitCode: code, exitSignal: signal })
+    notifyWorkerStatus(unexpected ? 'crashed' : 'stopped', {
+      exitCode: code,
+      exitSignal: signal,
+      ...(unexpected ? { message: `DSH runtime 已退出 code=${code} signal=${signal}` } : {}),
+    })
   })
 
-  return { child, sdk }
+  return runtime
 }
 
 // ---------- 极简 SDK wire client(session/prompt 协议) ----------
@@ -231,6 +238,10 @@ function createSdkClient(child) {
         }
       }, timeoutMs)
     }),
+    close: (error = new Error('harness runtime 已退出')) => {
+      for (const { reject } of pending.values()) reject(error)
+      pending.clear()
+    },
   }
 }
 
@@ -557,6 +568,7 @@ function cancelActiveRun() {
 function stopRuntime() {
   const runtime = state.runtime
   if (!runtime) return { ok: true, stopped: false }
+  runtime.stopping = true
   notifyWorkerStatus('stopping')
   state.runtime = null
   try { runtime.child.stdin.end() } catch {}
@@ -598,13 +610,19 @@ async function handleRequest(method, params) {
         const runtime = spawnRuntime()
         state.runtime = runtime
         const serverInfo = await runtime.sdk.request('initialize', {
-          cwd: params.cwd || `${state.dataRoot}/agent/runtime-workdir`,
+          // Web profiles expose the product workspace.  The runtime must
+          // default to that same directory so a caller that omits cwd does
+          // not create a shadow session that Web cannot discover.
+          cwd: params.cwd || `${state.dataRoot}/agent/workspace`,
           provider: state.provider,
           model: state.model,
           maxTokens: state.maxTokens,
         }, RUNTIME_BOOT_TIMEOUT_MS)
         // P0 经验:等 MCP 工具发现完成,否则首条 prompt 看不到工具
         await new Promise((r) => setTimeout(r, MCP_SETTLE_MS))
+        if (state.runtime !== runtime || runtime.child.exitCode !== null) {
+          throw new Error('DSH runtime 在启动完成前已退出')
+        }
         notifyWorkerStatus('ready', { serverInfo })
         return { ok: true, serverInfo }
       } catch (error) {
@@ -619,7 +637,7 @@ async function handleRequest(method, params) {
         ok: true,
         protocol_version: PROTOCOL_VERSION,
         node: process.versions.node,
-        runtimeAlive: Boolean(state.runtime),
+        runtimeAlive: Boolean(state.runtime && state.runtime.child.exitCode === null),
         generation: state.generation,
         activeRun: state.activeRun?.runId ?? null,
       }

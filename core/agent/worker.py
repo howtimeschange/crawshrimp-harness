@@ -16,6 +16,7 @@ WORKER_ENTRY = "worker/worker.mjs"
 WORKER_STREAM_LIMIT_BYTES = 4 * 1024 * 1024 + 64 * 1024
 
 NotificationHandler = Callable[[str, dict], Awaitable[None]]
+WorkerExitHandler = Callable[[str, bool], Awaitable[None]]
 
 
 def _repo_root() -> Path:
@@ -72,18 +73,22 @@ class AgentWorker:
 
     def __init__(self, *, runtime_root: str, data_root: str, cordis_path: str,
                  mcp_url: str, session_root: str,
-                 on_notification: Optional[NotificationHandler] = None):
+                 on_notification: Optional[NotificationHandler] = None,
+                 on_exit: Optional[WorkerExitHandler] = None):
         self.runtime_root = runtime_root
         self.data_root = data_root
         self.cordis_path = cordis_path
         self.mcp_url = mcp_url
         self.session_root = session_root
         self.on_notification = on_notification
+        self.on_exit = on_exit
         self.proc: Optional[asyncio.subprocess.Process] = None
         self._next_id = 0
         self._pending: dict[int, asyncio.Future] = {}
         self._reader_task: Optional[asyncio.Task] = None
         self.stderr_tail: str = ""
+        self._stop_requested = False
+        self._exit_reported = False
 
     async def start(self) -> None:
         node_executable = resolve_node_executable()
@@ -98,6 +103,8 @@ class AgentWorker:
         env["CRAWSHRIMP_SESSION_ROOT"] = self.session_root
         # API key 由外部注入到 FastAPI 环境,worker 继承并传给 runtime
 
+        self._stop_requested = False
+        self._exit_reported = False
         self.proc = await asyncio.create_subprocess_exec(
             node_executable, worker_entry,
             stdin=asyncio.subprocess.PIPE,
@@ -112,6 +119,7 @@ class AgentWorker:
     async def _read_loop(self) -> None:
         assert self.proc and self.proc.stdout
         stderr_task = asyncio.create_task(self._drain_stderr())
+        exit_message = "worker 已退出"
         try:
             while True:
                 line = await self.proc.stdout.readline()
@@ -134,10 +142,34 @@ class AgentWorker:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            self._fail_pending(f"worker 读取失败: {exc}")
+            exit_message = f"worker 读取失败: {exc}"
+            self._fail_pending(exit_message)
         finally:
             stderr_task.cancel()
-            self._fail_pending("worker 已退出,未返回请求结果")
+            return_code = getattr(self.proc, "returncode", None)
+            wait = getattr(self.proc, "wait", None)
+            if return_code is None and callable(wait):
+                try:
+                    return_code = await wait()
+                except Exception:  # noqa: BLE001
+                    pass
+            if return_code is not None:
+                exit_message = f"{exit_message} (exit code={return_code})"
+            self._fail_pending(f"{exit_message},未返回请求结果")
+            await self._report_exit(exit_message, unexpected=not self._stop_requested)
+
+    async def _report_exit(self, message: str, *, unexpected: bool) -> None:
+        if self._exit_reported:
+            return
+        self._exit_reported = True
+        if self.on_exit is None:
+            return
+        try:
+            await self.on_exit(message, unexpected)
+        except Exception:  # noqa: BLE001
+            # A supervisor callback is observability only. It must not turn a
+            # clean stdio shutdown into an unhandled reader-task exception.
+            pass
 
     def _fail_pending(self, message: str) -> None:
         pending = list(self._pending.values())
@@ -159,7 +191,8 @@ class AgentWorker:
             raise
 
     async def request(self, method: str, params: Optional[dict] = None, timeout: float = 30.0) -> Any:
-        if self.proc is None or self.proc.stdin is None:
+        if (self.proc is None or self.proc.stdin is None
+                or getattr(self.proc, "returncode", None) is not None):
             raise WorkerProtocolError("worker 未启动")
         self._next_id += 1
         msg_id = self._next_id
@@ -183,6 +216,7 @@ class AgentWorker:
     async def stop(self) -> None:
         if self.proc is None:
             return
+        self._stop_requested = True
         try:
             await asyncio.wait_for(self.request("worker.shutdown", {}, timeout=8), timeout=8)
         except Exception:  # noqa: BLE001
