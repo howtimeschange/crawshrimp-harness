@@ -246,6 +246,33 @@ def _fetch(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[dict]
     return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
+def _plan_expired(expires_at: str, *, now: Optional[datetime] = None) -> bool:
+    """Compare a plan expiry as an instant, never as an ISO text value.
+
+    Plan deadlines are emitted in UTC by the MCP gateway.  Product audit rows
+    historically use local-naive timestamps, so a lexical comparison makes a
+    newly created UTC plan appear expired on positive-offset hosts (for
+    example, 19:00+08:00 sorts after 12:00+00:00 even when it is 11:00 UTC).
+    Retain local-clock behavior for an old naive deadline, and normalize aware
+    values to UTC for every new plan.
+    """
+    try:
+        deadline = datetime.fromisoformat(str(expires_at or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return True
+    if deadline.tzinfo is None:
+        reference = now
+        if reference is None:
+            reference = datetime.now()
+        elif reference.tzinfo is not None:
+            reference = reference.astimezone().replace(tzinfo=None)
+        return reference >= deadline
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.astimezone()
+    return reference.astimezone(timezone.utc) >= deadline.astimezone(timezone.utc)
+
+
 # ---------- 会话 ----------
 
 def create_session(session_id: str, runtime_session_id: str, title: str = "新会话") -> dict:
@@ -712,7 +739,6 @@ def claim_plan(plan_id: str, task_instance_uid: str = "") -> Optional[dict]:
     `BEGIN IMMEDIATE` 让跨 MCP 线程/连接的并发调用只有一个能消费计划；
     UID 与 claim 同事务写入，因此重放调用在实例尚未创建完时也能获得稳定引用。
     """
-    now = _now_iso()
     with _lock:
         conn = _conn()
         try:
@@ -724,7 +750,7 @@ def claim_plan(plan_id: str, task_instance_uid: str = "") -> Optional[dict]:
             if row is None or str(row["status"]) != "ready":
                 conn.rollback()
                 return None
-            if str(row["expires_at"] or "") <= now:
+            if _plan_expired(str(row["expires_at"] or "")):
                 conn.execute(
                     "UPDATE agent_execution_plans SET status = 'expired' WHERE plan_id = ? AND status = 'ready'",
                     (plan_id,),

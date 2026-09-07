@@ -46,6 +46,11 @@ const TOKEN_STORAGE_KEY = 'crawshrimp.apiToken'
 const API_BASE_STORAGE_KEY = 'crawshrimp.apiBase'
 const LOCAL_PROMPT_LIBRARY_FALLBACK_STORAGE_KEY = 'crawshrimp.localPromptLibraries.fallback.v1'
 const API_BASE_QUERY_KEYS = ['crawshrimp_api_base', 'api_base']
+// The sandboxed preload cannot rely on renderer localStorage as the only
+// transport for a dynamically selected backend endpoint. Keep the current IPC
+// status in this isolated-world closure as the authoritative runtime fallback.
+let synchronizedApiBase = ''
+let synchronizedApiToken = ''
 
 function readQueryValue(keys = []) {
   try {
@@ -92,6 +97,10 @@ function apiBase() {
     writeStorageValue(API_BASE_STORAGE_KEY, queryBase)
     return queryBase.replace(/\/+$/, '')
   }
+  // This value only originates from Electron main-process status IPC. Unlike
+  // renderer storage, it remains usable in a sandboxed preload when URL or
+  // localStorage APIs are unavailable during startup.
+  if (synchronizedApiBase) return synchronizedApiBase
   const storedBase = normalizeLocalApiBase(readStorageValue(API_BASE_STORAGE_KEY))
   return storedBase || DEFAULT_API_BASE
 }
@@ -100,8 +109,22 @@ function rememberApiConnectionFromStatus(status) {
   const port = Number(status?.apiPort || 0)
   const statusBase = String(status?.apiBase || (port ? `http://127.0.0.1:${port}` : '')).trim()
   const statusToken = String(status?.apiToken || '').trim()
-  if (statusBase) writeStorageValue(API_BASE_STORAGE_KEY, statusBase)
-  if (statusToken) writeStorageValue(TOKEN_STORAGE_KEY, statusToken)
+  // The main process selected this endpoint after ownership/readiness checks.
+  // Development sessions may intentionally use an arbitrary high loopback port,
+  // so do not discard that trusted status merely because it is outside the
+  // production default range.
+  const trustedPort = Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : 0
+  const normalizedStatusBase = trustedPort
+    ? `http://127.0.0.1:${trustedPort}`
+    : normalizeLocalApiBase(statusBase)
+  if (normalizedStatusBase) {
+    synchronizedApiBase = normalizedStatusBase.replace(/\/+$/, '')
+    writeStorageValue(API_BASE_STORAGE_KEY, synchronizedApiBase)
+  }
+  if (statusToken) {
+    synchronizedApiToken = statusToken
+    writeStorageValue(TOKEN_STORAGE_KEY, statusToken)
+  }
   const publicStatus = { ...(status || {}) }
   delete publicStatus.apiToken
   return publicStatus
@@ -114,7 +137,7 @@ function isMissingIpcHandlerError(error, channel) {
 }
 
 function apiToken() {
-  return readStorageValue(TOKEN_STORAGE_KEY)
+  return synchronizedApiToken || readStorageValue(TOKEN_STORAGE_KEY)
 }
 
 function buildUrl(requestPath) {
@@ -202,7 +225,7 @@ async function apiCall(method, requestPath, body) {
 }
 
 async function agentApi(method, requestPath, body) {
-  return apiCall(method, requestPath, body)
+  return ipcRenderer.invoke('agent:api', method, requestPath, body)
 }
 
 function rememberAndMarkApiConnection(status) {
@@ -524,6 +547,7 @@ contextBridge.exposeInMainWorld('cs', {
   saveAgentClipboardImage: (payload) => ipcRenderer.invoke('agent:save-clipboard-image', payload),
   saveAgentAttachment: (payload) => ipcRenderer.invoke('agent:save-attachment', payload),
   readAgentImageDataUrl: (filePath) => ipcRenderer.invoke('agent:read-image-dataurl', filePath),
+  readAgentAttachment: (filePath) => ipcRenderer.invoke('agent:read-attachment', filePath),
 
   getAdapters:     () => ipcRenderer.invoke('get-adapters'),
   showOperatorAlert: (payload) => ipcRenderer.invoke('show-operator-alert', payload || {}),

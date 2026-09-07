@@ -112,6 +112,29 @@ def test_attachment_read_checks_actual_parse_size(tmp_path, monkeypatch):
     assert result["error"]["code"] == "PREVIEW_TOO_LARGE"
 
 
+def test_attachment_read_preserves_plain_text_content(tmp_path, monkeypatch):
+    marker = "CRAWSHRIMP_ATTACHMENT_E2E_MARKER"
+    path = tmp_path / "marker.txt"
+    path.write_text(marker, encoding="utf-8")
+    previous_run = mcp_gateway.ctx.active_run
+    mcp_gateway.ctx.active_run = {"run_id": "run", "session_id": "session"}
+    monkeypatch.setattr(
+        mcp_gateway.db,
+        "get_attachment",
+        lambda _aid: {"attachment_id": "att", "session_id": "session", "filename": "marker.txt",
+                      "path": str(path), "mime": "text/plain", "size": path.stat().st_size},
+    )
+    try:
+        result = mcp_gateway.tool_attachment_read("att")
+    finally:
+        mcp_gateway.ctx.active_run = previous_run
+
+    assert result["ok"] is True
+    assert result["data"]["content"] == marker
+    assert result["data"]["truncated"] is False
+    assert result["data"]["preview"]["kind"] == "text"
+
+
 def test_excel_zip_uncompressed_and_entry_limits(tmp_path, monkeypatch):
     path = tmp_path / "bomb.xlsx"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:

@@ -20,6 +20,7 @@ const { createLifecycleController } = require('./lifecycleController')
 const { stopManagedChrome: stopManagedChromeFromState } = require('./managedChrome')
 const { startDesktopServices } = require('./startupServices')
 const { waitForServiceReadiness } = require('./serviceReadiness')
+const { normalizeAgentApiRequest } = require('./agentApiBridge')
 const {
   requestBackendApi,
   resolveAiVideoCapabilityPath,
@@ -28,6 +29,7 @@ const {
 } = require('./backendApi')
 const { collectCrawshrimpDataDirCandidates } = require('./dataDirRecovery')
 const { getBrowserExecutableCandidates } = require('./browserExecutablePaths')
+const { resolveCdpPort, loopbackCdpUrl } = require('./cdpPort')
 const { atomicWriteFileSync, atomicWriteJsonSync, retryWindowsFileOperationSync } = require('./atomicFile')
 const { assertNoLinkComponentsSync, normalizePathIdentity } = require('./pathIdentity')
 const { assertSafeWindowsDataRootSync, hardenWindowsPathSync } = require('./windowsAcl')
@@ -97,7 +99,7 @@ const DEFAULT_API_PORT = parseInt(process.env.CRAWSHRIMP_PORT || '18765')
 let apiPort = DEFAULT_API_PORT
 const DEV_RENDERER_URL = process.env.CRAWSHRIMP_RENDERER_URL || 'http://127.0.0.1:5173'
 const API_TOKEN_HEADER = 'X-Crawshrimp-Token'
-const CDP_PORT = 9222
+const CDP_PORT = resolveCdpPort()
 const IS_DEV   = !app.isPackaged
 const CLOUD_APPROVAL_APP_ENV = IS_DEV ? 'development' : 'production'
 const BACKEND_STARTUP_ATTEMPTS = process.platform === 'win32' ? 60 : 20
@@ -1243,6 +1245,8 @@ function spawnBackendProcess() {
       PYTHONIOENCODING: 'utf-8',
       PYTHONUTF8: '1',
       CRAWSHRIMP_PORT: String(apiPort),
+      CRAWSHRIMP_CDP_PORT: String(CDP_PORT),
+      CRAWSHRIMP_CDP_URL: loopbackCdpUrl(CDP_PORT),
       CRAWSHRIMP_DATA: resolvedCrawshrimpDataDir,
       CRAWSHRIMP_ALLOW_DATA_FALLBACK: '1',
       CRAWSHRIMP_API_TOKEN: apiToken,
@@ -2743,6 +2747,15 @@ async function getDesktopStatus() {
 }
 
 secureHandle('get-status', async () => getDesktopStatus())
+secureHandle('agent:api', async (_, method, requestPath, body) => {
+  const request = normalizeAgentApiRequest(method, requestPath)
+  await waitForServiceReadiness({
+    recoveryBarrier: backendRecoveryBarrier,
+    startupPromise: desktopServicesStartupPromise,
+    ensureServices: ensureDesktopServicesStarted,
+  })
+  return apiCall(request.method, request.path, body)
+})
 
 secureHandle('show-operator-alert', async (_, payload = {}) => {
   const targetWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : BrowserWindow.getFocusedWindow()
@@ -2838,9 +2851,10 @@ secureHandle('agent:browser:stream:state', async () => getAgentBrowserState())
 
 secureHandle('agent:pick-attachments', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: '选择附件(表格/文本/数据文件)',
+    title: '选择图片或附件',
     properties: ['openFile', 'multiSelections'],
     filters: [
+      { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
       { name: '数据与文本文件', extensions: ['csv', 'xlsx', 'json', 'txt', 'md', 'pdf'] },
       { name: '所有文件', extensions: ['*'] },
     ],
@@ -2910,6 +2924,29 @@ secureHandle('agent:read-image-dataurl', async (_, filePath) => {
     else if (buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') mime = 'image/webp'
     if (!mime) return { ok: false, error: '文件内容不是受支持的图片格式' }
     return { ok: true, dataUrl: `data:${mime};base64,${buffer.toString('base64')}` }
+  } catch (error) {
+    return { ok: false, error: String(error.message || error) }
+  }
+})
+
+// DSH's Web composer needs actual File bytes to create its durable native
+// draft-image record. Keep that byte handoff inside Electron IPC and verify
+// the image signature before the iframe receives it; no data URL fallback.
+secureHandle('agent:read-attachment', async (_, filePath) => {
+  try {
+    const stats = await fs.promises.stat(filePath)
+    const MAX_DSH_NATIVE_IMAGE_BYTES = 16 * 1024 * 1024
+    if (!stats.isFile() || stats.size > MAX_DSH_NATIVE_IMAGE_BYTES) {
+      return { ok: false, error: '图片超过 DSH 原生附件 16MB 上限' }
+    }
+    const bytes = await fs.promises.readFile(filePath)
+    let mime = ''
+    if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) mime = 'image/png'
+    else if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) mime = 'image/jpeg'
+    else if (bytes.subarray(0, 6).toString('ascii') === 'GIF87a' || bytes.subarray(0, 6).toString('ascii') === 'GIF89a') mime = 'image/gif'
+    else if (bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP') mime = 'image/webp'
+    if (!mime) return { ok: false, error: '文件内容不是受支持的图片格式' }
+    return { ok: true, bytes: new Uint8Array(bytes), mime, name: path.basename(filePath) }
   } catch (error) {
     return { ok: false, error: String(error.message || error) }
   }

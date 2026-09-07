@@ -103,13 +103,13 @@ def test_general_builtin_skills_are_part_of_staging_contract():
     assert "cpSync(source, join(stageRoot, name)" in stage
 
     # rc.1 Web profiles deliberately avoid a flat web-cordis.yml tool list.
-    # Each Web session mounts DSH's complete standard preset, which discovers
-    # all staged local skills rather than hard-coding individual package names.
+    # Crawshrimp selects its product-owned copy of the complete standard
+    # preset so the effective persona is preserved without dropping skills.
     worker = (HARNESS_ROOT / "worker" / "worker.mjs").read_text(encoding="utf-8")
-    standard_preset = (
-        HARNESS_ROOT / "node_modules" / "@deepseek-ai" / "dsh-agent-presets"
-        / "presets" / "standard" / "agent.cordis.yml"
+    crawshrimp_preset = (
+        HARNESS_ROOT / "profile" / "web" / "agent-presets"
+        / "crawshrimp-standard" / "agent.cordis.yml"
     ).read_text(encoding="utf-8")
-    assert "agentPreset: 'standard'" in worker
-    assert "name: '@deepseek-ai/dsh-skill-filesystem'" in standard_preset
-    assert "name: '@deepseek-ai/dsh-tool-skill'" in standard_preset
+    assert "agentPreset: 'crawshrimp-standard'" in worker
+    assert "name: '@deepseek-ai/dsh-skill-filesystem'" in crawshrimp_preset
+    assert "name: '@deepseek-ai/dsh-tool-skill'" in crawshrimp_preset

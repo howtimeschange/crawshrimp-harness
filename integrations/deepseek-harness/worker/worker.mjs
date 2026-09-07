@@ -14,7 +14,7 @@
 
 import readline from 'node:readline'
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { DshWebRuntime } from './web-rpc-client.mjs'
+import { DshWebRuntime, activeTurnEvents } from './web-rpc-client.mjs'
 
 const PROTOCOL_VERSION = 1
 const MODEL_IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
@@ -36,6 +36,11 @@ const state = {
   maxTokens: null,
   runtime: null,          // DshWebRuntime
   startedSessions: new Set(),
+  selectedModels: new Map(),
+  // Trusted embedded-Web sessions are not product API runs. Keep one follow
+  // per explicit renderer registration so their MCP calls receive a scoped
+  // shadow run instead of falling back to an unrelated active run.
+  nativeWebFollows: new Map(),
   activeRun: null,        // { runId, sessionId, resolve, timer, turnEndReason, lastSeq, messageId, follow }
 }
 
@@ -108,6 +113,86 @@ function notifyHarnessShadow(sessionId, event) {
   })
 }
 
+const RUNTIME_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u
+
+function closeNativeWebFollows() {
+  for (const record of state.nativeWebFollows.values()) {
+    record.closed = true
+    try { record.follow?.close() } catch {}
+  }
+  state.nativeWebFollows.clear()
+}
+
+function forwardNativeWebEvent(record, event) {
+  if (record.closed || !event || typeof event !== 'object') return
+  const seq = Number(event.seq || 0)
+  if (seq && seq <= record.lastSeq) return
+  if (seq) record.lastSeq = seq
+  notifyHarnessShadow(record.sessionId, event)
+}
+
+function forwardNativeWebSnapshot(record, events) {
+  // A first snapshot replays historical turns whenever the iframe reloads.
+  // Only an unterminated final turn may need a shadow context; replaying a
+  // completed turn would create duplicate product run/audit rows.
+  for (const event of activeTurnEvents(events)) forwardNativeWebEvent(record, event)
+  const maxSnapshotSeq = (Array.isArray(events) ? events : []).reduce((max, event) => (
+    Math.max(max, Number(event?.seq || 0) || 0)
+  ), record.lastSeq)
+  record.lastSeq = maxSnapshotSeq
+}
+
+async function observeNativeWebSession(sessionId, { refresh = false } = {}) {
+  const runtime = state.runtime
+  if (!runtime) return { ok: false, error: { code: 'RUNTIME_UNAVAILABLE', message: 'DSH Web runtime is not ready' } }
+  const normalized = String(sessionId || '').trim()
+  if (!RUNTIME_SESSION_ID.test(normalized)) {
+    return { ok: false, error: { code: 'INVALID_SESSION_ID', message: 'invalid runtime session id' } }
+  }
+  if (state.activeRun?.sessionId === normalized) {
+    return { ok: true, following: false, reason: 'product-run-already-followed' }
+  }
+  const existing = state.nativeWebFollows.get(normalized)
+  if (existing && !existing.closed && !refresh) return { ok: true, following: true, idempotent: true }
+  if (existing && !existing.closed && refresh) {
+    // The renderer follow can be alive while its first snapshot was missed by
+    // FastAPI. Re-follow this exact session to request a fresh active-turn
+    // snapshot; never substitute a run from a different Web session.
+    existing.closed = true
+    try { existing.follow?.close() } catch {}
+    if (state.nativeWebFollows.get(normalized) === existing) state.nativeWebFollows.delete(normalized)
+  }
+
+  const record = { sessionId: normalized, follow: null, closed: false, lastSeq: 0 }
+  state.nativeWebFollows.set(normalized, record)
+  const onError = (error) => {
+    if (record.closed) return
+    record.closed = true
+    if (state.nativeWebFollows.get(normalized) === record) state.nativeWebFollows.delete(normalized)
+    console.error(`[worker] native Web Session follow ${normalized} failed: ${error.message}`)
+    // A follow failure during a native turn must release the exact shadow
+    // context. Do not leave a stale run available to a later MCP request.
+    notifyHarnessShadow(normalized, {
+      type: 'turn/end',
+      data: { reason: { kind: 'interrupted', error: { code: 'SESSION_FOLLOW_FAILED', message: error.message } } },
+      seq: record.lastSeq,
+    })
+  }
+  record.follow = runtime.follow(normalized, {
+    onSnapshot: () => {},
+    onSnapshotComplete: (events) => forwardNativeWebSnapshot(record, events),
+    onEvent: (event) => forwardNativeWebEvent(record, event),
+    onError,
+  })
+  try {
+    await record.follow.ready
+    return { ok: true, following: true }
+  } catch (error) {
+    onError(error instanceof Error ? error : new Error(String(error)))
+    return { ok: false, error: { code: 'SESSION_FOLLOW_FAILED', message: error.message } }
+  }
+}
+
 // ---------- DSH runtime 生命周期 ----------
 function resolveNodeExecutable() {
   // 发布态:FastAPI 通过 env 传入抓虾打包的 Electron 可执行文件
@@ -155,6 +240,8 @@ async function spawnRuntime({ cwd, webPort }) {
     const wasActive = state.activeRun
     state.runtime = null
     state.startedSessions.clear()
+    state.selectedModels.clear()
+    closeNativeWebFollows()
     if (wasActive) {
       console.error(`[worker] runtime 在 run ${wasActive.runId} 期间退出 code=${code} signal=${signal}`)
       finishRun({ status: 'interrupted', reason: { kind: 'interrupted', detail: `runtime exit code=${code} signal=${signal}` } })
@@ -461,9 +548,17 @@ async function startRun(params) {
       await state.runtime.createSession({
         sessionId,
         cwd: String(params.cwd || `${state.dataRoot}/agent/runtime-workdir`),
-        agentPreset: 'standard',
+        agentPreset: 'crawshrimp-standard',
       })
       state.startedSessions.add(sessionId)
+    }
+    const provider = String(params.provider || state.provider || '')
+    const model = String(params.model || state.model || '')
+    if (!provider || !model) throw new Error('runtime model selection is missing provider or model')
+    const selected = state.selectedModels.get(sessionId)
+    if (!selected || selected.provider !== provider || selected.model !== model) {
+      await state.runtime.selectModel({ sessionId, provider, model })
+      state.selectedModels.set(sessionId, { provider, model })
     }
     const follow = attachRunEventHandlers(run)
     await follow.ready
@@ -501,6 +596,8 @@ async function stopRuntime() {
   notifyWorkerStatus('stopping')
   state.runtime = null
   state.startedSessions.clear()
+  state.selectedModels.clear()
+  closeNativeWebFollows()
   if (state.activeRun) {
     finishRun({
       status: 'interrupted',
@@ -554,7 +651,7 @@ async function handleRequest(method, params) {
         state.runtime = runtime
         const serverInfo = {
           profile: 'web',
-          agentPreset: 'standard',
+          agentPreset: 'crawshrimp-standard',
           webOrigin: runtime.origin,
           webLaunchUrl: runtime.launchUrl,
           provider: state.provider,
@@ -587,6 +684,8 @@ async function handleRequest(method, params) {
       return startRun(params)
     case 'worker.cancel_active':
       return cancelActiveRun()
+    case 'worker.observe_web_session':
+      return await observeNativeWebSession(params.sessionId, { refresh: params.refresh === true })
     case 'worker.request_approval': {
       if (!state.runtime) {
         return { ok: false, error: { code: 'RUNTIME_UNAVAILABLE', message: 'DSH Web runtime is not ready' } }

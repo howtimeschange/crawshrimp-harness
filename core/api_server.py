@@ -1276,6 +1276,21 @@ def _resolve_task_target_entry_url(adapter_id: str, task_id: str, run_params: di
         if urls:
             return urls[0]
         raise ValueError("请先填写有效的 Amazon 商品链接或评论页链接")
+    # Generated adapter packages commonly expose ``target_url`` so the same
+    # reusable task can start on a discovered sub-page.  It used to be a
+    # display-only parameter for every non-special-cased adapter: the runner
+    # always opened manifest.entry_url.  Honour one explicit, well-formed web
+    # URL while keeping the platform-specific entry resolvers above intact.
+    generic_target_url = _first_url_from_value(
+        run_params.get("target_url") or run_params.get("targetUrl") or ""
+    )
+    if generic_target_url:
+        try:
+            parsed_target = urlparse(generic_target_url)
+        except Exception:
+            parsed_target = None
+        if parsed_target and parsed_target.scheme in {"http", "https"} and parsed_target.netloc:
+            return generic_target_url
     if (adapter_id, task_id) != ("tmall-ops-assistant", "buyer_reviews"):
         return fallback
     urls = _resolve_tmall_buyer_review_item_urls(run_params)
@@ -8423,6 +8438,35 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
                 tab_url=str(tab.get('url') or ''),
                 artifact_dir=runtime_artifact_dir,
             )
+            # CDP exposes a new tab's requested URL before the target document
+            # has necessarily finished bootstrapping. Do one safe readiness
+            # probe before any script injection; do not replay a task script on
+            # failure because scripts may have external side effects.
+            if mode != 'current':
+                wait_for_ready = getattr(runner, 'wait_for_document_ready', None)
+                if callable(wait_for_ready):
+                    ready = await wait_for_ready(timeout_seconds=8.0)
+                    if ready.get('ready'):
+                        log(f"新页面已就绪：{str(ready.get('href') or '')[:120]}")
+                    else:
+                        log(
+                            "[warn] 新页面在脚本注入前未确认就绪，先停止卡住的加载再确认页面可执行。"
+                            f" state={ready.get('ready_state') or '-'} error={str(ready.get('error') or '')[:120]}"
+                        )
+                        recover_ready = getattr(runner, 'stop_loading_and_wait_for_document_ready', None)
+                        if not callable(recover_ready):
+                            raise RuntimeError("新页面未就绪，且当前运行器不支持安全的加载恢复")
+                        recovered = await recover_ready(timeout_seconds=4.0)
+                        if not recovered.get('ready'):
+                            raise RuntimeError(
+                                "新页面在停止加载后仍不可执行，已取消脚本注入："
+                                f"state={recovered.get('ready_state') or '-'} "
+                                f"error={str(recovered.get('error') or '')[:160]}"
+                            )
+                        log(
+                            "新页面停止加载后已就绪："
+                            f"{str(recovered.get('href') or '')[:120]}"
+                        )
 
         async def navigate_runner_to(url: str, wait_seconds: float = 2.0, via_page: bool = False):
             if via_page:
@@ -12246,7 +12290,7 @@ def health(probe: bool = False):
 
     warnings = []
     try:
-        chrome_ok = CDPBridge().is_available(timeout=0.2)
+        chrome_ok = get_bridge().is_available(timeout=0.2)
     except Exception as e:
         logger.debug("health chrome probe failed", exc_info=True)
         warnings.append(str(e))

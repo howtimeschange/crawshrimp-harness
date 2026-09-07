@@ -1,7 +1,11 @@
 <template>
   <div :class="['agent-web-view', { 'browser-docked': hasDockedBrowserWindows }]">
     <!-- 主体:iframe(DSH Web UI) + 可展开浏览器面板 -->
-    <div class="web-body">
+    <div
+      ref="webBodyEl"
+      :class="['web-body', { 'browser-dock-resizing': dockedBrowserResizing }]"
+      :style="dockedBrowserStyle"
+    >
       <div class="web-frame-wrap">
         <iframe
           v-if="webUrl"
@@ -73,8 +77,12 @@
             </div>
           </section>
         </div>
-        <!-- 实时浏览器面板悬浮开关 -->
+        <!--
+          固定浏览器打开时，右侧面板自己的标题栏已经提供关闭和“脱离为浮窗”。
+          不再把宿主按钮叠在变窄的 DSH 会话标题上，以免遮住提醒、Session 日志等原生控件。
+        -->
         <button
+          v-if="!hasDockedBrowserWindows"
           :class="['browser-toggle', { active: hasVisibleBrowserWindows }]"
           type="button"
           :title="browserToggleTitle"
@@ -85,6 +93,21 @@
         >
           <IconDeviceDesktop :size="18" :stroke-width="2.1" aria-hidden="true" />
         </button>
+      </div>
+      <div
+        v-show="hasDockedBrowserWindows"
+        class="web-browser-divider"
+        role="separator"
+        aria-label="调整实时浏览器宽度"
+        aria-orientation="vertical"
+        tabindex="0"
+        :aria-valuemin="dockedBrowserBounds.min"
+        :aria-valuemax="dockedBrowserBounds.max"
+        :aria-valuenow="dockedBrowserWidth"
+        @pointerdown.left.prevent="onDockedBrowserResizeStart"
+        @keydown="onDockedBrowserResizeKeydown"
+      >
+        <span aria-hidden="true"></span>
       </div>
       <div v-show="hasDockedBrowserWindows" class="web-browser-panel">
         <AgentBrowserPanel
@@ -185,6 +208,11 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { IconDeviceDesktop, IconExternalLink, IconSettings } from '@tabler/icons-vue'
 import AgentBrowserPanel from '../components/agent/AgentBrowserPanel.vue'
 import { DEEPSEEK_PLATFORM_URL } from '../utils/llmSettings.mjs'
+import {
+  clampDockedBrowserWidth,
+  defaultDockedBrowserWidth,
+  dockedBrowserWidthBounds,
+} from '../utils/browserDockWidth.mjs'
 
 const props = defineProps({
   theme: { type: String, default: '' },        // effectiveTheme(light|dark)
@@ -204,7 +232,12 @@ const browserOpen = ref(false)
 const browserMinimizeCount = ref(0)
 const browserWindows = ref([])
 const BROWSER_LAYOUT_STORAGE_KEY = 'crawshrimp.browserLayout.v2'
+const BROWSER_DOCK_WIDTH_STORAGE_KEY = 'crawshrimp.browserDockWidth.v1'
 const browserLayout = ref(loadBrowserLayoutPreference())
+const webBodyEl = ref(null)
+const browserDockContainerWidth = ref(0)
+const dockedBrowserWidth = ref(loadDockedBrowserWidthPreference())
+const dockedBrowserResizing = ref(false)
 const recoverAttempts = ref(0)
 const workspaceRoot = ref('')
 const runtimeGeneration = ref(0)
@@ -215,7 +248,12 @@ let pollTimer = null
 let tabPollTimer = null
 let warmStarted = false
 let recovering = false
+let browserDockResizeObserver = null
+let stopDockedBrowserResize = null
+let nativeWebFollowRetryTimer = null
+let nativeWebFollowSessionId = ''
 const MISSING_LLM_PROVIDER_MESSAGE = '请先配置任一可用的大模型供应商。'
+const NATIVE_WEB_FOLLOW_RETRY_DELAYS_MS = [250, 750, 1500]
 
 const frameSrc = computed(() => {
   if (!webUrl.value) return ''
@@ -234,6 +272,8 @@ const visibleBrowserWindows = computed(() => (
 ))
 const hasVisibleBrowserWindows = computed(() => visibleBrowserWindows.value.length > 0)
 const hasDockedBrowserWindows = computed(() => browserLayout.value === 'docked' && hasVisibleBrowserWindows.value)
+const dockedBrowserBounds = computed(() => dockedBrowserWidthBounds(browserDockContainerWidth.value || window.innerWidth))
+const dockedBrowserStyle = computed(() => ({ '--browser-dock-width': `${dockedBrowserWidth.value}px` }))
 const sessionBrowserTabs = computed(() => tabsForActiveBrowserWindow(props.browserTabs))
 const canToggleBrowserWindows = computed(() => (
   hasVisibleBrowserWindows.value || browserWindows.value.length > 0 || sessionBrowserTabs.value.length > 0
@@ -273,24 +313,15 @@ const placeholderStateText = computed(() => (
 ))
 const runtimeNeedsModelKey = ref(false)
 const inlineLlmModalOpen = ref(false)
-let llmConfigPromptedAutomatically = false
 
 function syncRuntimeModelConfiguration(result) {
   const needsModelKey = result?.api_key_configured === false
+  const changed = runtimeNeedsModelKey.value !== needsModelKey
   runtimeNeedsModelKey.value = needsModelKey
   if (!needsModelKey) {
-    llmConfigPromptedAutomatically = false
     inlineLlmModalOpen.value = false
-    return
   }
-  // The DSH upstream Models screen is intentionally disabled for Crawshrimp:
-  // it offers a DeepSeek-only first-run dialog. Show the existing product
-  // provider guide once on first entry instead, without trapping a user who
-  // explicitly closes it and continues to inspect the workspace.
-  if (!llmConfigPromptedAutomatically) {
-    llmConfigPromptedAutomatically = true
-    inlineLlmModalOpen.value = true
-  }
+  if (changed) pushRuntimeModelConfiguration()
 }
 
 function loadBrowserLayoutPreference() {
@@ -302,6 +333,100 @@ function loadBrowserLayoutPreference() {
   }
 }
 
+function loadDockedBrowserWidthPreference() {
+  try {
+    const value = Number(localStorage.getItem(BROWSER_DOCK_WIDTH_STORAGE_KEY))
+    return Number.isFinite(value) && value > 0 ? value : 0
+  } catch {
+    return 0
+  }
+}
+
+function persistDockedBrowserWidth() {
+  try { localStorage.setItem(BROWSER_DOCK_WIDTH_STORAGE_KEY, String(Math.round(dockedBrowserWidth.value))) } catch { /* ignore */ }
+}
+
+function updateBrowserDockContainerWidth() {
+  const width = Math.round(Number(webBodyEl.value?.clientWidth || 0))
+  if (width > 0 && width !== browserDockContainerWidth.value) browserDockContainerWidth.value = width
+}
+
+function syncDockedBrowserWidth({ persist = false } = {}) {
+  updateBrowserDockContainerWidth()
+  const containerWidth = browserDockContainerWidth.value || window.innerWidth
+  const candidate = dockedBrowserWidth.value > 0
+    ? dockedBrowserWidth.value
+    : defaultDockedBrowserWidth(containerWidth)
+  const normalized = clampDockedBrowserWidth(candidate, containerWidth)
+  if (normalized !== dockedBrowserWidth.value) dockedBrowserWidth.value = normalized
+  if (persist) persistDockedBrowserWidth()
+}
+
+function setDockedBrowserWidth(value, { persist = true } = {}) {
+  updateBrowserDockContainerWidth()
+  const containerWidth = browserDockContainerWidth.value || window.innerWidth
+  dockedBrowserWidth.value = clampDockedBrowserWidth(value, containerWidth)
+  if (persist) persistDockedBrowserWidth()
+}
+
+function onDockedBrowserResizeStart(event) {
+  if (!hasDockedBrowserWindows.value || event.button !== 0) return
+  stopDockedBrowserResize?.({ persist: true })
+  updateBrowserDockContainerWidth()
+  const startWidth = dockedBrowserWidth.value || defaultDockedBrowserWidth(browserDockContainerWidth.value || window.innerWidth)
+  const pointerTarget = event.currentTarget
+  const pointerId = event.pointerId
+  let latestX = event.clientX
+  let frameId = 0
+  let done = false
+  dockedBrowserResizing.value = true
+  try { pointerTarget?.setPointerCapture?.(pointerId) } catch { /* ignore */ }
+  const apply = () => {
+    frameId = 0
+    setDockedBrowserWidth(startWidth + (event.clientX - latestX), { persist: false })
+  }
+  const onMove = (moveEvent) => {
+    latestX = moveEvent.clientX
+    if (!frameId) frameId = window.requestAnimationFrame(apply)
+  }
+  const onFinish = ({ persist = true } = {}) => {
+    if (done) return
+    done = true
+    if (frameId) {
+      window.cancelAnimationFrame(frameId)
+      frameId = 0
+    }
+    setDockedBrowserWidth(startWidth + (event.clientX - latestX), { persist })
+    dockedBrowserResizing.value = false
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onFinish)
+    window.removeEventListener('pointercancel', onFinish)
+    window.removeEventListener('blur', onFinish)
+    try {
+      if (pointerTarget?.hasPointerCapture?.(pointerId)) pointerTarget.releasePointerCapture(pointerId)
+    } catch { /* ignore */ }
+    stopDockedBrowserResize = null
+  }
+  stopDockedBrowserResize = onFinish
+  window.addEventListener('pointermove', onMove, { passive: true })
+  window.addEventListener('pointerup', onFinish, { once: true })
+  window.addEventListener('pointercancel', onFinish, { once: true })
+  window.addEventListener('blur', onFinish, { once: true })
+}
+
+function onDockedBrowserResizeKeydown(event) {
+  if (!hasDockedBrowserWindows.value) return
+  const bounds = dockedBrowserBounds.value
+  let next = dockedBrowserWidth.value
+  if (event.key === 'ArrowLeft') next += 40
+  else if (event.key === 'ArrowRight') next -= 40
+  else if (event.key === 'Home') next = bounds.min
+  else if (event.key === 'End') next = bounds.max
+  else return
+  event.preventDefault()
+  setDockedBrowserWidth(next)
+}
+
 function setBrowserLayout(layout) {
   const next = layout === 'floating' ? 'floating' : 'docked'
   browserLayout.value = next
@@ -310,8 +435,13 @@ function setBrowserLayout(layout) {
 }
 
 function postToFrame(message) {
-  if (!frameEl.value?.contentWindow || !frameOrigin.value) return
-  frameEl.value.contentWindow.postMessage(message, frameOrigin.value)
+  if (!frameEl.value?.contentWindow || !frameOrigin.value) return false
+  try {
+    frameEl.value.contentWindow.postMessage(message, frameOrigin.value)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function applyRuntimeSnapshot(result) {
@@ -506,11 +636,22 @@ function onFrameLoad() {
   pushNav()
   pushAppVersion()
   pushWorkspace()
+  pushRuntimeModelConfiguration()
 }
 
 function pushWorkspace() {
   if (!workspaceRoot.value) return
   postToFrame({ __crawshrimp: 'workspace', root: workspaceRoot.value })
+}
+
+function pushRuntimeModelConfiguration() {
+  // rc.1 exchanges the one-time launch URL and redirects to a clean address,
+  // so a csNeedsModelKey query flag cannot survive as application state. The
+  // authenticated Shell bridge is the durable source of this product setting.
+  postToFrame({
+    __crawshrimp: 'runtime-model-configuration',
+    apiKeyConfigured: !runtimeNeedsModelKey.value,
+  })
 }
 
 function pushTheme() {
@@ -599,6 +740,13 @@ function onWindowMessage(event) {
   } else if (data.__crawshrimp === 'active-runtime-session') {
     activeRuntimeSessionId.value = String(data.runtimeSessionId || '')
     emit('runtime-session', activeRuntimeSessionId.value)
+    if (!activeRuntimeSessionId.value && nativeWebFollowRetryTimer) {
+      clearTimeout(nativeWebFollowRetryTimer)
+      nativeWebFollowRetryTimer = null
+      nativeWebFollowSessionId = ''
+    } else {
+      void observeNativeWebSession(activeRuntimeSessionId.value)
+    }
   } else if (data.__crawshrimp === 'open-file') {
     // 会话内附件点击 → 系统默认应用打开
     const p = String(data.path || '').trim()
@@ -613,6 +761,12 @@ function onWindowMessage(event) {
     handlePickAttachments(data.runtimeSessionId)
   } else if (data.__crawshrimp === 'workspace-directory-pick') {
     handleWorkspaceDirectoryPick(data)
+  } else if (data.__crawshrimp === 'workspace-ready') {
+    // The slots client registers after the iframe's initial load event. Replay
+    // the default workspace only after it explicitly confirms that its
+    // postMessage listener is ready, so first launch cannot lose the binding.
+    pushWorkspace()
+    pushRuntimeModelConfiguration()
   } else if (data.__crawshrimp === 'llm-config-request') {
     openInlineLlmModal()
   }
@@ -623,6 +777,58 @@ const IMAGE_MIME_PREFIX = 'image/'
 
 function isImageLikeFile(file) {
   return String(file?.type || file?.mime || '').toLowerCase().startsWith(IMAGE_MIME_PREFIX)
+}
+
+function scheduleNativeWebSessionFollow(runtimeId, attempt) {
+  if (nativeWebFollowRetryTimer || activeRuntimeSessionId.value !== runtimeId) return
+  const delay = NATIVE_WEB_FOLLOW_RETRY_DELAYS_MS[attempt]
+  if (delay === undefined) return
+  nativeWebFollowRetryTimer = setTimeout(() => {
+    nativeWebFollowRetryTimer = null
+    void observeNativeWebSession(runtimeId, attempt + 1)
+  }, delay)
+}
+
+async function observeNativeWebSession(runtimeSessionId, attempt = 0) {
+  const runtimeId = String(runtimeSessionId || '').trim()
+  if (!runtimeId || typeof window.cs?.agentApi !== 'function') return
+  if (nativeWebFollowSessionId !== runtimeId) {
+    if (nativeWebFollowRetryTimer) clearTimeout(nativeWebFollowRetryTimer)
+    nativeWebFollowRetryTimer = null
+    nativeWebFollowSessionId = runtimeId
+  }
+  try {
+    const result = await window.cs.agentApi('POST', '/agent/runtime/web-session', { runtime_session_id: runtimeId })
+    if (result?.ok) return
+    scheduleNativeWebSessionFollow(runtimeId, attempt)
+  } catch (error) {
+    scheduleNativeWebSessionFollow(runtimeId, attempt)
+    if (attempt >= NATIVE_WEB_FOLLOW_RETRY_DELAYS_MS.length) {
+      // Do not expose backend transport detail as a fake composer success.
+      console.warn('[agent] 原生 Web 会话绑定失败:', error?.message)
+    }
+  }
+}
+
+async function pushNativeImageDraft(file, runtimeSessionId = '') {
+  if (!isImageLikeFile(file) || typeof window.cs?.readAgentAttachment !== 'function') return false
+  const runtimeId = String(runtimeSessionId || activeRuntimeSessionId.value || '')
+  if (!runtimeId || !file?.path) return false
+  try {
+    const image = await window.cs.readAgentAttachment(file.path)
+    if (!image?.ok || !image.bytes || !image.mime) return false
+    if (!postToFrame({
+      __crawshrimp: 'native-image-attachment',
+      runtimeSessionId: runtimeId,
+      name: String(file.name || image.name || 'image'),
+      mime: image.mime,
+      bytes: image.bytes,
+    })) return false
+    return true
+  } catch (error) {
+    console.warn('[agent] 图片交给 DSH 原生附件通道失败:', error?.message)
+    return false
+  }
 }
 
 async function registerAttachmentFile(file, runtimeSessionId = '') {
@@ -668,7 +874,10 @@ async function handlePickAttachments(runtimeSessionId = '') {
     const result = await window.cs.pickAgentAttachments()
     if (!result?.ok) return
     for (const file of result.files || []) {
-      if (isImageLikeFile(file)) continue
+      if (isImageLikeFile(file)) {
+        await pushNativeImageDraft(file, runtimeId)
+        continue
+      }
       try {
         const registered = await window.cs.agentApi('POST', '/agent/attachments/inbox', {
           name: file.name, path: file.path, mime: file.mime, size: file.size,
@@ -693,6 +902,12 @@ async function handlePickAttachments(runtimeSessionId = '') {
 }
 
 onMounted(() => {
+  updateBrowserDockContainerWidth()
+  syncDockedBrowserWidth()
+  if (typeof ResizeObserver === 'function' && webBodyEl.value) {
+    browserDockResizeObserver = new ResizeObserver(() => syncDockedBrowserWidth())
+    browserDockResizeObserver.observe(webBodyEl.value)
+  }
   loadRuntime()
   window.addEventListener('message', onWindowMessage)
   // 持续读取受控 runtime 状态来恢复。rc.1 的 Web Host 对裸 HTTP 正确返回
@@ -747,6 +962,11 @@ onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
   if (tabPollTimer) clearInterval(tabPollTimer)
   window.removeEventListener('message', onWindowMessage)
+  browserDockResizeObserver?.disconnect()
+  browserDockResizeObserver = null
+  if (nativeWebFollowRetryTimer) clearTimeout(nativeWebFollowRetryTimer)
+  nativeWebFollowRetryTimer = null
+  stopDockedBrowserResize?.({ persist: true })
 })
 
 watch(() => props.theme, (t) => {
@@ -882,17 +1102,25 @@ async function removeBrowserWindow(tabId) {
   display: flex;
 }
 
+.web-body.browser-dock-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
 .web-frame-wrap {
   flex: 1;
   min-width: 0;
   position: relative;
   background: var(--bg);
+  /* DSH owns the right side of its header for Session actions (for example,
+     the Session log download). Keep this host-level control outside it. */
+  --dsh-session-header-utilities-reserve: 168px;
 }
 
 .browser-toggle {
   position: absolute;
   top: 10px;
-  right: 12px;
+  right: var(--dsh-session-header-utilities-reserve, 168px);
   z-index: 10;
   width: 34px;
   height: 34px;
@@ -937,8 +1165,8 @@ async function removeBrowserWindow(tabId) {
 }
 
 .web-browser-panel {
-  width: min(680px, max(360px, 40vw), 46%);
-  flex: none;
+  width: var(--browser-dock-width, min(920px, max(420px, 48vw), 66%));
+  flex: 0 0 var(--browser-dock-width, min(920px, max(420px, 48vw), 66%));
   border-left: 1px solid var(--border);
   background: var(--bg);
   min-width: 0;
@@ -947,8 +1175,40 @@ async function removeBrowserWindow(tabId) {
   flex-direction: column;
 }
 
+.web-browser-divider {
+  position: relative;
+  z-index: 11;
+  flex: 0 0 12px;
+  width: 12px;
+  margin-right: -1px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.web-browser-divider::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 5px;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+
+.web-browser-divider:hover::before,
+.web-browser-divider:focus-visible::before,
+.browser-dock-resizing .web-browser-divider::before {
+  background: var(--orange);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--orange) 62%, transparent);
+}
+
+.web-browser-divider:focus-visible {
+  background: color-mix(in srgb, var(--orange) 12%, transparent);
+}
+
 .browser-docked .web-frame-wrap {
-  min-width: min(420px, 54%);
+  min-width: 0;
 }
 
 .web-placeholder-shell {

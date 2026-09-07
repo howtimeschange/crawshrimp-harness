@@ -88,7 +88,7 @@
             <div class="approval-card-body">{{ approvalSummary(m) }}</div>
             <div class="approval-card-risk">风险等级:{{ m.risk || 'read_only' }}</div>
             <div v-if="m.status === 'pending'" class="approval-card-actions">
-              <button class="approve-btn" type="button" @click="decideApproval(m, 'approved')">批准</button>
+              <button class="approve-btn" type="button" @click="decideApproval(m, 'approved')">{{ approvalApproveLabel(m) }}</button>
               <button class="reject-btn" type="button" @click="decideApproval(m, 'rejected')">拒绝</button>
             </div>
             <div v-else class="approval-card-decided">
@@ -242,7 +242,7 @@ const TOOL_LABELS = {
   script_describe: '脚本详情',
   script_run: '运行脚本',
   script_create_draft: '创建脚本草稿',
-  script_publish: '发布脚本',
+  script_publish: '安装脚本',
   script_test: '测试脚本',
 }
 
@@ -284,7 +284,7 @@ async function scrollToBottom() {
 
 function approvalSummary(m) {
   const s = m.summary || {}
-  if (s.kind === 'script_publish') return `发布脚本修订:${s.rev_id || ''}(经审批后进入脚本审核页复核)`
+  if (s.kind === 'script_publish') return `安装可复用抓虾脚本:${s.adapter_id || s.rev_id || ''}。确认后将直接安装到「我的脚本」；已校验内容指纹:${String(s.source_sha256 || '').slice(0, 12) || '未提供'}`
   if (s.kind === 'capability_upgrade') return `页面操作授权请求:允许智能体在本次运行中执行浏览器点击/输入(当前页面 ${s.tab_url || ''})`
   if (s.kind === 'sensitive_click') return `敏感操作:点击「${s.text || s.selector || ''}」(${s.tab_url || ''})`
   if (s.kind === 'data_export') return `导出产物 ${s.name || ''} 为 ${s.format || ''}`
@@ -292,6 +292,10 @@ function approvalSummary(m) {
   const params = s.params || {}
   const paramText = Object.entries(params).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')
   return `任务:${s.task_id || ''}(${paramText || '无参数'})`
+}
+
+function approvalApproveLabel(m) {
+  return m?.summary?.kind === 'script_publish' ? '确认安装' : '批准'
 }
 
 // ---------- SSE ----------

@@ -72,6 +72,8 @@ const required = [
   'profiles/web/package.json',
   'profiles/web/cordis.yml',
   'profiles/web/cordis.patch.yml',
+  'profiles/web/agent-presets/crawshrimp-standard/agent.cordis.yml',
+  'profiles/web/agent-presets/crawshrimp-standard/preset.yml',
   'profiles/web/node_modules/@xmanrui/dsh-im/package.json',
   'profiles/web/node_modules/crawshrimp-product-bridge/lib/index.js',
   'profiles/web/node_modules/crawshrimp-slots/lib/client.js',
@@ -201,7 +203,8 @@ if (skipBootCheck) {
     },
   })
   const config = String(probe.stdout || '')
-  if (probe.status !== 0 || !config.includes('@deepseek-ai/dsh-web-app') || !config.includes('@xmanrui/dsh-im')) {
+  const duplicateDeepSeekRouteDisabled = /^- id: llm-deepseek\n(?:(?!^- id:)[\s\S])*?^  disabled: true$/mu.test(config)
+  if (probe.status !== 0 || !config.includes('@deepseek-ai/dsh-web-app') || !config.includes('@xmanrui/dsh-im') || !duplicateDeepSeekRouteDisabled) {
     fail('Web profile config check failed: ' + String(probe.stderr || probe.error?.message || '').slice(-3000))
   }
   console.log('[stage-runtime] Web profile config check OK')

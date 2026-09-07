@@ -96,7 +96,7 @@ class CdpError(Exception):
 class CdpClient:
     """单个 tab 的 CDP 会话(每工具调用短连接)。"""
 
-    def __init__(self, ws_url: str, timeout: float = 20.0):
+    def __init__(self, ws_url: str, timeout: float = 10.0):
         self.ws_url = ws_url
         self.timeout = timeout
         self._ws: Any = None
@@ -114,7 +114,10 @@ class CdpClient:
 
     async def connect(self) -> None:
         try:
-            self._ws = await asyncio.wait_for(websockets.connect(self.ws_url, max_size=8 * 1024 * 1024), timeout=10)
+            self._ws = await asyncio.wait_for(
+                websockets.connect(self.ws_url, max_size=8 * 1024 * 1024, proxy=None),
+                timeout=10,
+            )
         except Exception as exc:  # noqa: BLE001
             raise CdpError(f"CDP 连接失败: {exc}") from exc
         self._reader = asyncio.create_task(self._read_loop())
@@ -176,7 +179,10 @@ class CdpClient:
         self._pending[msg_id] = fut
         try:
             await self._ws.send(json.dumps({"id": msg_id, "method": method, "params": params or {}}))
-            return await asyncio.wait_for(fut, timeout=self.timeout)
+            try:
+                return await asyncio.wait_for(fut, timeout=self.timeout)
+            except asyncio.TimeoutError as exc:
+                raise CdpError(f"CDP {method} 超时（{self.timeout:.0f} 秒），页面可能无响应") from exc
         finally:
             if self._pending.get(msg_id) is fut:
                 self._pending.pop(msg_id, None)

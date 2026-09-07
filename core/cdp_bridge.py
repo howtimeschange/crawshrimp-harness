@@ -5,6 +5,7 @@ Chrome 启动参数：--remote-debugging-port=9222
 import json
 import logging
 import asyncio
+import os
 import socket
 import time
 from typing import Optional
@@ -185,7 +186,16 @@ def get_bridge() -> CDPBridge:
     global _bridge
     from core.config import get
     if _bridge is None:
-        cdp_url = get("chrome.remote_debugging_url", "http://127.0.0.1:9222")
+        # The desktop launches its backend with the exact same loopback CDP
+        # endpoint it owns.  This lets an isolated development Harness avoid
+        # silently attaching to a user's installed-client browser on 9222.
+        cdp_url = str(os.environ.get("CRAWSHRIMP_CDP_URL") or "").strip()
+        if not cdp_url:
+            raw_port = str(os.environ.get("CRAWSHRIMP_CDP_PORT") or "").strip()
+            if raw_port.isdigit() and 1024 <= int(raw_port) <= 65535:
+                cdp_url = f"http://127.0.0.1:{int(raw_port)}"
+        if not cdp_url:
+            cdp_url = get("chrome.remote_debugging_url", "http://127.0.0.1:9222")
         if isinstance(cdp_url, str) and "://localhost:" in cdp_url:
             cdp_url = cdp_url.replace("://localhost:", "://127.0.0.1:")
         _bridge = CDPBridge(cdp_url)

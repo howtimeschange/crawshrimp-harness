@@ -8,6 +8,16 @@
   config:
     persona: !!js process.env.CRAWSHRIMP_AGENT_PERSONA ?? 'You are a Crawshrimp agent running in the Crawshrimp desktop application.'
 
+# The agent-plane preset owns its scoped persona.  Mount the product-owned
+# full-capability copy from the mutable profile root before any user-authored
+# presets, leaving the upstream shipped and user preset roots available.
+- id: agent-presets
+  config:
+    default: crawshrimp-standard
+    roots:
+      - path: !!js dshHomePath('profiles/web/agent-presets')
+        trust: system
+
 - id: agent-default-model
   config:
     provider: !!js process.env.CRAWSHRIMP_AGENT_PROVIDER ?? 'crawshrimp-deepseek-official'
@@ -21,7 +31,6 @@
         apiKeyEnv: CRAWSHRIMP_DEEPSEEK_API_KEY
         api: openai-completions
         baseURL: !!js process.env.CRAWSHRIMP_DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com'
-        reasoning: high
         models:
           - id: deepseek-v4-flash
             contextWindow: 128000
@@ -253,6 +262,16 @@
 
 - id: tool-web
   disabled: false
+
+# The base Web bundle also mounts a direct `deepseek-official` adapter.  It
+# registers a second generic “DeepSeek” group in the model picker and reads a
+# different credential reference (`DEEPSEEK_API_KEY`) from the Crawshrimp
+# provider route.  Crawshrimp owns direct DeepSeek configuration through the
+# named pi-ai route above, so expose only that route to every native session.
+# This leaves the Web tool plane enabled; it only removes the duplicate model
+# adapter and its misleading first-run credential path.
+- id: llm-deepseek
+  disabled: true
 
 # The official wordmark is presentation-only. Keep the complete official Web
 # capability roster, but let the Crawshrimp client slot own this product's

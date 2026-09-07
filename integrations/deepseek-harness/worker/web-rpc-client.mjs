@@ -14,6 +14,9 @@ import { dirname, join, resolve } from 'node:path'
 import WebSocket from 'ws'
 
 const PROFILE_FILES = ['cordis.yml', 'cordis.patch.yml', 'pnpm-workspace.yaml']
+const PRODUCT_PRESET_FILES = [
+  'agent-presets/crawshrimp-standard/agent.cordis.yml',
+]
 const PRODUCT_PROFILE_PACKAGES = ['@xmanrui/dsh-im', 'crawshrimp-product-bridge', 'crawshrimp-slots']
 
 function profileTemplate(runtimeRoot) {
@@ -63,6 +66,14 @@ export function ensureWebProfile({ runtimeRoot, dshHome }) {
   for (const file of PROFILE_FILES) {
     copyFileSync(join(source, file), join(destination, file))
   }
+  // Product presets are evaluated from DSH_HOME after the launch capability
+  // redirects the iframe. Refresh only this system-owned root on every boot;
+  // user-authored presets under DSH_HOME/.agent-presets remain untouched.
+  for (const file of PRODUCT_PRESET_FILES) {
+    const target = join(destination, file)
+    mkdirSync(dirname(target), { recursive: true })
+    copyFileSync(join(source, file), target)
+  }
   for (const packagePath of PRODUCT_PROFILE_PACKAGES) {
     linkProfilePackage(destination, runtimeRoot, packagePath)
   }
@@ -96,13 +107,40 @@ function rpcFailure(method, body) {
   return new Error('DSH Web RPC ' + method + ' failed: ' + detail)
 }
 
-function wireEvents(frame) {
+/**
+ * Session follow transports entries, not raw Session events.  The opening
+ * snapshot may additionally contain packed chunk rows, while a live frame is
+ * one `{ type: 'event', event }` envelope.  Project only the inner event so
+ * downstream consumers receive the same shape for snapshot and live traffic.
+ */
+export function wireEvents(frame) {
+  const eventForEntry = (entry) => (
+    (entry?.type === 'event' || entry?.type === 'chunks')
+      && entry.event
+      && typeof entry.event === 'object'
+      ? [entry.event]
+      : []
+  )
   if (frame?.type === 'snapshot') {
-    return (frame.records || [])
-      .filter((record) => record?.type === 'event' && record.event)
-      .map((record) => record.event)
+    return (Array.isArray(frame.records) ? frame.records : []).flatMap(eventForEntry)
   }
-  return frame?.type === 'event' ? [frame] : []
+  return eventForEntry(frame)
+}
+
+/**
+ * A Session follow snapshot contains prior as well as current events. Product
+ * runs deliberately consume that whole history, but a newly attached native
+ * Web shadow must never duplicate finished turns. Retain only the final
+ * start-to-now span when the snapshot proves a turn is still active.
+ */
+export function activeTurnEvents(events) {
+  const entries = Array.isArray(events) ? events.filter((event) => event && typeof event === 'object') : []
+  let activeStart = -1
+  for (let index = 0; index < entries.length; index += 1) {
+    if (entries[index].type === 'turn/start') activeStart = index
+    if (entries[index].type === 'turn/end') activeStart = -1
+  }
+  return activeStart < 0 ? [] : entries.slice(activeStart)
 }
 
 export class DshWebRuntime {
@@ -235,8 +273,19 @@ export class DshWebRuntime {
     return body.result.value
   }
 
-  createSession({ sessionId, cwd, agentPreset = 'standard' }) {
+  createSession({ sessionId, cwd, agentPreset = 'crawshrimp-standard' }) {
     return this.request('session/create', { request: { sessionId, cwd, agentPreset } })
+  }
+
+  /**
+   * Product sessions retain their own selected model.  Re-assert that choice
+   * after a runtime restart (or a product-side model change), rather than
+   * letting a persisted DSH Session silently reuse its prior model.
+   */
+  selectModel({ sessionId, provider, model, reasoningEffort }) {
+    const request = { sessionId, provider, model }
+    if (reasoningEffort !== undefined) request.reasoningEffort = reasoningEffort
+    return this.request('session/selectModel', { request })
   }
 
   prompt({ sessionId, content, mode = 'queue', requestId = 'crawshrimp-' + randomUUID() }) {
@@ -281,7 +330,7 @@ export class DshWebRuntime {
    * handle; malformed/ended streams report through onError rather than being
    * treated as a successful end of an active run.
    */
-  follow(sessionId, { onEvent, onError, onSnapshot }) {
+  follow(sessionId, { onEvent, onError, onSnapshot, onSnapshotComplete }) {
     const socket = new WebSocket(this.#origin.replace(/^http/u, 'ws') + '/api/remote.mux', {
       headers: { cookie: this.#cookie },
     })
@@ -327,7 +376,9 @@ export class DshWebRuntime {
         if (message.type === 'end') throw new Error('DSH Session follow ended unexpectedly')
         if (message.type !== 'item') return
         if (message.value?.type === 'snapshot') {
-          for (const event of wireEvents(message.value)) onSnapshot?.(event)
+          const events = wireEvents(message.value)
+          for (const event of events) onSnapshot?.(event)
+          onSnapshotComplete?.(events)
           settleReady()
           return
         }

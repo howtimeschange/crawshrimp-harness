@@ -61,6 +61,93 @@ def test_native_approval_is_agent_service_method():
     assert callable(service._ds_native_approval)
 
 
+def test_native_web_session_observer_leases_only_an_explicit_ready_runtime_session():
+    service = AgentService()
+    worker = SimpleNamespace(request=AsyncMock(return_value={"ok": True, "following": True}))
+    service.worker = worker
+
+    async def scenario():
+        service.runtime_state = "ready"
+        assert await service.observe_native_web_session("web-session:1") == {"ok": True, "following": True}
+        worker.request.assert_awaited_once_with(
+            "worker.observe_web_session", {"sessionId": "web-session:1"}, timeout=15,
+        )
+
+        assert await service.observe_native_web_session("not a session id") == {
+            "ok": False, "error": "INVALID_SESSION_ID",
+        }
+        assert worker.request.await_count == 1
+
+        service.runtime_state = "starting"
+        assert await service.observe_native_web_session("web-session:2") == {
+            "ok": False, "error": "RUNTIME_UNAVAILABLE",
+        }
+        assert worker.request.await_count == 1
+
+    asyncio.run(scenario())
+
+
+def test_native_web_mcp_context_recovers_the_exact_session_after_a_missed_initial_follow():
+    """A native DSH turn may reach its first MCP tool before the shell follow sticks.
+
+    Recovery may only refresh the exact runtime session supplied by DSH.  It
+    must not borrow a different live run merely because that run is available.
+    """
+    async def scenario():
+        service = AgentService()
+        service.runtime_state = "ready"
+        service.register_run_context(
+            "other-runtime",
+            {"run_id": "other-run", "session_id": "other-session", "status": "running"},
+        )
+        recovered_run = {"run_id": "native-run", "session_id": "native-session", "status": "running"}
+        calls = []
+
+        async def request(method, params, timeout):
+            calls.append((method, params, timeout))
+            assert method == "worker.observe_web_session"
+            assert params["sessionId"] == "native-runtime"
+            assert params["refresh"] is True
+            service.register_run_context("native-runtime", recovered_run)
+            return {"ok": True, "following": True}
+
+        service.worker = SimpleNamespace(request=request)
+        lease = await service.acquire_mcp_context("native-runtime", "tool-call")
+        try:
+            assert lease["run_id"] == "native-run"
+            assert lease["session_id"] == "native-session"
+            assert service._mcp_context_leases[lease["lease_id"]]["active_run"]["run_id"] == "native-run"
+        finally:
+            assert service.release_mcp_context(lease["lease_id"])
+        assert calls == [("worker.observe_web_session", {"sessionId": "native-runtime", "refresh": True}, 3)]
+
+    asyncio.run(scenario())
+
+
+def test_native_web_mcp_context_never_falls_back_to_an_unrelated_live_run():
+    async def scenario():
+        service = AgentService()
+        service.runtime_state = "ready"
+        service.register_run_context(
+            "other-runtime",
+            {"run_id": "other-run", "session_id": "other-session", "status": "running"},
+        )
+        worker = SimpleNamespace(request=AsyncMock(return_value={
+            "ok": False,
+            "error": {"code": "SESSION_NOT_FOUND", "message": "session ended"},
+        }))
+        service.worker = worker
+        with pytest.raises(LookupError, match="RUNTIME_SESSION_CONTEXT_UNAVAILABLE"):
+            await service.acquire_mcp_context("missing-runtime", "tool-call")
+        worker.request.assert_awaited_once_with(
+            "worker.observe_web_session", {"sessionId": "missing-runtime", "refresh": True}, timeout=3,
+        )
+        assert service._mcp_context_leases == {}
+        assert service.active_runs_by_runtime["other-runtime"]["run_id"] == "other-run"
+
+    asyncio.run(scenario())
+
+
 def test_agent_service_starts_shared_runtime_host_with_core_and_stops_it_on_shutdown(tmp_path, monkeypatch):
     monkeypatch.setenv("CRAWSHRIMP_DATA", str(tmp_path))
     service = AgentService()
@@ -176,6 +263,98 @@ def test_browser_client_ignores_legacy_url_prefix_but_keeps_exact_tab(monkeypatc
     assert guard is None
     assert tab["id"] == "tab-bound"
     assert client.ws_url == "ws://bound"
+
+
+def test_browser_eval_reports_unresponsive_page_without_claiming_context_is_missing(monkeypatch):
+    from core.agent.cdp import CdpError
+
+    class FakeBridge:
+        @staticmethod
+        def get_tabs(timeout=0):
+            return [{
+                "id": "tab-1",
+                "type": "page",
+                "url": "https://example.test/contact",
+                "webSocketDebuggerUrl": "ws://tab-1",
+            }]
+
+    class FakeClient:
+        def __init__(self, _ws_url):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def evaluate(self, _expression):
+            raise CdpError("CDP Runtime.evaluate 超时（10 秒），页面可能无响应")
+
+    previous_run = mcp_gateway.ctx.active_run
+    previous_grant = mcp_gateway.ctx.grant
+    previous_emit = mcp_gateway.ctx.emit_event
+    mcp_gateway.ctx.active_run = {"run_id": "run-page", "session_id": "session-page"}
+    mcp_gateway.ctx.grant = None
+    mcp_gateway.ctx.emit_event = None
+    monkeypatch.setattr("core.cdp_bridge.get_bridge", lambda: FakeBridge())
+    monkeypatch.setattr(mcp_gateway, "CdpClient", FakeClient)
+    try:
+        result = asyncio.run(mcp_gateway.tool_browser_eval("document.title"))
+    finally:
+        mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.grant = previous_grant
+        mcp_gateway.ctx.emit_event = previous_emit
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "PAGE_UNRESPONSIVE"
+    assert "页面可能无响应" in result["error"]["message"]
+
+
+def test_browser_navigate_reports_unresponsive_page_without_claiming_context_is_missing(monkeypatch):
+    from core.agent.cdp import CdpError
+
+    class FakeBridge:
+        @staticmethod
+        def get_tabs(timeout=0):
+            return [{
+                "id": "tab-1",
+                "type": "page",
+                "url": "https://example.test/contact",
+                "webSocketDebuggerUrl": "ws://tab-1",
+            }]
+
+    class FakeClient:
+        def __init__(self, _ws_url):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def navigate(self, _url):
+            raise CdpError("CDP Page.navigate 超时（10 秒），页面可能无响应")
+
+    previous_run = mcp_gateway.ctx.active_run
+    previous_grant = mcp_gateway.ctx.grant
+    previous_emit = mcp_gateway.ctx.emit_event
+    mcp_gateway.ctx.active_run = {"run_id": "run-page", "session_id": "session-page"}
+    mcp_gateway.ctx.grant = None
+    mcp_gateway.ctx.emit_event = None
+    monkeypatch.setattr("core.cdp_bridge.get_bridge", lambda: FakeBridge())
+    monkeypatch.setattr(mcp_gateway, "CdpClient", FakeClient)
+    try:
+        result = asyncio.run(mcp_gateway.tool_browser_navigate("https://example.test/target"))
+    finally:
+        mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.grant = previous_grant
+        mcp_gateway.ctx.emit_event = previous_emit
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "PAGE_UNRESPONSIVE"
+    assert "页面可能无响应" in result["error"]["message"]
 
 
 def test_browser_activity_exposes_only_granted_tab():
@@ -350,6 +529,52 @@ def test_navigate_auto_executes_without_approval(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_browser_wait_skips_act_approval_while_click_keeps_it(monkeypatch):
+    class Client:
+        def __init__(self):
+            self.actions = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def act(self, action, payload):
+            self.actions.append((action, payload))
+            return {"action": action, "waited_ms": payload["ms"]}
+
+    async def scenario():
+        client = Client()
+        approvals = []
+
+        async def reject_approval(*args):
+            approvals.append(args)
+            return "rejected"
+
+        previous = (mcp_gateway.ctx.active_run, mcp_gateway.ctx.grant, mcp_gateway.ctx.request_approval)
+        mcp_gateway.ctx.active_run = {"run_id": "run-wait", "session_id": "session-wait"}
+        mcp_gateway.ctx.grant = {"grant_id": "grant-wait", "toolset_json": "[]"}
+        mcp_gateway.ctx.request_approval = reject_approval
+        monkeypatch.setattr(mcp_gateway, "_browser_client", lambda: (client, {"url": "https://example.com"}, None))
+        try:
+            waited = await mcp_gateway.tool_browser_act("wait", ms=2500)
+            clicked = await mcp_gateway.tool_browser_act("click", selector="#submit")
+            grant_toolset = json.loads(mcp_gateway.ctx.grant["toolset_json"])
+        finally:
+            mcp_gateway.ctx.active_run, mcp_gateway.ctx.grant, mcp_gateway.ctx.request_approval = previous
+        assert waited["ok"] is True
+        assert waited["data"]["result"] == {"action": "wait", "waited_ms": 2500}
+        assert clicked["status"] == "rejected"
+        assert approvals, "click must retain the existing capability-upgrade approval"
+        assert grant_toolset == []
+        assert client.actions == [("wait", {
+            "selector": "", "text": "", "delta_y": 0, "ms": 2500, "credential_authorized": False,
+        })]
+
+    asyncio.run(scenario())
+
+
 def test_missing_explicit_tab_creates_tombstone_grant(monkeypatch):
     service = AgentService()
     bridge = SimpleNamespace(get_tabs=lambda timeout=0: [
@@ -443,6 +668,9 @@ def test_completed_run_broadcasts_artifacts():
         ):
             await service._run_one(_run_item())
         service._broadcast_run_artifacts.assert_awaited_once_with("run-1", "session-1")
+        run_call = next(call for call in service.worker.request.await_args_list if call.args[0] == "worker.run")
+        assert run_call.args[1]["provider"] == "provider"
+        assert run_call.args[1]["model"] == "gpt-5.5"
 
     asyncio.run(scenario())
 
@@ -1078,7 +1306,7 @@ def test_clear_agent_data_removes_owned_files_and_agent_adapters(tmp_path, monke
     uninstalled = []
     monkeypatch.setattr("core.adapter_loader.uninstall", lambda adapter_id: uninstalled.append(adapter_id))
     monkeypatch.setattr("core.agent.service._data_root", lambda: tmp_path)
-    for name in ("attachments", "workspace", "harness-sessions", "runtime-workdir", "review-backups",
+    for name in ("attachments", "workspace", "harness-sessions", "runtime-workdir", "publish-backups", "review-backups",
                  "published-baselines"):
         directory = tmp_path / "agent" / name
         directory.mkdir(parents=True)
@@ -1091,7 +1319,7 @@ def test_clear_agent_data_removes_owned_files_and_agent_adapters(tmp_path, monke
     assert uninstalled == ["published", "review-test"]
     assert cleared == [True]
     assert not any((tmp_path / "agent" / name).exists() for name in (
-        "attachments", "workspace", "harness-sessions", "runtime-workdir", "review-backups",
+        "attachments", "workspace", "harness-sessions", "runtime-workdir", "publish-backups", "review-backups",
         "published-baselines",
     ))
     assert mcp_gateway.ctx.plan_params == {}
@@ -1712,6 +1940,9 @@ def test_dsh_native_deepseek_route_is_hidden_in_favor_of_crawshrimp_route():
     assert "provider: crawshrimp-deepseek-official" in default_block
     assert "provider: deepseek-official" not in default_block
     assert "disabled: true" in native_block
+    profile_patch = (Path(__file__).resolve().parents[1] / "integrations" / "deepseek-harness" / "profile" / "web" / "cordis.patch.yml").read_text(encoding="utf-8")
+    native_profile_block = profile_patch.split("- id: llm-deepseek", 1)[1].split("- id:", 1)[0]
+    assert "disabled: true" in native_profile_block
 
 
 def test_dsh_deepseek_official_models_expose_reasoning_efforts():
@@ -1723,7 +1954,7 @@ def test_dsh_deepseek_official_models_expose_reasoning_efforts():
     pro_block = official_block.split("- id: deepseek-v4-pro", 1)[1].split("- id:", 1)[0]
     vision_block = official_block.split("- id: deepseek-v4-flash-vision-exp", 1)[1]
 
-    assert "reasoning: high" in official_block
+    assert "reasoning: high" not in official_block
     for block in (flash_block, pro_block):
         assert "reasoningEfforts:" in block
         assert "low: low" in block
@@ -1733,17 +1964,33 @@ def test_dsh_deepseek_official_models_expose_reasoning_efforts():
     assert "reasoningEfforts" not in vision_block
 
 
-def test_dsh_runtime_guard_checks_rc1_and_dsh_im_contracts_without_binary_patches():
+def test_dsh_runtime_settings_do_not_force_vision_models_to_text_reasoning_effort():
+    from core.agent.service import _dsh_llm_pi_ai_settings
+
+    settings = _dsh_llm_pi_ai_settings({"ai": {"llm": {}}}, [])
+    provider = settings["providers"]["crawshrimp-deepseek-official"]
+    flash = next(model for model in provider["models"] if model["id"] == "deepseek-v4-flash")
+    vision = next(model for model in provider["models"] if model["id"] == "deepseek-v4-flash-vision-exp")
+
+    assert "reasoning" not in provider
+    assert flash["reasoningEfforts"]["high"] == "high"
+    assert vision["input"] == ["text", "image"]
+    assert "reasoningEfforts" not in vision
+
+
+def test_dsh_runtime_guard_checks_rc1_and_dsh_im_contracts_with_verified_source_overlay():
     patcher = (Path(__file__).resolve().parents[1] / "integrations" / "deepseek-harness" / "scripts" / "patch-runtime-dependencies.mjs").read_text(encoding="utf-8")
 
     assert "RUNTIME_GUARD_MARKER" in patcher
-    assert "crawshrimp-dsh-rc1-native-runtime-guard-v1" in patcher
+    assert "crawshrimp-dsh-im-411-product-patch-v1" in patcher
+    assert "crawshrimp-dsh-im-411-natural-controls-v1" in patcher
+    assert "crawshrimp-dsh-im-411-session-permission-v1" in patcher
     assert '"0.1.2-rc.1"' in patcher
     assert '"4.11.0"' in patcher
     assert "DEFAULT_INBOUND_TTL_HOURS = 168" in patcher
     assert "harness-session-binding.mjs" in patcher
     assert "model-setting.mjs" in patcher
-    assert "patched: false" in patcher
+    assert "patched: true" in patcher
     assert "DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER" not in patcher
     assert "SDK_JSONRPC_IMAGE_ADMISSION_PATCH_MARKER" not in patcher
 
@@ -2092,6 +2339,62 @@ def test_agent_start_generation_overwrites_stale_dsh_default_model_settings_with
     assert "keep: true" in settings
 
 
+def test_agent_start_generation_exposes_deepseek_compatibility_aliases_only_in_runtime(tmp_path, monkeypatch):
+    from core.agent import service as service_mod
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
+    monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_COMPAT_ALIAS", raising=False)
+    calls, _harness_root, data_root = _patch_agent_generation_runtime(
+        monkeypatch,
+        service_mod,
+        tmp_path,
+        {"ai": {"llm": {
+            "api_key": "",
+            "deepseek_api_key": "sk-ds-official-unit",
+            "deepseek_base_url": "https://api.deepseek.example/v1",
+            "default_model": "deepseek-official-v4-flash",
+        }}},
+    )
+    service = service_mod.AgentService()
+    service.mcp_port = 18965
+
+    assert asyncio.run(service.start_generation())
+
+    assert calls["worker.start_generation"]["params"]["provider"] == "crawshrimp-deepseek-official"
+    assert service_mod.os.environ["CRAWSHRIMP_DEEPSEEK_API_KEY"] == "sk-ds-official-unit"
+    assert service_mod.os.environ["DEEPSEEK_API_KEY"] == "sk-ds-official-unit"
+    assert service_mod.os.environ["DEEPSEEK_BASE_URL"] == "https://api.deepseek.example/v1"
+    assert service_mod.os.environ["CRAWSHRIMP_DEEPSEEK_COMPAT_ALIAS"] == "1"
+    settings = (data_root / "agent" / "dsh-home" / "settings.yaml").read_text(encoding="utf-8")
+    assert "sk-ds-official-unit" not in settings
+
+
+def test_agent_restart_uses_the_newly_saved_deepseek_key_instead_of_its_previous_runtime_value(tmp_path, monkeypatch):
+    from core.agent import service as service_mod
+
+    monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    config = {"ai": {"llm": {
+        "api_key": "",
+        "deepseek_api_key": "sk-ds-before-save",
+        "default_model": "deepseek-official-v4-flash",
+    }}}
+    _calls, _harness_root, _data_root = _patch_agent_generation_runtime(
+        monkeypatch, service_mod, tmp_path, config,
+    )
+    service = service_mod.AgentService()
+    service.mcp_port = 18965
+
+    assert asyncio.run(service.start_generation())
+    assert service_mod.os.environ["CRAWSHRIMP_DEEPSEEK_API_KEY"] == "sk-ds-before-save"
+    config["ai"]["llm"]["deepseek_api_key"] = "sk-ds-after-save"
+
+    assert asyncio.run(service.restart_runtime())["ok"] is True
+    assert service_mod.os.environ["CRAWSHRIMP_DEEPSEEK_API_KEY"] == "sk-ds-after-save"
+    assert service_mod.os.environ["DEEPSEEK_API_KEY"] == "sk-ds-after-save"
+
+
 def test_dsh_settings_sync_writes_runtime_provider_profiles_without_secrets(tmp_path):
     import yaml
     from core.agent import service as service_mod
@@ -2138,6 +2441,36 @@ def test_dsh_settings_sync_writes_runtime_provider_profiles_without_secrets(tmp_
     assert "glm-unit-key" not in text
     assert "legacy-gateway-key" not in text
     assert "custom-secret-key" not in text
+
+
+def test_dsh_settings_sync_clears_stale_reasoning_effort_for_vision_model(tmp_path):
+    import yaml
+    from core.agent import service as service_mod
+
+    agent_dir = tmp_path / "agent"
+    settings_path = agent_dir / "dsh-home" / "settings.yaml"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        "agent-default-model:\n"
+        "  provider: crawshrimp-deepseek-official\n"
+        "  model: deepseek-v4-flash\n"
+        "  reasoningEffort: high\n",
+        encoding="utf-8",
+    )
+
+    service_mod._sync_dsh_default_model_settings(
+        agent_dir,
+        "crawshrimp-deepseek-official",
+        "deepseek-v4-flash-vision-exp",
+        {"ai": {"llm": {}}},
+        [],
+    )
+
+    settings = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
+    assert settings["agent-default-model"] == {
+        "provider": "crawshrimp-deepseek-official",
+        "model": "deepseek-v4-flash-vision-exp",
+    }
 
 
 def test_agent_start_generation_falls_back_from_unkeyed_gateway_model_to_deepseek(tmp_path, monkeypatch):

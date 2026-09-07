@@ -145,13 +145,18 @@ test('worker compacts image-heavy user message events before FastAPI notificatio
   assert.match(source, /function extractEventText\(data\)/)
 })
 
-test('staged DSH rc.1 runtime guard verifies the current clean-install closure without binary patches', () => {
+test('staged DSH rc.1 runtime applies the small verified 4.11 source overlay after a clean install', () => {
   const patcherPath = resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs')
   assert.equal(existsSync(patcherPath), true, 'runtime dependency patcher must be packaged from source')
   const patcher = readFileSync(patcherPath, 'utf8')
   const staging = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/stage-runtime.mjs'), 'utf8')
   assert.match(patcher, /RUNTIME_GUARD_MARKER/)
-  assert.match(patcher, /patched:\s*false/)
+  assert.match(patcher, /patched:\s*true/)
+  assert.match(patcher, /DSH_IM_USER_VISIBLE_SOURCE_ROOTS = \['src', 'plugin-src', 'lib'\]/)
+  assert.match(patcher, /CRAWSHRIMP_DSH_IM_NATURAL_CONTROLS_MARKER/)
+  assert.match(patcher, /CRAWSHRIMP_DSH_IM_SESSION_PERMISSION_MARKER/)
+  assert.match(patcher, /upstreamModelDispatch/)
+  assert.match(patcher, /TextHarnessBridge natural model dispatch/)
   assert.match(patcher, /@deepseek-ai\/dsh\/package\.json[\s\S]*0\.1\.2-rc\.1/)
   assert.match(patcher, /@deepseek-ai\/dsh-web-app\/package\.json[\s\S]*0\.1\.2-rc\.1/)
   assert.match(patcher, /@deepseek-ai\/dsh-api-workspace-controller\/package\.json/)
@@ -165,11 +170,53 @@ test('staged DSH rc.1 runtime guard verifies the current clean-install closure w
   assert.match(patcher, /dsh-web-app\/cordis\.patch\.yml/)
   assert.match(patcher, /assertStandardPresetRootClosure/)
   assert.match(patcher, /dsh-agent-presets\/presets\/standard\/agent\.cordis\.yml/)
+  assert.match(patcher, /crawshrimp-standard\/agent\.cordis\.yml/)
   assert.match(patcher, /@xmanrui\/dsh-im\/package\.json[\s\S]*4\.11\.0/)
   assert.match(patcher, /inbound-ttl\.mjs[\s\S]*DEFAULT_INBOUND_TTL_HOURS = 168/)
   assert.match(patcher, /harness-session-binding\.mjs/)
   assert.match(patcher, /model-setting\.mjs/)
   assert.match(staging, /patchRuntimeDependencies\(stageRoot\)/)
+})
+
+test('the runtime guard accepts both the source profile layout and the staged profile layout', async () => {
+  const patcherPath = resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs')
+  const runtimeRoot = resolve(appRoot, '../integrations/deepseek-harness')
+  const { patchRuntimeDependencies } = await import(`${pathToFileURL(patcherPath).href}?source-layout=${Date.now()}`)
+
+  const result = patchRuntimeDependencies(runtimeRoot)
+
+  assert.match(result.crawshrimpPreset, /profile\/web\/agent-presets\/crawshrimp-standard\/agent\.cordis\.yml$/)
+})
+
+test('Crawshrimp standard preset owns the effective persona without dropping the upstream tool plane', () => {
+  const profilePatch = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/cordis.patch.yml'), 'utf8')
+  const preset = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/agent-presets/crawshrimp-standard/agent.cordis.yml'), 'utf8')
+  const presetMetadata = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/agent-presets/crawshrimp-standard/preset.yml'), 'utf8')
+  const worker = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/worker.mjs'), 'utf8')
+  const webClient = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/web-rpc-client.mjs'), 'utf8')
+  const staging = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/stage-runtime.mjs'), 'utf8')
+
+  assert.match(profilePatch, /id: agent-presets[\s\S]*?default: crawshrimp-standard/)
+  assert.match(profilePatch, /roots:[\s\S]*?dshHomePath\('profiles\/web\/agent-presets'\)/)
+  assert.match(presetMetadata, /name: 抓虾工作模式（推荐）/)
+  assert.match(presetMetadata, /description: 适合日常抓虾任务/)
+  assert.match(staging, /agent-presets\/crawshrimp-standard\/preset\.yml/)
+  assert.match(preset, /id: persona[\s\S]*?CRAWSHRIMP_AGENT_PERSONA/)
+  assert.match(preset, /你是抓虾智能体/)
+  for (const packageName of [
+    '@deepseek-ai/dsh-tool-bash',
+    '@deepseek-ai/dsh-tool-fs',
+    '@deepseek-ai/dsh-tool-fs-search',
+    '@deepseek-ai/dsh-tool-skill',
+    '@deepseek-ai/dsh-tool-subagent',
+    '@deepseek-ai/dsh-tool-workflow',
+    '@deepseek-ai/dsh-tool-web',
+  ]) assert.match(preset, new RegExp(`name: '${packageName}'`), `${packageName} must remain mounted`)
+  assert.match(preset, /Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode/)
+  assert.match(preset, /The tool catalog stays the same across modes for request-cache stability/)
+  assert.match(preset, /Make exit_plan_mode the only and final tool call in that assistant response/)
+  assert.match(worker, /agentPreset:\s*'crawshrimp-standard'/)
+  assert.match(webClient, /agentPreset = 'crawshrimp-standard'/)
 })
 
 test('standard rc.1 Web profile retains the full DSH operational surface', () => {
@@ -242,6 +289,80 @@ test('rc.1 Web transport keeps image input and session-follow without reviving t
   assert.match(client, /type\s*===\s*['"]snapshot['"]/)
   assert.match(profile, /id:\s*deepseek-v4-flash-vision-exp[\s\S]*input:\s*\[text, image\]/)
   assert.doesNotMatch(client, /dsh-sdk-jsonrpc-demo/)
+})
+
+test('the Vision model is not forced onto a DeepSeek-only reasoning effort', () => {
+  const profile = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/cordis.patch.yml'), 'utf8')
+  const deepseekProvider = profile.split('crawshrimp-deepseek-official:', 2)[1].split('crawshrimp-overseas-openai:', 1)[0]
+  const visionModel = deepseekProvider.split('- id: deepseek-v4-flash-vision-exp', 2)[1].split('crawshrimp-overseas-openai:', 1)[0]
+  assert.doesNotMatch(deepseekProvider, /^\s+reasoning:\s+high\s*$/mu)
+  assert.match(visionModel, /input:\s*\[text, image\]/)
+})
+
+test('rc.1 Session follow projects inner events from live envelopes and snapshot chunk rows', async () => {
+  const clientUrl = pathToFileURL(resolve(appRoot, '../integrations/deepseek-harness/worker/web-rpc-client.mjs'))
+  const { wireEvents, activeTurnEvents } = await import(`${clientUrl.href}?follow-frame=${Date.now()}`)
+  const turnEnd = { type: 'turn/end', seq: 7, data: { reason: { kind: 'completed' } } }
+  const assistantChunkRow = { type: 'chunkrow/text-chunks', seq: 6, data: { chunks: [{ text: '抓虾中' }] } }
+
+  assert.deepEqual(wireEvents({ type: 'event', event: turnEnd }), [turnEnd])
+  assert.deepEqual(wireEvents({
+    type: 'snapshot',
+    records: [
+      { type: 'event', event: { type: 'turn/start', seq: 5, data: {} } },
+      { type: 'chunks', event: assistantChunkRow },
+      { type: 'unknown', event: { type: 'turn/end', seq: 999, data: {} } },
+    ],
+  }), [
+    { type: 'turn/start', seq: 5, data: {} },
+    assistantChunkRow,
+  ])
+  assert.deepEqual(wireEvents({ type: 'event' }), [])
+  assert.deepEqual(activeTurnEvents([
+    { type: 'turn/start', seq: 1 },
+    { type: 'turn/end', seq: 2 },
+    { type: 'turn/start', seq: 3 },
+    { type: 'assistant/chunk', seq: 4 },
+  ]), [
+    { type: 'turn/start', seq: 3 },
+    { type: 'assistant/chunk', seq: 4 },
+  ])
+  assert.deepEqual(activeTurnEvents([
+    { type: 'turn/start', seq: 1 },
+    { type: 'turn/end', seq: 2 },
+  ]), [])
+})
+
+test('Web RPC reasserts a product session model through the authenticated Session API', async () => {
+  const clientUrl = pathToFileURL(resolve(appRoot, '../integrations/deepseek-harness/worker/web-rpc-client.mjs'))
+  const { DshWebRuntime } = await import(`${clientUrl.href}?session-model=${Date.now()}`)
+  const originalFetch = global.fetch
+  const requests = []
+  global.fetch = async (url, options) => {
+    requests.push({ url: String(url), body: JSON.parse(String(options.body)) })
+    return new Response(JSON.stringify({ result: { ok: true, value: { selected: { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash-vision-exp' } } } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  try {
+    const runtime = new DshWebRuntime({ child: { exitCode: 0 }, origin: 'http://127.0.0.1:19099', cookie: 'session=test', launchUrl: 'http://127.0.0.1:19099/?<redacted>' })
+    const result = await runtime.selectModel({
+      sessionId: 'dsh-test',
+      provider: 'crawshrimp-deepseek-official',
+      model: 'deepseek-v4-flash-vision-exp',
+    })
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0].url, 'http://127.0.0.1:19099/api/session/selectModel')
+    assert.deepEqual(requests[0].body.payload.args.request, {
+      sessionId: 'dsh-test',
+      provider: 'crawshrimp-deepseek-official',
+      model: 'deepseek-v4-flash-vision-exp',
+    })
+    assert.equal(result.selected.model, 'deepseek-v4-flash-vision-exp')
+  } finally {
+    global.fetch = originalFetch
+  }
 })
 
 test('Web startup diagnostics redact every one-time launch URL query parameter', async () => {
@@ -340,7 +461,7 @@ test('agent runtime failures leave the loading screen and expose a retry action'
   assert.match(webView, /lastRuntimeState\.value === 'needs_configuration' \|\| lastRuntimeState\.value === 'disabled_until_manual_restart'/)
 })
 
-test('agent runtime missing model keys suppresses upstream onboarding and opens Crawshrimp provider configuration', () => {
+test('agent runtime missing model keys suppresses upstream onboarding and defers Crawshrimp provider configuration to composer interaction', () => {
   const webView = readFileSync(resolve(appRoot, 'src/renderer/views/AgentWebView.vue'), 'utf8')
   const settings = readFileSync(resolve(appRoot, 'src/renderer/views/SettingsPage.vue'), 'utf8')
   const slots = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-slots/lib/client.js'), 'utf8')
@@ -350,9 +471,11 @@ test('agent runtime missing model keys suppresses upstream onboarding and opens 
   assert.match(webView, /csNeedsModelKey/)
   assert.match(webView, /function syncRuntimeModelConfiguration\(result\)/)
   assert.match(webView, /const needsModelKey = result\?\.api_key_configured === false/)
-  assert.match(webView, /llmConfigPromptedAutomatically = true[\s\S]*?inlineLlmModalOpen\.value = true/)
+  assert.doesNotMatch(webView, /llmConfigPromptedAutomatically/)
+  assert.doesNotMatch(webView, /needsModelKey[\s\S]{0,320}inlineLlmModalOpen\.value = true/)
   assert.match(webView, /data\.__crawshrimp === 'llm-config-request'/)
   assert.match(webView, /openInlineLlmModal/)
+  assert.match(webView, /runtime-model-configuration/)
   assert.match(webView, /配置大模型供应商/)
   assert.match(webView, /DeepSeek 官方 API/)
   assert.match(webView, /配置 DeepSeek/)
@@ -376,6 +499,12 @@ test('agent runtime missing model keys suppresses upstream onboarding and opens 
   assert.match(slots, /csNeedsModelKey/)
   assert.match(slots, /llm-config-request/)
   assert.match(slots, /requestLlmConfigFromComposer/)
+  assert.match(slots, /updateRuntimeModelConfiguration/)
+  assert.match(slots, /target\.closest\('\.wSkVaW_composerSeat'\)/)
+  assert.match(slots, /\['pointerdown', 'keydown', 'beforeinput', 'paste'\]/)
+  assert.doesNotMatch(slots, /\['pointerdown', 'click', 'keydown', 'beforeinput', 'paste'\]/)
+  assert.match(slots, /postToShell\(\{ __crawshrimp: 'llm-config-request', source: 'composer' \}\)/)
+  assert.match(slots, /exports\.inject = \['theme', 'workspaces', 'sessions', 'slots', 'uiWorkspace'\]/)
   assert.match(profile, /- id: ui-settings-models\s+disabled: true/)
   assert.match(service, /CRAWSHRIMP_LLM_CONFIG_REQUIRED/)
   assert.match(app, /@open-settings="openSettingsPanel"/)
@@ -454,6 +583,7 @@ test('core status indicator debounces transient backend probe drops', () => {
 
 test('browser windows are isolated per target and remove closed tabs', () => {
   const main = readFileSync(resolve(appRoot, 'src/agentBrowser.js'), 'utf8')
+  const desktopMain = readFileSync(resolve(appRoot, 'src/main.js'), 'utf8')
   const app = readFileSync(resolve(appRoot, 'src/renderer/App.vue'), 'utf8')
   const panel = readFileSync(resolve(appRoot, 'src/renderer/components/agent/AgentBrowserPanel.vue'), 'utf8')
   const webView = readFileSync(resolve(appRoot, 'src/renderer/views/AgentWebView.vue'), 'utf8')
@@ -462,6 +592,11 @@ test('browser windows are isolated per target and remove closed tabs', () => {
   const appTabPicker = app.split('function tabsForActiveBrowserWindow(payload)', 2)[1]?.split('\nfunction onBrowserOpenTabs', 1)[0] || ''
   const webTabPicker = webView.split('function tabsForActiveBrowserWindow(payload)', 2)[1]?.split('\nfunction syncBrowserTabs', 1)[0] || ''
   assert.match(main, /const startingByTarget = new Map\(\)/)
+  assert.match(main, /const \{ resolveCdpPort \} = require\('\.\/cdpPort'\)/)
+  assert.match(main, /const CDP_PORT = resolveCdpPort\(\)/)
+  assert.match(desktopMain, /const \{ resolveCdpPort, loopbackCdpUrl \} = require\('\.\/cdpPort'\)/)
+  assert.match(desktopMain, /CRAWSHRIMP_CDP_PORT: String\(CDP_PORT\)/)
+  assert.match(desktopMain, /CRAWSHRIMP_CDP_URL: loopbackCdpUrl\(CDP_PORT\)/)
   assert.match(main, /const startingSockets = new Map\(\)/)
   assert.ok(main.indexOf('streams.set(actualTid, st)') < main.indexOf('startingSockets.delete(startKey)', main.indexOf('streams.set(actualTid, st)')))
   assert.match(main, /CDP_COMMAND_TIMEOUT_MS/)
@@ -499,14 +634,24 @@ test('browser windows are isolated per target and remove closed tabs', () => {
   assert.match(webView, /BROWSER_LAYOUT_STORAGE_KEY = 'crawshrimp\.browserLayout\.v2'/)
   assert.match(webView, /hasDockedBrowserWindows/)
   assert.match(webView, /web-browser-panel/)
+  assert.match(webView, /web-browser-divider/)
+  assert.match(webView, /role="separator"/)
+  assert.match(webView, /onDockedBrowserResizeStart/)
+  assert.match(webView, /onDockedBrowserResizeKeydown/)
+  assert.match(webView, /BROWSER_DOCK_WIDTH_STORAGE_KEY = 'crawshrimp\.browserDockWidth\.v1'/)
+  assert.match(webView, /ResizeObserver/)
+  assert.match(webView, /--browser-dock-width/)
   assert.match(webView, /v-show="hasDockedBrowserWindows"/)
   assert.match(webView, /:key="win\.tabId"/)
   assert.match(webView, /:layout="browserLayout"/)
   assert.doesNotMatch(webView, /floatingBrowserWindows/)
   assert.doesNotMatch(webView, /`docked-\$\{win\.tabId\}`/)
   assert.doesNotMatch(webView, /`floating-\$\{win\.tabId\}`/)
-  assert.match(webView, /width:\s*min\(680px, max\(360px, 40vw\), 46%\)/)
-  assert.match(webView, /\.browser-docked \.web-frame-wrap[\s\S]*?min-width:\s*min\(420px, 54%\)/)
+  assert.match(webView, /width:\s*var\(--browser-dock-width/)
+  assert.match(webView, /\.browser-docked \.web-frame-wrap[\s\S]*?min-width:\s*0/)
+  assert.match(webView, /\.browser-toggle[\s\S]*?right:\s*var\(--dsh-session-header-utilities-reserve,\s*168px\)/)
+  assert.match(webView, /--dsh-session-header-utilities-reserve:\s*168px/)
+  assert.match(webView, /<button\s+v-if="!hasDockedBrowserWindows"\s+:class="\['browser-toggle'/)
   assert.match(webView, /setBrowserLayout/)
   assert.match(webView, /return value === 'docked' \? 'docked' : 'floating'/)
   assert.match(webView, /toggleBrowserWindows/)
@@ -536,7 +681,7 @@ test('browser windows are isolated per target and remove closed tabs', () => {
   assert.match(productLayer, /pendingIds\.has\(String\(card\.approvalId/)
 })
 
-test('DSH attachment bridge leaves images to the native composer rail', () => {
+test('DSH attachment bridge sends regular files to Crawshrimp and images into DSH native drafts', () => {
   const slots = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-slots/lib/client.js'), 'utf8')
   const slotsPackage = JSON.parse(readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-slots/package.json'), 'utf8'))
   const webView = readFileSync(resolve(appRoot, 'src/renderer/views/AgentWebView.vue'), 'utf8')
@@ -546,12 +691,18 @@ test('DSH attachment bridge leaves images to the native composer rail', () => {
   assert.match(slots, /function isImageFile\(file\)/)
   assert.match(slots, /function nonImageFiles\(files\)/)
   assert.match(slots, /filter\(\(file\) => file && !isImageFile\(file\)\)/)
-  assert.doesNotMatch(slots, /pendingImagePartsBySession/)
-  assert.doesNotMatch(slots, /submitPendingImages/)
-  assert.doesNotMatch(slots, /session\.prompt\([\s\S]*?pendingImage/)
-  assert.doesNotMatch(slots, /imagePart/)
+  assert.match(slots, /function installNativeImageDraft\(ctx, data\)/)
+  assert.match(slots, /new File\(\[data\.bytes\], data\.name, \{ type: data\.mime \}\)/)
+  assert.match(slots, /scoped\.get\('conversation'\)/)
+  assert.match(slots, /conversation\.createDraftImages\(\[image\]\)/)
+  assert.match(slots, /conversation\.input\.for\(scoped\)\.addImages/)
+  assert.doesNotMatch(slots, /session\.prompt\([\s\S]*?native-image/)
   assert.match(slots, /pendingAttachmentHintsBySession/)
   assert.match(slots, /queueAttachmentHint\(sessionId/)
+  assert.match(slots, /function insertAttachmentHint\(name, attachmentId\)/)
+  assert.match(slots, /document\.querySelector\('\[contenteditable="true"\]'\)/)
+  assert.match(slots, /editor\.textContent = current \? `\$\{current\}\\n\$\{hint\}` : hint/)
+  assert.match(slots, /new InputEvent\('input', \{[\s\S]*?inputType: 'insertText'/)
   assert.match(slots, /localStorage\?\.getItem\?\.\(['"]dsh\.sessions\.current['"]\)/)
   assert.match(slots, /activeRuntimeSessionId\(\)/)
   assert.match(slots, /lastPublishedRuntimeSessionId/)
@@ -606,14 +757,70 @@ test('DSH attachment bridge leaves images to the native composer rail', () => {
   assert.doesNotMatch(slots, /observer\.observe\(document\.documentElement,\s*\{[^\}]*attributes:\s*true/)
   assert.doesNotMatch(slots, /attributeFilter:\s*\[['"]class['"],\s*['"]style['"]\]/)
   assert.match(webView, /function isImageLikeFile\(file\)/)
-  assert.match(webView, /if \(isImageLikeFile\(file\)\) return/)
-  assert.match(webView, /if \(isImageLikeFile\(file\)\) continue/)
-  assert.doesNotMatch(webView, /attachmentImagePart/)
+  assert.match(webView, /function pushNativeImageDraft\(file, runtimeSessionId/)
+  assert.match(webView, /readAgentAttachment/)
+  assert.match(webView, /__crawshrimp:\s*'native-image-attachment'/)
+  assert.match(webView, /if \(!postToFrame\(\{[\s\S]*?native-image-attachment[\s\S]*?\}\)\) return false/)
   assert.doesNotMatch(webView, /readAgentImageDataUrl/)
   assert.match(webView, /runtime_session_id:\s*runtimeId/)
   assert.match(webView, /runtimeSessionId:\s*runtimeId/)
   assert.match(worker, /type:\s*['"]image['"]/)
   assert.match(worker, /MODEL_IMAGE_MEDIA_TYPES\.has\(mediaType\)/)
+})
+
+test('the Crawshrimp attachment picker visibly offers native DSH image formats alongside regular files', () => {
+  const main = readFileSync(resolve(appRoot, 'src/main.js'), 'utf8')
+
+  assert.match(main, /title:\s*['"]选择图片或附件['"]/)
+  assert.match(main, /name:\s*['"]图片['"],\s*extensions:\s*\['png', 'jpg', 'jpeg', 'gif', 'webp'\]/)
+})
+
+test('native Web sessions obtain a per-session shadow follow without a latest-run fallback', () => {
+  const worker = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/worker.mjs'), 'utf8')
+  const webView = readFileSync(resolve(appRoot, 'src/renderer/views/AgentWebView.vue'), 'utf8')
+  const api = readFileSync(resolve(appRoot, '../core/agent/api.py'), 'utf8')
+  const service = readFileSync(resolve(appRoot, '../core/agent/service.py'), 'utf8')
+
+  assert.match(webView, /observeNativeWebSession\(activeRuntimeSessionId\.value\)/)
+  assert.match(webView, /NATIVE_WEB_FOLLOW_RETRY_DELAYS_MS/)
+  assert.match(webView, /scheduleNativeWebSessionFollow/)
+  assert.match(api, /@router\.post\("\/runtime\/web-session"\)/)
+  assert.match(service, /async def observe_native_web_session\(\s*self, runtime_session_id: str/)
+  assert.match(service, /worker\.request\(\s*"worker\.observe_web_session"/)
+  assert.match(service, /_recover_native_web_mcp_context/)
+  assert.match(service, /refresh=True/)
+  assert.match(service, /McpContextUnavailableError/)
+  assert.match(worker, /nativeWebFollows:\s*new Map\(\)/)
+  assert.match(worker, /async function observeNativeWebSession\(sessionId, \{ refresh = false \} = \{\}\)/)
+  assert.match(worker, /RUNTIME_SESSION_ID\.test\(normalized\)/)
+  assert.match(worker, /runtime\.follow\(normalized, \{/)
+  assert.match(worker, /notifyHarnessShadow\(sessionId, event\)/)
+  assert.match(worker, /refresh: params\.refresh === true/)
+  assert.match(worker, /case 'worker\.observe_web_session'/)
+  assert.doesNotMatch(worker, /latest.*active.*run/i)
+})
+
+test('browser wait is explicitly local-only and does not request an act approval', () => {
+  const gateway = readFileSync(resolve(appRoot, '../core/agent/mcp_gateway.py'), 'utf8')
+  const body = gateway.split('async def tool_browser_act(', 2)[1]?.split('\n\nasync def tool_browser_verify', 1)[0] || ''
+  assert.match(body, /requires_act_approval = action != "wait"/)
+  assert.match(body, /if requires_act_approval and "act" not in toolset/)
+  assert.match(body, /if requires_act_approval and action == "click"/)
+})
+
+test('Crawshrimp running-status branding follows the semantic live region rather than a retired hash class', () => {
+  const slots = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-slots/lib/client.js'), 'utf8')
+
+  assert.match(slots, /function normalizeRunningStatus\(root = document\)/)
+  assert.match(slots, /\[role="status"\]/)
+  assert.match(slots, /EvIC1a_turnStatus/)
+  assert.match(slots, /dataset\.csRunningStatus/)
+  assert.match(slots, /抓虾中\.\.\./)
+  assert.match(slots, /cs-running-status-shimmer/)
+  assert.match(slots, /background-clip:\s*text/)
+  assert.match(slots, /prefers-reduced-motion:\s*reduce/)
+  assert.doesNotMatch(slots, /\[data-cs-running-status="1"\] \{[^}]*animation:\s*none !important;/)
+  assert.doesNotMatch(slots, /\.Md3f7G_turnStatus::before/)
 })
 
 test('DSH attachment bridge resets and retitles the native file-drop overlay', () => {
@@ -680,14 +887,25 @@ test('agent persona introduces itself as Crawshrimp agent', () => {
   const profilePatch = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/cordis.patch.yml'), 'utf8')
   const service = readFileSync(resolve(appRoot, '../core/agent/service.py'), 'utf8')
   const runtimeCordisSource = readFileSync(resolve(appRoot, '../core/agent/cordis_config.py'), 'utf8')
+  const profileGenerator = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/gen-web-cordis.py'), 'utf8')
+  const generatedProfile = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/web-cordis.yml'), 'utf8')
+  const preset = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/agent-presets/crawshrimp-standard/agent.cordis.yml'), 'utf8')
 
   assert.match(profilePatch, /id: system-prompt[\s\S]*CRAWSHRIMP_AGENT_PERSONA/)
   assert.match(service, /CRAWSHRIMP_AGENT_PERSONA.*AGENT_PERSONA/)
   assert.match(runtimeCordisSource, /你是抓虾智能体/)
-  assert.match(runtimeCordisSource, /只有当用户明确询问身份[\s\S]*首句回答[\s\S]*我是抓虾智能体/)
-  assert.match(runtimeCordisSource, /普通寒暄[\s\S]*不要主动自我介绍[\s\S]*不要写[\s\S]*我是抓虾智能体/)
-  assert.match(runtimeCordisSource, /能力咨询[\s\S]*不要以身份开头/)
-  assert.match(runtimeCordisSource, /用户说[\s\S]*你好[\s\S]*需要我帮你处理什么/)
+  assert.match(runtimeCordisSource, /新用户引导/)
+  assert.match(runtimeCordisSource, /可直接复制/)
+  assert.match(runtimeCordisSource, /查看当前可用的抓虾脚本/)
+  assert.match(runtimeCordisSource, /读取我上传的销售表/)
+  assert.match(runtimeCordisSource, /先查看.*不要执行/)
+  assert.match(profileGenerator, /新用户引导[\s\S]*可直接复制/)
+  assert.match(generatedProfile, /新用户引导[\s\S]*查看当前可用的抓虾脚本/)
+  assert.match(preset, /如何开始使用抓虾智能体/)
+  assert.match(runtimeCordisSource, /当用户明确问[\s\S]*首句明确回答[\s\S]*我是抓虾智能体/)
+  assert.match(runtimeCordisSource, /普通寒暄[\s\S]*不要主动输出长篇介绍[\s\S]*简短回答/)
+  assert.match(runtimeCordisSource, /其它明确任务直接处理[\s\S]*不重复粘贴整段说明/)
+  assert.match(runtimeCordisSource, /普通寒暄[\s\S]*你好[\s\S]*需要我帮你处理什么/)
   assert.doesNotMatch(runtimeCordisSource, /首句必须明确回答/)
   assert.doesNotMatch(runtimeCordisSource, /你是抓虾桌面应用中的操作智能体/)
 })
@@ -782,11 +1000,23 @@ test('DSH Web profile registers Crawshrimp providers through a persistent offici
   assert.match(piAiBlock, /apiKeyEnv:\s*CRAWSHRIMP_DEEPSEEK_API_KEY/)
   assert.match(piAiBlock, /baseURL:\s*!!js process\.env\.CRAWSHRIMP_DEEPSEEK_BASE_URL \?\? 'https:\/\/api\.deepseek\.com'/)
   assert.match(piAiBlock, /id:\s*deepseek-v4-flash/)
-  assert.match(piAiBlock, /reasoning:\s*high/)
   assert.match(piAiBlock, /reasoningEfforts:[\s\S]*low:\s*low[\s\S]*high:\s*high[\s\S]*max:\s*max/)
   assert.match(piAiBlock, /id:\s*deepseek-v4-flash-vision-exp[\s\S]*input:\s*\[text,\s*image\]/)
   assert.match(piAiBlock, /id:\s*kimi-k3/)
   assert.doesNotMatch(piAiBlock.split('id: deepseek-v4-flash-vision-exp', 2)[1]?.split('crawshrimp-overseas-openai:', 1)[0] || '', /reasoningEfforts|reasoning:\s*high/)
+})
+
+test('native DSH model discovery suppresses the duplicate upstream DeepSeek credential route', () => {
+  const profile = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/cordis.patch.yml'), 'utf8')
+  const staging = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/stage-runtime.mjs'), 'utf8')
+  const service = readFileSync(resolve(appRoot, '../core/agent/service.py'), 'utf8')
+  const upstreamRoute = profile.split('- id: llm-deepseek', 2)[1]?.split('\n- id:', 1)[0] || ''
+
+  assert.match(upstreamRoute, /disabled:\s*true/)
+  assert.match(staging, /duplicateDeepSeekRouteDisabled/)
+  assert.match(service, /DEEPSEEK_API_KEY.*deepseek_key/)
+  assert.match(service, /DEEPSEEK_BASE_URL.*deepseek_base_url/)
+  assert.match(service, /CRAWSHRIMP_DEEPSEEK_COMPAT_ALIAS/)
 })
 
 test('development bridge never accepts API credentials from URL query', () => {

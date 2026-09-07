@@ -82,22 +82,25 @@ class LlmGatewayTests(unittest.TestCase):
         config = self.config()
         config["ai"]["llm"]["deepseek_api_key"] = "sk-ds-official-unit"
         config["ai"]["llm"]["deepseek_base_url"] = "https://api.deepseek.example"
-        flash = llm_gateway.route_for_model("deepseek-official-v4-flash", config)
-        pro = llm_gateway.route_for_model("deepseek-official-v4-pro", config)
-        vision = llm_gateway.route_for_model("deepseek-official-v4-flash-vision-exp", config)
-        self.assertEqual(flash.model_id, "deepseek-v4-flash")
-        self.assertEqual(flash.base_url, "https://api.deepseek.example")
-        self.assertEqual(flash.api_key, "sk-ds-official-unit")
-        self.assertEqual(flash.protocol, "openai")
-        self.assertEqual(pro.model_id, "deepseek-v4-pro")
-        self.assertEqual(vision.model_id, "deepseek-v4-flash-vision-exp")
-        self.assertEqual(vision.base_url, "https://api.deepseek.example")
-        self.assertEqual(vision.api_key, "sk-ds-official-unit")
-        self.assertEqual(vision.protocol, "openai")
-        # 默认官方 Base URL
-        config["ai"]["llm"].pop("deepseek_base_url")
-        defaulted = llm_gateway.route_for_model("deepseek-official-v4-pro", config)
-        self.assertEqual(defaulted.base_url, llm_gateway.DEEPSEEK_OFFICIAL_BASE_URL)
+        # Runtime tests may populate CRAWSHRIMP_* for a separate provider.
+        # This route unit test verifies the supplied settings document itself.
+        with patch.dict(os.environ, {}, clear=True):
+            flash = llm_gateway.route_for_model("deepseek-official-v4-flash", config)
+            pro = llm_gateway.route_for_model("deepseek-official-v4-pro", config)
+            vision = llm_gateway.route_for_model("deepseek-official-v4-flash-vision-exp", config)
+            self.assertEqual(flash.model_id, "deepseek-v4-flash")
+            self.assertEqual(flash.base_url, "https://api.deepseek.example")
+            self.assertEqual(flash.api_key, "sk-ds-official-unit")
+            self.assertEqual(flash.protocol, "openai")
+            self.assertEqual(pro.model_id, "deepseek-v4-pro")
+            self.assertEqual(vision.model_id, "deepseek-v4-flash-vision-exp")
+            self.assertEqual(vision.base_url, "https://api.deepseek.example")
+            self.assertEqual(vision.api_key, "sk-ds-official-unit")
+            self.assertEqual(vision.protocol, "openai")
+            # 默认官方 Base URL
+            config["ai"]["llm"].pop("deepseek_base_url")
+            defaulted = llm_gateway.route_for_model("deepseek-official-v4-pro", config)
+            self.assertEqual(defaulted.base_url, llm_gateway.DEEPSEEK_OFFICIAL_BASE_URL)
 
     def test_deepseek_official_requires_dedicated_key(self):
         config = self.config()

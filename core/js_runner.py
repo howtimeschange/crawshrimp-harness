@@ -3815,6 +3815,84 @@ class JSRunner:
     async def evaluate_user_gesture(self, expression: str) -> JSResult:
         return await self.evaluate(expression, user_gesture=True)
 
+    async def wait_for_document_ready(
+        self,
+        *,
+        timeout_seconds: float = 8.0,
+        poll_seconds: float = 0.25,
+    ) -> dict:
+        """Wait for a newly opened page to leave its loading document state.
+
+        CDP reports a newly-created tab's target URL before the page navigation
+        has settled. Injecting a script immediately can therefore race the
+        site's own cookie/challenge/bootstrap requests and surface a generic
+        browser-side ``Failed to fetch``. This is deliberately a readiness
+        probe only: it never replays a task script or performs a network
+        request, so it is safe for scripts with side effects.
+        """
+        deadline = time.monotonic() + max(0.1, float(timeout_seconds or 0.1))
+        delay = max(0.05, min(float(poll_seconds or 0.25), 1.0))
+        last_state = ""
+        last_href = ""
+        last_error = ""
+        expression = (
+            "(() => ({ success: true, data: [{ "
+            "readyState: String(document.readyState || ''), "
+            "href: String(location.href || '') "
+            "}], meta: { has_more: false } }))()"
+        )
+
+        while True:
+            result = await self.evaluate(expression)
+            if result.success and result.data:
+                snapshot = result.data[0] if isinstance(result.data[0], dict) else {}
+                last_state = str(snapshot.get("readyState") or "")
+                last_href = str(snapshot.get("href") or "")
+                if last_state in {"interactive", "complete"} and last_href and last_href != "about:blank":
+                    return {"ready": True, "ready_state": last_state, "href": last_href}
+            else:
+                last_error = str(result.error or "")
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return {
+                    "ready": False,
+                    "ready_state": last_state,
+                    "href": last_href,
+                    "error": last_error,
+                }
+            await asyncio.sleep(min(delay, remaining))
+
+    async def stop_loading_and_wait_for_document_ready(
+        self,
+        *,
+        timeout_seconds: float = 4.0,
+        poll_seconds: float = 0.25,
+    ) -> dict:
+        """End a stalled top-level navigation, then require an executable document.
+
+        Some legacy pages keep a tracking/font request open indefinitely.  Their
+        HTML is visible but ``document.readyState`` stays ``loading`` and a
+        normal script evaluation can then wait for the full CDP timeout.  This
+        recovery is navigation-safe: it never replays a task script and only
+        stops the still-loading document before applying the existing readiness
+        probe once more.
+        """
+        try:
+            await self._cdp_send("Page.stopLoading", {})
+        except Exception as exc:
+            return {
+                "ready": False,
+                "load_stopped": False,
+                "error": f"Page.stopLoading failed: {exc}",
+            }
+        ready = await self.wait_for_document_ready(
+            timeout_seconds=timeout_seconds,
+            poll_seconds=poll_seconds,
+        )
+        ready["load_stopped"] = True
+        return ready
+
     async def _refresh_ws_url(self) -> None:
         try:
             tab = None
@@ -3906,6 +3984,23 @@ class JSRunner:
             "      }\n"
             "      if (raw) window.__CRAWSHRIMP_PARAMS__ = JSON.parse(raw);\n"
             "    }\n"
+            "  }\n"
+            "  const __crawshrimpHref = (() => {\n"
+            "    try { return String((window.location && window.location.href) || ''); } catch (e) { return ''; }\n"
+            "  })();\n"
+            "  const __crawshrimpErrorPage = /^(?:chrome-error:|chrome:\\/\\/network-error\\/|about:neterror)/i.test(__crawshrimpHref)\n"
+            "    || /^(?:chromewebdata)$/i.test((() => {\n"
+            "      try { return String((window.location && window.location.hostname) || ''); } catch (e) { return ''; }\n"
+            "    })());\n"
+            "  if (__crawshrimpErrorPage) {\n"
+            "    let __crawshrimpErrorCode = '';\n"
+            "    try {\n"
+            "      const text = String((window.document && window.document.body && window.document.body.innerText) || '');\n"
+            "      const match = text.match(/\\bERR_[A-Z0-9_]+\\b/);\n"
+            "      if (match) __crawshrimpErrorCode = match[0];\n"
+            "    } catch (e) {}\n"
+            "    throw new Error('当前浏览器页面不可用，已停止执行脚本：' + __crawshrimpHref\n"
+            "      + (__crawshrimpErrorCode ? ' (' + __crawshrimpErrorCode + ')' : ''));\n"
             "  }\n"
             "})();\n"
         )

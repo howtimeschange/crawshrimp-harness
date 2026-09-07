@@ -305,7 +305,32 @@ function installMcpLeaseFetchBridge(ctx) {
   ctx.logger?.info?.('Crawshrimp MCP lease and IM workspace fetch bridge installed')
 }
 
-async function postMcpContext(action, payload) {
+function contextErrorDetail(value, fallbackCode, fallbackMessage) {
+  if (value && typeof value === 'object') {
+    return {
+      code: String(value.code || fallbackCode),
+      message: String(value.message || value.detail || fallbackMessage),
+    }
+  }
+  return {
+    code: fallbackCode,
+    message: String(value || fallbackMessage),
+  }
+}
+
+export function mcpContextError(action, status, result) {
+  const detail = contextErrorDetail(
+    result?.detail || result?.error,
+    'MCP_CONTEXT_REQUEST_FAILED',
+    `context ${action} failed (${status})`,
+  )
+  const error = new Error(`Crawshrimp MCP context ${action} failed [${detail.code}]: ${detail.message}`)
+  error.code = detail.code
+  error.status = Number(status) || 0
+  return error
+}
+
+export async function postMcpContext(action, payload) {
   const raw = String(process.env.CRAWSHRIMP_MCP_URL || '').trim()
   const token = String(process.env.CRAWSHRIMP_MCP_TOKEN || '').trim()
   if (!raw || !token) throw new Error('CRAWSHRIMP_MCP_URL/token unavailable')
@@ -326,7 +351,7 @@ async function postMcpContext(action, payload) {
     })
     const result = await response.json().catch(() => ({}))
     if (!response.ok || !result?.ok) {
-      throw new Error(String(result?.detail || result?.error || `context ${action} failed (${response.status})`))
+      throw mcpContextError(action, response.status, result)
     }
     return result
   } finally {

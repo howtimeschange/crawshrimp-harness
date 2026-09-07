@@ -141,7 +141,8 @@
         if (attempt < maxAttempts) await sleep(350 * attempt)
       }
     }
-    throw lastError || new Error(`Renner 请求失败：${url}`)
+    const detail = compact(lastError?.message || lastError)
+    throw new Error(`Renner 请求失败（已重试 ${maxAttempts} 次）：${url}${detail ? `；${detail}` : ''}`)
   }
 
   function walkObjects(root, visit, seen = new Set()) {

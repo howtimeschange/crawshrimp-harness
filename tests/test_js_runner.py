@@ -88,6 +88,32 @@ class SharedCarryRunner(JSRunner):
         )
 
 
+class DocumentReadyRunner(JSRunner):
+    def __init__(self, states):
+        super().__init__("ws://example.invalid")
+        self.states = list(states)
+        self.calls = 0
+
+    async def evaluate(self, expression: str, user_gesture: bool = False) -> JSResult:
+        self.calls += 1
+        state, href = self.states.pop(0) if self.states else ("loading", "about:blank")
+        return JSResult(
+            success=True,
+            data=[{"readyState": state, "href": href}],
+            meta={"has_more": False},
+        )
+
+
+class StopLoadingRecoveryRunner(DocumentReadyRunner):
+    def __init__(self, states):
+        super().__init__(states)
+        self.cdp_calls = []
+
+    async def _cdp_send(self, method: str, params: dict) -> dict:
+        self.cdp_calls.append({"method": method, "params": params})
+        return {"result": {}}
+
+
 class SharedResetRunner(JSRunner):
     def __init__(self):
         super().__init__("ws://example.invalid")
@@ -1327,6 +1353,19 @@ class JSRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runner.calls[0]["phase"], "main")
         self.assertTrue(runner.calls[0]["allow_navigation_retry"])
 
+    async def test_wait_for_document_ready_waits_for_non_blank_interactive_document(self):
+        runner = DocumentReadyRunner([
+            ("loading", "about:blank"),
+            ("interactive", "https://example.test/target"),
+        ])
+
+        result = await runner.wait_for_document_ready(timeout_seconds=1, poll_seconds=0.001)
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["ready_state"], "interactive")
+        self.assertEqual(result["href"], "https://example.test/target")
+        self.assertEqual(runner.calls, 2)
+
     async def test_run_script_file_replaces_empty_script_error_with_readable_message(self):
         class EmptyErrorRunner(JSRunner):
             def __init__(self):
@@ -1387,6 +1426,49 @@ class JSRunnerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    async def test_stop_loading_recovers_document_before_script_execution(self):
+        runner = StopLoadingRecoveryRunner([
+            ("loading", "http://example.test/contact"),
+            ("interactive", "http://example.test/contact"),
+        ])
+
+        ready = await runner.stop_loading_and_wait_for_document_ready(
+            timeout_seconds=0.2,
+            poll_seconds=0.01,
+        )
+
+        self.assertTrue(ready["ready"])
+        self.assertTrue(ready["load_stopped"])
+        self.assertEqual(ready["href"], "http://example.test/contact")
+        self.assertEqual(runner.cdp_calls, [{"method": "Page.stopLoading", "params": {}}])
+
+    def test_build_phase_preamble_rejects_chrome_error_document(self):
+        if shutil.which("node") is None:
+            self.skipTest("node not installed")
+
+        runner = JSRunner("ws://example.invalid")
+        preamble = runner._build_phase_preamble(1, "main", "run-token", {}, "{}")
+        script = (
+            "globalThis.window = {\n"
+            "  sessionStorage: { setItem() {}, getItem() { return null; } },\n"
+            "  name: '',\n"
+            "  location: { href: 'chrome-error://chromewebdata/', hostname: 'chromewebdata' },\n"
+            "  document: { body: { innerText: 'This site cannot be reached ERR_CONNECTION_CLOSED' } },\n"
+            "};\n"
+            f"{preamble}"
+        )
+
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("当前浏览器页面不可用", result.stderr)
+        self.assertIn("ERR_CONNECTION_CLOSED", result.stderr)
 
     async def test_evaluate_surfaces_browser_exception_details(self):
         runner = JSRunner("ws://example.invalid")

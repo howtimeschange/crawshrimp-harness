@@ -3,6 +3,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { readFileSync } = require('node:fs')
+const { runInNewContext } = require('node:vm')
 
 const { createApiConnection } = require('./apiConnection')
 
@@ -94,7 +95,76 @@ test('preload gates every local API path and never exposes the API token to stat
   assert.match(preload, /function createApiConnection\(\{ synchronize, request \}\)/)
   assert.doesNotMatch(preload, /require\(['"]\.\/apiConnection['"]\)/)
   assert.match(preload, /async function apiCall\(method, requestPath, body\)\s*\{\s*return agentApiConnection\.call\(method, requestPath, body\)/)
+  assert.match(preload, /async function agentApi\(method, requestPath, body\)\s*\{\s*return ipcRenderer\.invoke\('agent:api', method, requestPath, body\)/)
   assert.match(preload, /await agentApiConnection\.ready\(\)/)
   assert.match(preload, /const publicStatus = rememberApiConnectionFromStatus\(data\)[\s\S]{0,180}cb\(publicStatus\)/)
   assert.doesNotMatch(preload, /rememberApiConnectionFromStatus\(data\)\s*\n\s*cb\(data\)/)
+})
+
+test('preload retains the API endpoint and token returned by status IPC in its isolated world', () => {
+  const preload = readFileSync(`${__dirname}/preload.js`, 'utf8')
+
+  assert.match(preload, /let synchronizedApiBase = ''/)
+  assert.match(preload, /let synchronizedApiToken = ''/)
+  assert.match(preload, /synchronizedApiBase = normalizedStatusBase/)
+  assert.match(preload, /synchronizedApiToken = statusToken/)
+  assert.match(preload, /const trustedPort = Number\.isInteger\(port\) && port >= 1024 && port <= 65535 \? port : 0/)
+  assert.match(preload, /return synchronizedApiToken \|\| readStorageValue\(TOKEN_STORAGE_KEY\)/)
+})
+
+test('preload trusts the validated status port even when isolated-world URL storage is unavailable', async () => {
+  const preload = readFileSync(`${__dirname}/preload.js`, 'utf8')
+  const exposed = {}
+  const requests = []
+  const status = {
+    api: true,
+    apiPort: 18882,
+    apiBase: 'http://127.0.0.1:18882',
+    apiToken: 'test-runtime-token',
+  }
+
+  runInNewContext(preload, {
+    require: (id) => {
+      if (id !== 'electron') throw new Error(`Unexpected preload dependency: ${id}`)
+      return {
+        contextBridge: { exposeInMainWorld: (_name, api) => { Object.assign(exposed, api) } },
+        ipcRenderer: {
+          invoke: async (channel, ...args) => {
+            if (channel === 'get-status') return status
+            if (channel === 'agent:api') {
+              requests.push({ channel, args })
+              return { state: 'ready' }
+            }
+            throw new Error(`Unexpected IPC channel: ${channel}`)
+          },
+          on: () => {},
+          removeAllListeners: () => {},
+          removeListener: () => {},
+        },
+      }
+    },
+    window: {
+      location: { search: '' },
+      localStorage: {
+        getItem: () => { throw new Error('storage unavailable') },
+        setItem: () => { throw new Error('storage unavailable') },
+      },
+    },
+    URL: class UnavailableUrl { constructor() { throw new Error('URL unavailable in isolated world') } },
+    URLSearchParams,
+    AbortController,
+    TextDecoder,
+    setTimeout,
+    clearTimeout,
+    console,
+    fetch: async () => { throw new Error('Agent startup must not fetch from the renderer') },
+  })
+
+  await exposed.getStatus()
+  assert.equal(exposed.getApiBase(), 'http://127.0.0.1:18882')
+  assert.deepEqual(await exposed.agentApi('GET', '/agent/runtime'), { state: 'ready' })
+  assert.deepEqual(requests, [{
+    channel: 'agent:api',
+    args: ['GET', '/agent/runtime', undefined],
+  }])
 })

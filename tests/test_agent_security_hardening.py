@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from core.agent import mcp_gateway
 from core.agent.redaction import REDACTED, contains_redaction, redact_value
 from core.agent.service import (
@@ -371,6 +373,59 @@ def test_script_draft_uses_atomic_replacement(tmp_path, monkeypatch):
     assert result["ok"] is True
     assert draft.read_text(encoding="utf-8") == "export default true\n"
     assert atomic_writes == [draft]
+
+
+def test_script_draft_preserves_a_safe_adapter_package_directory(tmp_path, monkeypatch):
+    previous_run = mcp_gateway.ctx.active_run
+    previous_workspace = mcp_gateway.ctx.workspace_root
+    mcp_gateway.ctx.active_run = {"run_id": "run", "session_id": "session"}
+    mcp_gateway.ctx.workspace_root = tmp_path
+    workspace_files = []
+    revisions = []
+    monkeypatch.setattr(mcp_gateway.db, "create_workspace_file", lambda *args: workspace_files.append(args))
+    monkeypatch.setattr(mcp_gateway.db, "create_script_revision", lambda *args: revisions.append(args))
+    try:
+        manifest = mcp_gateway.tool_script_create_draft(
+            "eifini-franchise-entry/manifest.yaml", "id: eifini-franchise-entry\n"
+        )
+        script = mcp_gateway.tool_script_create_draft(
+            "eifini-franchise-entry/eifini_franchise_entry.js",
+            ";(async () => { return { success: true, data: [], meta: {} } })()\n",
+        )
+    finally:
+        mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.workspace_root = previous_workspace
+
+    package_root = tmp_path / "eifini-franchise-entry"
+    assert manifest["ok"] is True
+    assert script["ok"] is True
+    assert (package_root / "manifest.yaml").is_file()
+    assert (package_root / "eifini_franchise_entry.js").is_file()
+    assert [Path(row[1]).relative_to(tmp_path).as_posix() for row in workspace_files] == [
+        "eifini-franchise-entry/manifest.yaml",
+        "eifini-franchise-entry/eifini_franchise_entry.js",
+    ]
+    assert [Path(row[1]).relative_to(tmp_path).as_posix() for row in revisions] == [
+        "eifini-franchise-entry/manifest.yaml",
+        "eifini-franchise-entry/eifini_franchise_entry.js",
+    ]
+
+
+@pytest.mark.parametrize("filename", ["../manifest.yaml", "/tmp/manifest.yaml", "adapter/../../manifest.yaml", r"adapter\\..\\manifest.yaml"])
+def test_script_draft_rejects_path_escape(tmp_path, monkeypatch, filename):
+    previous_run = mcp_gateway.ctx.active_run
+    previous_workspace = mcp_gateway.ctx.workspace_root
+    mcp_gateway.ctx.active_run = {"run_id": "run", "session_id": "session"}
+    mcp_gateway.ctx.workspace_root = tmp_path
+    try:
+        result = mcp_gateway.tool_script_create_draft(filename, "ignored")
+    finally:
+        mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.workspace_root = previous_workspace
+
+    assert result["status"] == "rejected"
+    assert result["error"]["code"] == "INVALID_PARAMETERS"
+    assert not any(tmp_path.iterdir())
 
 
 def test_skill_read_rejects_windows_style_parent_traversal(tmp_path, monkeypatch):
