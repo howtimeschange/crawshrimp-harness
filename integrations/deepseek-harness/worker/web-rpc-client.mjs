@@ -188,13 +188,15 @@ export class DshWebRuntime {
   #origin
   #cookie
   #launchUrl
+  #runtimeToken
   #output = ''
 
-  constructor({ child, origin, cookie, launchUrl }) {
+  constructor({ child, origin, cookie, launchUrl, runtimeToken = '' }) {
     this.#child = child
     this.#origin = origin
     this.#cookie = cookie
     this.#launchUrl = launchUrl
+    this.#runtimeToken = String(runtimeToken || '').trim()
   }
 
   static async launch({
@@ -266,6 +268,7 @@ export class DshWebRuntime {
         origin: new URL(launchUrl).origin,
         cookie,
         launchUrl,
+        runtimeToken: env.CRAWSHRIMP_MCP_TOKEN,
       })
       runtime.#output = output
       return runtime
@@ -336,6 +339,29 @@ export class DshWebRuntime {
     return this.request('session/prompt', {
       request: { requestId, sessionId, mode, content },
     })
+  }
+
+  /**
+   * Request a Host-owned automatic continuation.  Unlike public session/prompt,
+   * this requires the generation runtime token and the Host records a fixed
+   * plugin source so it cannot be mistaken for a browser user's input.
+   */
+  async continueOutput({ sessionId, text }) {
+    if (!this.#runtimeToken) throw new Error('DSH output continuation runtime token is unavailable')
+    const response = await fetch(this.#origin + '/api/crawshrimp/session/output-continuation', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie: this.#cookie,
+        'x-crawshrimp-runtime-token': this.#runtimeToken,
+      },
+      body: JSON.stringify({ sessionId, text }),
+    })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok || body?.ok !== true) {
+      throw new Error('DSH output continuation route failed: ' + String(body?.error?.message || body?.error || response.status))
+    }
+    return body
   }
 
   cancel(sessionId) {

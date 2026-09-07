@@ -371,9 +371,9 @@ function continueRunAfterOutputBudget(run) {
     `请从上一段回答中断的位置继续写第 ${segment} 段,只输出后续内容,不要重复已经写过的内容。`,
     '如果内容已经完整,请用一句话自然收尾。',
   ].join('\n')
-  runtime.prompt({
+  runtime.continueOutput({
     sessionId: run.sessionId,
-    content: [{ type: 'text', text }],
+    text,
   }).then((result) => {
     if (state.activeRun !== run) return
     if (result?.messageId) run.messageId = result.messageId

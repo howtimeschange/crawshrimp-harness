@@ -115,7 +115,8 @@ test('worker auto-continues text output budgets without restarting the runtime',
   assert.match(source, /OUTPUT_BUDGET_REACHED/)
   assert.match(source, /resumable:\s*true/)
   const continuation = source.match(/function continueRunAfterOutputBudget\(run\)\s*\{[\s\S]*?\n\}/)?.[0] || ''
-  assert.match(continuation, /runtime\.prompt\(\{[\s\S]*?sessionId:\s*run\.sessionId[\s\S]*?content:\s*\[\{ type: 'text', text \}\]/)
+  assert.match(continuation, /runtime\.continueOutput\(\{[\s\S]*?sessionId:\s*run\.sessionId[\s\S]*?text,/)
+  assert.doesNotMatch(continuation, /runtime\.prompt\(/)
   assert.match(continuation, /agent\/inbox\/spliced[\s\S]*?internal:\s*true/)
 })
 
@@ -514,10 +515,11 @@ test('authenticated Web transport cancels the active Session without restarting 
   assert.doesNotMatch(worker.match(/function cancelActiveRun\(\)[\s\S]*?\n\}/)?.[0] || '', /stopRuntime\(\)/)
 })
 
-test('automatic continuations keep their product event private to the local worker', () => {
+test('automatic continuations use the trusted private Host entry and keep their product event private', () => {
   const worker = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/worker.mjs'), 'utf8')
   const continuation = worker.match(/function continueRunAfterOutputBudget\(run\)\s*\{[\s\S]*?\n\}/)?.[0] || ''
-  assert.match(continuation, /runtime\.prompt\(/)
+  assert.match(continuation, /runtime\.continueOutput\(/)
+  assert.doesNotMatch(continuation, /runtime\.prompt\(/)
   assert.match(continuation, /agent\/inbox\/spliced/)
   assert.match(continuation, /internal:\s*true/)
   assert.doesNotMatch(continuation, /dsh-sdk-jsonrpc-demo|sdk\.request/)

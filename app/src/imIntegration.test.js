@@ -1143,3 +1143,77 @@ test('Crawshrimp automation receipt HTTP route authenticates and rejects a busy 
     else process.env.CRAWSHRIMP_API_TOKEN = previousToken
   }
 })
+
+test('Crawshrimp output continuation is a runtime-token plugin prompt, never a browser user prompt', async () => {
+  const bridgeUrl = pathToFileURL(resolve(harnessRoot, 'crawshrimp-product-bridge/lib/index.js'))
+  const bridge = await import(`${bridgeUrl.href}?output-continuation-route-test=${Date.now()}`)
+  const accepted = []
+  const session = { id: 'dsh-output-continuation', events: [] }
+  const agent = {
+    status: 'idle',
+    session,
+    followup(message) { accepted.push(message) },
+  }
+  let routeHandler
+  bridge.apply({
+    logger: { info() {}, error() {} },
+    connection: {},
+    agents: { roots: () => [agent] },
+    approval: { decide: async () => 'rejected' },
+    provide() {},
+    on: () => () => {},
+    effect(fn) { return fn() },
+    webServer: {
+      register(route) {
+        routeHandler = route.handler
+        return () => {}
+      },
+    },
+  })
+
+  const callRoute = async (token, body) => new Promise((resolveResponse, reject) => {
+    const req = new EventEmitter()
+    req.url = '/api/crawshrimp/session/output-continuation'
+    req.method = 'POST'
+    req.headers = { 'x-crawshrimp-runtime-token': token }
+    const res = {
+      statusCode: 0,
+      writeHead(statusCode) { this.statusCode = statusCode },
+      end(chunk = '') { resolveResponse({ statusCode: this.statusCode, body: JSON.parse(String(chunk)) }) },
+    }
+    Promise.resolve(routeHandler(req, res)).catch(reject)
+    process.nextTick(() => {
+      req.emit('data', JSON.stringify(body))
+      req.emit('end')
+    })
+  })
+
+  const previousToken = process.env.CRAWSHRIMP_MCP_TOKEN
+  process.env.CRAWSHRIMP_MCP_TOKEN = 'output-continuation-runtime-token'
+  try {
+    const unauthorized = await callRoute('browser-cookie-is-not-enough', {
+      sessionId: session.id,
+      text: '继续输出后续内容。',
+    })
+    assert.equal(unauthorized.statusCode, 401)
+    assert.equal(accepted.length, 0)
+
+    const completed = await callRoute('output-continuation-runtime-token', {
+      sessionId: session.id,
+      text: '继续输出后续内容。',
+    })
+    assert.equal(completed.statusCode, 200)
+    assert.equal(completed.body.ok, true)
+    assert.equal(typeof completed.body.messageId, 'string')
+    assert.equal(accepted.length, 1)
+    assert.deepEqual(accepted[0].source, {
+      kind: 'plugin',
+      plugin: 'crawshrimp-output-continuation',
+      form: 'instructions',
+    })
+    assert.deepEqual(accepted[0].content, [{ type: 'text', text: '继续输出后续内容。' }])
+  } finally {
+    if (previousToken === undefined) delete process.env.CRAWSHRIMP_MCP_TOKEN
+    else process.env.CRAWSHRIMP_MCP_TOKEN = previousToken
+  }
+})

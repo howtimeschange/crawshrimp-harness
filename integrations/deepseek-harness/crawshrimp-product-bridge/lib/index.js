@@ -7,7 +7,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { timingSafeEqual } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { isAbsolute, relative, resolve } from 'node:path'
-import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 
 export const name = 'crawshrimp-product-bridge'
 
@@ -44,6 +44,8 @@ const AUTOMATION_RECEIPT_MODEL_PREFIX = 'receipt:'
 const AUTOMATION_RECEIPT_MAX_CHARS = 2_000
 const AUTOMATION_RECEIPT_ID_MAX_CHARS = 256
 const AUTOMATION_POLICY_DENIED = 'AUTOMATION_POLICY_DENIED'
+const OUTPUT_CONTINUATION_PLUGIN = 'crawshrimp-output-continuation'
+const OUTPUT_CONTINUATION_MAX_CHARS = 2_000
 // Kept only in the Web Host process.  The Python service sends one immutable
 // snapshot immediately before an Automation prompt and removes it as that run
 // settles; no interactive Session permission state is changed or persisted.
@@ -683,6 +685,45 @@ function findLiveAgent(ctx, sessionId) {
   return undefined
 }
 
+/**
+ * Queue the output-budget continuation with a source that only this trusted
+ * Host plugin can create.  This must stay outside the public session/prompt
+ * RPC: browser-cookie holders may submit user prompts but must never be able
+ * to forge plugin-originated history or audit entries.
+ */
+export function continueCrawshrimpOutput(ctx, body) {
+  const sessionId = String(body?.sessionId || '').trim()
+  const text = String(body?.text || '').trim()
+  if (!sessionId || !text || text.length > OUTPUT_CONTINUATION_MAX_CHARS || text.includes('\0')) {
+    return { ok: false, status: 400, error: { code: 'bad-request', message: 'sessionId and continuation text are required' } }
+  }
+  const agent = findLiveAgent(ctx, sessionId)
+  if (agent === undefined) {
+    return { ok: false, status: 409, error: { code: 'NO_LIVE_AGENT', message: 'No live agent for this session' } }
+  }
+  if (typeof agent.followup !== 'function') {
+    return { ok: false, status: 500, error: { code: 'SESSION_FOLLOWUP_UNAVAILABLE', message: 'Source session cannot accept a continuation' } }
+  }
+  try {
+    const message = createUserMessage({
+      content: [{ type: 'text', text }],
+      source: {
+        kind: 'plugin',
+        plugin: OUTPUT_CONTINUATION_PLUGIN,
+        form: 'instructions',
+      },
+    })
+    agent.followup(message)
+    return { ok: true, status: 200, messageId: String(message.id) }
+  } catch (error) {
+    return {
+      ok: false,
+      status: 409,
+      error: { code: 'SESSION_FOLLOWUP_REJECTED', message: String(error?.message || error) },
+    }
+  }
+}
+
 // A one-off Automation normally completes in an isolated Agent session, then
 // projects its human-facing receipt into the originating DSH conversation.
 // Since rc.1 idle conversations can be evicted from ``agents.roots()`` while
@@ -1020,6 +1061,32 @@ export function apply(ctx) {
           })
           res.end(JSON.stringify(result.ok
             ? { ok: true, appended: result.appended, messageId: result.messageId, receiptId: result.receiptId }
+            : { ok: false, error: result.error }))
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+          res.end(JSON.stringify({ ok: false, error: apiProxyFailure(error) }))
+        }
+        return
+      }
+      if (url.pathname === '/api/crawshrimp/session/output-continuation' && req.method === 'POST') {
+        // This uses the per-runtime generation token, which is available to
+        // the worker and Host but never to the browser.  Do not add a generic
+        // `internal` field to session/prompt: a Web cookie alone must not be
+        // sufficient to forge a plugin-originated message.
+        const runtimeToken = String(process.env.CRAWSHRIMP_MCP_TOKEN || '').trim()
+        if (!sameSecret(runtimeToken, headerValue(req, 'x-crawshrimp-runtime-token'))) {
+          res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+          res.end(JSON.stringify({ ok: false, error: { code: 'UNAUTHORIZED', message: 'Crawshrimp runtime token required' } }))
+          return
+        }
+        try {
+          const result = continueCrawshrimpOutput(ctx, await readBody(req))
+          res.writeHead(result.status ?? (result.ok ? 200 : 500), {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+          })
+          res.end(JSON.stringify(result.ok
+            ? { ok: true, messageId: result.messageId }
             : { ok: false, error: result.error }))
         } catch (error) {
           res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
