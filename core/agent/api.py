@@ -679,7 +679,7 @@ def create_grant(session_id: str, req: GrantCreateRequest) -> dict:
     return {"grant": grant}
 
 
-# ---------- 脚本审核(双闸门第二闸门) ----------
+# ---------- 脚本修订审计 ----------
 
 @router.get("/script-revisions")
 def list_script_revisions(status: str = "") -> dict:
@@ -717,25 +717,26 @@ def get_script_revision(rev_id: str) -> dict:
     return {"revision": rev, "content": content, "files": package_files}
 
 
-class ScriptReviewRequest(BaseModel):
-    decision: str  # publish | reject
-
-
 def _collect_revision_files(rev: dict):
     """收集某修订所属 run 的适配包文件(manifest.yaml + 各任务脚本/附属文件)。"""
     from pathlib import Path as _P
     from core.agent import db as _db
     files: list[tuple[str, _P]] = []
     seen: set[str] = set()
+    draft = _P(str(rev.get("draft_path") or ""))
+    package_root = draft.parent.resolve()
     for wf in (_db.list_workspace_files(rev.get("created_run_id")) or []):
         src = _P(wf.get("path") or "")
         if not src.is_file():
             continue
-        if src.name in seen or not src.name.endswith((".js", ".yaml", ".yml", ".json", ".md", ".txt", ".csv")):
+        try:
+            package_name = src.resolve().relative_to(package_root).as_posix()
+        except ValueError:
             continue
-        seen.add(src.name)
-        files.append((src.name, src))
-    draft = _P(str(rev.get("draft_path") or ""))
+        if package_name in seen or not src.name.endswith((".js", ".yaml", ".yml", ".json", ".md", ".txt", ".csv")):
+            continue
+        seen.add(package_name)
+        files.append((package_name, src))
     if draft.is_file() and draft.name not in seen:
         files.append((draft.name, draft))
     return files
@@ -746,7 +747,7 @@ def _adapter_snapshot_dir(adapter_id: str):
     from core.agent.service import _data_root
     safe = _P(str(adapter_id or "")).name or "adapter"
     # 备份不能放在 adapters 根目录，否则 scan_all 会把备份 manifest 当成正式包。
-    return _data_root() / "agent" / "review-backups" / safe
+    return _data_root() / "agent" / "publish-backups" / safe
 
 
 def _discard_adapter_backup_best_effort(path, label: str) -> bool:
@@ -957,11 +958,6 @@ def _rollback_failed_adapter_install(
         ) from rollback_exc
 
 
-def _test_adapter_id(rev_id: str) -> str:
-    import hashlib
-    return f"review-{hashlib.sha256(str(rev_id).encode('utf-8')).hexdigest()[:20]}"
-
-
 def _load_revision_package(rev: dict):
     """读取并严格校验一个 manifest 修订，返回 manifest 与包文件。"""
     from pathlib import Path as _P
@@ -986,7 +982,7 @@ def _load_revision_package(rev: dict):
     return manifest_doc, files
 
 
-def _install_revision_to_adapters(rev: dict, *, adapter_id_override: str = ""):
+def _install_revision_to_adapters(rev: dict):
     """把修订的适配包文件安装到抓虾 adapters 运行时(经 adapter_loader 加载)。
 
     返回 (adapter_id, manifest_doc)。manifest 声明缺失脚本时报 409。
@@ -997,11 +993,7 @@ def _install_revision_to_adapters(rev: dict, *, adapter_id_override: str = ""):
     import yaml as _y
     from core import adapter_loader as _al
     manifest_doc, file_map = _load_revision_package(rev)
-    adapter_id = str(adapter_id_override or manifest_doc.get("id") or "").strip()
-    install_manifest = dict(manifest_doc)
-    if adapter_id_override:
-        install_manifest["id"] = adapter_id
-        install_manifest["name"] = f"[测试] {manifest_doc.get('name') or manifest_doc.get('id')}"
+    adapter_id = str(manifest_doc.get("id") or "").strip()
     with _tf.TemporaryDirectory(prefix="crawshrimp-rev-") as tmp:
         tmpdir = _P(tmp)
         for name, src in file_map.items():
@@ -1009,7 +1001,7 @@ def _install_revision_to_adapters(rev: dict, *, adapter_id_override: str = ""):
                 continue
             _sh.copy2(str(src), str(tmpdir / name))
         (tmpdir / "manifest.yaml").write_text(
-            _y.safe_dump(install_manifest, allow_unicode=True, sort_keys=False), encoding="utf-8"
+            _y.safe_dump(manifest_doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
         )
         try:
             _al.install_from_dir(str(tmpdir), install_mode="copy")
@@ -1018,131 +1010,32 @@ def _install_revision_to_adapters(rev: dict, *, adapter_id_override: str = ""):
     return adapter_id, manifest_doc
 
 
-@router.post("/script-revisions/{rev_id}/test-install")
-async def test_install_script_revision(rev_id: str) -> dict:
-    """把待复核适配包安装到运行时测试区(与正式脚本界面同一运行环境)。
+def install_approved_script_revision(rev_id: str, *, expected_source_sha256: str = "") -> dict:
+    """Install one dialog-confirmed adapter package into the formal Crawshrimp runtime.
 
-    用户在审核页即可真实运行测试;批准=转正,拒绝=卸载测试安装。
+    This is intentionally not an HTTP endpoint: the only caller is the MCP
+    ``script_publish`` tool after the native conversation approval resolves.
+    Contract validation, immutable-content checking, snapshotting, rollback and
+    the durable published baseline remain mandatory; only the obsolete manual
+    Script Review page has been removed.
     """
-    from core.agent import db as _db
     rev = db.get_script_revision(rev_id)
     if not rev:
         raise HTTPException(404, "修订不存在")
-    if rev["status"] not in ("pending_review", "testing"):
-        raise HTTPException(409, f"修订状态不允许测试安装: {rev['status']}")
-    manifest_doc, _files = _load_revision_package(rev)
-    target_adapter_id = str(manifest_doc.get("id") or "")
-    test_adapter_id = str(rev.get("test_adapter_id") or _test_adapter_id(rev_id))
-    tested_sha256 = _revision_package_sha256(rev)
-    if (rev.get("status") == "testing" and rev.get("test_adapter_id")
-            and str(rev.get("tested_sha256") or "") == tested_sha256):
-        return {"ok": True, "idempotent": True, "status": "testing",
-                "adapter_id": test_adapter_id, "target_adapter_id": target_adapter_id,
-                "test_adapter_id": test_adapter_id, "tested_sha256": tested_sha256,
-                "message": "该版本已安装在隔离测试命名空间，无需重复覆盖"}
-    if rev.get("test_adapter_id"):
-        await _stop_test_adapter_instances(test_adapter_id)
-    try:
-        installed_id, _ = _install_revision_to_adapters(rev, adapter_id_override=test_adapter_id)
-    except Exception as install_exc:
-        # adapter_loader 覆盖安装会先移除旧测试目录；失败后不能继续把修订
-        # 标成 testing，也不能留下缓存中的半安装 review-* 包。
-        cleanup_exc = None
-        try:
-            _remove_failed_adapter(test_adapter_id)
-        except Exception as exc:  # noqa: BLE001
-            cleanup_exc = exc
-        _db.update_script_revision(
-            rev_id, status="pending_review", test_adapter_id=None,
-            tested_sha256=None,
-        )
-        if cleanup_exc is not None:
-            raise HTTPException(
-                500,
-                f"测试适配器安装失败，且残留目录清理失败；"
-                f"安装错误: {install_exc}; 清理错误: {cleanup_exc}",
-            ) from cleanup_exc
-        raise
-    _db.update_script_revision(
-        rev_id, status="testing", adapter_id=target_adapter_id,
-        target_adapter_id=target_adapter_id, test_adapter_id=installed_id,
-        tested_sha256=tested_sha256,
-    )
-    return {"ok": True, "status": "testing", "adapter_id": installed_id,
-            "target_adapter_id": target_adapter_id, "test_adapter_id": installed_id,
-            "tested_sha256": tested_sha256,
-            "adapter": {
-                "id": installed_id,
-                "name": f"[测试] {manifest_doc.get('name') or target_adapter_id}",
-                "version": str(manifest_doc.get("version") or ""),
-                "description": manifest_doc.get("description") or "",
-                "task_count": len([t for t in manifest_doc.get("tasks") or [] if isinstance(t, dict)]),
-            },
-            "message": "已安装到隔离测试命名空间，不会覆盖或触发同名正式适配器；真实运行确认后才能批准发布"}
+    if rev["status"] == "published":
+        return {"ok": True, "idempotent": True, "status": "published",
+                "adapter_id": str(rev.get("target_adapter_id") or rev.get("adapter_id") or "")}
+    if rev["status"] not in ("draft", "tested"):
+        raise HTTPException(409, f"修订状态不允许安装: {rev['status']}")
 
-
-async def _stop_test_adapter_instances(adapter_id: str) -> None:
-    """卸载测试适配器前停止其活动实例，避免 Windows 文件占用和孤儿任务。"""
-    if not adapter_id:
-        return
-    from core import data_sink as _sink
-    active = _sink.list_task_instances(status_group="current", adapter_id=adapter_id, limit=500)
-    if not active:
-        return
-    service = get_agent_service()
-    control = service._callbacks.get("control_task_instance")
-    if not control:
-        raise HTTPException(503, "任务控制服务未就绪，无法安全卸载测试适配器")
-    for item in active:
-        try:
-            await control(str(item["instance_uid"]), "stop")
-        except Exception as exc:  # noqa: BLE001
-            current = _sink.get_task_instance(str(item["instance_uid"])) or {}
-            if str(current.get("status") or "") in {"draft", "queued", "running", "generating", "creating", "waiting_approval"}:
-                raise HTTPException(409, f"测试任务 {item['instance_uid']} 无法停止: {exc}") from exc
-
-
-@router.post("/script-revisions/{rev_id}/review")
-async def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
-    """人工复核闸门:把草稿发布到已发布脚本库,或拒绝。"""
-    from pathlib import Path
-    from core.agent import db as _db
-
-    if req.decision not in ("publish", "reject"):
-        raise HTTPException(422, "decision 仅支持 publish/reject")
-    rev = db.get_script_revision(rev_id)
-    if not rev:
-        raise HTTPException(404, "修订不存在")
-    if rev["status"] not in ("pending_review", "testing"):
-        if rev["status"] == "published" and req.decision == "publish":
-            return {"ok": True, "idempotent": True, "status": "published"}
-        raise HTTPException(409, f"修订状态不允许复核: {rev['status']}")
-    if req.decision == "reject":
-        test_adapter_id = str(rev.get("test_adapter_id") or "")
-        if test_adapter_id:
-            await _stop_test_adapter_instances(test_adapter_id)
-            from core import adapter_loader as _al
-            _al.uninstall(test_adapter_id)
-        _db.update_script_revision(rev_id, status="rejected", test_adapter_id=None,
-                                   tested_sha256=None)
-        return {"ok": True, "status": "rejected"}
-
-    if rev["status"] != "testing" or not rev.get("test_adapter_id"):
-        raise HTTPException(409, "必须先安装到隔离测试区并真实测试，才能批准发布")
-
-    draft = Path(rev["draft_path"])
-    if not draft.exists():
-        _db.update_script_revision(rev_id, status="rejected")
-        raise HTTPException(409, "草稿文件已不存在,无法发布")
     manifest_doc, _files = _load_revision_package(rev)
     package_sha256 = _revision_package_sha256(rev)
-    if not rev.get("tested_sha256") or str(rev.get("tested_sha256")) != package_sha256:
-        raise HTTPException(409, "适配包内容在测试后已变化，必须重新安装到隔离测试区并真实测试")
+    if expected_source_sha256 and expected_source_sha256 != package_sha256:
+        raise HTTPException(409, "脚本内容在确认期间已变化，请重新确认后再安装")
+
     safe_adapter = str(manifest_doc["id"])
     published_files = [name for name, _src in _collect_revision_files(rev) if name != "manifest.yaml"]
     task_id = str((manifest_doc.get("tasks") or [{}])[0].get("id") or "")
-    test_adapter_id = str(rev.get("test_adapter_id") or "")
-    await _stop_test_adapter_instances(test_adapter_id)
     baseline_created = _capture_published_adapter_baseline(safe_adapter)
     try:
         had_snapshot = _snapshot_existing_adapter(safe_adapter)
@@ -1161,12 +1054,11 @@ async def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
         if baseline_created:
             _discard_published_adapter_baseline(safe_adapter)
         raise
-    sha = package_sha256
     try:
-        _db.update_script_revision(
+        db.update_script_revision(
             rev_id, status="published", adapter_id=safe_adapter,
             target_adapter_id=safe_adapter, test_adapter_id=None,
-            tested_sha256=package_sha256, source_sha256=sha,
+            tested_sha256=package_sha256, source_sha256=package_sha256,
         )
     except Exception as exc:
         _rollback_failed_adapter_install(
@@ -1177,19 +1069,12 @@ async def review_script_revision(rev_id: str, req: ScriptReviewRequest) -> dict:
         if baseline_created:
             _discard_published_adapter_baseline(safe_adapter)
         raise
-    if test_adapter_id:
-        from core import adapter_loader as _al
-        try:
-            _al.uninstall(test_adapter_id)
-        except Exception as exc:  # noqa: BLE001
-            # 正式包和数据库状态已经提交；保留审计告警，清除智能体数据仍会清理 review-*。
-            print(f"[agent] 测试适配器 {test_adapter_id} 发布后清理失败: {exc}", flush=True)
     _discard_adapter_snapshot(safe_adapter)
-    return {"ok": True, "status": "published", "path": draft and str(draft),
+    return {"ok": True, "status": "published", "path": str(rev["draft_path"]),
             "adapter_id": safe_adapter, "task_id": task_id,
             "files": published_files,
-            "source_sha256": sha,
-            "message": f"已固化到抓虾脚本库:任务 {task_id} 可复用(tasks_search 可见)"}
+            "source_sha256": package_sha256,
+            "message": f"已安装到抓虾脚本库:任务 {task_id} 可在「我的脚本」和 tasks_search 中发现"}
 
 
 def build_agent_mcp_asgi(token_provider, context_acquirer=None,

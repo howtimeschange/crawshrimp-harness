@@ -145,13 +145,18 @@ test('worker compacts image-heavy user message events before FastAPI notificatio
   assert.match(source, /function extractEventText\(data\)/)
 })
 
-test('staged DSH rc.1 runtime guard verifies the current clean-install closure without binary patches', () => {
+test('staged DSH rc.1 runtime applies the small verified 4.11 source overlay after a clean install', () => {
   const patcherPath = resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs')
   assert.equal(existsSync(patcherPath), true, 'runtime dependency patcher must be packaged from source')
   const patcher = readFileSync(patcherPath, 'utf8')
   const staging = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/stage-runtime.mjs'), 'utf8')
   assert.match(patcher, /RUNTIME_GUARD_MARKER/)
-  assert.match(patcher, /patched:\s*false/)
+  assert.match(patcher, /patched:\s*true/)
+  assert.match(patcher, /DSH_IM_USER_VISIBLE_SOURCE_ROOTS = \['src', 'plugin-src', 'lib'\]/)
+  assert.match(patcher, /CRAWSHRIMP_DSH_IM_NATURAL_CONTROLS_MARKER/)
+  assert.match(patcher, /CRAWSHRIMP_DSH_IM_SESSION_PERMISSION_MARKER/)
+  assert.match(patcher, /upstreamModelDispatch/)
+  assert.match(patcher, /TextHarnessBridge natural model dispatch/)
   assert.match(patcher, /@deepseek-ai\/dsh\/package\.json[\s\S]*0\.1\.2-rc\.1/)
   assert.match(patcher, /@deepseek-ai\/dsh-web-app\/package\.json[\s\S]*0\.1\.2-rc\.1/)
   assert.match(patcher, /@deepseek-ai\/dsh-api-workspace-controller\/package\.json/)
@@ -578,6 +583,7 @@ test('core status indicator debounces transient backend probe drops', () => {
 
 test('browser windows are isolated per target and remove closed tabs', () => {
   const main = readFileSync(resolve(appRoot, 'src/agentBrowser.js'), 'utf8')
+  const desktopMain = readFileSync(resolve(appRoot, 'src/main.js'), 'utf8')
   const app = readFileSync(resolve(appRoot, 'src/renderer/App.vue'), 'utf8')
   const panel = readFileSync(resolve(appRoot, 'src/renderer/components/agent/AgentBrowserPanel.vue'), 'utf8')
   const webView = readFileSync(resolve(appRoot, 'src/renderer/views/AgentWebView.vue'), 'utf8')
@@ -586,6 +592,11 @@ test('browser windows are isolated per target and remove closed tabs', () => {
   const appTabPicker = app.split('function tabsForActiveBrowserWindow(payload)', 2)[1]?.split('\nfunction onBrowserOpenTabs', 1)[0] || ''
   const webTabPicker = webView.split('function tabsForActiveBrowserWindow(payload)', 2)[1]?.split('\nfunction syncBrowserTabs', 1)[0] || ''
   assert.match(main, /const startingByTarget = new Map\(\)/)
+  assert.match(main, /const \{ resolveCdpPort \} = require\('\.\/cdpPort'\)/)
+  assert.match(main, /const CDP_PORT = resolveCdpPort\(\)/)
+  assert.match(desktopMain, /const \{ resolveCdpPort, loopbackCdpUrl \} = require\('\.\/cdpPort'\)/)
+  assert.match(desktopMain, /CRAWSHRIMP_CDP_PORT: String\(CDP_PORT\)/)
+  assert.match(desktopMain, /CRAWSHRIMP_CDP_URL: loopbackCdpUrl\(CDP_PORT\)/)
   assert.match(main, /const startingSockets = new Map\(\)/)
   assert.ok(main.indexOf('streams.set(actualTid, st)') < main.indexOf('startingSockets.delete(startKey)', main.indexOf('streams.set(actualTid, st)')))
   assert.match(main, /CDP_COMMAND_TIMEOUT_MS/)

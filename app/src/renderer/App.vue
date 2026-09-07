@@ -206,8 +206,6 @@
           />
           <!-- 数据文件 -->
           <DataFiles v-if="currentView === 'files'" />
-          <!-- 脚本审核(双闸门第二闸门) -->
-          <AgentScriptReview v-if="currentView === 'agent_script_review'" />
           <!-- 设置 -->
           <SettingsPage
             v-if="settingsMountedOnce"
@@ -257,7 +255,6 @@ import LocalPromptLibrary from './views/LocalPromptLibrary.vue'
 import DataFiles   from './views/DataFiles.vue'
 import SettingsPage from './views/SettingsPage.vue'
 import AgentWebView from './views/AgentWebView.vue'
-import AgentScriptReview from './views/AgentScriptReview.vue'
 import AgentProductLayer from './components/agent/AgentProductLayer.vue'
 import UpdateChangelogModal from './components/UpdateChangelogModal.vue'
 import SidebarUpdateFooter from './components/SidebarUpdateFooter.vue'
@@ -337,7 +334,6 @@ const updateActionRunner = createUpdateActionRunner({
 
 const navItems = [
   { id: 'agent',  icon: '🤖', label: '智能体' },
-  { id: 'agent_script_review', icon: '🧾', label: '脚本审核' },
   { id: 'scripts',  icon: '📄', label: '我的脚本' },
   { id: 'task_center', icon: '📋', label: '任务中心' },
   { id: 'ai_image', icon: '🎨', label: 'AI 生图' },

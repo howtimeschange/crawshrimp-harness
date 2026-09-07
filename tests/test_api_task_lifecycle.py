@@ -1113,7 +1113,7 @@ class ApiTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 seen["timeout"] = timeout
                 return False
 
-        with patch("core.api_server.CDPBridge", return_value=FakeBridge()):
+        with patch("core.api_server.get_bridge", return_value=FakeBridge()):
             with patch("core.api_server.adapter_loader.list_all", return_value=[]):
                 with patch("core.api_server.sched_module.list_jobs", return_value=[]):
                     result = api_server.health()
@@ -1125,7 +1125,7 @@ class ApiTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_health_remains_ready_when_config_is_invalid(self):
         with patch("core.api_server.load_config", side_effect=ValueError("bad config")):
-            with patch("core.api_server.CDPBridge", return_value=type("FakeBridge", (), {"is_available": lambda self, timeout=None: False})()):
+            with patch("core.api_server.get_bridge", return_value=type("FakeBridge", (), {"is_available": lambda self, timeout=None: False})()):
                 with patch("core.api_server.adapter_loader.list_all", return_value=[]):
                     with patch("core.api_server.sched_module.list_jobs", return_value=[]):
                         result = api_server.health()

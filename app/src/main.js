@@ -20,6 +20,7 @@ const { createLifecycleController } = require('./lifecycleController')
 const { stopManagedChrome: stopManagedChromeFromState } = require('./managedChrome')
 const { startDesktopServices } = require('./startupServices')
 const { waitForServiceReadiness } = require('./serviceReadiness')
+const { normalizeAgentApiRequest } = require('./agentApiBridge')
 const {
   requestBackendApi,
   resolveAiVideoCapabilityPath,
@@ -28,6 +29,7 @@ const {
 } = require('./backendApi')
 const { collectCrawshrimpDataDirCandidates } = require('./dataDirRecovery')
 const { getBrowserExecutableCandidates } = require('./browserExecutablePaths')
+const { resolveCdpPort, loopbackCdpUrl } = require('./cdpPort')
 const { atomicWriteFileSync, atomicWriteJsonSync, retryWindowsFileOperationSync } = require('./atomicFile')
 const { assertNoLinkComponentsSync, normalizePathIdentity } = require('./pathIdentity')
 const { assertSafeWindowsDataRootSync, hardenWindowsPathSync } = require('./windowsAcl')
@@ -97,7 +99,7 @@ const DEFAULT_API_PORT = parseInt(process.env.CRAWSHRIMP_PORT || '18765')
 let apiPort = DEFAULT_API_PORT
 const DEV_RENDERER_URL = process.env.CRAWSHRIMP_RENDERER_URL || 'http://127.0.0.1:5173'
 const API_TOKEN_HEADER = 'X-Crawshrimp-Token'
-const CDP_PORT = 9222
+const CDP_PORT = resolveCdpPort()
 const IS_DEV   = !app.isPackaged
 const CLOUD_APPROVAL_APP_ENV = IS_DEV ? 'development' : 'production'
 const BACKEND_STARTUP_ATTEMPTS = process.platform === 'win32' ? 60 : 20
@@ -1243,6 +1245,8 @@ function spawnBackendProcess() {
       PYTHONIOENCODING: 'utf-8',
       PYTHONUTF8: '1',
       CRAWSHRIMP_PORT: String(apiPort),
+      CRAWSHRIMP_CDP_PORT: String(CDP_PORT),
+      CRAWSHRIMP_CDP_URL: loopbackCdpUrl(CDP_PORT),
       CRAWSHRIMP_DATA: resolvedCrawshrimpDataDir,
       CRAWSHRIMP_ALLOW_DATA_FALLBACK: '1',
       CRAWSHRIMP_API_TOKEN: apiToken,
@@ -2743,6 +2747,15 @@ async function getDesktopStatus() {
 }
 
 secureHandle('get-status', async () => getDesktopStatus())
+secureHandle('agent:api', async (_, method, requestPath, body) => {
+  const request = normalizeAgentApiRequest(method, requestPath)
+  await waitForServiceReadiness({
+    recoveryBarrier: backendRecoveryBarrier,
+    startupPromise: desktopServicesStartupPromise,
+    ensureServices: ensureDesktopServicesStarted,
+  })
+  return apiCall(request.method, request.path, body)
+})
 
 secureHandle('show-operator-alert', async (_, payload = {}) => {
   const targetWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : BrowserWindow.getFocusedWindow()

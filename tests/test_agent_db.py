@@ -3,6 +3,7 @@ import os
 import sys
 import uuid
 import json
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "core"))
 
@@ -128,3 +129,28 @@ def test_plan_claim_is_atomic_and_persists_task_instance_uid():
     stored = db.get_plan(plan["plan_id"])
     assert stored["status"] == "consumed"
     assert stored["task_instance_uid"] == "ti-123"
+
+
+def test_plan_expiry_compares_timezone_aware_instants_not_timestamp_text():
+    expires_at = "2026-09-06T12:00:00+00:00"
+
+    # 19:00 in China is 11:00 UTC, therefore it is still one hour before the
+    # UTC deadline. Lexicographically comparing these two ISO strings instead
+    # marks the plan expired because 19 is greater than 12.
+    assert db._plan_expired(expires_at, now=datetime(2026, 9, 6, 19, 0, tzinfo=timezone(timedelta(hours=8)))) is False
+    assert db._plan_expired(expires_at, now=datetime(2026, 9, 6, 20, 0, tzinfo=timezone(timedelta(hours=8)))) is True
+
+
+def test_plan_claim_accepts_a_fresh_utc_expiry_on_a_non_utc_machine():
+    session_id = _uid("s")
+    run_id = _uid("run")
+    db.create_session(session_id, _uid("r"))
+    db.create_run(run_id, session_id, None, "p", "m")
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    plan = db.create_plan(_uid("plan"), session_id, run_id, "task-1", "adapter-1",
+                          {}, "read_only", False, expires_at)
+
+    claimed = db.claim_plan(plan["plan_id"])
+
+    assert claimed is not None
+    assert claimed["status"] == "executing"

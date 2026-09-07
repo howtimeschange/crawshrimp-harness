@@ -2237,7 +2237,7 @@ class AgentService:
                         _adapter_loader.uninstall(str(adapter_id))
             agent_root = Path(_data_root()) / "agent"
             for child_name in ("attachments", "workspace", "harness-sessions", "runtime-workdir",
-                               "review-backups"):
+                               "publish-backups", "review-backups"):
                 _remove_owned_tree(agent_root / child_name)
             tmp_root = os.environ.get("CRAWSHRIMP_AGENT_ATTACHMENT_TMP_ROOT", "").strip()
             if tmp_root:

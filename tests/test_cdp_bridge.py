@@ -3,7 +3,7 @@ import socket
 from urllib.error import URLError
 from unittest.mock import patch
 
-from core.cdp_bridge import CDPBridge
+from core.cdp_bridge import CDPBridge, get_bridge, reset_bridge
 
 
 class DummyResponse:
@@ -15,6 +15,22 @@ class DummyResponse:
 
 
 class CDPBridgeTests(unittest.TestCase):
+    def tearDown(self):
+        reset_bridge()
+
+    def test_get_bridge_uses_explicit_isolated_dev_endpoint(self):
+        with patch.dict("os.environ", {
+            "CRAWSHRIMP_CDP_URL": "http://127.0.0.1:9247",
+        }, clear=True):
+            reset_bridge()
+            self.assertEqual(get_bridge().cdp_url, "http://127.0.0.1:9247")
+
+    def test_get_bridge_derives_loopback_url_from_isolated_dev_port(self):
+        with patch.dict("os.environ", {
+            "CRAWSHRIMP_CDP_PORT": "9247",
+        }, clear=True):
+            reset_bridge()
+            self.assertEqual(get_bridge().cdp_url, "http://127.0.0.1:9247")
     def test_get_tabs_retries_transient_timeout(self):
         calls = []
 

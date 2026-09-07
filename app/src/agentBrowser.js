@@ -15,8 +15,9 @@
  */
 
 const http = require('node:http')
+const { resolveCdpPort } = require('./cdpPort')
 
-const CDP_PORT = 9222
+const CDP_PORT = resolveCdpPort()
 const CDP_HTTP_TIMEOUT_MS = 3000
 const CDP_WS_TIMEOUT_MS = 5000
 const CDP_COMMAND_TIMEOUT_MS = 5000
@@ -37,7 +38,7 @@ function fetchJson(port, path) {
         try { resolve(JSON.parse(body)) } catch (error) { reject(new Error('CDP 响应不是有效 JSON')) }
       })
     })
-    req.on('timeout', () => req.destroy(new Error('9222 CDP HTTP 超时')))
+    req.on('timeout', () => req.destroy(new Error(`${CDP_PORT} CDP HTTP 超时`)))
     req.on('error', reject)
   })
 }
@@ -47,12 +48,12 @@ async function pickPageTarget(targetId) {
   try {
     targets = await fetchJson(CDP_PORT, '/json')
   } catch (error) {
-    throw new Error('无法连接 9222 CDP 浏览器,请先启动 Chrome')
+    throw new Error(`无法连接 ${CDP_PORT} CDP 浏览器,请先启动 Chrome`)
   }
   const pages = (Array.isArray(targets) ? targets : []).filter(
     (t) => t && t.type === 'page' && typeof t.webSocketDebuggerUrl === 'string' && t.webSocketDebuggerUrl
   )
-  if (!pages.length) throw new Error('9222 CDP 上没有可用的页面标签')
+  if (!pages.length) throw new Error(`${CDP_PORT} CDP 上没有可用的页面标签`)
   if (targetId) {
     const found = pages.find((p) => String(p.id) === String(targetId))
     if (found) return found

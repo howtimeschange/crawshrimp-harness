@@ -189,5 +189,27 @@ class AmazonReviewsEntryUrlSelectionTests(unittest.TestCase):
         )
 
 
+class GenericAdapterEntryUrlSelectionTests(unittest.TestCase):
+    def test_generated_adapter_honors_valid_target_url(self):
+        selected = api_server._resolve_task_target_entry_url(
+            "eifini-franchise-entry",
+            "eifini_franchise_probe",
+            {"target_url": "http://www.eifini.com/contact.asp"},
+            "http://www.eifini.com",
+        )
+
+        self.assertEqual(selected, "http://www.eifini.com/contact.asp")
+
+    def test_generated_adapter_ignores_invalid_target_url(self):
+        selected = api_server._resolve_task_target_entry_url(
+            "eifini-franchise-entry",
+            "eifini_franchise_probe",
+            {"target_url": "file:///tmp/not-a-web-page"},
+            "http://www.eifini.com",
+        )
+
+        self.assertEqual(selected, "http://www.eifini.com")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -265,6 +265,98 @@ def test_browser_client_ignores_legacy_url_prefix_but_keeps_exact_tab(monkeypatc
     assert client.ws_url == "ws://bound"
 
 
+def test_browser_eval_reports_unresponsive_page_without_claiming_context_is_missing(monkeypatch):
+    from core.agent.cdp import CdpError
+
+    class FakeBridge:
+        @staticmethod
+        def get_tabs(timeout=0):
+            return [{
+                "id": "tab-1",
+                "type": "page",
+                "url": "https://example.test/contact",
+                "webSocketDebuggerUrl": "ws://tab-1",
+            }]
+
+    class FakeClient:
+        def __init__(self, _ws_url):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def evaluate(self, _expression):
+            raise CdpError("CDP Runtime.evaluate 超时（10 秒），页面可能无响应")
+
+    previous_run = mcp_gateway.ctx.active_run
+    previous_grant = mcp_gateway.ctx.grant
+    previous_emit = mcp_gateway.ctx.emit_event
+    mcp_gateway.ctx.active_run = {"run_id": "run-page", "session_id": "session-page"}
+    mcp_gateway.ctx.grant = None
+    mcp_gateway.ctx.emit_event = None
+    monkeypatch.setattr("core.cdp_bridge.get_bridge", lambda: FakeBridge())
+    monkeypatch.setattr(mcp_gateway, "CdpClient", FakeClient)
+    try:
+        result = asyncio.run(mcp_gateway.tool_browser_eval("document.title"))
+    finally:
+        mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.grant = previous_grant
+        mcp_gateway.ctx.emit_event = previous_emit
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "PAGE_UNRESPONSIVE"
+    assert "页面可能无响应" in result["error"]["message"]
+
+
+def test_browser_navigate_reports_unresponsive_page_without_claiming_context_is_missing(monkeypatch):
+    from core.agent.cdp import CdpError
+
+    class FakeBridge:
+        @staticmethod
+        def get_tabs(timeout=0):
+            return [{
+                "id": "tab-1",
+                "type": "page",
+                "url": "https://example.test/contact",
+                "webSocketDebuggerUrl": "ws://tab-1",
+            }]
+
+    class FakeClient:
+        def __init__(self, _ws_url):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def navigate(self, _url):
+            raise CdpError("CDP Page.navigate 超时（10 秒），页面可能无响应")
+
+    previous_run = mcp_gateway.ctx.active_run
+    previous_grant = mcp_gateway.ctx.grant
+    previous_emit = mcp_gateway.ctx.emit_event
+    mcp_gateway.ctx.active_run = {"run_id": "run-page", "session_id": "session-page"}
+    mcp_gateway.ctx.grant = None
+    mcp_gateway.ctx.emit_event = None
+    monkeypatch.setattr("core.cdp_bridge.get_bridge", lambda: FakeBridge())
+    monkeypatch.setattr(mcp_gateway, "CdpClient", FakeClient)
+    try:
+        result = asyncio.run(mcp_gateway.tool_browser_navigate("https://example.test/target"))
+    finally:
+        mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.grant = previous_grant
+        mcp_gateway.ctx.emit_event = previous_emit
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "PAGE_UNRESPONSIVE"
+    assert "页面可能无响应" in result["error"]["message"]
+
+
 def test_browser_activity_exposes_only_granted_tab():
     events = []
     previous = mcp_gateway.ctx.emit_event
@@ -1136,7 +1228,7 @@ def test_clear_agent_data_removes_owned_files_and_agent_adapters(tmp_path, monke
     uninstalled = []
     monkeypatch.setattr("core.adapter_loader.uninstall", lambda adapter_id: uninstalled.append(adapter_id))
     monkeypatch.setattr("core.agent.service._data_root", lambda: tmp_path)
-    for name in ("attachments", "workspace", "harness-sessions", "runtime-workdir", "review-backups",
+    for name in ("attachments", "workspace", "harness-sessions", "runtime-workdir", "publish-backups", "review-backups",
                  "published-baselines"):
         directory = tmp_path / "agent" / name
         directory.mkdir(parents=True)
@@ -1149,7 +1241,7 @@ def test_clear_agent_data_removes_owned_files_and_agent_adapters(tmp_path, monke
     assert uninstalled == ["published", "review-test"]
     assert cleared == [True]
     assert not any((tmp_path / "agent" / name).exists() for name in (
-        "attachments", "workspace", "harness-sessions", "runtime-workdir", "review-backups",
+        "attachments", "workspace", "harness-sessions", "runtime-workdir", "publish-backups", "review-backups",
         "published-baselines",
     ))
     assert mcp_gateway.ctx.plan_params == {}
@@ -1808,17 +1900,19 @@ def test_dsh_runtime_settings_do_not_force_vision_models_to_text_reasoning_effor
     assert "reasoningEfforts" not in vision
 
 
-def test_dsh_runtime_guard_checks_rc1_and_dsh_im_contracts_without_binary_patches():
+def test_dsh_runtime_guard_checks_rc1_and_dsh_im_contracts_with_verified_source_overlay():
     patcher = (Path(__file__).resolve().parents[1] / "integrations" / "deepseek-harness" / "scripts" / "patch-runtime-dependencies.mjs").read_text(encoding="utf-8")
 
     assert "RUNTIME_GUARD_MARKER" in patcher
-    assert "crawshrimp-dsh-rc1-native-runtime-guard-v1" in patcher
+    assert "crawshrimp-dsh-im-411-product-patch-v1" in patcher
+    assert "crawshrimp-dsh-im-411-natural-controls-v1" in patcher
+    assert "crawshrimp-dsh-im-411-session-permission-v1" in patcher
     assert '"0.1.2-rc.1"' in patcher
     assert '"4.11.0"' in patcher
     assert "DEFAULT_INBOUND_TTL_HOURS = 168" in patcher
     assert "harness-session-binding.mjs" in patcher
     assert "model-setting.mjs" in patcher
-    assert "patched: false" in patcher
+    assert "patched: true" in patcher
     assert "DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER" not in patcher
     assert "SDK_JSONRPC_IMAGE_ADMISSION_PATCH_MARKER" not in patcher
 
