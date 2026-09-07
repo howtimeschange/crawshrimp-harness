@@ -43,7 +43,7 @@
     </section>
 
     <section v-if="activeGroup === 'automations'" class="tc-automation-content">
-      <AutomationCenter />
+      <AutomationCenter @open-agent="emit('open-agent')" />
     </section>
 
     <section v-else class="tc-content">
@@ -204,7 +204,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AutomationCenter from './AutomationCenter.vue'
 
-const emit = defineEmits(['open-instance'])
+const emit = defineEmits(['open-instance', 'open-agent'])
 
 const defaultNotifyTemplate = `巴拉-AI测图数据抓取导出执行通知
 定时任务：{{schedule_title}}

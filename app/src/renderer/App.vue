@@ -166,6 +166,7 @@
           <TaskCenter
             v-else-if="currentView === 'task_center' && !activeInstanceUid"
             @open-instance="openTaskInstance"
+            @open-agent="openAgentFromAutomation"
           />
           <TaskInstanceRunner
             v-else-if="currentView === 'task_center' && activeInstanceUid"
@@ -390,6 +391,10 @@ function onAgentNavSelect(navId) {
 function onSessionNav() {
   const item = navItems.find((it) => it.id === 'agent')
   if (item) selectNav(item)
+}
+
+function openAgentFromAutomation() {
+  onSessionNav()
 }
 
 // 会话侧边栏宽度/折叠状态(覆盖层左偏移跟随;默认与 DSH 侧栏默认宽一致,

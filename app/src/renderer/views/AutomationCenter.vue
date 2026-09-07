@@ -7,7 +7,10 @@
       </div>
       <div class="ac-head-actions">
         <button v-if="editing" type="button" class="ac-secondary" @click="closeEditor">返回列表</button>
-        <button v-else type="button" class="ac-primary" @click="startCreate">新建自动化</button>
+        <template v-else>
+          <button type="button" class="ac-primary" @click="openAgent">从智能体对话创建</button>
+          <button type="button" class="ac-secondary" @click="startCreate">高级配置</button>
+        </template>
         <button type="button" class="ac-secondary" :disabled="loading" @click="refresh">
           {{ loading ? '刷新中...' : '刷新' }}
         </button>
@@ -20,8 +23,8 @@
     <section v-if="editing" class="ac-editor">
       <div class="ac-editor-title">
         <div>
-          <h3>{{ editingUid ? '编辑自动化' : '新建自动化' }}</h3>
-              <p>可先编辑草稿；含 Program 的自动化必须用代表性事实测试通过后才能保存或启用。</p>
+          <h3>{{ editingUid ? '编辑自动化' : '高级配置自动化' }}</h3>
+          <p>普通自动化请从智能体对话用自然语言创建；此处用于审计后的高级配置。含 Program 的自动化必须用代表性事实测试通过后才能保存或启用。</p>
         </div>
         <span :class="['ac-status', form.enabled ? 'active' : 'neutral']">{{ form.enabled ? '准备启用' : '草稿' }}</span>
       </div>
@@ -192,8 +195,11 @@
       <div v-if="loading" class="ac-state">加载中...</div>
       <div v-else-if="!automations.length" class="ac-state empty">
         <strong>还没有智能体自动化</strong>
-        <span>可以创建一次性的定时运行，也可以创建带条件 Program 的周期闭环。</span>
-        <button type="button" class="ac-primary" @click="startCreate">新建自动化</button>
+        <span>请先在智能体对话中用自然语言创建一次性定时任务或周期闭环；这里负责查看、暂停、恢复和审计运行证据。</span>
+        <div class="ac-head-actions">
+          <button type="button" class="ac-primary" @click="openAgent">从智能体对话创建</button>
+          <button type="button" class="ac-secondary" @click="startCreate">高级配置</button>
+        </div>
       </div>
       <template v-else>
         <div class="ac-table" role="table">
@@ -278,6 +284,7 @@ import {
   payloadFromAutomationForm,
 } from '../utils/automationCenterState.mjs'
 
+const emit = defineEmits(['open-agent'])
 const automations = ref([])
 const selectedAutomation = ref(null)
 const selectedUid = ref('')
@@ -307,6 +314,10 @@ function syncAutomationViewState() {
   selectedUid.value = automationViewState.selectedUid
   selectedAutomation.value = automationViewState.selectedAutomation
   runs.value = automationViewState.runsForSelected
+}
+
+function openAgent() {
+  emit('open-agent')
 }
 
 function exampleProgram() {

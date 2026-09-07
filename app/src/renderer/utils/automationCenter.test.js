@@ -79,3 +79,15 @@ test('task center mounts AutomationCenter as its 自动化 tab', () => {
   assert.match(source, /AutomationCenter/)
   assert.match(source, /id: 'automations', label: '自动化'/)
 })
+
+test('Automation Center sends ordinary creation to the Agent conversation', () => {
+  const automationCenter = readFileSync(path.join(srcRoot, 'renderer', 'views', 'AutomationCenter.vue'), 'utf8')
+  const taskCenter = readFileSync(path.join(srcRoot, 'renderer', 'views', 'TaskCenter.vue'), 'utf8')
+  const app = readFileSync(path.join(srcRoot, 'renderer', 'App.vue'), 'utf8')
+
+  assert.match(automationCenter, /从智能体对话创建/)
+  assert.match(automationCenter, /emit\('open-agent'\)/)
+  assert.match(taskCenter, /@open-agent="emit\('open-agent'\)"/)
+  assert.match(app, /@open-agent="openAgentFromAutomation"/)
+  assert.match(app, /function openAgentFromAutomation\(\)/)
+})
