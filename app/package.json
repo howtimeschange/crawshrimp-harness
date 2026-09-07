@@ -22,10 +22,12 @@
     "@tabler/icons-vue": "^3.45.0",
     "@tldraw/assets": "^5.2.3",
     "electron-updater": "6.8.9",
+    "img-fx": "^0.5.1",
     "portfinder": "^1.0.32",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "tesseract.js": "^5.1.1",
+    "three": "^0.185.1",
     "tldraw": "^5.2.3"
   },
   "devDependencies": {

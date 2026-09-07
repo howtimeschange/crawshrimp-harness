@@ -302,27 +302,22 @@
                     @dragstart.stop="startResultDrag(item, $event)"
                     @dragend="endResultDrag"
                   >
-                    <img
+                    <ImageGenerationLoader
                       v-if="resultPreviewSrc(item)"
-                      :src="resultPreviewSrc(item)"
-                      :alt="item.label"
-                      loading="lazy"
-                      decoding="async"
-                      @load="handleResultPreviewLoaded(item)"
-                      @error="markResultPreviewBroken(item)"
+                      class="aiw-result-image-reveal"
+                      :images="[resultPreviewSrc(item)]"
+                      :mode="shouldRevealResult(item) ? 'reveal' : 'static'"
+                      :reveal-key="resultKey(item)"
                     />
                     <span v-else class="aiw-result-preview">{{ item.label }}</span>
                   </button>
                   <div v-else-if="item.loading" class="aiw-loading-preview">
-                    <img
-                      v-if="loadingPreviewSrc(item)"
-                      class="aiw-loading-source"
-                      :src="loadingPreviewSrc(item)"
-                      alt=""
-                      aria-hidden="true"
-                      @error="markPreviewBroken(item.loadingPreviewPath)"
+                    <ImageGenerationLoader
+                      class="aiw-image-generation-loader"
+                      :images="loadingEffectImages()"
+                      mode="loading"
                     />
-                    <div v-else class="aiw-loading-default-art" aria-hidden="true">
+                    <div v-if="!loadingPreviewSrc(item)" class="aiw-loading-default-art" aria-hidden="true">
                       <span class="aiw-loading-moon"></span>
                       <span class="aiw-loading-sea sea-back"></span>
                       <span class="aiw-loading-sea sea-front"></span>
@@ -729,10 +724,16 @@
         <div class="aiw-lightbox-image-pane">
           <figure>
             <div class="aiw-lightbox-canvas" :class="{ loading: lightboxActiveItem?.loading }">
+              <ImageGenerationLoader
+                v-if="lightboxActiveSrc && shouldUseLightboxImageEffect(lightboxActiveItem)"
+                class="aiw-lightbox-main-effect"
+                :images="[lightboxActiveSrc]"
+                :mode="lightboxImageEffectMode(lightboxActiveItem)"
+                :reveal-key="lightboxImageEffectKey(lightboxActiveItem)"
+              />
               <img
-                v-if="lightboxActiveSrc"
+                v-else-if="lightboxActiveSrc"
                 class="aiw-lightbox-main-image"
-                :class="{ blurred: lightboxActiveItem?.loading }"
                 :src="lightboxActiveSrc"
                 :alt="lightboxActiveItem?.label || lightboxItem.label"
                 decoding="async"
@@ -753,7 +754,6 @@
                 @error="handleLightboxAnnotationError"
               />
               <div v-if="lightboxActiveItem?.loading" class="aiw-edit-loading-overlay">
-                <span class="aiw-edit-spinner" aria-hidden="true"></span>
                 <strong>{{ lightboxEditActionLabel }}</strong>
               </div>
               <div
@@ -823,18 +823,23 @@
                 :class="{ active: index === lightboxActiveIndex, loading: item.loading }"
                 @click="selectLightboxPreview(index)"
               >
+                <ImageGenerationLoader
+                  v-if="lightboxThumbnailSrc(item) && shouldUseLightboxImageEffect(item)"
+                  class="aiw-lightbox-thumb-effect"
+                  :images="[lightboxThumbnailSrc(item)]"
+                  :mode="lightboxImageEffectMode(item)"
+                  :reveal-key="lightboxImageEffectKey(item)"
+                />
                 <img
-                  v-if="lightboxThumbnailSrc(item)"
+                  v-else-if="lightboxThumbnailSrc(item)"
                   :src="lightboxThumbnailSrc(item)"
                   :alt="item.label"
-                  :class="{ blurred: item.loading }"
                   loading="lazy"
                   decoding="async"
                   @load="handleResultPreviewLoaded(item)"
                   @error="markResultPreviewBroken(item)"
                 />
                 <strong v-else>{{ previewInitial(resultPreviewKey(item) || item.label) }}</strong>
-                <span v-if="item.loading" class="aiw-edit-spinner" aria-hidden="true"></span>
                 <small>{{ item.label }}</small>
               </button>
             </div>
@@ -981,6 +986,7 @@ import {
 import { focusFirstInDialog, trapDialogFocus } from '../utils/dialogAccessibility.mjs'
 import { isAiImageWorkbenchHiddenJob, selectRestorableAiImageJob } from '../utils/aiImageTaskIsolation.js'
 import TldrawAnnotationLayer from '../components/TldrawAnnotationLayer.js'
+import ImageGenerationLoader from '../components/ImageGenerationLoader.js'
 import PromptLibraryPickerModal from '../components/PromptLibraryPickerModal.vue'
 
 const emit = defineEmits(['open-settings'])
@@ -1107,6 +1113,8 @@ const imagePreviews = reactive({})
 const previewFailures = reactive(new Set())
 const resultCachePaths = reactive({})
 const resultCachePending = reactive(new Set())
+const resultRevealKeys = reactive(new Set())
+const resultRevealBaselines = new Map()
 const taskDrafts = reactive({})
 const pendingActiveJobUid = ref('')
 const batchDialogPanel = ref(null)
@@ -1775,6 +1783,7 @@ async function pollActiveJob() {
     const latest = await window.cs.getAiImageJob(uid)
     if (uid !== jobPollingUid) return
     mergeResultCacheFromJob(latest)
+    captureNewResultReveals(latest)
     upsertJob(latest)
     if (currentJob.value?.job_uid === uid) {
       currentJob.value = latest
@@ -2164,6 +2173,7 @@ async function submitBatchGeneration() {
     const activeTask = await ensureCurrentTask()
     const jobUid = activeTask?.job_uid
     if (!jobUid) throw new Error('后端未返回 job_uid')
+    beginResultRevealTracking(activeTask)
     generatingJobUid.value = jobUid
     generatingSnapshot.value = batchSnapshot
     const firstPayload = buildBatchJobPayload(batchSnapshot, promptCards[0], 0)
@@ -2190,6 +2200,7 @@ async function submitBatchGeneration() {
     })
     if (!batchResult?.accepted) throw new Error('后端未接受批量生成任务')
     const acceptedJob = batchResult.job || submittedJob
+    captureNewResultReveals(acceptedJob)
     if (activeJobUid.value === jobUid) currentJob.value = acceptedJob
     upsertJob(acceptedJob)
     compactPane.value = 'results'
@@ -2199,6 +2210,7 @@ async function submitBatchGeneration() {
     logs.value.push(`批量任务已提交：${promptStats.promptCount} 条 Prompt，预计 ${promptStats.totalImages} 张图`)
     if (hasActiveRuns(currentJob.value)) startJobPolling(jobUid)
   } catch (error) {
+    clearResultRevealTracking(generatingJobUid.value)
     const message = normalizeGenerateError(error)
     batchGenerationDialog.error = message
     errorMessage.value = message
@@ -2233,6 +2245,7 @@ async function generate() {
     const activeTask = await ensureCurrentTask()
     const jobUid = activeTask?.job_uid
     if (!jobUid) throw new Error('后端未返回 job_uid')
+    beginResultRevealTracking(activeTask)
     const previousSummary = currentJob.value?.summary || activeTask.summary || {}
     const payload = buildJobPayload()
     const submittedSnapshot = formSnapshot()
@@ -2252,6 +2265,7 @@ async function generate() {
     const runResult = await window.cs.runAiImageJob(jobUid)
     const latest = await window.cs.getAiImageJob(jobUid)
     const completedJob = latest || activeTask
+    captureNewResultReveals(completedJob)
     if (activeJobUid.value === jobUid) currentJob.value = latest || activeTask
     upsertJob(completedJob)
     if (runResult && runResult.ok === false) {
@@ -2264,6 +2278,7 @@ async function generate() {
     logs.value.push(`生成完成：${jobUid}`)
     await loadJobs()
   } catch (error) {
+    clearResultRevealTracking(generatingJobUid.value)
     errorMessage.value = normalizeGenerateError(error)
     logs.value.push(`生成失败：${errorMessage.value}`)
   } finally {
@@ -2541,8 +2556,45 @@ function loadingPreviewSrc(item) {
   return path ? imagePreviewSrc(path) : ''
 }
 
+function loadingEffectImages() {
+  // A pending generation has no truthful result image yet. Keep the shader on
+  // a neutral black stage instead of periodically revealing the input image.
+  return []
+}
+
 function resultKey(item) {
   return item?.url || item?.path || ''
+}
+
+function shouldRevealResult(item) {
+  const key = resultKey(item)
+  return Boolean(key && resultRevealKeys.has(key))
+}
+
+function beginResultRevealTracking(job) {
+  const jobUid = String(job?.job_uid || '').trim()
+  if (!jobUid) return
+  resultRevealBaselines.set(
+    jobUid,
+    new Set(collectResultCards(job).map(resultKey).filter(Boolean)),
+  )
+}
+
+function captureNewResultReveals(job) {
+  const jobUid = String(job?.job_uid || '').trim()
+  const baseline = resultRevealBaselines.get(jobUid)
+  if (!jobUid || !baseline) return
+  for (const item of collectResultCards(job)) {
+    const key = resultKey(item)
+    if (!key || baseline.has(key)) continue
+    baseline.add(key)
+    resultRevealKeys.add(key)
+  }
+  if (!hasActiveRuns(job)) resultRevealBaselines.delete(jobUid)
+}
+
+function clearResultRevealTracking(jobUid) {
+  resultRevealBaselines.delete(String(jobUid || '').trim())
 }
 
 function resultPreviewKey(item) {
@@ -2576,6 +2628,19 @@ function resultPreviewSrc(item) {
 function lightboxThumbnailSrc(item) {
   if (!item) return ''
   return item.previewSrc || resultPreviewSrc(item)
+}
+
+function lightboxImageEffectMode(item) {
+  if (item?.loading) return 'loading'
+  return item?.revealOnComplete ? 'reveal' : 'static'
+}
+
+function shouldUseLightboxImageEffect(item) {
+  return ['loading', 'reveal'].includes(lightboxImageEffectMode(item))
+}
+
+function lightboxImageEffectKey(item) {
+  return String(item?.revealKey || lightboxItemIdentity(item) || '').trim()
 }
 
 function activeResultPreviewKey(item) {
@@ -2993,8 +3058,10 @@ async function retryFailedRun(item) {
     if (typeof window?.cs?.retryAiImageRun !== 'function') {
       throw new Error('当前客户端版本不支持队列重试，请重启抓虾客户端后再试')
     }
+    beginResultRevealTracking(currentJob.value)
     const result = await window.cs.retryAiImageRun(jobUid, runUid)
     if (!result?.accepted) throw new Error(result?.run?.error || '重试任务未被接受')
+    captureNewResultReveals(result.job || currentJob.value)
     currentJob.value = result.job || currentJob.value
     upsertJob(currentJob.value)
     selectedResults.clear()
@@ -3002,6 +3069,7 @@ async function retryFailedRun(item) {
     startJobPolling(jobUid)
     announceStatus('失败队列已重新提交，正在等待上游处理')
   } catch (error) {
+    clearResultRevealTracking(jobUid)
     errorMessage.value = generationFailureMessage(error)
   } finally {
     retryingRunUids.delete(runUid)
@@ -3262,6 +3330,8 @@ function applyLightboxEditResult(placeholder, latestJob, runUid = '') {
     ...result,
     ...editMetadata,
     key: `edit-${Date.now()}-${resultKey(result)}`,
+    revealKey: `lightbox-edit-${Date.now()}-${resultKey(result)}`,
+    revealOnComplete: true,
     label: result.label || '修改结果',
     prompt: placeholder.prompt || result.prompt || '',
     jobUid: latestJob?.job_uid || result.jobUid || '',
@@ -3287,6 +3357,7 @@ async function runLightboxEditGeneration({ sourceItem, mainPath, prompt, referen
     const activeTask = await ensureCurrentTask()
     jobUid = activeTask?.job_uid || ''
     if (!jobUid) throw new Error('后端未返回 job_uid')
+    beginResultRevealTracking(activeTask)
     const annotationPath = await materializeLightboxAnnotation(jobUid, annotationDataUrl)
     const effectivePrompt = buildAnnotationEditPrompt(prompt, Boolean(annotationPath))
     const retainedSnapshotReferences = filterGeneratedAnnotationReferences(snapshot.referenceImagePaths)
@@ -3325,6 +3396,7 @@ async function runLightboxEditGeneration({ sourceItem, mainPath, prompt, referen
     const runResult = await window.cs.runAiImageJob(jobUid)
     const latest = await window.cs.getAiImageJob(jobUid)
     const completedJob = latest || submittingJob
+    captureNewResultReveals(completedJob)
     if (activeJobUid.value === jobUid) currentJob.value = completedJob
     upsertJob(completedJob)
     if (runResult && runResult.ok === false) {
@@ -3334,6 +3406,7 @@ async function runLightboxEditGeneration({ sourceItem, mainPath, prompt, referen
     refreshResultPreviewCandidates(collectResultCards(completedJob), { force: true })
     await loadJobs()
   } catch (error) {
+    clearResultRevealTracking(jobUid)
     removeLightboxEditPlaceholder(placeholder)
     throw error
   } finally {
@@ -4417,7 +4490,7 @@ function localFileUrl(path) {
 
 .aiw-result-card.loading {
   border-color: rgba(var(--orange-rgb), 0.22);
-  background: var(--bg2);
+  background: #000;
 }
 
 .aiw-result-card img,
@@ -4461,6 +4534,32 @@ function localFileUrl(path) {
   place-items: center;
 }
 
+.aiw-preview-button :deep(.aiw-image-generation-host),
+.aiw-preview-button :deep(.aiw-result-image-reveal),
+.aiw-preview-button :deep(.aiw-image-generation-effect),
+.aiw-preview-button :deep(.image-gen-root),
+.aiw-preview-button :deep(.aiw-image-generation-surface),
+.aiw-preview-button :deep(.aiw-image-generation-fallback) {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+}
+
+.aiw-preview-button :deep(.aiw-image-generation-host),
+.aiw-preview-button :deep(.aiw-result-image-reveal),
+.aiw-preview-button :deep(.aiw-image-generation-effect),
+.aiw-preview-button :deep(.image-gen-root) {
+  position: relative;
+  background: #000;
+}
+
+.aiw-preview-button :deep(.aiw-image-generation-surface),
+.aiw-preview-button :deep(.aiw-image-generation-fallback) {
+  height: 100%;
+  background: #000;
+  object-fit: contain;
+}
+
 .aiw-result-preview,
 .aiw-loading-preview {
   display: grid;
@@ -4474,19 +4573,36 @@ function localFileUrl(path) {
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  background: #10131d;
+  background: #000;
   color: #fff;
   font-size: 14px;
 }
 
-.aiw-loading-source {
+.aiw-loading-preview :deep(.aiw-image-generation-host),
+.aiw-loading-preview :deep(.aiw-image-generation-loader),
+.aiw-loading-preview :deep(.aiw-image-generation-effect),
+.aiw-loading-preview :deep(.image-gen-root),
+.aiw-loading-preview :deep(.aiw-image-generation-surface),
+.aiw-loading-preview :deep(.aiw-image-generation-fallback) {
+  width: 100%;
+  height: 100%;
+}
+
+.aiw-loading-preview :deep(.aiw-image-generation-host),
+.aiw-loading-preview :deep(.aiw-image-generation-loader),
+.aiw-loading-preview :deep(.aiw-image-generation-effect),
+.aiw-loading-preview :deep(.image-gen-root) {
   position: absolute;
-  inset: -7%;
-  z-index: -2;
-  width: 114%;
-  height: 114%;
-  min-height: 0;
-  aspect-ratio: auto;
+  inset: 0;
+  display: block;
+}
+
+.aiw-loading-preview :deep(.aiw-image-generation-surface) {
+  background: #000;
+}
+
+.aiw-loading-preview :deep(.aiw-image-generation-fallback) {
+  display: block;
   object-fit: cover;
   filter: blur(18px) saturate(0.72) brightness(0.66);
   transform: scale(1.08);
@@ -4498,9 +4614,7 @@ function localFileUrl(path) {
   position: absolute;
   inset: 0;
   z-index: -1;
-  background:
-    radial-gradient(circle at 24% 22%, rgba(255, 113, 51, 0.26), transparent 34%),
-    linear-gradient(180deg, rgba(10, 13, 23, 0.18), rgba(10, 12, 20, 0.70));
+  background: #000;
 }
 
 .aiw-loading-preview::after {
@@ -4508,9 +4622,7 @@ function localFileUrl(path) {
   position: absolute;
   inset: 0;
   z-index: 1;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 26%, transparent 64%, rgba(4, 6, 13, 0.54)),
-    radial-gradient(circle at 50% 48%, transparent 0 52%, rgba(255, 255, 255, 0.035) 53%, transparent 70%);
+  background: transparent;
   pointer-events: none;
 }
 
@@ -4519,9 +4631,7 @@ function localFileUrl(path) {
   inset: 0;
   z-index: -2;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 72% 26%, rgba(255, 138, 79, 0.26), transparent 28%),
-    linear-gradient(155deg, #171a2a 0%, #111827 48%, #07131d 100%);
+  background: #000;
 }
 
 .aiw-loading-default-art::before {
@@ -4593,10 +4703,7 @@ function localFileUrl(path) {
   position: absolute;
   inset: -28% -70%;
   z-index: 2;
-  background: linear-gradient(100deg, transparent 34%, rgba(255, 255, 255, 0.16) 49%, transparent 64%);
-  filter: blur(12px);
-  transform: translateX(-32%);
-  animation: aiw-loading-sheen 2.8s ease-in-out infinite;
+  display: none;
 }
 
 .aiw-loading-copy {
@@ -5002,6 +5109,33 @@ function localFileUrl(path) {
   border-radius: 8px;
 }
 
+.aiw-lightbox-canvas :deep(.aiw-image-generation-host),
+.aiw-lightbox-canvas :deep(.aiw-lightbox-main-effect),
+.aiw-lightbox-canvas :deep(.aiw-image-generation-effect),
+.aiw-lightbox-canvas :deep(.image-gen-root),
+.aiw-lightbox-canvas :deep(.aiw-image-generation-surface),
+.aiw-lightbox-canvas :deep(.aiw-image-generation-fallback) {
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+}
+
+.aiw-lightbox-canvas :deep(.aiw-image-generation-host),
+.aiw-lightbox-canvas :deep(.aiw-lightbox-main-effect),
+.aiw-lightbox-canvas :deep(.aiw-image-generation-effect),
+.aiw-lightbox-canvas :deep(.image-gen-root) {
+  display: block;
+  background: #000;
+}
+
+.aiw-lightbox-canvas :deep(.aiw-image-generation-surface),
+.aiw-lightbox-canvas :deep(.aiw-image-generation-fallback) {
+  display: block;
+  background: #000;
+  object-fit: contain;
+}
+
 .aiw-lightbox-main-image.blurred,
 .aiw-lightbox-preview-strip img.blurred {
   filter: blur(6px) saturate(0.82);
@@ -5060,6 +5194,30 @@ function localFileUrl(path) {
 .aiw-lightbox-preview-strip img {
   width: 100%;
   height: 100%;
+  object-fit: cover;
+}
+
+.aiw-lightbox-preview-strip :deep(.aiw-image-generation-host),
+.aiw-lightbox-preview-strip :deep(.aiw-lightbox-thumb-effect),
+.aiw-lightbox-preview-strip :deep(.aiw-image-generation-effect),
+.aiw-lightbox-preview-strip :deep(.image-gen-root),
+.aiw-lightbox-preview-strip :deep(.aiw-image-generation-surface),
+.aiw-lightbox-preview-strip :deep(.aiw-image-generation-fallback) {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.aiw-lightbox-preview-strip :deep(.aiw-image-generation-host),
+.aiw-lightbox-preview-strip :deep(.aiw-lightbox-thumb-effect),
+.aiw-lightbox-preview-strip :deep(.aiw-image-generation-effect),
+.aiw-lightbox-preview-strip :deep(.image-gen-root) {
+  background: #000;
+}
+
+.aiw-lightbox-preview-strip :deep(.aiw-image-generation-surface),
+.aiw-lightbox-preview-strip :deep(.aiw-image-generation-fallback) {
+  background: #000;
   object-fit: cover;
 }
 
