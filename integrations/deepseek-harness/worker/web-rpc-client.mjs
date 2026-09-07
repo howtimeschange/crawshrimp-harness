@@ -16,6 +16,7 @@ import WebSocket from 'ws'
 const PROFILE_FILES = ['cordis.yml', 'cordis.patch.yml', 'pnpm-workspace.yaml']
 const PRODUCT_PRESET_FILES = [
   'agent-presets/crawshrimp-standard/agent.cordis.yml',
+  'agent-presets/crawshrimp-standard/preset.yml',
 ]
 const PRODUCT_PROFILE_PACKAGES = ['@xmanrui/dsh-im', 'crawshrimp-product-bridge', 'crawshrimp-slots']
 export const NATIVE_WEB_TOOL_NAMES = Object.freeze(['web_search', 'web_fetch'])

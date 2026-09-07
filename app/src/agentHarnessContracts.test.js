@@ -182,6 +182,53 @@ test('staged DSH rc.1 runtime applies the small verified 4.11 source overlay aft
   assert.match(staging, /patchRuntimeDependencies\(stageRoot\)/)
 })
 
+test('dsh-im brief-card patch accepts fresh upstream and already-branded 4.11 approval text', async () => {
+  const patcherPath = resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs')
+  const { patchDshImApprovalBriefCardSource } = await import(`${pathToFileURL(patcherPath).href}?approval-brief-fresh-red=${Date.now()}`)
+  const toolArguments = [
+    'function toolArguments(toolCall) {',
+    '  const source = toolCall?.arguments;',
+    '  if (source !== null && typeof source === \'object\') {',
+    '    try {',
+    '      return JSON.stringify(source, null, 2);',
+    '    } catch {',
+    '      return null;',
+    '    }',
+    '  }',
+    '  if (typeof source !== \'string\') return null;',
+    '  const raw = printableText(source);',
+    '  // Harness treats an empty tool argument string as an empty object.',
+    '  if (!raw) return source === \'\' ? \'{}\' : null;',
+    '  try {',
+    '    return JSON.stringify(JSON.parse(raw), null, 2);',
+    '  } catch {',
+    '    return raw;',
+    '  }',
+    '}',
+  ].join('\n')
+  const approvalText = (brand) => [
+    '  const lines = [',
+    `    t('${brand} 需要你的审批：'),`,
+    '    \'\',',
+    "    t('工具：{tool}', { tool: printableText(payload.toolName) }),",
+    "    t('操作参数：'),",
+    '    operation,',
+    '  ];',
+    '  const reason = printableText(payload.reason);',
+    "  if (reason) lines.push(t('原因：{reason}', { reason }));",
+  ].join('\n')
+
+  for (const brand of ['DeepSeek Harness', '抓虾 Harness']) {
+    const freshSource = `${toolArguments}\n${approvalText(brand)}`
+    const patched = patchDshImApprovalBriefCardSource(freshSource)
+    assert.match(patched, /crawshrimp-dsh-im-411-approval-brief-card-v1/)
+    assert.match(patched, /t\('抓虾 Harness 需要你的审批'\)/)
+    assert.match(patched, /简略参数：/)
+    assert.doesNotMatch(patched, /需要你的审批：/)
+    assert.equal(patchDshImApprovalBriefCardSource(patched), patched)
+  }
+})
+
 test('the runtime guard accepts both the source profile layout and the staged profile layout', async () => {
   const patcherPath = resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs')
   const runtimeRoot = resolve(appRoot, '../integrations/deepseek-harness')
@@ -209,6 +256,42 @@ test('runtime admits image prompts to the installed Vision bridge only for offic
   assert.match(controller, /current\.model === "deepseek-v4-pro"/)
   assert.match(controller, /!crawshrimpVisionBridgeAllowsImageAdmission/)
   assert.match(controller, /MODEL_DOES_NOT_SUPPORT_IMAGES/)
+})
+
+test('rc.1 Web native approval card exposes allow-all through the current Session command seam', async () => {
+  const patcherPath = resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs')
+  const runtimeRoot = resolve(appRoot, '../integrations/deepseek-harness')
+  const approvalPath = resolve(runtimeRoot, 'node_modules/@deepseek-ai/dsh-client-ui-approval/lib/client.js')
+  const { patchRuntimeDependencies } = await import(`${pathToFileURL(patcherPath).href}?web-approval-allow-all-red=${Date.now()}`)
+
+  patchRuntimeDependencies(runtimeRoot)
+  const source = readFileSync(approvalPath, 'utf8')
+
+  assert.match(source, /crawshrimp-dsh-im-411-web-approval-allow-all-v1/)
+  assert.match(source, /runCommand\("\/permission danger-full-access"\)/)
+  assert.match(source, /pending\.answer\("allowed-once"\)/)
+  assert.match(source, /children: t\("allowAll"\)/)
+  assert.match(source, /inject: \(sessionId\) => \(\{/)
+  assert.match(source, /sessions\.binding\(sessionId\)\?\.session/)
+  assert.match(source, /result\.ok && result\.value\.matched/)
+})
+
+test('DeepSeek Vision preflight audit retains structured fields in logger and stderr', async () => {
+  const patcherPath = resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs')
+  const runtimeRoot = resolve(appRoot, '../integrations/deepseek-harness')
+  const bridgePath = resolve(runtimeRoot, 'node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js')
+  const { patchRuntimeDependencies } = await import(`${pathToFileURL(patcherPath).href}?vision-audit-red=${Date.now()}`)
+
+  patchRuntimeDependencies(runtimeRoot)
+  const source = readFileSync(bridgePath, 'utf8')
+
+  assert.match(source, /crawshrimp-deepseek-vision-audit-v1/)
+  assert.match(source, /event:\s*"deepseek_vision_preflight"/)
+  assert.match(source, /vision_preflight:\s*true/)
+  assert.match(source, /original_model:\s*model/)
+  assert.match(source, /vision_model:\s*visionModel/)
+  assert.match(source, /session_id:\s*sessionId \?\? null/)
+  assert.match(source, /process\.stderr\.write\("crawshrimp\.audit "/)
 })
 
 test('runtime suppresses native web registration even when an upstream preset mounts tool-web', async () => {

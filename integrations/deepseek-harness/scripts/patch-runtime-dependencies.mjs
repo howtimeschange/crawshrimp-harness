@@ -34,8 +34,11 @@ export const CRAWSHRIMP_DSH_IM_NATIVE_CONTROLS_MARKER = 'crawshrimp-dsh-im-411-n
 export const CRAWSHRIMP_DSH_IM_APPROVAL_DISPLAY_ARGUMENTS_MARKER = 'crawshrimp-approval-display-arguments-v4'
 export const CRAWSHRIMP_DSH_IM_PRODUCT_MODEL_CATALOG_MARKER = 'crawshrimp-dsh-im-411-product-model-catalog-v1'
 export const CRAWSHRIMP_DSH_IM_APPROVAL_REPLIES_MARKER = 'crawshrimp-dsh-im-411-approval-replies-v2'
+export const CRAWSHRIMP_DSH_IM_APPROVAL_BRIEF_CARD_MARKER = 'crawshrimp-dsh-im-411-approval-brief-card-v1'
+export const CRAWSHRIMP_DSH_WEB_APPROVAL_ALLOW_ALL_MARKER = 'crawshrimp-dsh-im-411-web-approval-allow-all-v1'
 export const CRAWSHRIMP_DSH_IM_BUILT_OVERLAY_MARKER = 'crawshrimp-dsh-im-411-built-overlay-v2'
 export const CRAWSHRIMP_DEEPSEEK_VISION_BRIDGE_MARKER = 'crawshrimp-deepseek-vision-bridge-v3'
+export const CRAWSHRIMP_DEEPSEEK_VISION_AUDIT_MARKER = 'crawshrimp-deepseek-vision-audit-v1'
 export const CRAWSHRIMP_DEEPSEEK_VISION_ADMISSION_MARKER = 'crawshrimp-deepseek-vision-admission-v1'
 export const CRAWSHRIMP_DISABLE_NATIVE_WEB_TOOLS_MARKER = 'crawshrimp-disable-native-web-tools-v1'
 export const CRAWSHRIMP_WORKSPACE_ACCESS_PROBE_MARKER = 'crawshrimp-workspace-access-probe-v1'
@@ -58,28 +61,79 @@ function compactModelName(value) {
 const PRODUCT_MODEL_ALIASES = new Map([
   ['v4pro', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-pro' }],
   ['deepseekv4pro', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-pro' }],
+  ['deepseekofficialv4pro', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-pro' }],
   ['v4flash', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash' }],
   ['deepseekv4flash', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash' }],
+  ['deepseekofficialv4flash', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash' }],
+  ['deepseekv4flashvisionexp', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash-vision-exp' }],
+  ['deepseekofficialv4flashvisionexp', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash-vision-exp' }],
   ['gpt5', { provider: 'crawshrimp-overseas-openai', model: 'gpt-5.5' }],
+  ['gpt55', { provider: 'crawshrimp-overseas-openai', model: 'gpt-5.5' }],
 ]);
 
+const SAFE_MODEL_TARGET = /^[\\p{L}\\p{N}._/:\\s-]{1,256}$/u;
+const NATURAL_MODEL_LIST_PHRASES = new Set([
+  '可以切换模型吗',
+  '能切换模型吗',
+  '怎么切换模型',
+]);
+const NATURAL_MODEL_CURRENT_PHRASES = new Set([
+  '当前是什么模型',
+  '现在用的哪个模型',
+  '当前模型',
+  '现在模型',
+  '用的什么模型',
+]);
+const NATURAL_MODEL_SELECTION_PATTERNS = Object.freeze([
+  /^(?:切换(?:模型)?(?:到|为)?|换成|改成|使用(?:模型)?(?:到|为)?)[\\s：:]*([^\\n]{1,256}?)(?:\\s*模型)?$/u,
+  /^切换模型到\\s*(.+)$/u,
+  /^切(?:到|成|为)\\s*(.+)$/u,
+  /^换到\\s*(.+)$/u,
+  /^换成\\s*(.+)$/u,
+  /^改用\\s*(.+)$/u,
+  /^使用\\s+(.+?)\\s*模型$/u,
+  /^用\\s*(.+?)\\s*模型$/u,
+  /^模型(?:切换到|换成|改成|设置为|设为)\\s*(.+)$/u,
+]);
+
+function modelLookupVariants(value) {
+  const normalized = cleanText(value).toLocaleLowerCase('en-US');
+  if (!normalized) return [];
+  const variants = new Set([normalized, compactModelName(normalized)]);
+  for (const suffix of ['模型', 'model']) {
+    if (normalized.endsWith(suffix)) {
+      const withoutSuffix = normalized.slice(0, -suffix.length).trim();
+      if (withoutSuffix) variants.add(withoutSuffix);
+      const compactWithoutSuffix = compactModelName(withoutSuffix);
+      if (compactWithoutSuffix) variants.add(compactWithoutSuffix);
+    }
+  }
+  return [...variants].filter(Boolean);
+}
+
 function safeDirectModelAlias(command) {
-  if (!/^[\\p{L}\\p{N}._\\s-]{1,128}$/u.test(command)) return null;
+  if (!SAFE_MODEL_TARGET.test(command)) return null;
   return PRODUCT_MODEL_ALIASES.has(compactModelName(command)) ? command : null;
 }
 
 export function parseNaturalModelCommand(text) {
   const command = cleanText(text);
   if (!command || command.startsWith('/')) return null;
-  if (/^(?:可以|能)?(?:查看|列出|显示|有什么|有哪些|全部)?(?:可用)?(?:大)?模型(?:吗|呢|列表)?[？?]?$/u.test(command)) {
+  if (NATURAL_MODEL_LIST_PHRASES.has(command)
+    || /^(?:可以|能)?(?:查看|列出|显示|有什么|有哪些|全部)?(?:可用)?(?:大)?模型(?:吗|呢|列表)?[？?]?$/u.test(command)) {
     return { action: 'list' };
   }
-  if (/^(?:当前|现在|目前).*(?:是什么|哪个|查看)?.*(?:大)?模型[？?]?$/u.test(command)) {
+  if (NATURAL_MODEL_CURRENT_PHRASES.has(command)
+    || /^(?:当前|现在|目前).*(?:是什么|哪个|查看)?.*(?:大)?模型[？?]?$/u.test(command)) {
     return { action: 'current' };
   }
-  const selection = /^(?:切换(?:模型)?(?:到|为)?|换成|改成|使用(?:模型)?(?:到|为)?)[\\s：:]*([^\\n]{1,128}?)(?:\\s*模型)?$/u.exec(command);
+  const selection = NATURAL_MODEL_SELECTION_PATTERNS
+    .map((pattern) => pattern.exec(command))
+    .find(Boolean);
   const requested = cleanText(selection?.[1] ?? safeDirectModelAlias(command));
-  return requested ? { action: 'select', requested } : null;
+  return requested && SAFE_MODEL_TARGET.test(requested)
+    ? { action: 'select', requested }
+    : null;
 }
 
 export function isNaturalModelCommand(text) {
@@ -95,22 +149,159 @@ function boundSession(harness, state, key) {
 
 async function modelSelectionFor(requested, harness, state, key, options) {
   const bound = boundSession(harness, state, key);
-  if (!bound || typeof bound.session?.models !== 'function') return null;
-  const catalog = await bound.session.models(options.signal ? { signal: options.signal } : undefined);
-  const expected = compactModelName(requested);
-  const alias = PRODUCT_MODEL_ALIASES.get(expected);
-  const candidates = [];
-  for (const group of Array.isArray(catalog?.groups) ? catalog.groups : []) {
-    for (const model of Array.isArray(group?.models) ? group.models : []) {
-      if ((alias && group?.id === alias.provider && model?.id === alias.model)
-        || compactModelName(model?.id) === expected
-        || compactModelName(model?.name) === expected) {
-        candidates.push({ provider: group.id, model: model.id });
-      }
+  if (!bound) return null;
+  const requestOptions = options.signal ? { signal: options.signal } : undefined;
+  let catalog = null;
+  if (typeof bound.session?.models === 'function') {
+    try {
+      catalog = await bound.session.models(requestOptions);
+    } catch {
+      // The product catalog below is the controlled fallback when the native
+      // session catalog is unavailable during a cold or partially restored IM
+      // session. Never turn this into an unvalidated native /model command.
     }
   }
-  if (candidates.length === 0) return null;
-  return candidates.find(({ provider }) => provider === catalog?.current?.provider) ?? candidates[0];
+  const sessionMatches = matchingModelCandidates(sessionModelCandidates(catalog), requested);
+  if (sessionMatches.length > 1) return { ambiguous: sessionMatches, source: 'session' };
+  if (sessionMatches.length === 1) return { selection: sessionMatches[0], source: 'session' };
+
+  if (typeof harness?.listCrawshrimpModelCatalog === 'function') {
+    try {
+      const productCatalog = await harness.listCrawshrimpModelCatalog(requestOptions);
+      const productMatches = matchingModelCandidates(productModelCandidates(productCatalog), requested);
+      if (productMatches.length > 1) return { ambiguous: productMatches, source: 'product' };
+      if (productMatches.length === 1) return { selection: productMatches[0], source: 'product' };
+    } catch {
+      // A malformed/unavailable product catalog must fail closed for selection.
+    }
+  }
+  return null;
+}
+
+function sessionModelCandidates(catalog) {
+  return (Array.isArray(catalog?.groups) ? catalog.groups : []).flatMap((group) => (
+    Array.isArray(group?.models) ? group.models.flatMap((model) => {
+      const provider = cleanText(group?.id);
+      const modelId = cleanText(model?.id);
+      if (!provider || !modelId) return [];
+      return [{
+        provider,
+        model: modelId,
+        displayName: cleanText(model?.name) || cleanText(model?.label) || modelId,
+        fullId: provider + '/' + modelId,
+        aliases: [model?.id, model?.name, model?.label, ...(Array.isArray(model?.aliases) ? model.aliases : [])],
+      }];
+    }) : []
+  ));
+}
+
+function productModelCandidates(catalog) {
+  return (Array.isArray(catalog?.groups) ? catalog.groups : []).flatMap((group) => (
+    Array.isArray(group?.models) ? group.models.flatMap((model) => {
+      if (model?.configured !== true || model?.supports_switch !== true) return [];
+      const provider = cleanText(model?.provider);
+      const productId = cleanText(model?.id);
+      const runtimeModel = cleanText(model?.runtime_model)
+        || cleanText(model?.runtimeModel)
+        || cleanText(model?.model)
+        || productId;
+      if (!provider || !productId || !runtimeModel) return [];
+      const displayName = cleanText(model?.label) || cleanText(model?.name) || productId;
+      return [{
+        provider,
+        model: runtimeModel,
+        displayName,
+        fullId: provider + '/' + runtimeModel,
+        aliases: [
+          productId,
+          displayName,
+          model?.name,
+          model?.label,
+          provider + '/' + productId,
+          runtimeModel,
+          provider + '/' + runtimeModel,
+        ],
+      }];
+    }) : []
+  ));
+}
+
+function matchingModelCandidates(candidates, requested) {
+  const unique = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    const id = candidate?.provider + '/' + candidate?.model;
+    if (!candidate?.provider || !candidate?.model || seen.has(id)) continue;
+    seen.add(id);
+    unique.push(candidate);
+  }
+  const raw = cleanText(requested).toLocaleLowerCase('en-US');
+  const lookups = modelLookupVariants(requested);
+  if (!raw || lookups.length === 0) return [];
+  const alias = PRODUCT_MODEL_ALIASES.get(compactModelName(requested));
+  const exact = unique.filter((candidate) => (
+    candidate.fullId.toLocaleLowerCase('en-US') === raw
+      || (alias && candidate.provider === alias.provider && candidate.model === alias.model)
+  ));
+  if (exact.length > 0) return exact;
+  return unique.filter((candidate) => {
+    const aliases = [candidate.fullId, candidate.model, candidate.displayName, ...(candidate.aliases || [])]
+      .filter((value) => typeof value === 'string' && value);
+    return aliases.some((value) => modelLookupVariants(value).some((lookup) => lookups.includes(lookup)));
+  });
+}
+
+function ambiguousModelMessage(matches) {
+  const ids = matches.map((candidate) => candidate.fullId).sort();
+  return commandResult([
+    '找到多个匹配的模型，请使用 provider/model 明确指定：',
+    '',
+    ...ids.map((id) => '- ' + id),
+    '',
+    '例如：切换到 provider/model',
+  ].join('\\n'));
+}
+
+async function selectProductModel(bound, selection, options) {
+  if (options.hasImages) return commandResult('模型切换命令仅支持纯文字，请移除图片后重试。');
+  const requestOptions = options.signal ? { signal: options.signal } : undefined;
+  if (typeof bound.session?.isRunning === 'function' && await bound.session.isRunning(requestOptions)) {
+    return commandResult('当前任务正在运行，请等待完成或先发送 /stop。');
+  }
+  if (typeof bound.session?.hasActiveTurn === 'function'
+    && await bound.session.hasActiveTurn(options.control, requestOptions)) {
+    return commandResult('当前任务正在运行，请等待完成或先发送 /stop。');
+  }
+  if (typeof bound.session?.selectModel !== 'function') {
+    return commandResult('模型切换失败：当前会话不支持模型切换。');
+  }
+  const result = await bound.session.selectModel(
+    { provider: selection.provider, model: selection.model },
+    requestOptions,
+  );
+  const selected = result?.selected;
+  if (selected?.provider !== selection.provider || selected?.model !== selection.model) {
+    return commandResult('模型切换失败：当前会话没有确认所选模型。');
+  }
+  if (typeof bound.session.models === 'function') {
+    try {
+      const readback = await bound.session.models(requestOptions);
+      const current = readback?.current;
+      if (current?.provider && current?.model
+        && (current.provider !== selection.provider || current.model !== selection.model)) {
+        return commandResult('模型切换失败：当前会话读回的模型不一致。');
+      }
+    } catch {
+      // Product fallback is specifically for an unavailable native catalog;
+      // selectModel's own response remains the authoritative confirmation.
+    }
+  }
+  return commandResult([
+    '模型已切换为：',
+    selection.provider + '/' + selection.model,
+    '',
+    '后续消息将使用该模型。',
+  ].join('\\n'));
 }
 
 function productModelCatalogText(catalog) {
@@ -159,9 +350,28 @@ export async function runNaturalModelCommand(text, harness, state, key, options 
   if (!bound) {
     return commandResult('当前聊天还没有已绑定会话。请先发送一条普通消息创建会话，再切换模型。');
   }
-  const selection = await modelSelectionFor(command.requested, harness, state, key, options);
-  if (!selection) return runModelCommand('/model ' + command.requested, harness, state, key, options);
-  return runModelCommand('/model ' + selection.provider + '/' + selection.model, harness, state, key, options);
+  let resolution;
+  try {
+    resolution = await modelSelectionFor(command.requested, harness, state, key, options);
+  } catch {
+    return commandResult('暂时无法获取可切换模型，请稍后重试。');
+  }
+  if (resolution?.ambiguous) return ambiguousModelMessage(resolution.ambiguous);
+  if (!resolution?.selection) {
+    return commandResult([
+      '没有找到模型：' + command.requested,
+      '',
+      '请发送“有哪些模型”查看已配置且可切换的模型。',
+    ].join('\\n'));
+  }
+  if (resolution.source === 'product') {
+    try {
+      return await selectProductModel(bound, resolution.selection, options);
+    } catch {
+      return commandResult('模型切换失败：当前会话没有确认所选模型。');
+    }
+  }
+  return runModelCommand('/model ' + resolution.selection.provider + '/' + resolution.selection.model, harness, state, key, options);
 }
 
 export function parseNaturalPermissionCommand(text) {
@@ -801,8 +1011,216 @@ export function harnessApprovalText(payload, {
       'Harness approval correlated display arguments',
     )
   }
+  source = patchDshImApprovalBriefCardSource(source)
   writeFileSync(approval, source)
   return approval
+}
+
+export function patchDshImApprovalBriefCardSource(source) {
+  if (source.includes(CRAWSHRIMP_DSH_IM_APPROVAL_BRIEF_CARD_MARKER)) return source
+  source = replaceRequired(
+    source,
+    `function toolArguments(toolCall) {
+  const source = toolCall?.arguments;
+  if (source !== null && typeof source === 'object') {
+    try {
+      return JSON.stringify(source, null, 2);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof source !== 'string') return null;
+  const raw = printableText(source);
+  // Harness treats an empty tool argument string as an empty object.
+  if (!raw) return source === '' ? '{}' : null;
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
+}`,
+    `// ${CRAWSHRIMP_DSH_IM_APPROVAL_BRIEF_CARD_MARKER}: mobile IM approvals show purpose plus bounded parameters.
+const MAX_APPROVAL_BRIEF_FIELDS = 6;
+const MAX_APPROVAL_BRIEF_VALUE = 80;
+
+function briefValue(value) {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) return \`[\${value.length}项]\`;
+  if (typeof value === 'object') return '[对象]';
+  let text = printableText(String(value));
+  if (text.length > MAX_APPROVAL_BRIEF_VALUE) {
+    text = \`\${text.slice(0, MAX_APPROVAL_BRIEF_VALUE - 3)}...\`;
+  }
+  return text;
+}
+
+function collectBriefFields(source, fields, prefix = '') {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return;
+  for (const [key, value] of Object.entries(source)) {
+    if (fields.length >= MAX_APPROVAL_BRIEF_FIELDS) return;
+    const safeKey = printableText(String(key));
+    if (!safeKey) continue;
+    if (value && typeof value === 'object' && !Array.isArray(value)
+      && ['summary', 'params', 'arguments', 'plan'].includes(safeKey)) {
+      collectBriefFields(value, fields, \`\${prefix}\${safeKey}.\`);
+      continue;
+    }
+    const safeValue = briefValue(value);
+    if (!safeValue) continue;
+    fields.push(\`\${prefix}\${safeKey}=\${safeValue}\`);
+  }
+}
+
+function briefObjectText(source) {
+  const fields = [];
+  collectBriefFields(source, fields);
+  return fields.length > 0 ? fields.join('\\n') : null;
+}
+
+function briefArgumentText(source) {
+  if (source !== null && typeof source === 'object') return briefObjectText(source);
+  if (typeof source !== 'string') return null;
+  const raw = printableText(source);
+  if (!raw) return source === '' ? '{}' : null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed !== null && typeof parsed === 'object') return briefObjectText(parsed);
+    return briefValue(parsed);
+  } catch {
+    return briefValue(raw);
+  }
+}
+
+function toolArguments(toolCall) {
+  return briefArgumentText(toolCall?.arguments);
+}`,
+    'dsh-im approval brief argument preview',
+  )
+  const briefCardTextAnchor = [
+    '抓虾 Harness',
+    'DeepSeek Harness',
+  ].map((brand) => `  const lines = [
+    t('${brand} 需要你的审批：'),
+    '',
+    t('工具：{tool}', { tool: printableText(payload.toolName) }),
+    t('操作参数：'),
+    operation,
+  ];
+  const reason = printableText(payload.reason);
+  if (reason) lines.push(t('原因：{reason}', { reason }));`).find((candidate) => source.includes(candidate))
+  if (!briefCardTextAnchor) {
+    throw new Error('dsh-im 4.11 product patch anchor changed: dsh-im approval brief card text')
+  }
+  return replaceRequired(
+    source,
+    briefCardTextAnchor,
+    `  const lines = [
+    t('抓虾 Harness 需要你的审批'),
+    '',
+    t('步骤：{step}', { step: printableText(payload.toolName) }),
+  ];
+  const reason = printableText(payload.reason);
+  if (reason) lines.push(t('说明：{reason}', { reason }));
+  lines.push(t('简略参数：'), operation);`,
+    'dsh-im approval brief card text',
+  )
+}
+
+/**
+ * rc.1 moved the Web approval composer into dsh-client-ui-approval. Restore
+ * the former allow-all affordance against that package's current Session
+ * command seam: elevate only the visible Session, then answer this request
+ * once. Reject and allow-once continue to use the native PendingApproval path.
+ */
+function patchDshWebApprovalAllowAll(root) {
+  const entry = requireFile(root, 'node_modules/@deepseek-ai/dsh-client-ui-approval/lib/client.js')
+  let source = readFileSync(entry, 'utf8')
+  if (source.includes(CRAWSHRIMP_DSH_WEB_APPROVAL_ALLOW_ALL_MARKER)) {
+    return { entry, patched: false }
+  }
+  source = replaceRequired(
+    source,
+    '.mna1RW_actionRow{justify-content:flex-end;gap:8px;padding:14px 16px;display:flex}',
+    '.mna1RW_actionRow{justify-content:flex-end;gap:8px;padding:14px 16px;display:flex;flex-wrap:wrap}',
+    'Web approval action row wrapping',
+  )
+  source = replaceRequired(
+    source,
+    '\t\t\t\tdetail: approval.callId === void 0 ? null : props.renderSlot("conversation.approval.detail", { callId: approval.callId }),\n\t\t\t\tt: props.t',
+    '\t\t\t\tdetail: approval.callId === void 0 ? null : props.renderSlot("conversation.approval.detail", { callId: approval.callId }),\n\t\t\t\trunCommand: props.runCommand,\n\t\t\t\tt: props.t',
+    'Web approval command injection prop',
+  )
+  source = replaceRequired(
+    source,
+    '\t\tfunction ApprovalFlow({ pending, detail, t }) {',
+    `\t\t/* ${CRAWSHRIMP_DSH_WEB_APPROVAL_ALLOW_ALL_MARKER}: elevate the current Session, then resolve only this approval once. */
+\t\tfunction ApprovalFlow({ pending, detail, runCommand, t }) {`,
+    'Web approval allow-all flow signature',
+  )
+  source = replaceRequired(
+    source,
+    '\t\t\t};\n\t\t\treturn (0, react_jsx_runtime.jsx)("div", {',
+    `\t\t\t};
+\t\t\tconst allowAll = () => {
+\t\t\t\tif (runCommand === void 0) return;
+\t\t\t\tsetAnswered(true);
+\t\t\t\tPromise.resolve().then(() => runCommand("/permission danger-full-access")).then((matched) => {
+\t\t\t\t\tif (!matched) throw new Error("permission command unavailable");
+\t\t\t\t\treturn pending.answer("allowed-once");
+\t\t\t\t}).catch(() => {
+\t\t\t\t\tsetAnswered(false);
+\t\t\t\t});
+\t\t\t};
+\t\t\treturn (0, react_jsx_runtime.jsx)("div", {`,
+    'Web approval allow-all handler',
+  )
+  source = replaceRequired(
+    source,
+    '\t\t\t\t\t\t\t\tchildren: t("allowOnce")\n\t\t\t\t\t\t\t})]',
+    `\t\t\t\t\t\t\t\t\tchildren: t("allowOnce")
+\t\t\t\t\t\t\t\t}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+\t\t\t\t\t\t\t\t\tvariant: "outline",
+\t\t\t\t\t\t\t\t\tdisabled: answered || runCommand === void 0,
+\t\t\t\t\t\t\t\t\tonClick: allowAll,
+\t\t\t\t\t\t\t\t\tchildren: t("allowAll")
+\t\t\t\t\t\t\t\t})]`,
+    'Web approval allow-all action',
+  )
+  source = replaceRequired(
+    source,
+    '\t\t\tallowOnce: "允许一次"\n\t\t};',
+    '\t\t\tallowOnce: "允许一次",\n\t\t\tallowAll: "允许所有"\n\t\t};',
+    'Web Chinese approval allow-all locale',
+  )
+  source = replaceRequired(
+    source,
+    '\t\t\tallowOnce: "Allow once"\n\t\t};',
+    '\t\t\tallowOnce: "Allow once",\n\t\t\tallowAll: "Allow all"\n\t\t};',
+    'Web English approval allow-all locale',
+  )
+  source = replaceRequired(
+    source,
+    '\t\tfunction apply(ctx) {\n\t\t\tctx.effect(() => ctx.locale.register(NS, {',
+    '\t\tfunction apply(ctx) {\n\t\t\tconst sessions = ctx.sessions;\n\t\t\tctx.effect(() => ctx.locale.register(NS, {',
+    'Web approval Session binding',
+  )
+  source = replaceRequired(
+    source,
+    '\t\t\t\tlocale: NS,\n\t\t\t\tchildren: { "conversation.approval.detail": {',
+    `\t\t\t\tlocale: NS,
+\t\t\t\tinject: (sessionId) => ({
+\t\t\t\t\trunCommand: async (line) => {
+\t\t\t\t\t\tconst session = sessions.binding(sessionId)?.session;
+\t\t\t\t\t\tif (session === void 0 || typeof session.command !== "function") return false;
+\t\t\t\t\t\tconst result = await session.command(line);
+\t\t\t\t\t\treturn result.ok && result.value.matched;
+\t\t\t\t\t}
+\t\t\t\t}),
+\t\t\t\tchildren: { "conversation.approval.detail": {`,
+    'Web approval Session command injection',
+  )
+  writeFileSync(entry, source, 'utf8')
+  return { entry, patched: true }
 }
 
 function patchDshImNativeChannelControls(root) {
@@ -1253,6 +1671,32 @@ function assertStandardPresetRootClosure(root) {
   return { packages: [...packages].sort(), standardPath, crawshrimpPath }
 }
 
+function patchPiAiDeepSeekVisionAudit(source) {
+  if (source.includes(CRAWSHRIMP_DEEPSEEK_VISION_AUDIT_MARKER)) return source
+  return replaceRequired(
+    source,
+    `\t\tonVisionPreflight: ({ provider, model, visionModel, sessionId }) => {
+\t\t\tctx.logger.info("crawshrimp.audit " + JSON.stringify({ event: "deepseek_vision_preflight", provider, model, vision_model: visionModel, session_id: sessionId ?? null }));
+\t\t},`,
+    `\t\t// ${CRAWSHRIMP_DEEPSEEK_VISION_AUDIT_MARKER}: retain the full preflight audit in logger and stderr.
+\t\tonVisionPreflight: ({ provider, model, visionModel, sessionId }) => {
+\t\t\tconst audit = {
+\t\t\t\tevent: "deepseek_vision_preflight",
+\t\t\t\tvision_preflight: true,
+\t\t\t\tprovider,
+\t\t\t\toriginal_model: model,
+\t\t\t\tvision_model: visionModel,
+\t\t\t\tsession_id: sessionId ?? null
+\t\t\t};
+\t\t\tctx.logger.info("crawshrimp.audit " + JSON.stringify(audit));
+\t\t\ttry {
+\t\t\t\tprocess.stderr.write("crawshrimp.audit " + JSON.stringify(audit) + "\\n");
+\t\t\t} catch {}
+\t\t},`,
+    'llm-pi-ai DeepSeek vision preflight audit',
+  )
+}
+
 /**
  * DSH rc.1 correctly rejects an image-bearing session on a text-only model.
  * Crawshrimp's official DeepSeek Flash/Pro routes are the deliberate exception:
@@ -1267,7 +1711,9 @@ function patchPiAiDeepSeekVisionBridge(root) {
   const entry = requireFile(root, 'node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js')
   let source = readFileSync(entry, 'utf8')
   if (source.includes(CRAWSHRIMP_DEEPSEEK_VISION_BRIDGE_MARKER)) {
-    return { entry, patched: false }
+    const audited = patchPiAiDeepSeekVisionAudit(source)
+    if (audited !== source) writeFileSync(entry, audited, 'utf8')
+    return { entry, patched: audited !== source }
   }
   if (source.includes('crawshrimp-deepseek-vision-bridge-v2')) {
     const legacyHelperName = ['crawshrimpLatest', 'ImageMessageIndex'].join('')
@@ -1286,6 +1732,7 @@ function patchPiAiDeepSeekVisionBridge(root) {
 }`)
       .replaceAll(legacyHelperName, 'crawshrimpLatestImageUserMessageIndex')
       .replaceAll('crawshrimp-deepseek-vision-bridge-v2', CRAWSHRIMP_DEEPSEEK_VISION_BRIDGE_MARKER)
+    source = patchPiAiDeepSeekVisionAudit(source)
     writeFileSync(entry, source, 'utf8')
     return { entry, patched: true }
   }
@@ -1420,6 +1867,7 @@ async function crawshrimpBridgeDeepSeekImages(snapshot, profile, options, apiKey
     '\t\tresolveAttachments: () => ctx.get("attachments"),\n\t\tresolveImageAccess: (attachments, ref) => resolveImageAttachmentAccess(attachments, (hostPath) => ctx.get("fs")?.processPathFromHostPath(hostPath), ref),\n\t\tonVisionPreflight: ({ provider, model, visionModel, sessionId }) => {\n\t\t\tctx.logger.info("crawshrimp.audit " + JSON.stringify({ event: "deepseek_vision_preflight", provider, model, vision_model: visionModel, session_id: sessionId ?? null }));\n\t\t},\n\t\tonReplayDegrade: ({ provider, model, reason }) => {',
     'llm-pi-ai DeepSeek vision bridge audit',
   )
+  source = patchPiAiDeepSeekVisionAudit(source)
   writeFileSync(entry, source, 'utf8')
   return { entry, patched: true }
 }
@@ -1605,6 +2053,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
   // development runtime produce the same user-visible source and Host bundle.
   const dshImBrand = patchDshImUserVisibleBrand(root)
   const dshImBuiltEntry = buildPatchedDshImBundle(root)
+  const dshWebApprovalAllowAll = patchDshWebApprovalAllowAll(root)
   const nativeWebTools = patchNativeWebToolRegistration(root)
   const workspaceAccessProbe = patchWorkspaceAccessProbe(root)
   const deepseekVisionBridge = patchPiAiDeepSeekVisionBridge(root)
@@ -1643,6 +2092,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
     dshImManifest,
     dshImEntry,
     dshImBuiltEntry,
+    dshWebApprovalAllowAll,
     nativeWebTools,
     workspaceAccessProbe,
     dshImBrandFiles: dshImBrand.files,

@@ -535,17 +535,36 @@ test('natural model phrases reuse the bound IM Session and preserve the bot defa
   assert.equal(existsSync(controlsPath), true)
   const controls = await import(`${pathToFileURL(controlsPath).href}?natural-model-control=${Date.now()}`)
 
-  assert.deepEqual(controls.parseNaturalModelCommand('有哪些模型'), { action: 'list' })
-  assert.deepEqual(controls.parseNaturalModelCommand('当前是什么模型'), { action: 'current' })
-  assert.deepEqual(controls.parseNaturalModelCommand('换成 deepseek-v4-pro'), {
-    action: 'select', requested: 'deepseek-v4-pro',
-  })
-  assert.deepEqual(controls.parseNaturalModelCommand('切换到v4 pro 模型'), {
-    action: 'select', requested: 'v4 pro',
-  })
-  assert.deepEqual(controls.parseNaturalModelCommand('v4pro'), {
-    action: 'select', requested: 'v4pro',
-  })
+  for (const [phrase, expected] of [
+    ['有哪些模型', { action: 'list' }],
+    ['可以切换模型吗', { action: 'list' }],
+    ['能切换模型吗', { action: 'list' }],
+    ['怎么切换模型', { action: 'list' }],
+    ['当前是什么模型', { action: 'current' }],
+    ['现在用的哪个模型', { action: 'current' }],
+    ['当前模型', { action: 'current' }],
+    ['现在模型', { action: 'current' }],
+    ['用的什么模型', { action: 'current' }],
+    ['切换到 deepseek-v4-pro', { action: 'select', requested: 'deepseek-v4-pro' }],
+    ['切换模型到 deepseek-v4-pro', { action: 'select', requested: 'deepseek-v4-pro' }],
+    ['切到 deepseek-v4-pro', { action: 'select', requested: 'deepseek-v4-pro' }],
+    ['切成 deepseek-v4-pro', { action: 'select', requested: 'deepseek-v4-pro' }],
+    ['切为 deepseek-v4-pro', { action: 'select', requested: 'deepseek-v4-pro' }],
+    ['换到 deepseek-v4-pro', { action: 'select', requested: 'deepseek-v4-pro' }],
+    ['换成 deepseek-v4-pro', { action: 'select', requested: 'deepseek-v4-pro' }],
+    ['改用 deepseek-v4-pro', { action: 'select', requested: 'deepseek-v4-pro' }],
+    ['使用 deepseek-v4-pro 模型', { action: 'select', requested: 'deepseek-v4-pro' }],
+    ['用 deepseek-v4-pro 模型', { action: 'select', requested: 'deepseek-v4-pro' }],
+    ['模型切换到 deepseek-v4-pro', { action: 'select', requested: 'deepseek-v4-pro' }],
+    ['模型换成 deepseek-v4-pro', { action: 'select', requested: 'deepseek-v4-pro' }],
+    ['模型改成 deepseek-v4-pro', { action: 'select', requested: 'deepseek-v4-pro' }],
+    ['模型设置为 deepseek-v4-pro', { action: 'select', requested: 'deepseek-v4-pro' }],
+    ['模型设为 deepseek-v4-pro', { action: 'select', requested: 'deepseek-v4-pro' }],
+    ['切换到v4 pro 模型', { action: 'select', requested: 'v4 pro' }],
+    ['v4pro', { action: 'select', requested: 'v4pro' }],
+  ]) {
+    assert.deepEqual(controls.parseNaturalModelCommand(phrase), expected, phrase)
+  }
 
   let current = { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash' }
   const selected = []
@@ -619,6 +638,102 @@ test('natural model phrases reuse the bound IM Session and preserve the bot defa
     { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-pro' },
     { provider: 'crawshrimp-overseas-openai', model: 'gpt-5.5' },
   ])
+})
+
+test('natural model selection uses a controlled product catalog fallback and never silently chooses unsafe candidates', async () => {
+  const patcher = await import(`${pathToFileURL(resolve(harnessRoot, 'scripts/patch-runtime-dependencies.mjs')).href}?natural-model-fallback-red=${Date.now()}`)
+  patcher.patchRuntimeDependencies(harnessRoot)
+  const controlsPath = resolve(dshImRoot, 'src/channels/shared/crawshrimp-natural-controls.mjs')
+  const controls = await import(`${pathToFileURL(controlsPath).href}?natural-model-fallback=${Date.now()}`)
+
+  const selected = []
+  let current = { provider: 'provider-ok', model: 'runtime-ok' }
+  const session = {
+    sessionExists: async () => true,
+    isRunning: async () => false,
+    hasActiveTurn: async () => false,
+    models: async () => ({ groups: [], failures: [], current }),
+    selectModel: async (selection) => {
+      selected.push(selection)
+      current = { ...selection }
+      return { selected: { ...selection } }
+    },
+  }
+  const catalog = {
+    ok: true,
+    groups: [{
+      id: 'llm',
+      name: 'LLM 对话模型',
+      models: [
+        {
+          id: 'product-ok',
+          runtime_model: 'runtime-ok',
+          label: '显示模型',
+          provider: 'provider-ok',
+          configured: true,
+          supports_switch: true,
+        },
+        {
+          id: 'not-configured',
+          runtime_model: 'runtime-hidden',
+          label: '隐藏模型',
+          provider: 'provider-hidden',
+          configured: false,
+          supports_switch: true,
+        },
+        {
+          id: 'not-switchable',
+          runtime_model: 'runtime-image',
+          label: '生图模型',
+          provider: 'provider-image',
+          configured: true,
+          supports_switch: false,
+        },
+        {
+          id: 'twin-a',
+          runtime_model: 'runtime-twin-a',
+          label: '同名模型',
+          provider: 'provider-a',
+          configured: true,
+          supports_switch: true,
+        },
+        {
+          id: 'twin-b',
+          runtime_model: 'runtime-twin-b',
+          label: '同名模型',
+          provider: 'provider-b',
+          configured: true,
+          supports_switch: true,
+        },
+      ],
+    }],
+  }
+  const harness = {
+    workspaceSession: () => session,
+    listCrawshrimpModelCatalog: async () => catalog,
+  }
+  const state = { sessionFor: () => 'im-session-model-fallback' }
+
+  for (const requested of ['runtime-ok', 'product-ok', '显示模型', 'provider-ok/runtime-ok']) {
+    const result = await controls.runNaturalModelCommand(`切换到 ${requested}`, harness, state, 'direct:merchant')
+    assert.match(result.message, /runtime-ok/)
+  }
+  assert.deepEqual(selected, [
+    { provider: 'provider-ok', model: 'runtime-ok' },
+    { provider: 'provider-ok', model: 'runtime-ok' },
+    { provider: 'provider-ok', model: 'runtime-ok' },
+    { provider: 'provider-ok', model: 'runtime-ok' },
+  ])
+
+  const ambiguous = await controls.runNaturalModelCommand('切换到 同名模型', harness, state, 'direct:merchant')
+  assert.match(ambiguous.message, /多个匹配/)
+  assert.match(ambiguous.message, /provider-a\/runtime-twin-a/)
+  assert.match(ambiguous.message, /provider-b\/runtime-twin-b/)
+  assert.equal(selected.length, 4)
+
+  const hidden = await controls.runNaturalModelCommand('切换到 隐藏模型', harness, state, 'direct:merchant')
+  assert.match(hidden.message, /没有找到模型/)
+  assert.equal(selected.length, 4)
 })
 
 test('natural permission controls require same-user confirmation before full access', async () => {
@@ -890,6 +1005,40 @@ test('dsh-im approval presents sanitized payload arguments when the display name
     toolCall: { ...toolCall, callId: 'other-call' },
   }), null)
   assert.equal(approval.harnessApprovalText({ ...payload, arguments: undefined }, { toolCall }), null)
+})
+
+test('dsh-im approval uses a brief correlated card with bounded fields and values', async () => {
+  const patcher = await import(`${pathToFileURL(resolve(harnessRoot, 'scripts/patch-runtime-dependencies.mjs')).href}?approval-brief-red=${Date.now()}`)
+  patcher.patchRuntimeDependencies(harnessRoot)
+  const approval = await import(moduleUrl('src/channels/shared/harness-approval.mjs', 'approval-brief-bounded'))
+  const sentinel = 'SECRET_SENTINEL_' + 'x'.repeat(500)
+  const payload = {
+    type: 'approval/requested',
+    sessionId: 'session-brief',
+    approvalId: 'approval-brief',
+    toolName: '运行任务: brief-card',
+    callId: 'call-brief',
+    arguments: JSON.stringify({
+      path: '/tmp/report.txt',
+      reason: sentinel,
+      params: { plan_id: 'plan-brief', owner: 'merchant-a', extra: 'bounded' },
+    }),
+  }
+  const text = approval.harnessApprovalText(payload, {
+    toolCall: {
+      callId: 'call-brief',
+      name: 'mcp__crawshrimp__task_run',
+      arguments: JSON.stringify({ ignored: 'the payload display arguments are authoritative' }),
+    },
+  })
+
+  assert.match(text, /简略参数：/)
+  assert.ok(!text.includes(sentinel), 'the original 500-character value must not appear in full')
+  const fieldLines = text.split('\n').filter((line) => /^[^\n=]{1,80}=/.test(line))
+  assert.ok(fieldLines.length <= 6, `expected at most six brief fields, got ${fieldLines.length}`)
+  for (const line of fieldLines) {
+    assert.ok(line.split('=').slice(1).join('=').length <= 80, line)
+  }
 })
 
 test('dsh-im modern approval frames preserve product-supplied sanitized arguments', () => {
