@@ -597,13 +597,18 @@ def test_missing_explicit_tab_creates_tombstone_grant(monkeypatch):
 
 
 def test_fs_write_reaches_approval_instead_of_name_error(tmp_path, monkeypatch):
+    async def reject(*_args):
+        return "rejected"
+
     previous_run = mcp_gateway.ctx.active_run
+    previous_approval = mcp_gateway.ctx.request_approval
     mcp_gateway.ctx.active_run = {"run_id": "run-write", "session_id": "session-write"}
-    monkeypatch.setattr(mcp_gateway, "_await_approval_blocking", lambda *_args: "rejected")
+    mcp_gateway.ctx.request_approval = reject
     try:
-        result = mcp_gateway.tool_fs_write(str(tmp_path / "blocked.txt"), "content")
+        result = asyncio.run(mcp_gateway.tool_fs_write(str(tmp_path / "blocked.txt"), "content"))
     finally:
         mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.request_approval = previous_approval
     assert result["status"] == "rejected"
     assert not (tmp_path / "blocked.txt").exists()
 
@@ -623,14 +628,19 @@ def test_fs_write_retries_transient_windows_sharing_violation(tmp_path, monkeypa
                 raise error
         return original_write_text(path, *args, **kwargs)
 
+    async def approve(*_args):
+        return "approved"
+
     previous_run = mcp_gateway.ctx.active_run
+    previous_approval = mcp_gateway.ctx.request_approval
     mcp_gateway.ctx.active_run = {"run_id": "run-write-retry", "session_id": "session-write-retry"}
-    monkeypatch.setattr(mcp_gateway, "_await_approval_blocking", lambda *_args: "approved")
+    mcp_gateway.ctx.request_approval = approve
     monkeypatch.setattr(Path, "write_text", transient_write_text)
     try:
-        result = mcp_gateway.tool_fs_write(str(target), "content")
+        result = asyncio.run(mcp_gateway.tool_fs_write(str(target), "content"))
     finally:
         mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.request_approval = previous_approval
 
     assert result["ok"] is True
     assert attempts == 2
@@ -1000,7 +1010,7 @@ def test_plan_is_claimed_before_creating_task_instance(monkeypatch):
             "current_tool_call_id": "",
         })
         try:
-            return mcp_gateway.tool_task_run("plan-race")
+            return asyncio.run(mcp_gateway.tool_task_run("plan-race"))
         finally:
             mcp_gateway.reset_tool_context(token)
 
@@ -1488,11 +1498,6 @@ def test_task_control_uses_async_approval_without_blocking_event_loop(monkeypatc
         mcp_gateway.ctx.active_run = {"run_id": "run-control", "session_id": "session-control"}
         mcp_gateway.ctx.request_approval = reject
         mcp_gateway.ctx.control_task_instance = control
-        monkeypatch.setattr(
-            mcp_gateway,
-            "_await_approval_blocking",
-            lambda *_args: (_ for _ in ()).throw(AssertionError("async tool must not block")),
-        )
         try:
             result = await mcp_gateway.tool_task_control("ti-control", "stop")
         finally:
@@ -2261,6 +2266,9 @@ def test_agent_start_generation_uses_authenticated_web_profile_without_install_w
     assert calls["worker.start_generation"]["params"]["webPort"] == 19065
     assert service._web_origin == "http://127.0.0.1:19065/"
     assert service._web_launch_url == "http://127.0.0.1:19065/?launch=unit-token"
+    # The DSH Web profile and the Session runtime share this workspace so Web
+    # can list its native session and render the corresponding approval cards.
+    assert calls["worker.start_generation"]["params"]["cwd"] == str(data_root / "agent" / "workspace")
     assert service_mod.os.environ["CRAWSHRIMP_AGENT_PROVIDER"] == "crawshrimp-overseas-openai"
     assert service_mod.os.environ["CRAWSHRIMP_AGENT_MODEL"] == "gpt-5.6-terra"
     assert not (harness_root / "runtime-cordis.yml").exists()

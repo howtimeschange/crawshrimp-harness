@@ -5,7 +5,7 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   getRequiredNativeRuntimePackages,
@@ -40,6 +40,28 @@ const lockMarker = join(stageRoot, '.staged-lock-hash')
 const crossTarget = isCrossStageTarget(target)
 const skipBootCheck = shouldSkipBootCheck({ args }) || crossTarget
 const force = args.includes('--force')
+const cliSource = join(repoRoot, 'skills', 'cli')
+const EXCLUDED_SOURCE_TREE_ENTRIES = new Set(['.git', 'node_modules', '.DS_Store'])
+
+// Public built-in skills must ship as executable production closures, rather
+// than leaving npm/pnpm installation to an end user on first use.
+const CLI_NODE_SKILL_RUNTIMES = [
+  { directory: 'bmall-cli', packageManager: 'pnpm', entry: 'dist/cli.js' },
+  { directory: 'DeepDrawCLI', packageManager: 'npm', entry: 'dist/cli/main.js' },
+  { directory: 'semir-yunpan-cli', packageManager: 'npm', entry: 'dist/cli.js' },
+  { directory: 'tmall-cli', packageManager: 'npm', entry: 'dist/cli.js' },
+]
+
+const REQUIRED_SKILL_SOURCE_FILES = [
+  [sourceRoot, 'skills/dont-stop/SKILL.md'],
+  [sourceRoot, 'skills/crawshrimp-skill/SKILL.md'],
+  [sourceRoot, 'skills/web-automation-skill/SKILL.md'],
+  [sourceRoot, 'skills/crawshrimp-adapter-skill/SKILL.md'],
+  [sourceRoot, 'skills/crawshrimp-probe-skill/SKILL.md'],
+  [sourceRoot, 'skills/suanming/SKILL.md'],
+  [repoRoot, 'skills/cli/vipshop-hot-strategy-agent/src/vipshop_hot_strategy_agent/cli.py'],
+  ...CLI_NODE_SKILL_RUNTIMES.map(({ directory }) => [repoRoot, `skills/cli/${directory}/package.json`]),
+]
 const required = [
   markerName,
   'package.json',
@@ -77,6 +99,18 @@ const required = [
   'profiles/web/node_modules/@xmanrui/dsh-im/package.json',
   'profiles/web/node_modules/crawshrimp-product-bridge/lib/index.js',
   'profiles/web/node_modules/crawshrimp-slots/lib/client.js',
+  'skills/dont-stop/SKILL.md',
+  'skills/crawshrimp-skill/SKILL.md',
+  'skills/web-automation-skill/SKILL.md',
+  'skills/crawshrimp-adapter-skill/SKILL.md',
+  'skills/crawshrimp-probe-skill/SKILL.md',
+  'skills/suanming/SKILL.md',
+  'skills/cli/vipshop-hot-strategy-agent/src/vipshop_hot_strategy_agent/cli.py',
+  ...CLI_NODE_SKILL_RUNTIMES.flatMap(({ directory, entry }) => [
+    `skills/cli/${directory}/package.json`,
+    `skills/cli/${directory}/${entry}`,
+    `skills/cli/${directory}/node_modules`,
+  ]),
 ]
 
 function fail(message) {
@@ -88,6 +122,7 @@ function hashTree(path) {
   const hash = createHash('sha256')
   const walk = (directory) => {
     for (const name of readdirSync(directory).sort()) {
+      if (EXCLUDED_SOURCE_TREE_ENTRIES.has(name)) continue
       const child = join(directory, name)
       const stat = statSync(child)
       if (stat.isDirectory()) walk(child)
@@ -96,6 +131,17 @@ function hashTree(path) {
   }
   if (existsSync(path)) walk(path)
   return hash.digest('hex')
+}
+
+function copyDir(source, destination) {
+  // Git metadata and development-machine dependencies must not leak into the
+  // packaged runtime. CLI dependencies are rebuilt below from their lockfiles.
+  cpSync(source, destination, {
+    recursive: true,
+    force: true,
+    errorOnExist: false,
+    filter: (path) => !EXCLUDED_SOURCE_TREE_ENTRIES.has(basename(path)),
+  })
 }
 
 function linkProfilePackage(packagePath) {
@@ -108,7 +154,7 @@ function linkProfilePackage(packagePath) {
 }
 
 function stageProfile() {
-  cpSync(profileSource, profileRoot, { recursive: true, force: true })
+  copyDir(profileSource, profileRoot)
   linkProfilePackage('@xmanrui/dsh-im')
   linkProfilePackage('crawshrimp-product-bridge')
   linkProfilePackage('crawshrimp-slots')
@@ -135,12 +181,58 @@ function assertNativePackages() {
   }
 }
 
+function assertSkillSourcesPresent() {
+  const missing = REQUIRED_SKILL_SOURCE_FILES
+    .map(([root, relative]) => join(root, relative))
+    .filter((file) => !existsSync(file))
+  if (missing.length) {
+    fail(`内置技能源码不完整: ${missing.join(', ')}. 请先执行 git submodule update --init --recursive`)
+  }
+}
+
+function runCliBuild(command, commandArgs, cwd) {
+  const result = spawnSync(command, commandArgs, {
+    cwd,
+    stdio: 'inherit',
+    env: process.env,
+    shell: process.platform === 'win32',
+  })
+  if (result.error) fail(`内置 CLI 构建无法执行 ${command}: ${result.error.message}`)
+  if (result.status !== 0) fail(`内置 CLI 构建失败: ${command} ${commandArgs.join(' ')} (exit ${result.status})`)
+}
+
+function buildCliSkillRuntimes(cliDest) {
+  for (const spec of CLI_NODE_SKILL_RUNTIMES) {
+    const skillRoot = join(cliDest, spec.directory)
+    if (!existsSync(join(skillRoot, 'package.json'))) {
+      fail(`CLI 技能包缺少 package.json: ${spec.directory}`)
+    }
+    rmSync(join(skillRoot, 'node_modules'), { recursive: true, force: true })
+    rmSync(join(skillRoot, 'dist'), { recursive: true, force: true })
+    if (spec.packageManager === 'pnpm') {
+      runCliBuild('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], skillRoot)
+      runCliBuild('pnpm', ['run', 'build'], skillRoot)
+      runCliBuild('pnpm', ['prune', '--prod', '--ignore-scripts'], skillRoot)
+    } else {
+      runCliBuild('npm', ['ci', '--ignore-scripts'], skillRoot)
+      runCliBuild('npm', ['run', 'build'], skillRoot)
+      runCliBuild('npm', ['prune', '--omit=dev', '--ignore-scripts'], skillRoot)
+    }
+    if (!existsSync(join(skillRoot, spec.entry)) || !existsSync(join(skillRoot, 'node_modules'))) {
+      fail(`CLI 技能包生产产物不完整: ${spec.directory}`)
+    }
+  }
+}
+
+assertSkillSourcesPresent()
+
 const hashInputs = [
   readFileSync(join(sourceRoot, 'package-lock.json')),
   hashTree(join(sourceRoot, 'worker')),
   hashTree(join(sourceRoot, 'skills')),
   hashTree(join(sourceRoot, 'crawshrimp-product-bridge')),
   hashTree(join(sourceRoot, 'crawshrimp-slots')),
+  hashTree(cliSource),
   hashTree(profileSource),
   readFileSync(fileURLToPath(import.meta.url)),
   readFileSync(join(here, 'patch-runtime-dependencies.mjs')),
@@ -165,10 +257,11 @@ if (force || current !== fingerprint) {
 
   for (const name of ['worker', 'skills', 'crawshrimp-launcher', 'crawshrimp-slots', 'crawshrimp-product-bridge']) {
     const source = join(sourceRoot, name)
-    if (existsSync(source)) cpSync(source, join(stageRoot, name), { recursive: true, force: true })
+    if (existsSync(source)) copyDir(source, join(stageRoot, name))
   }
-  const cliSource = join(repoRoot, 'skills', 'cli')
-  if (existsSync(cliSource)) cpSync(cliSource, join(stageRoot, 'skills', 'cli'), { recursive: true, force: true })
+  const cliDest = join(stageRoot, 'skills', 'cli')
+  copyDir(cliSource, cliDest)
+  buildCliSkillRuntimes(cliDest)
   stageProfile()
   patchRuntimeDependencies(stageRoot)
   writeFileSync(join(stageRoot, markerName), JSON.stringify(target, null, 2) + '\n')

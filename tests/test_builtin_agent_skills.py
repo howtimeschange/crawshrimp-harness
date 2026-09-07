@@ -43,6 +43,20 @@ BUILTIN_GENERAL_SKILLS = {
     ],
 }
 
+EXPECTED_TOP_LEVEL_SKILL_PACKS = {
+    *BUILTIN_GENERAL_SKILLS,
+    "cli-bmall",
+    "cli-deepdraw",
+    "cli-semir-yunpan",
+    "cli-tmall",
+    "cli-vipshop-hot-strategy",
+    "crawshrimp-adapter-skill",
+    "crawshrimp-probe-skill",
+    "crawshrimp-skill",
+    "dont-stop",
+    "web-automation-skill",
+}
+
 
 def _with_active_run():
     previous = mcp_gateway.ctx.active_run
@@ -77,6 +91,30 @@ def test_general_builtin_skill_packages_have_required_files():
         assert f"name: {skill}" in frontmatter
 
 
+def test_every_staged_top_level_skill_is_discoverable_and_has_frontmatter(monkeypatch):
+    """Do not regress to a few vendored packs while leaving product skills unreadable."""
+    monkeypatch.setenv("CRAWSHRIMP_SKILL_ROOT", str(SKILLS_ROOT))
+    previous = _with_active_run()
+    try:
+        listed = mcp_gateway.tool_skill_list()
+        skill_files = sorted(SKILLS_ROOT.glob("*/SKILL.md"))
+        names = {path.parent.name for path in skill_files}
+        reads = [mcp_gateway.tool_skill_read(path.relative_to(SKILLS_ROOT).as_posix()) for path in skill_files]
+    finally:
+        mcp_gateway.ctx.active_run = previous
+
+    assert EXPECTED_TOP_LEVEL_SKILL_PACKS.issubset(names)
+    assert EXPECTED_TOP_LEVEL_SKILL_PACKS.issubset(set(listed["data"]["packs"]))
+    assert all(item["ok"] for item in reads)
+    for path, item in zip(skill_files, reads, strict=True):
+        content = item["data"]["content"]
+        assert content.startswith("---\n")
+        frontmatter = content.split("---", 2)[1]
+        assert "name:" in frontmatter
+        assert item["data"]["absolute_path"] == str(path)
+        assert item["data"]["root"] == str(SKILLS_ROOT)
+
+
 def test_general_builtin_skills_avoid_external_install_paths():
     checked = [
         SKILLS_ROOT / "bilibili-video-transcript" / "README.md",
@@ -100,7 +138,7 @@ def test_general_builtin_skills_are_part_of_staging_contract():
     stage = (HARNESS_ROOT / "scripts" / "stage-runtime.mjs").read_text(encoding="utf-8")
     assert "hashTree(join(sourceRoot, 'skills'))" in stage
     assert "'worker', 'skills', 'crawshrimp-launcher'" in stage
-    assert "cpSync(source, join(stageRoot, name)" in stage
+    assert "copyDir(source, join(stageRoot, name)" in stage
 
     # rc.1 Web profiles deliberately avoid a flat web-cordis.yml tool list.
     # Crawshrimp selects its product-owned copy of the complete standard
@@ -113,3 +151,51 @@ def test_general_builtin_skills_are_part_of_staging_contract():
     assert "agentPreset: 'crawshrimp-standard'" in worker
     assert "name: '@deepseek-ai/dsh-skill-filesystem'" in crawshrimp_preset
     assert "name: '@deepseek-ai/dsh-tool-skill'" in crawshrimp_preset
+
+
+def test_cli_skill_runtime_is_built_during_staging_and_never_delegated_to_users():
+    stage = (HARNESS_ROOT / "scripts" / "stage-runtime.mjs").read_text(encoding="utf-8")
+    main = (ROOT / "app" / "src" / "main.js").read_text(encoding="utf-8")
+    app_package = (ROOT / "app" / "package.json").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "build-desktop.yml").read_text(encoding="utf-8")
+
+    assert "buildCliSkillRuntimes(cliDest)" in stage
+    assert "hashTree(cliSource)" in stage
+    assert "EXCLUDED_SOURCE_TREE_ENTRIES.has(name)" in stage
+    assert "git submodule update --init --recursive" in stage
+    for package in ("bmall-cli", "DeepDrawCLI", "semir-yunpan-cli", "tmall-cli"):
+        assert package in stage
+    assert "CRAWSHRIMP_PYTHON_EXECUTABLE: pythonBin" in main
+    # Development stages the same closure that production embeds, rather than
+    # exposing skill documentation whose executable cannot be resolved.
+    assert "CRAWSHRIMP_CLI_ROOT: cliSkillRoot" in main
+    assert "stage-runtime.mjs --skip-boot-check" in app_package
+    assert workflow.count("submodules: recursive") >= 2
+
+    node_docs = [
+        SKILLS_ROOT / "cli-bmall" / "SKILL.md",
+        SKILLS_ROOT / "cli-deepdraw" / "SKILL.md",
+        SKILLS_ROOT / "cli-semir-yunpan" / "SKILL.md",
+        SKILLS_ROOT / "cli-tmall" / "SKILL.md",
+    ]
+    for path in node_docs:
+        text = path.read_text(encoding="utf-8")
+        assert "CRAWSHRIMP_NODE_EXECUTABLE" in text
+        assert "## 内置运行时" in text
+        assert "首次使用" not in text
+    vipshop = (SKILLS_ROOT / "cli-vipshop-hot-strategy" / "SKILL.md").read_text(encoding="utf-8")
+    assert "CRAWSHRIMP_PYTHON_EXECUTABLE" in vipshop
+    assert "## 内置运行时" in vipshop
+    assert "首次使用" not in vipshop
+
+
+def test_web_skills_distinguish_installed_product_tools_from_repo_only_helpers():
+    web = (SKILLS_ROOT / "web-automation-skill" / "SKILL.md").read_text(encoding="utf-8")
+    probe = (SKILLS_ROOT / "crawshrimp-probe-skill" / "SKILL.md").read_text(encoding="utf-8")
+    for text in (web, probe):
+        assert "untrusted reference data" in text
+    assert "## Product Runtime Entry" in web
+    assert "## Repository Development Entry" in web
+    assert "browser_observe" in web
+    assert "## Installed Product Action" in probe
+    assert "## Repository Development Action" in probe

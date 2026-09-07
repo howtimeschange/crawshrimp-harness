@@ -80,7 +80,7 @@ def test_sensitive_plan_params_stay_in_memory_and_execute_original(monkeypatch):
         plan_id = prepared["data"]["plan_id"]
         assert json.loads(stored["params_json"])["api_key"] == REDACTED
         assert mcp_gateway.ctx.plan_params[plan_id]["api_key"] == "secret-value-123"
-        result = mcp_gateway.tool_task_run(plan_id)
+        result = asyncio.run(mcp_gateway.tool_task_run(plan_id))
     finally:
         mcp_gateway.ctx.active_run = previous_run
         mcp_gateway.ctx.plan_params.clear()
@@ -298,14 +298,19 @@ def test_repo_update_requires_approval_before_pull(tmp_path, monkeypatch):
             return True, "https://example.com/repo.git"
         return True, "pulled"
 
+    async def reject(*_args):
+        return "rejected"
+
     monkeypatch.setattr(mcp_gateway, "_run_git", run_git)
-    monkeypatch.setattr(mcp_gateway, "_await_approval_blocking", lambda *_args: "rejected")
     previous_run = mcp_gateway.ctx.active_run
+    previous_approval = mcp_gateway.ctx.request_approval
     mcp_gateway.ctx.active_run = {"run_id": "run", "session_id": "session"}
+    mcp_gateway.ctx.request_approval = reject
     try:
-        result = mcp_gateway.tool_repo_update("repo")
+        result = asyncio.run(mcp_gateway.tool_repo_update("repo"))
     finally:
         mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.request_approval = previous_approval
     assert result["status"] == "rejected"
     assert len(calls) == 1
 
@@ -318,8 +323,10 @@ def test_repo_learn_does_not_embed_untrusted_readme(tmp_path, monkeypatch):
     builtin_root = harness_root / "skills"
     builtin_root.mkdir(parents=True)
     generated_root = tmp_path / "data" / "agent" / "skills"
+    async def approve(*_args):
+        return "approved"
+
     monkeypatch.setattr(mcp_gateway, "_repo_target", lambda *_args, **_kwargs: ("repo", target))
-    monkeypatch.setattr(mcp_gateway, "_await_approval_blocking", lambda *_args: "approved")
     monkeypatch.setattr("core.agent.worker.resolve_harness_root", lambda: harness_root)
     monkeypatch.setenv("CRAWSHRIMP_GENERATED_SKILL_ROOT", str(generated_root))
     atomic_writes = []
@@ -331,12 +338,15 @@ def test_repo_learn_does_not_embed_untrusted_readme(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mcp_gateway, "atomic_write_text", tracked_atomic_write)
     previous_run = mcp_gateway.ctx.active_run
+    previous_approval = mcp_gateway.ctx.request_approval
     mcp_gateway.ctx.active_run = {"run_id": "run", "session_id": "session"}
+    mcp_gateway.ctx.request_approval = approve
     try:
-        result = mcp_gateway.tool_repo_learn("repo")
+        result = asyncio.run(mcp_gateway.tool_repo_learn("repo"))
         read_result = mcp_gateway.tool_skill_read("repo-repo/SKILL.md")
     finally:
         mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.request_approval = previous_approval
     body = (generated_root / "repo-repo" / "SKILL.md").read_text(encoding="utf-8")
     assert result["ok"] is True
     assert result["data"]["path"] == "repo-repo/SKILL.md"
@@ -464,13 +474,18 @@ def test_generated_skills_remain_visible_under_a_hidden_data_root(tmp_path, monk
 
 
 def test_rejected_fs_write_does_not_create_parent_directory(tmp_path, monkeypatch):
+    async def reject(*_args):
+        return "rejected"
+
     target = tmp_path / "new-parent" / "blocked.txt"
     previous_run = mcp_gateway.ctx.active_run
+    previous_approval = mcp_gateway.ctx.request_approval
     mcp_gateway.ctx.active_run = {"run_id": "run", "session_id": "session"}
-    monkeypatch.setattr(mcp_gateway, "_await_approval_blocking", lambda *_args: "rejected")
+    mcp_gateway.ctx.request_approval = reject
     try:
-        result = mcp_gateway.tool_fs_write(str(target), "blocked")
+        result = asyncio.run(mcp_gateway.tool_fs_write(str(target), "blocked"))
     finally:
         mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.request_approval = previous_approval
     assert result["status"] == "rejected"
     assert not target.parent.exists()

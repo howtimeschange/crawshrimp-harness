@@ -5,20 +5,20 @@ description: Use when the user asks to operate the Bmall/Semir Reabam ordering p
 
 # Bmall CLI(Semir Reabam 订货商城 CLI)
 
-## 位置与安装
+## 内置运行时
 - 本地路径:`skills/cli/bmall-cli`(可用 `CRAWSHRIMP_CLI_ROOT` 覆盖 CLI 根)。
-- 运行时:Node 20+,TypeScript,包管理器 pnpm 9。首次使用 `pnpm install && pnpm build`。
+- 抓虾 Harness 安装包已包含编译后的 `dist/` 与生产依赖；不要让最终用户执行 `pnpm install`、`pnpm build` 或下载 Node。
 
 ## 调用方式
 ```bash
 cd <CLI_ROOT>/bmall-cli
-pnpm bmall --help
-pnpm bmall manifest --json          # 能力清单(156 条命令)
-pnpm bmall product search --json    # 商品搜索
-pnpm bmall stock query --json       # SKU/库存
-pnpm bmall order plan --dry-run     # 订单规划(dry-run 预演)
-pnpm bmall agent knowledge --json   # Agent 知识
-pnpm bmall agent explain-error <code>  # 错误码排障剧本
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js --help
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js manifest --json
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js product search --json
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js stock query --json
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js order plan --dry-run
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js agent knowledge --json
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js agent explain-error <code>
 ```
 
 ## 使用场景

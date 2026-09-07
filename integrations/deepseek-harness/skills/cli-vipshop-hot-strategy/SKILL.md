@@ -5,17 +5,17 @@ description: Use when the user asks to collect, export, analyze, or summarize Vi
 
 # 唯品会爆款策略追踪 Agent CLI
 
-## 位置与安装
+## 内置运行时
 - 本地路径:`skills/cli/vipshop-hot-strategy-agent`(可用 `CRAWSHRIMP_CLI_ROOT` 覆盖 CLI 根)。
-- Python 项目:首次使用 `pip install -r requirements.txt`(见 `pyproject.toml`)。
+- 抓虾 Harness 的打包 Python 已包含本项目所需 `openpyxl`、`PyYAML` 与 `websockets`；不要让最终用户执行 `pip install`。
 
 ## 调用方式
 ```bash
 cd <CLI_ROOT>/vipshop-hot-strategy-agent
-python cli.py collect            # 从 9222 只读采集 5 份报表 → Excel
-python cli.py analyze <excel>    # 分析 → analysis.json + strategy.md
-python cli.py run                # 采集 + 分析
-python cli.py doc-summary        # 需求文档理解摘要
+PYTHONPATH=src "$CRAWSHRIMP_PYTHON_EXECUTABLE" -m vipshop_hot_strategy_agent.cli collect
+PYTHONPATH=src "$CRAWSHRIMP_PYTHON_EXECUTABLE" -m vipshop_hot_strategy_agent.cli analyze <excel>
+PYTHONPATH=src "$CRAWSHRIMP_PYTHON_EXECUTABLE" -m vipshop_hot_strategy_agent.cli run
+PYTHONPATH=src "$CRAWSHRIMP_PYTHON_EXECUTABLE" -m vipshop_hot_strategy_agent.cli doc-summary
 ```
 
 ## 使用场景

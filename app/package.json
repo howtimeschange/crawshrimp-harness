@@ -7,7 +7,7 @@
   "crawshrimpUpdateFeedUrl": "",
   "main": "src/main.js",
   "scripts": {
-    "dev": "concurrently \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "dev": "node ../integrations/deepseek-harness/scripts/stage-runtime.mjs --skip-boot-check && concurrently \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "build": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime-targets.mjs && node scripts/run-electron-builder.js --publish=never",
     "build:mac": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime-targets.mjs darwin-arm64 darwin-x64 && node scripts/run-electron-builder.js --mac --publish=never",
     "build:mac:ci": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime-targets.mjs darwin-arm64 darwin-x64 && node scripts/run-electron-builder.js --mac --publish=never",

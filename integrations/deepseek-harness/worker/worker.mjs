@@ -237,8 +237,9 @@ async function spawnRuntime({ cwd, webPort }) {
   })
   runtime.onExit((code, signal) => {
     console.error(`[worker] DSH Web runtime 退出 code=${code} signal=${signal}`)
+    const unexpected = state.runtime === runtime
     const wasActive = state.activeRun
-    state.runtime = null
+    if (state.runtime === runtime) state.runtime = null
     state.startedSessions.clear()
     state.selectedModels.clear()
     closeNativeWebFollows()
@@ -246,7 +247,11 @@ async function spawnRuntime({ cwd, webPort }) {
       console.error(`[worker] runtime 在 run ${wasActive.runId} 期间退出 code=${code} signal=${signal}`)
       finishRun({ status: 'interrupted', reason: { kind: 'interrupted', detail: `runtime exit code=${code} signal=${signal}` } })
     }
-    notifyWorkerStatus('stopped', { exitCode: code, exitSignal: signal })
+    notifyWorkerStatus(unexpected ? 'crashed' : 'stopped', {
+      exitCode: code,
+      exitSignal: signal,
+      ...(unexpected ? { message: `DSH runtime 已退出 code=${code} signal=${signal}` } : {}),
+    })
   })
 
   return runtime
@@ -645,7 +650,9 @@ async function handleRequest(method, params) {
       notifyWorkerStatus('starting')
       try {
         const runtime = await spawnRuntime({
-          cwd: params.cwd || `${state.dataRoot}/agent/runtime-workdir`,
+          // Web profiles expose the product workspace. The runtime must
+          // default to that same directory so native sessions stay visible.
+          cwd: params.cwd || `${state.dataRoot}/agent/workspace`,
           webPort: params.webPort || process.env.CRAWSHRIMP_WEB_PORT || 0,
         })
         state.runtime = runtime
@@ -661,6 +668,9 @@ async function handleRequest(method, params) {
         // Web profile 先完成 host composition，再向 Python 报告 ready；Session
         // follow 自己会以初始 snapshot 作为每次 prompt 前的同步栅栏。
         await new Promise((r) => setTimeout(r, Math.min(MCP_SETTLE_MS, 500)))
+        if (state.runtime !== runtime) {
+          throw new Error('DSH runtime 在启动完成前已退出')
+        }
         notifyWorkerStatus('ready', { serverInfo })
         return { ok: true, serverInfo }
       } catch (error) {

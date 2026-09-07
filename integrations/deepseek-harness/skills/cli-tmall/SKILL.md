@@ -5,20 +5,20 @@ description: Use when the user asks to inspect the Tmall/千牛 merchant center 
 
 # Tmall CLI(天猫商家中心只读 CLI)
 
-## 位置与安装
+## 内置运行时
 - 本地路径:`skills/cli/tmall-cli`(可用环境变量 `CRAWSHRIMP_CLI_ROOT` 覆盖 CLI 根目录)。
-- 依赖:Node 20+。首次使用前 `npm install && npm run build`(本地已装过则跳过)。
+- 抓虾 Harness 安装包已包含编译后的 `dist/` 与生产依赖；不要让最终用户执行 `npm install` 或 `npm run build`。
 
 ## 调用方式
 ```bash
 cd <CLI_ROOT>/tmall-cli
-npm run dev -- doctor -f json
-npm run dev -- whoami -f json
-npm run dev -- menu summary -f table
-npm run dev -- menu list --top 商品 --leaves-only -f table
-npm run dev -- endpoints apis -f table
-npm run dev -- recon export --output-dir docs/recon -f json
-npm run dev -- material-test items --keyword 1060862679580 -f json
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js doctor -f json
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js whoami -f json
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js menu summary -f table
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js menu list --top 商品 --leaves-only -f table
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js endpoints apis -f table
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js recon export --output-dir docs/recon -f json
+ELECTRON_RUN_AS_NODE=1 "$CRAWSHRIMP_NODE_EXECUTABLE" dist/cli.js material-test items --keyword 1060862679580 -f json
 ```
 
 ## 使用场景

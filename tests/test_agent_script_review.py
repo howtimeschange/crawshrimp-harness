@@ -1,6 +1,7 @@
 """Dialog-confirmed agent adapter installation and runtime-discovery regression."""
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -171,9 +172,15 @@ def test_publish_tool_uses_one_native_confirmation_then_direct_install(tmp_path,
     revision, files = _package(tmp_path)
     approvals = []
     previous_run = mcp_gateway.ctx.active_run
+    previous_approval = mcp_gateway.ctx.request_approval
     monkeypatch.setattr(mcp_gateway.db, "get_script_revision", lambda _rid: dict(revision))
     monkeypatch.setattr(mcp_gateway.db, "list_workspace_files", lambda _run: files)
-    monkeypatch.setattr(mcp_gateway, "_await_approval_blocking", lambda _plan, summary: approvals.append(summary) or "approved")
+
+    async def approve(_tool_call, _plan, summary, _risk):
+        approvals.append(summary)
+        return "approved"
+
+    mcp_gateway.ctx.request_approval = approve
     installed = []
 
     def direct_install(rev_id, *, expected_source_sha256):
@@ -183,9 +190,10 @@ def test_publish_tool_uses_one_native_confirmation_then_direct_install(tmp_path,
     monkeypatch.setattr(api, "install_approved_script_revision", direct_install)
     mcp_gateway.ctx.active_run = {"run_id": "run-eifini", "session_id": "session-eifini"}
     try:
-        result = mcp_gateway.tool_script_publish(revision["rev_id"])
+        result = asyncio.run(mcp_gateway.tool_script_publish(revision["rev_id"]))
     finally:
         mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.request_approval = previous_approval
 
     assert result["status"] == "published"
     assert approvals[0]["kind"] == "script_publish"
@@ -196,16 +204,22 @@ def test_publish_tool_uses_one_native_confirmation_then_direct_install(tmp_path,
 def test_publish_tool_rejection_never_installs(tmp_path, monkeypatch):
     revision, files = _package(tmp_path)
     previous_run = mcp_gateway.ctx.active_run
+    previous_approval = mcp_gateway.ctx.request_approval
     monkeypatch.setattr(mcp_gateway.db, "get_script_revision", lambda _rid: dict(revision))
     monkeypatch.setattr(mcp_gateway.db, "list_workspace_files", lambda _run: files)
     monkeypatch.setattr(mcp_gateway.db, "update_script_revision", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(mcp_gateway, "_await_approval_blocking", lambda *_args: "rejected")
+
+    async def reject(*_args):
+        return "rejected"
+
+    mcp_gateway.ctx.request_approval = reject
     monkeypatch.setattr(api, "install_approved_script_revision", lambda *_args, **_kwargs: pytest.fail("拒绝后不得安装"))
     mcp_gateway.ctx.active_run = {"run_id": "run-eifini", "session_id": "session-eifini"}
     try:
-        result = mcp_gateway.tool_script_publish(revision["rev_id"])
+        result = asyncio.run(mcp_gateway.tool_script_publish(revision["rev_id"]))
     finally:
         mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.request_approval = previous_approval
     assert result["status"] == "rejected"
 
 

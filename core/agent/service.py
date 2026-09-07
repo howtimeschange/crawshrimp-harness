@@ -2407,12 +2407,21 @@ class AgentService:
         self.web_port = _pick_free_port(self.web_port, 8)
         os.environ["CRAWSHRIMP_WEB_PORT"] = str(self.web_port)
 
+        worker: Optional[AgentWorker] = None
+
+        async def on_worker_exit(message: str, unexpected: bool) -> None:
+            # The worker has a distinct lifetime from FastAPI. Do not leave
+            # `/agent/runtime` reporting a stale ready Web host after stdio EOF.
+            if worker is not None:
+                await self._on_worker_exit(worker, message, unexpected)
+
         worker = AgentWorker(
             runtime_root=str(resolve_harness_root()),
             data_root=str(data_root),
             mcp_url=getattr(self, "mcp_url", "http://127.0.0.1:18965/mcp"),
             session_root=str(agent_dir / "harness-sessions"),
             on_notification=self._on_worker_notification,
+            on_exit=on_worker_exit,
         )
         try:
             await worker.start()
@@ -2430,7 +2439,9 @@ class AgentService:
                 # DeepSeek 官方模型:产品内 ID → runtime 真实模型名
                 "model": runtime_model_id,
                 "maxTokens": model_capabilities(model_id).get("max_output_tokens", 8192),
-                "cwd": str(agent_dir / "runtime-workdir"),
+                # Keep the DSH session and Web profile on the same product
+                # workspace so native Web can discover it and render approvals.
+                "cwd": str(agent_dir / "workspace"),
                 "webPort": self.web_port,
             }, timeout=120)
             if not gen.get("ok"):
@@ -2466,6 +2477,18 @@ class AgentService:
             await worker.stop()
             self._note_crash(str(exc))
             return False
+
+    async def _on_worker_exit(self, worker: AgentWorker, message: str,
+                              unexpected: bool) -> None:
+        """Project an unexpected stdio worker exit into the public runtime state."""
+        if not unexpected or self.worker is not worker:
+            return
+        self.worker = None
+        self.runtime_state = "crashed"
+        self.runtime_error_code = "WORKER_EXITED"
+        self.runtime_error = str(message or "worker 已退出")[:300]
+        self._web_port_verified = False
+        self._note_crash(self.runtime_error)
 
     def _note_crash(self, message: str) -> None:
         import time as _time

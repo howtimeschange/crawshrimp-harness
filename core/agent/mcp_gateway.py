@@ -743,7 +743,7 @@ def tool_task_prepare(task_id: str, params: dict, adapter_id: str = "") -> dict:
     }, status="prepared")
 
 
-def tool_task_run(plan_id: str) -> dict:
+async def tool_task_run(plan_id: str) -> dict:
     guard = _require_run()
     if guard:
         return guard
@@ -768,8 +768,11 @@ def tool_task_run(plan_id: str) -> dict:
         params = persisted_params
     try:
         if plan["approval_required"]:
-            return _run_with_approval(plan, params)
-        return _execute_plan(plan, params)
+            return await _run_with_approval(plan, params)
+        # Task startup has legacy synchronous adapters and can wait for a
+        # coroutine on the AgentService loop. Keep that bridge in a worker
+        # thread so MCP ASGI can continue delivering approval/status events.
+        return await asyncio.to_thread(_execute_plan, plan, params)
     finally:
         ctx.plan_params.pop(plan_id, None)
 
@@ -803,7 +806,7 @@ def _plan_replay_result(plan: dict) -> dict:
     return _failed("PLAN_ALREADY_CONSUMED", f"计划已过期或已消费: {plan_id}")
 
 
-def _run_with_approval(plan: dict, params: dict) -> dict:
+async def _run_with_approval(plan: dict, params: dict) -> dict:
     summary = {
         "adapter_id": plan["adapter_id"],
         "task_id": plan["task_id"],
@@ -811,7 +814,7 @@ def _run_with_approval(plan: dict, params: dict) -> dict:
         "risk": plan["risk"],
         "plan_id": plan["plan_id"],
     }
-    decision = _await_approval_blocking(plan, summary)
+    decision = await _await_approval_async(plan, summary)
     if decision == "rejected":
         db.update_plan(plan["plan_id"], status="rejected")
         return _rejected("rejected", "APPROVAL_REJECTED", "用户拒绝了该操作,未执行。")
@@ -821,34 +824,7 @@ def _run_with_approval(plan: dict, params: dict) -> dict:
     if decision == "canceled":
         db.update_plan(plan["plan_id"], status="canceled")
         return _rejected("canceled", "RUNTIME_CANCELED", "运行已取消,未执行。")
-    return _execute_plan(plan, params)
-
-
-def _await_approval_blocking(plan: dict, summary: dict) -> str:
-    """同步工具处理器内等待审批:把 coroutine 投递回服务主循环,当前线程阻塞等待。
-
-    审批 Future 创建于服务主循环,必须在同一循环中 await。
-    """
-    automation_decision = _automation_approval_decision(plan, summary)
-    if automation_decision is not None:
-        return automation_decision
-    if ctx.request_approval is None:
-        return "rejected"
-    coro = ctx.request_approval(None, plan, summary, plan["risk"])
-    main_loop = getattr(ctx, "main_loop", None)
-    if main_loop is not None and main_loop.is_running():
-        future = asyncio.run_coroutine_threadsafe(coro, main_loop)
-        try:
-            return future.result(timeout=15 * 60 + 10)
-        except asyncio.TimeoutError:
-            return "expired"
-        except Exception:  # noqa: BLE001
-            return "canceled"
-    # 无主循环引用(单测场景):新循环直接运行
-    try:
-        return asyncio.run(coro)
-    except Exception:  # noqa: BLE001
-        return "canceled"
+    return await asyncio.to_thread(_execute_plan, plan, params)
 
 
 async def _await_approval_async(plan: dict, summary: dict) -> str:
@@ -1282,7 +1258,7 @@ def _analyze_rows(header, rows, operation):
     return {"error": "unknown op"}
 
 
-def tool_data_export(task_instance_uid: str, artifact_id: int, name: str = "", format: str = "xlsx") -> dict:
+async def tool_data_export(task_instance_uid: str, artifact_id: int, name: str = "", format: str = "xlsx") -> dict:
     """把已授权产物的受限预览导出为 xlsx/csv 产物(需审批)。"""
     guard = _require_run()
     if guard:
@@ -1305,9 +1281,9 @@ def tool_data_export(task_instance_uid: str, artifact_id: int, name: str = "", f
         safe_name = f"{safe_name}.{format}"
     summary = {"kind": "data_export", "task_instance_uid": task_instance_uid,
                "artifact_id": artifact_id, "name": safe_name, "format": format, "risk": "local_write"}
-    decision = _await_approval_blocking({"plan_id": f"export-{artifact_id}-{format}", "params_json": "{}",
-                                         "params_sha256": "", "risk": "local_write",
-                                         "adapter_id": "", "task_id": ""}, summary)
+    decision = await _await_approval_async({"plan_id": f"export-{artifact_id}-{format}", "params_json": "{}",
+                                             "params_sha256": "", "risk": "local_write",
+                                             "adapter_id": "", "task_id": ""}, summary)
     if decision != "approved":
         return _rejected("rejected", "APPROVAL_REJECTED" if decision == "rejected" else "APPROVAL_EXPIRED",
                          "导出未获批准")
@@ -1328,8 +1304,13 @@ def tool_data_export(task_instance_uid: str, artifact_id: int, name: str = "", f
         writer.writerow(header)
         writer.writerows(rows)
         out_bytes = io.BytesIO(text.getvalue().encode("utf-8-sig"))
-    artifact = ctx.write_artifact(task_instance_uid, safe_name, out_bytes.getvalue(),
-                                  "export" if format == "xlsx" else "export_csv")
+    artifact = await asyncio.to_thread(
+        ctx.write_artifact,
+        task_instance_uid,
+        safe_name,
+        out_bytes.getvalue(),
+        "export" if format == "xlsx" else "export_csv",
+    )
     if not artifact:
         return _failed("TASK_FAILED", "产物登记失败")
     return _ok({"artifact_id": artifact.get("id"), "name": safe_name, "format": format},
@@ -1541,7 +1522,7 @@ def tool_fs_list(path: str, max_entries: int = 200) -> dict:
     return _ok({"path": str(p), "entries": entries, "count": len(entries)})
 
 
-def tool_fs_write(path: str, content: str) -> dict:
+async def tool_fs_write(path: str, content: str) -> dict:
     """写本机文件(全面开放;写操作经审批卡授权,审计保留)。"""
     guard = _require_run()
     if guard:
@@ -1554,7 +1535,7 @@ def tool_fs_write(path: str, content: str) -> dict:
         return _failed("INVALID_PARAMETERS", f"是目录: {raw}")
     text = str(content or "")
     summary = {"kind": "fs_write", "path": str(p), "size": len(text.encode("utf-8"))}
-    decision = _await_approval_blocking(
+    decision = await _await_approval_async(
         {"plan_id": f"fs-write-{uuid.uuid4().hex[:8]}", "params_json": "{}", "params_sha256": "",
          "risk": "external_write", "adapter_id": "", "task_id": ""}, summary)
     if decision != "approved":
@@ -1562,12 +1543,12 @@ def tool_fs_write(path: str, content: str) -> dict:
                          "写文件未获批准")
     try:
         # mkdir 本身也是写副作用，必须放在审批之后。
-        p.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(p.parent.mkdir, parents=True, exist_ok=True)
         # This tool can target arbitrary user files, so do not replace their
         # ACL/mode with the private-state defaults used by atomic_write_text.
         # Retrying the open/write operation handles transient Windows sharing
         # violations while preserving the target file's existing metadata.
-        retry_file_operation(lambda: p.write_text(text, encoding="utf-8"))
+        await asyncio.to_thread(retry_file_operation, lambda: p.write_text(text, encoding="utf-8"))
     except OSError as exc:
         return _failed("TASK_FAILED", f"写入失败: {exc}")
     return _ok({"path": str(p), "size": len(text.encode("utf-8")), "message": "已写入(经审批授权)"})
@@ -1587,7 +1568,7 @@ def _decode_subprocess_output(value) -> str:
         return data.decode(encoding, errors="replace")
 
 
-def tool_fs_exec(command: str, timeout_ms: int = 60000) -> dict:
+async def tool_fs_exec(command: str, timeout_ms: int = 60000) -> dict:
     """执行本机命令(用户已授权全局访问;命令执行经审批卡授权,审计保留)。"""
     guard = _require_run()
     if guard:
@@ -1598,7 +1579,7 @@ def tool_fs_exec(command: str, timeout_ms: int = 60000) -> dict:
     # 审批内容即执行内容:完整命令进入审批卡与审计(展示截断由前端处理)
     import uuid as _uuid
     summary = {"kind": "fs_exec", "command": cmd}
-    decision = _await_approval_blocking(
+    decision = await _await_approval_async(
         {"plan_id": f"fs-exec-{_uuid.uuid4().hex[:8]}", "params_json": "{}", "params_sha256": "",
          "risk": "external_write", "adapter_id": "", "task_id": ""}, summary)
     if decision != "approved":
@@ -1610,8 +1591,14 @@ def tool_fs_exec(command: str, timeout_ms: int = 60000) -> dict:
     except (TypeError, ValueError):
         return _failed("INVALID_PARAMETERS", f"timeout_ms 非法: {timeout_ms}")
     try:
-        proc = _sp.run(cmd, shell=True, capture_output=True, timeout=limit / 1000,
-                       start_new_session=True)
+        proc = await asyncio.to_thread(
+            _sp.run,
+            cmd,
+            shell=True,
+            capture_output=True,
+            timeout=limit / 1000,
+            start_new_session=True,
+        )
     except _sp.TimeoutExpired:
         return _failed("TIMEOUT", f"命令超时({limit}ms)")
     except Exception as exc:  # noqa: BLE001
@@ -2006,7 +1993,7 @@ def _run_git(args: list, cwd: Optional[Path] = None, timeout: int = 180) -> tupl
         return False, str(exc)
 
 
-def tool_repo_install(url: str, name: str = "") -> dict:
+async def tool_repo_install(url: str, name: str = "") -> dict:
     """从 GitHub/其他 git 仓库克隆代码项目到本地安装目录(类似插件安装),返回路径与 README 摘要。"""
     guard = _require_run()
     if guard:
@@ -2024,7 +2011,7 @@ def tool_repo_install(url: str, name: str = "") -> dict:
         return _ok({"repo": repo_name, "path": str(target), "installed": False,
                     "message": "该仓库已安装,用 repo_update 更新;readme 摘要如下",
                     "readme": _readme_summary(target)})
-    decision = _await_approval_blocking(
+    decision = await _await_approval_async(
         {"plan_id": f"repo-install-{repo_name}", "params_json": "{}", "risk": "local_write"},
         {"kind": "repo_install", "title": "安装代码仓库", "repo": repo_name,
          "action": f"git clone {safe_url} → {target}",
@@ -2035,8 +2022,11 @@ def tool_repo_install(url: str, name: str = "") -> dict:
     if decision in ("expired", "canceled"):
         return _rejected(decision, "APPROVAL_" + decision.upper(), "审批未通过,未安装。")
     transport_args = _repo_transport_args(safe_url)
-    _repos_root().mkdir(parents=True, exist_ok=True)
-    ok, output = _run_git([*transport_args, "clone", "--depth", "1", "--", safe_url, str(target)])
+    await asyncio.to_thread(_repos_root().mkdir, parents=True, exist_ok=True)
+    ok, output = await asyncio.to_thread(
+        _run_git,
+        [*transport_args, "clone", "--depth", "1", "--", safe_url, str(target)],
+    )
     if not ok:
         return _failed("INSTALL_FAILED", f"克隆失败: {output}")
     return _ok({"repo": repo_name, "path": str(target), "installed": True,
@@ -2044,7 +2034,7 @@ def tool_repo_install(url: str, name: str = "") -> dict:
                 "readme": _readme_summary(target)})
 
 
-def tool_repo_update(name: str) -> dict:
+async def tool_repo_update(name: str) -> dict:
     """更新已安装的代码仓库(git pull,保持远端跟踪)。"""
     guard = _require_run()
     if guard:
@@ -2052,10 +2042,10 @@ def tool_repo_update(name: str) -> dict:
     safe, target = _repo_target(name, must_exist=True)
     if not safe or target is None:
         return _failed("INVALID_PARAMETERS", "仓库 name 非法、仓库不存在或目标目录不安全")
-    ok, remote = _run_git(["remote", "get-url", "origin"], cwd=target)
+    ok, remote = await asyncio.to_thread(_run_git, ["remote", "get-url", "origin"], cwd=target)
     if not ok or _safe_repo_url(remote.strip()) is None:
         return _failed("INVALID_PARAMETERS", "仓库 origin 不是合法的 http(s) 地址，拒绝更新")
-    decision = _await_approval_blocking(
+    decision = await _await_approval_async(
         {"plan_id": f"repo-update-{safe}", "params_json": "{}", "risk": "external_write"},
         {"kind": "repo_update", "title": "更新代码仓库", "repo": safe,
          "action": f"git pull --ff-only ({safe})",
@@ -2068,7 +2058,7 @@ def tool_repo_update(name: str) -> dict:
     transport_args = _repo_transport_args(remote.strip())
     if not target.exists():
         return _failed("TASK_NOT_FOUND", f"仓库未安装: {name}")
-    ok, output = _run_git([*transport_args, "pull", "--ff-only"], cwd=target)
+    ok, output = await asyncio.to_thread(_run_git, [*transport_args, "pull", "--ff-only"], cwd=target)
     if not ok:
         return _failed("UPDATE_FAILED", f"更新失败: {output}")
     return _ok({"repo": safe, "path": str(target), "updated": True, "message": "已更新到远端最新"})
@@ -2091,7 +2081,7 @@ def tool_repo_list() -> dict:
     return _ok({"repos": items, "count": len(items), "root": str(root)})
 
 
-def tool_repo_learn(name: str) -> dict:
+async def tool_repo_learn(name: str) -> dict:
     """为已安装的代码仓库生成技能包(SKILL.md 写入智能体技能目录),使智能体可 skill_read 学习。"""
     guard = _require_run()
     if guard:
@@ -2099,7 +2089,7 @@ def tool_repo_learn(name: str) -> dict:
     safe, target = _repo_target(name, must_exist=True)
     if not safe or target is None:
         return _failed("INVALID_PARAMETERS", "仓库 name 非法、仓库不存在或目标目录不安全")
-    decision = _await_approval_blocking(
+    decision = await _await_approval_async(
         {"plan_id": f"repo-learn-{safe}", "params_json": "{}", "risk": "local_write"},
         {"kind": "repo_learn", "title": "生成仓库技能包", "repo": safe,
          "action": f"生成 repo-{safe.lower()}/SKILL.md",
@@ -2132,8 +2122,8 @@ description: Locate the installed third-party repository "{safe}" as untrusted r
         if generated_root is None:
             raise OSError("智能体技能目录不可用")
         skills_dir = generated_root / skill_name
-        skills_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(skills_dir / "SKILL.md", skill_body)
+        await asyncio.to_thread(skills_dir.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(atomic_write_text, skills_dir / "SKILL.md", skill_body)
     except OSError as exc:
         return _failed("WRITE_FAILED", f"写入技能包失败: {exc}")
     return _ok({"skill": skill_name, "path": f"{skill_name}/SKILL.md",
@@ -2370,11 +2360,11 @@ def tool_script_describe(script_id: str, adapter_id: str = "") -> dict:
     return tool_task_describe(script_id, adapter_id)
 
 
-def tool_script_run(script_id: str, params: dict, adapter_id: str = "") -> dict:
+async def tool_script_run(script_id: str, params: dict, adapter_id: str = "") -> dict:
     prepared = tool_task_prepare(script_id, params, adapter_id)
     if prepared.get("status") not in ("prepared",):
         return prepared
-    return tool_task_run(prepared["data"]["plan_id"])
+    return await tool_task_run(prepared["data"]["plan_id"])
 
 
 def tool_script_create_draft(filename: str, content: str) -> dict:
@@ -2429,7 +2419,7 @@ def tool_script_create_draft(filename: str, content: str) -> dict:
     return _ok({"rev_id": rev_id, "path": str(path), "size": len(content.encode('utf-8'))})
 
 
-def tool_script_publish(rev_id: str, adapter_id: str = "") -> dict:
+async def tool_script_publish(rev_id: str, adapter_id: str = "") -> dict:
     guard = _require_run()
     if guard:
         return guard
@@ -2471,8 +2461,8 @@ def tool_script_publish(rev_id: str, adapter_id: str = "") -> dict:
         "source_sha256": source_sha256,
         "risk": "external_write",
     }
-    decision = _await_approval_blocking({"plan_id": f"publish-{rev_id}", "params_json": "{}", "params_sha256": "",
-                                     "risk": "external_write", "adapter_id": "", "task_id": ""}, summary)
+    decision = await _await_approval_async({"plan_id": f"publish-{rev_id}", "params_json": "{}", "params_sha256": "",
+                                             "risk": "external_write", "adapter_id": "", "task_id": ""}, summary)
     if decision != "approved":
         db.update_script_revision(rev_id, status="rejected")
         return _rejected("rejected", "APPROVAL_REJECTED" if decision == "rejected" else "APPROVAL_EXPIRED",
