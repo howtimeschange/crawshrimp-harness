@@ -1,9 +1,7 @@
-"""从抓虾 ai.llm 配置生成 DSH Cordis profile。
+"""抓虾智能体的模型能力和提供商路由。
 
-- 复用 route_for_model 的路由(三组森马网关 + DeepSeek/GLM 官方);
-- API key 只通过环境变量引用(apiKeyEnv),绝不写入 yml;
-- MCP runtime token 通过 !!js 表达式在运行时从 CRAWSHRIMP_MCP_TOKEN 环境读取(仅进程内存);
-- 模型能力登记表:agent 可用模型需显式登记容量,未登记模型使用保守上限。
+DSH rc.1 的实际运行时配置仅由 profile/web/cordis.patch.yml 及其预设组成。
+本模块仅供 API 和服务层查询模型能力与抓虾提供商路由，不再生成平铺配置。
 """
 from __future__ import annotations
 
@@ -11,21 +9,13 @@ from typing import Any, Optional
 
 from core.llm_gateway import (
     DEEPSEEK_OFFICIAL_MODELS,
-    DOMESTIC_OPENAI_BASE_URL,
     DOMESTIC_OPENAI_MODELS,
-    GLM_OFFICIAL_BASE_URL,
     GLM_OFFICIAL_MODELS,
-    OVERSEAS_ANTHROPIC_BASE_URL,
     OVERSEAS_ANTHROPIC_MODELS,
-    OVERSEAS_OPENAI_BASE_URL,
     OVERSEAS_OPENAI_MODELS,
-    DEFAULT_MODEL,
     builtin_provider_has_configured_key,
     custom_provider_for_configured_model,
     custom_llm_providers,
-    official_real_model,
-    model_has_configured_key,
-    select_default_model,
 )
 
 # 模型能力登记(服务端共享能力表,方案 §12.2)
@@ -121,181 +111,6 @@ def agent_capable_model_ids() -> list[str]:
             ):
                 custom.append(model_id)
     return ordered + extras + custom
-
-
-def _route_models(model_ids: tuple[str, ...]) -> list[dict[str, Any]]:
-    entries = []
-    for mid in model_ids:
-        cap = MODEL_CAPABILITIES.get(mid, _CONSERVATIVE)
-        entries.append({
-            "id": mid,
-            "contextWindow": cap["context_window"],
-            "maxTokens": cap["max_output_tokens"],
-            "input": list(cap.get("input_modalities") or ["text"]),
-        })
-    return entries
-
-
-def build_cordis_yaml(cfg: dict, selected_model: Optional[str] = None) -> str:
-    """生成 runtime cordis profile。cfg = load_config()。
-
-    基于 web-cordis.yml 模板(完整 DSH web host 全量嵌入,见方案 §12.7):
-    模板由 integrations/deepseek-harness/scripts/gen-web-cordis.py 静态生成,
-    正常发布包直接使用 web-cordis.yml,会话级 provider/model/baseURL/端口
-    经环境表达式读取,由 AgentService 在起 worker 前注入环境。
-    本函数仅在需要生成 legacy runtime profile 时替换 agent-default-model 行;
-    模板缺失(旧发布包)时回退到内置 legacy 极简 profile。
-    """
-    default_model = select_default_model(cfg)
-
-    # 未登记能力或不支持工具的默认模型 → 保守上限 + 非默认
-    cap = model_capabilities(default_model)
-    if not cap.get("supports_tools"):
-        default_model = DEFAULT_MODEL
-        cap = model_capabilities(default_model)
-
-    sel = selected_model if selected_model and model_capabilities(selected_model).get("supports_tools") else default_model
-    if not model_has_configured_key(sel, cfg):
-        sel = select_default_model(cfg)
-    provider_id = resolve_provider_for_model(sel)
-
-    template = _web_cordis_template()
-    if template is None:
-        return _build_cordis_yaml_legacy(cfg, sel, provider_id)
-
-    lines = template.splitlines()
-    for i, line in enumerate(lines):
-        if line.startswith("- id: agent-default-model"):
-            j = i + 1
-            while j < len(lines) and not lines[j].startswith("- id:"):
-                if lines[j].startswith("      provider:"):
-                    lines[j] = f"      provider: {provider_id}"
-                elif lines[j].startswith("      model:"):
-                    lines[j] = f"      model: {official_real_model(sel)}"
-                j += 1
-            break
-    else:
-        return _build_cordis_yaml_legacy(cfg, sel, provider_id)
-    return "\n".join(lines) + "\n"
-
-
-def _web_cordis_template() -> Optional[str]:
-    """读取静态 web-cordis.yml 模板;缺失时返回 None(调用方回退 legacy)。"""
-    import os as _os
-    from pathlib import Path as _Path
-
-    env_root = _os.environ.get("CRAWSHRIMP_HARNESS_ROOT", "").strip()
-    if env_root:
-        root = _Path(env_root)
-    else:
-        root = _Path(__file__).resolve().parents[2] / "integrations" / "deepseek-harness"
-    path = root / "web-cordis.yml"
-    if not path.exists():
-        return None
-    return path.read_text(encoding="utf-8")
-
-
-def _build_cordis_yaml_legacy(cfg: dict, selected_model: str, provider_id: str) -> str:
-    """旧版极简 profile(无 web host 行);仅作模板缺失时的回退。"""
-    llm = (cfg.get("ai") or {}).get("llm") or {}
-    overseas_openai_base = llm.get("overseas_openai_base_url") or OVERSEAS_OPENAI_BASE_URL
-    overseas_anthropic_base = llm.get("overseas_anthropic_base_url") or OVERSEAS_ANTHROPIC_BASE_URL
-    domestic_base = llm.get("domestic_base_url") or DOMESTIC_OPENAI_BASE_URL
-    glm_base = llm.get("glm_base_url") or GLM_OFFICIAL_BASE_URL
-    sel = selected_model
-
-    return f"""# 由 crawshrimp-harness FastAPI 从 ai.llm 配置生成(勿手改;legacy 回退,无 web host)
-- id: sdk-jsonrpc-server
-  name: '@deepseek-ai/dsh-sdk-jsonrpc-server'
-
-- id: llm
-  name: '@deepseek-ai/dsh-llm-pi-ai'
-  config:
-    providers:
-      crawshrimp-overseas-openai:
-        displayName: 抓虾-海外 OpenAI
-        apiKeyEnv: CRAWSHRIMP_LLM_API_KEY
-        api: openai-completions
-        baseURL: '{overseas_openai_base}'
-        models:
-{_yaml_models(_route_models(OVERSEAS_OPENAI_MODELS), 10)}
-      crawshrimp-overseas-anthropic:
-        displayName: 抓虾-海外 Anthropic
-        apiKeyEnv: CRAWSHRIMP_LLM_API_KEY
-        api: anthropic-messages
-        baseURL: '{overseas_anthropic_base}'
-        models:
-{_yaml_models(_route_models(OVERSEAS_ANTHROPIC_MODELS), 10)}
-      crawshrimp-domestic-openai:
-        displayName: 抓虾-国内 OpenAI 兼容
-        apiKeyEnv: CRAWSHRIMP_LLM_API_KEY
-        api: openai-completions
-        baseURL: '{domestic_base}'
-        models:
-{_yaml_models(_route_models(DOMESTIC_OPENAI_MODELS), 10)}
-      crawshrimp-glm-official:
-        displayName: 智谱官方
-        apiKeyEnv: CRAWSHRIMP_GLM_API_KEY
-        api: openai-completions
-        baseURL: '{glm_base}'
-        models:
-{_yaml_models(_route_models(GLM_OFFICIAL_MODELS), 10)}
-
-- id: agent-spine
-  name: '@deepseek-ai/dsh-agent-spine-demo'
-  config:
-    includeHarnessIdentity: false
-    includeRuntimeContext: false
-    persona: |-
-{_indent(AGENT_PERSONA, 6)}
-    workspaceContext: false
-    skills:
-      enabled: false
-    toolBash: false
-    toolJobs: false
-
-- id: sessions
-  name: '@deepseek-ai/dsh-session-persistence-jsonl'
-  config:
-    root: !!js process.env.CRAWSHRIMP_SESSION_ROOT ?? './.sessions'
-    compression: zstd
-
-- id: checkpoint
-  name: '@deepseek-ai/dsh-session-checkpoint-policy'
-
-- id: token-meter
-  name: '@deepseek-ai/dsh-token-meter'
-
-- id: compaction
-  name: '@deepseek-ai/dsh-compaction-basic'
-
-- id: mcp-crawshrimp
-  name: '@deepseek-ai/dsh-mcp-client'
-  config:
-    transport: streamable-http
-    serverName: crawshrimp
-    url: !!js process.env.CRAWSHRIMP_MCP_URL ?? 'http://127.0.0.1:18965/mcp'
-    headers: !!js |
-      ({{ Authorization: 'Bearer ' + (process.env.CRAWSHRIMP_MCP_TOKEN ?? '') }})
-    toolCallTimeoutMs: 1800000
-    failOnStartupError: true
-"""
-
-
-def _yaml_models(models: list[dict], indent: int) -> str:
-    pad = " " * indent
-    lines = []
-    for m in models:
-        lines.append(f"{pad}- id: {m['id']}")
-        lines.append(f"{pad}  contextWindow: {m['contextWindow']}")
-        lines.append(f"{pad}  maxTokens: {m['maxTokens']}")
-        lines.append(f"{pad}  input: [{', '.join(m.get('input') or ['text'])}]")
-    return "\n".join(lines)
-
-
-def _indent(text: str, spaces: int) -> str:
-    pad = " " * spaces
-    return "\n".join(pad + line if line.strip() else line for line in text.splitlines())
 
 
 def resolve_provider_for_model(model_id: str, config: Optional[dict] = None) -> str:

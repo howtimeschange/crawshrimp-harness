@@ -887,8 +887,6 @@ test('agent persona introduces itself as Crawshrimp agent', () => {
   const profilePatch = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/cordis.patch.yml'), 'utf8')
   const service = readFileSync(resolve(appRoot, '../core/agent/service.py'), 'utf8')
   const runtimeCordisSource = readFileSync(resolve(appRoot, '../core/agent/cordis_config.py'), 'utf8')
-  const profileGenerator = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/gen-web-cordis.py'), 'utf8')
-  const generatedProfile = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/web-cordis.yml'), 'utf8')
   const preset = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/agent-presets/crawshrimp-standard/agent.cordis.yml'), 'utf8')
 
   assert.match(profilePatch, /id: system-prompt[\s\S]*CRAWSHRIMP_AGENT_PERSONA/)
@@ -899,8 +897,7 @@ test('agent persona introduces itself as Crawshrimp agent', () => {
   assert.match(runtimeCordisSource, /查看当前可用的抓虾脚本/)
   assert.match(runtimeCordisSource, /读取我上传的销售表/)
   assert.match(runtimeCordisSource, /先查看.*不要执行/)
-  assert.match(profileGenerator, /新用户引导[\s\S]*可直接复制/)
-  assert.match(generatedProfile, /新用户引导[\s\S]*查看当前可用的抓虾脚本/)
+  assert.match(profilePatch, /agent-presets[\s\S]*crawshrimp-standard/)
   assert.match(preset, /如何开始使用抓虾智能体/)
   assert.match(runtimeCordisSource, /当用户明确问[\s\S]*首句明确回答[\s\S]*我是抓虾智能体/)
   assert.match(runtimeCordisSource, /普通寒暄[\s\S]*不要主动输出长篇介绍[\s\S]*简短回答/)
@@ -908,6 +905,18 @@ test('agent persona introduces itself as Crawshrimp agent', () => {
   assert.match(runtimeCordisSource, /普通寒暄[\s\S]*你好[\s\S]*需要我帮你处理什么/)
   assert.doesNotMatch(runtimeCordisSource, /首句必须明确回答/)
   assert.doesNotMatch(runtimeCordisSource, /你是抓虾桌面应用中的操作智能体/)
+})
+
+test('native DSH Web has one profile source of truth instead of a flat generated configuration', () => {
+  const runtimeCordisSource = readFileSync(resolve(appRoot, '../core/agent/cordis_config.py'), 'utf8')
+  const profilePatch = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/cordis.patch.yml'), 'utf8')
+
+  assert.equal(existsSync(resolve(appRoot, '../integrations/deepseek-harness/web-cordis.yml')), false)
+  assert.equal(existsSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/gen-web-cordis.py')), false)
+  assert.equal(existsSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/bisect-web.py')), false)
+  assert.doesNotMatch(runtimeCordisSource, /build_cordis_yaml|_web_cordis_template|web-cordis\.yml/)
+  assert.match(profilePatch, /id: agent-presets[\s\S]*?default: crawshrimp-standard/)
+  assert.match(profilePatch, /id: tool-web[\s\S]*?disabled: false/)
 })
 
 test('DSH rc.1 profile graph pins the supported Web and ACP runtime closure', () => {

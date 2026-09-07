@@ -2015,25 +2015,18 @@ def test_dsh_web_profile_preserves_product_model_catalog_without_widening_text_o
 
 
 def test_dsh_native_deepseek_route_is_hidden_in_favor_of_crawshrimp_route():
-    from core.agent.cordis_config import build_cordis_yaml
-
-    profile = build_cordis_yaml({"ai": {"llm": {"default_model": "deepseek-official-v4-flash"}}})
-    default_block = profile.split("- id: agent-default-model", 1)[1].split("- id:", 1)[0]
-    native_block = profile.split("- id: llm-deepseek", 1)[1].split("- id:", 1)[0]
-
-    assert "provider: crawshrimp-deepseek-official" in default_block
-    assert "provider: deepseek-official" not in default_block
-    assert "disabled: true" in native_block
     profile_patch = (Path(__file__).resolve().parents[1] / "integrations" / "deepseek-harness" / "profile" / "web" / "cordis.patch.yml").read_text(encoding="utf-8")
     native_profile_block = profile_patch.split("- id: llm-deepseek", 1)[1].split("- id:", 1)[0]
+
+    default_block = profile_patch.split("- id: agent-default-model", 1)[1].split("- id:", 1)[0]
+    assert "CRAWSHRIMP_AGENT_PROVIDER ?? 'crawshrimp-deepseek-official'" in default_block
+    assert "?? 'deepseek-official'" not in default_block
     assert "disabled: true" in native_profile_block
 
 
 def test_dsh_deepseek_official_models_expose_reasoning_efforts():
-    from core.agent.cordis_config import build_cordis_yaml
-
-    profile = build_cordis_yaml({"ai": {"llm": {"default_model": "deepseek-official-v4-flash"}}})
-    official_block = profile.split("crawshrimp-deepseek-official:", 1)[1].split("crawshrimp-overseas-openai:", 1)[0]
+    profile_patch = (Path(__file__).resolve().parents[1] / "integrations" / "deepseek-harness" / "profile" / "web" / "cordis.patch.yml").read_text(encoding="utf-8")
+    official_block = profile_patch.split("crawshrimp-deepseek-official:", 1)[1].split("crawshrimp-overseas-openai:", 1)[0]
     flash_block = official_block.split("- id: deepseek-v4-flash", 1)[1].split("- id:", 1)[0]
     pro_block = official_block.split("- id: deepseek-v4-pro", 1)[1].split("- id:", 1)[0]
     vision_block = official_block.split("- id: deepseek-v4-flash-vision-exp", 1)[1]

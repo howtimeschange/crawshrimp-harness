@@ -317,6 +317,14 @@ async function afterPack(context) {
   console.log(`[after-pack] Python bundled (${srcKey})`)
 }
 
+function isPrunedPnpmVirtualStoreLink(source) {
+  const segments = path.normalize(source).split(path.sep)
+  const pnpmIndex = segments.lastIndexOf('.pnpm')
+  return pnpmIndex > 0
+    && segments[pnpmIndex - 1] === 'node_modules'
+    && segments[pnpmIndex + 1] === 'node_modules'
+}
+
 function copyDirSync(src, dest, ancestorSources = new Set()) {
   const canonicalSource = fs.realpathSync(src)
   if (ancestorSources.has(canonicalSource)) {
@@ -331,7 +339,17 @@ function copyDirSync(src, dest, ancestorSources = new Set()) {
       fs.mkdirSync(d, { recursive: true })
       copyDirSync(s, d, nextAncestors)
     } else if (entry.isSymbolicLink()) {
-      const realSrc = fs.realpathSync(s)
+      let realSrc
+      try {
+        realSrc = fs.realpathSync(s)
+      } catch (error) {
+        // `pnpm prune --prod` can leave its private virtual-store index with
+        // links to removed development-only packages. Those links cannot be
+        // reached through normal Node resolution and must not block copying a
+        // production CLI closure. Any other broken runtime link still fails.
+        if (error?.code === 'ENOENT' && isPrunedPnpmVirtualStoreLink(s)) continue
+        throw error
+      }
       const targetStat = fs.statSync(s)
       if (targetStat.isDirectory()) {
         fs.mkdirSync(d, { recursive: true })

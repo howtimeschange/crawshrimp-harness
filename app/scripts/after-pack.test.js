@@ -41,6 +41,33 @@ test('copyDirSync materializes directory symlinks instead of shipping or droppin
   }
 })
 
+test('copyDirSync ignores pnpm virtual-store links left dangling after production pruning', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-after-pack-pnpm-'))
+  const source = path.join(tmp, 'source')
+  const destination = path.join(tmp, 'destination')
+  const pnpmIndex = path.join(source, 'node_modules', '.pnpm', 'node_modules')
+  const linkedPackage = path.join(source, 'node_modules', 'commander')
+  fs.mkdirSync(pnpmIndex, { recursive: true })
+  fs.mkdirSync(path.dirname(linkedPackage), { recursive: true })
+  fs.mkdirSync(path.join(source, 'store', 'commander'), { recursive: true })
+  fs.writeFileSync(path.join(source, 'store', 'commander', 'index.js'), 'module.exports = 1\n')
+  fs.symlinkSync(path.join(source, 'store', 'commander'), linkedPackage, 'dir')
+  fs.symlinkSync(
+    path.join(source, 'store', 'removed-dev-dependency'),
+    path.join(pnpmIndex, 'removed-dev-dependency'),
+    'dir',
+  )
+
+  try {
+    fs.mkdirSync(destination)
+    copyDirSync(source, destination)
+    assert.equal(fs.readFileSync(path.join(destination, 'node_modules', 'commander', 'index.js'), 'utf8'), 'module.exports = 1\n')
+    assert.equal(fs.existsSync(path.join(destination, 'node_modules', '.pnpm', 'node_modules', 'removed-dev-dependency')), false)
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
 test('requirePythonBundle rejects missing bundled Python source', () => {
   const missing = path.join(__dirname, '..', '.missing-python-dist', 'win-x64')
 
