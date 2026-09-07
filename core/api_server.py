@@ -12898,6 +12898,11 @@ def _serialize_automation_run(row: dict) -> dict:
 
 
 def _validate_automation_inherited_session(values: dict, *, existing: Optional[dict] = None) -> None:
+    if existing is not None and "context_mode" in values:
+        previous_mode = str(existing.get("context_mode") or "isolated").strip().lower()
+        proposed_mode = str(values.get("context_mode") or "").strip().lower()
+        if proposed_mode != previous_mode:
+            raise HTTPException(422, "context_mode is immutable after Automation creation")
     context_mode = str(values.get("context_mode") if "context_mode" in values else (existing or {}).get("context_mode") or "isolated").strip().lower()
     requested_source_session_id = str(values.get("source_session_id") or "").strip()
     requested_runtime_session_id = str(values.get("source_runtime_session_id") or "").strip()

@@ -272,7 +272,11 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { formFromAutomation, payloadFromAutomationForm } from '../utils/automationCenterState.mjs'
+import {
+  createAutomationViewState,
+  formFromAutomation,
+  payloadFromAutomationForm,
+} from '../utils/automationCenterState.mjs'
 
 const automations = ref([])
 const selectedAutomation = ref(null)
@@ -292,9 +296,18 @@ const testedProgramFingerprint = ref('')
 const programTestProof = ref('')
 const initialExampleProgramText = JSON.stringify(exampleProgram(), null, 2)
 let refreshTimer = null
-let selectionSequence = 0
-let runsSequence = 0
-const runsByAutomation = new Map()
+const automationViewState = createAutomationViewState({
+  getAutomation: (...args) => window.cs.getAutomation(...args),
+  listAutomationRuns: (...args) => window.cs.listAutomationRuns(...args),
+  listAutomations: (...args) => window.cs.listAutomations(...args),
+  runAutomationNow: (...args) => window.cs.runAutomationNow(...args),
+})
+
+function syncAutomationViewState() {
+  selectedUid.value = automationViewState.selectedUid
+  selectedAutomation.value = automationViewState.selectedAutomation
+  runs.value = automationViewState.runsForSelected
+}
 
 function exampleProgram() {
   return {
@@ -560,7 +573,7 @@ async function copyAutomation(automation) {
   try {
     const response = await window.cs.getAutomation(automation.automation_uid)
     const item = response?.automation || response
-    form.value = formFromAutomation(item, defaultForm())
+    form.value = formFromAutomation(item, defaultForm(), { copy: true })
     form.value.title = `${form.value.title || '自动化'} 副本`
     editingUid.value = ''
     editing.value = true
@@ -576,9 +589,8 @@ async function loadAutomations() {
     const response = await window.cs.listAutomations()
     automations.value = Array.isArray(response?.items) ? response.items : []
     if (selectedUid.value && !automations.value.some(item => item.automation_uid === selectedUid.value)) {
-      selectedUid.value = ''
-      selectedAutomation.value = null
-      runs.value = []
+      automationViewState.clear()
+      syncAutomationViewState()
     }
   } catch (err) {
     error.value = err?.message || String(err)
@@ -590,23 +602,17 @@ async function loadAutomations() {
 async function loadRuns(automationUid) {
   if (!automationUid) return
   const uid = String(automationUid)
-  const selectionAtRequest = selectionSequence
-  const request = ++runsSequence
-  const selectedAtRequest = selectedUid.value === uid
+  const selectedAtRequest = automationViewState.selectedUid === uid
   if (selectedAtRequest) runsLoading.value = true
   try {
-    const response = await window.cs.listAutomationRuns(uid, 20)
-    const items = Array.isArray(response?.items) ? response.items : []
-    if (selectedUid.value === uid && selectionAtRequest === selectionSequence && request === runsSequence) {
-      runsByAutomation.set(uid, items)
-      runs.value = items
-    }
+    await automationViewState.loadRuns(uid)
+    syncAutomationViewState()
   } catch (err) {
-    if (selectedUid.value === uid && selectionAtRequest === selectionSequence && request === runsSequence) {
+    if (automationViewState.selectedUid === uid) {
       error.value = err?.message || String(err)
     }
   } finally {
-    if (selectedUid.value === uid && selectionAtRequest === selectionSequence && request === runsSequence) {
+    if (automationViewState.selectedUid === uid) {
       runsLoading.value = false
     }
   }
@@ -615,21 +621,18 @@ async function loadRuns(automationUid) {
 async function selectAutomation(automationUid) {
   if (!automationUid) return
   const uid = String(automationUid)
-  const request = ++selectionSequence
-  selectedUid.value = uid
-  selectedAutomation.value = null
-  runs.value = runsByAutomation.get(uid) || []
   runsLoading.value = true
+  const selecting = automationViewState.select(uid)
+  syncAutomationViewState()
   try {
-    const response = await window.cs.getAutomation(uid)
-    if (selectedUid.value !== uid || request !== selectionSequence) return
-    selectedAutomation.value = response?.automation || response || null
-    await loadRuns(uid)
+    await selecting
+    syncAutomationViewState()
   } catch (err) {
-    if (selectedUid.value === uid && request === selectionSequence) {
+    if (automationViewState.selectedUid === uid) {
       error.value = err?.message || String(err)
-      runsLoading.value = false
     }
+  } finally {
+    if (automationViewState.selectedUid === uid) runsLoading.value = false
   }
 }
 
@@ -637,12 +640,9 @@ async function runNow(automation) {
   error.value = ''
   try {
     const requestUid = `desktop:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`
-    const uid = String(automation.automation_uid || '')
-    await window.cs.runAutomationNow(uid, requestUid)
-    await loadAutomations()
-    // A run requested from a non-selected card must never replace the
-    // evidence panel belonging to the current selection.
-    if (selectedUid.value === uid) await loadRuns(uid)
+    const response = await automationViewState.runNow(automation, requestUid)
+    automations.value = Array.isArray(response?.items) ? response.items : []
+    syncAutomationViewState()
     notice.value = '已请求运行一次；运行结果会在下方证据中更新。'
   } catch (err) {
     error.value = err?.message || String(err)
@@ -674,9 +674,8 @@ async function archive(automation) {
     await window.cs.archiveAutomation(automation.automation_uid)
     await loadAutomations()
     if (selectedUid.value === automation.automation_uid) {
-      selectedUid.value = ''
-      selectedAutomation.value = null
-      runs.value = []
+      automationViewState.clear()
+      syncAutomationViewState()
     }
     notice.value = '自动化已归档；历史运行记录会保留。'
   } catch (err) {

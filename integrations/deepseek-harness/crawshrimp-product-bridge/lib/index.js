@@ -83,9 +83,16 @@ export function automationNativeToolDecision(policy, toolName) {
   if (!policy || typeof policy !== 'object') return undefined
   const snapshot = automationPolicySnapshot(policy)
   const name = String(toolName || '').trim()
-  if (!name || name.startsWith(MCP_TOOL_PREFIX)) return undefined
+  if (name.startsWith(MCP_TOOL_PREFIX)) return undefined
   const kind = nativeToolKind(name)
-  if (!kind) return undefined
+  // DSH can add native tools without the product bridge being upgraded at the
+  // same time.  An Automation policy is an allow-list, so an unclassified (or
+  // malformed) native name must not silently inherit the interactive Session's
+  // broader permission preset.
+  if (!kind) {
+    const label = name || '<missing>'
+    return `${AUTOMATION_POLICY_DENIED}: unknown native tool "${label}" is outside this Automation execution policy`
+  }
   const permitted = snapshot.toolset.includes(name)
   let denied = !permitted
   if (kind === 'delegation') denied = true // children cannot prove inheritance of this run-scoped guard.
@@ -862,6 +869,15 @@ export function apply(ctx) {
         })
       } catch (error) {
         ctx.logger?.error?.(`Unable to record Automation native-tool denial: ${String(error?.message || error)}`)
+        // If the durable Python-side mark/cancel boundary is unavailable, stop
+        // this exact in-process agent as the fail-closed containment fallback.
+        // A hook cancellation closes the active turn; it does not dispose the
+        // shared Web Host or affect another Session.
+        try {
+          exec?.agent?.cancel?.({ kind: 'hook', reason: denial })
+        } catch (cancelError) {
+          ctx.logger?.error?.(`Unable to cancel Automation after native-tool denial: ${String(cancelError?.message || cancelError)}`)
+        }
       }
     }
     return denial ? next({ kind: 'deny', reason: denial }) : next()

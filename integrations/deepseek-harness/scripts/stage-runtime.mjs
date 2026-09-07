@@ -90,6 +90,7 @@ const required = [
   'node_modules/crawshrimp-product-bridge/lib/index.js',
   'node_modules/crawshrimp-slots/lib/client.js',
   'worker/worker.mjs',
+  'worker/native-web-follow-manager.mjs',
   'worker/web-rpc-client.mjs',
   'profiles/web/package.json',
   'profiles/web/cordis.yml',

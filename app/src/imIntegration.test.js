@@ -124,6 +124,93 @@ test('Automation native tool policy denies unauthorized tools before execution a
     bridge.automationNativeToolDecision({ toolset: ['subagent'], allow_filesystem: true }, 'subagent'),
     /AUTOMATION_POLICY_DENIED/,
   )
+  for (const nativeTool of ['send_message', 'interrupt_agent', 'list_subagent_models', 'future_native_tool']) {
+    assert.match(
+      bridge.automationNativeToolDecision(scoped, nativeTool),
+      /AUTOMATION_POLICY_DENIED/,
+      nativeTool,
+    )
+  }
+})
+
+test('Automation native denial cancels the exact DSH agent when durable reporting fails', async (t) => {
+  const originalFetch = globalThis.fetch
+  const originalUrl = process.env.CRAWSHRIMP_MCP_URL
+  const originalToken = process.env.CRAWSHRIMP_MCP_TOKEN
+  process.env.CRAWSHRIMP_MCP_URL = 'http://127.0.0.1:18965/mcp'
+  process.env.CRAWSHRIMP_MCP_TOKEN = 'native-policy-test-token'
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    detail: { code: 'REPORT_FAILED', message: 'durable denial reporting failed' },
+  }), { status: 503, headers: { 'content-type': 'application/json' } })
+  t.after(() => {
+    globalThis.fetch = originalFetch
+    if (originalUrl === undefined) delete process.env.CRAWSHRIMP_MCP_URL
+    else process.env.CRAWSHRIMP_MCP_URL = originalUrl
+    if (originalToken === undefined) delete process.env.CRAWSHRIMP_MCP_TOKEN
+    else process.env.CRAWSHRIMP_MCP_TOKEN = originalToken
+  })
+
+  const bridgeUrl = pathToFileURL(resolve(harnessRoot, 'crawshrimp-product-bridge/lib/index.js'))
+  const bridge = await import(`${bridgeUrl.href}?native-policy-hook=${Date.now()}`)
+  let preExecute
+  let routeHandler
+  bridge.apply({
+    logger: { info() {}, error() {} },
+    connection: {},
+    agents: { roots: () => [] },
+    approval: { decide: async () => 'rejected' },
+    on(event, handler) {
+      if (event === 'tools/pre-execute') preExecute = handler
+      return () => {}
+    },
+    effect(fn) { return fn() },
+    webServer: {
+      register(route) {
+        routeHandler = route.handler
+        return () => {}
+      },
+    },
+  })
+
+  const callPolicyRoute = (body) => new Promise((resolveResponse, reject) => {
+    const req = new EventEmitter()
+    req.url = '/api/crawshrimp/session/automation-policy'
+    req.method = 'POST'
+    req.headers = {}
+    const res = {
+      statusCode: 0,
+      writeHead(statusCode) { this.statusCode = statusCode },
+      end(chunk = '') { resolveResponse({ statusCode: this.statusCode, body: JSON.parse(String(chunk)) }) },
+    }
+    Promise.resolve(routeHandler(req, res)).catch(reject)
+    process.nextTick(() => {
+      req.emit('data', JSON.stringify(body))
+      req.emit('end')
+    })
+  })
+
+  assert.equal(typeof preExecute, 'function')
+  assert.equal((await callPolicyRoute({
+    sessionId: 'automation-agent-1',
+    runId: 'automation-run-1',
+    policy: { toolset: [], allow_filesystem: false, allow_network: false },
+  })).statusCode, 200)
+
+  const cancellations = []
+  const agent = {
+    id: 'automation-agent-1',
+    cancel(cause, options) { cancellations.push({ cause, options }) },
+  }
+  const decision = await preExecute(
+    { name: 'future_native_tool', agent },
+    (value) => value,
+  )
+
+  assert.match(decision.reason, /AUTOMATION_POLICY_DENIED/)
+  assert.deepEqual(cancellations, [{
+    cause: { kind: 'hook', reason: decision.reason },
+    options: undefined,
+  }])
 })
 
 test('MCP context acquire exposes a user-safe retryable session-readiness error', async (t) => {

@@ -777,6 +777,7 @@ test('the Crawshrimp attachment picker visibly offers native DSH image formats a
 
 test('native Web sessions obtain a per-session shadow follow without a latest-run fallback', () => {
   const worker = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/worker.mjs'), 'utf8')
+  const followManager = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/native-web-follow-manager.mjs'), 'utf8')
   const webView = readFileSync(resolve(appRoot, 'src/renderer/views/AgentWebView.vue'), 'utf8')
   const api = readFileSync(resolve(appRoot, '../core/agent/api.py'), 'utf8')
   const service = readFileSync(resolve(appRoot, '../core/agent/service.py'), 'utf8')
@@ -791,16 +792,26 @@ test('native Web sessions obtain a per-session shadow follow without a latest-ru
   assert.match(service, /refresh=True/)
   assert.match(service, /McpContextUnavailableError/)
   assert.match(worker, /nativeWebFollows:\s*new Map\(\)/)
+  assert.match(worker, /createNativeWebFollowManager\(\{/)
   assert.match(worker, /async function observeNativeWebSession\(sessionId, \{ refresh = false, owner = '' \} = \{\}\)/)
-  assert.match(worker, /RUNTIME_SESSION_ID\.test\(normalized\)/)
-  assert.match(worker, /runtime\.follow\(normalized, \{/)
-  assert.match(worker, /firstFrameTimeoutMs:\s*NATIVE_WEB_FOLLOW_FIRST_FRAME_TIMEOUT_MS/)
-  assert.match(worker, /await record\.follow\.ready/)
+  assert.match(followManager, /runtime\.follow\(normalized, \{/)
+  assert.match(followManager, /await record\.follow\.ready/)
+  assert.match(followManager, /heldForActiveTurn:\s*true/)
   assert.match(worker, /notifyHarnessShadow\(sessionId, event\)/)
   assert.match(worker, /refresh: params\.refresh === true/)
   assert.match(worker, /case 'worker\.observe_web_session'/)
   assert.match(worker, /case 'worker\.unobserve_web_session'/)
   assert.doesNotMatch(worker, /latest.*active.*run/i)
+})
+
+test('native Web follow manager is required by development and packaged runtime manifests', () => {
+  const paths = readFileSync(resolve(appRoot, 'src/deepseekHarnessPaths.js'), 'utf8')
+  const staging = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/stage-runtime.mjs'), 'utf8')
+  const afterPack = readFileSync(resolve(appRoot, 'scripts/after-pack.js'), 'utf8')
+
+  for (const source of [paths, staging, afterPack]) {
+    assert.match(source, /worker\/native-web-follow-manager\.mjs/)
+  }
 })
 
 test('browser wait is explicitly local-only and does not request an act approval', () => {

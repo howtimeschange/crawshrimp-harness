@@ -362,6 +362,7 @@ FILTERED_EVENT_TYPES = {"request/header", "request/context"}
 RUN_FINAL_STATUSES = {"completed", "failed", "canceled", "interrupted"}
 OUTPUT_BUDGET_ERROR_CODE = "OUTPUT_BUDGET_REACHED"
 OUTPUT_BUDGET_NOTICE = "内容较长，已自动分段输出并达到单轮安全上限。当前内容已保留；如需更多内容，可缩小范围或发送“继续”。"
+AUTOMATION_POLICY_DENIED_ERROR_CODE = "AUTOMATION_POLICY_DENIED"
 
 
 def _result_reason(result: dict) -> dict:
@@ -371,17 +372,42 @@ def _result_reason(result: dict) -> dict:
 
 def _result_error_code(result: dict) -> Optional[str]:
     error = _result_reason(result).get("error")
-    if not isinstance(error, dict):
-        return None
-    code = str(error.get("code") or "").strip()
-    return code or None
+    if isinstance(error, dict):
+        code = str(error.get("code") or "").strip()
+        if code:
+            return code
+    hook_message = _result_hook_abort_message(result)
+    if hook_message and (
+        hook_message == AUTOMATION_POLICY_DENIED_ERROR_CODE
+        or hook_message.startswith(f"{AUTOMATION_POLICY_DENIED_ERROR_CODE}:")
+    ):
+        return AUTOMATION_POLICY_DENIED_ERROR_CODE
+    return None
 
 
 def _result_error_message(result: dict) -> Optional[str]:
     error = _result_reason(result).get("error")
-    if not isinstance(error, dict):
+    if isinstance(error, dict):
+        message = str(error.get("message") or "").strip()
+        if message:
+            return message
+    hook_message = _result_hook_abort_message(result)
+    if hook_message and (
+        hook_message == AUTOMATION_POLICY_DENIED_ERROR_CODE
+        or hook_message.startswith(f"{AUTOMATION_POLICY_DENIED_ERROR_CODE}:")
+    ):
+        return hook_message
+    return None
+
+
+def _result_hook_abort_message(result: dict) -> Optional[str]:
+    reason = _result_reason(result)
+    if reason.get("kind") != "aborted":
         return None
-    message = str(error.get("message") or "").strip()
+    cancel_reason = reason.get("reason")
+    if not isinstance(cancel_reason, dict) or cancel_reason.get("kind") != "hook":
+        return None
+    message = str(cancel_reason.get("reason") or "").strip()
     return message or None
 
 
@@ -1062,29 +1088,37 @@ class AgentService:
             # event immediately before the re-follow so only a fresh
             # projection for this *same* runtime Session opens the barrier.
             projected.clear()
-            response = await self.observe_native_web_session(
-                runtime_id,
-                refresh=True,
-                timeout=NATIVE_WEB_CONTEXT_FOLLOW_TIMEOUT_SECONDS,
-            )
-            run = self.active_runs_by_runtime.get(runtime_id)
-            if run:
-                return run
-            if not isinstance(response, dict) or response.get("ok") is not True:
-                raw_error = response.get("error") if isinstance(response, dict) else "INVALID_WORKER_RESPONSE"
-                if isinstance(raw_error, dict):
-                    reason = str(raw_error.get("code") or raw_error.get("message") or "SESSION_FOLLOW_FAILED")
-                else:
-                    reason = str(raw_error or "SESSION_FOLLOW_FAILED")
-                raise McpContextUnavailableError(runtime_id, reason[:120])
+            recovery_owner = "mcp-recovery"
             try:
-                await asyncio.wait_for(projected.wait(), timeout=NATIVE_WEB_CONTEXT_PROJECTION_WAIT_SECONDS)
-            except TimeoutError as exc:
-                raise McpContextUnavailableError(runtime_id, "SHADOW_RUN_NOT_PROJECTED") from exc
-            run = self.active_runs_by_runtime.get(runtime_id)
-            if not run:
-                raise McpContextUnavailableError(runtime_id, "SHADOW_RUN_NOT_PROJECTED")
-            return run
+                response = await self.observe_native_web_session(
+                    runtime_id,
+                    refresh=True,
+                    timeout=NATIVE_WEB_CONTEXT_FOLLOW_TIMEOUT_SECONDS,
+                    owner=recovery_owner,
+                )
+                run = self.active_runs_by_runtime.get(runtime_id)
+                if run:
+                    return run
+                if not isinstance(response, dict) or response.get("ok") is not True:
+                    raw_error = response.get("error") if isinstance(response, dict) else "INVALID_WORKER_RESPONSE"
+                    if isinstance(raw_error, dict):
+                        reason = str(raw_error.get("code") or raw_error.get("message") or "SESSION_FOLLOW_FAILED")
+                    else:
+                        reason = str(raw_error or "SESSION_FOLLOW_FAILED")
+                    raise McpContextUnavailableError(runtime_id, reason[:120])
+                try:
+                    await asyncio.wait_for(projected.wait(), timeout=NATIVE_WEB_CONTEXT_PROJECTION_WAIT_SECONDS)
+                except TimeoutError as exc:
+                    raise McpContextUnavailableError(runtime_id, "SHADOW_RUN_NOT_PROJECTED") from exc
+                run = self.active_runs_by_runtime.get(runtime_id)
+                if not run:
+                    raise McpContextUnavailableError(runtime_id, "SHADOW_RUN_NOT_PROJECTED")
+                return run
+            finally:
+                # Refresh inherits renderer owners in the Node manager. This
+                # temporary recovery owner is scoped to this barrier and must
+                # never keep an idle socket alive after success or timeout.
+                await self.unobserve_native_web_session(runtime_id, owner=recovery_owner)
 
     async def _expire_mcp_context_lease(self, lease_id: str) -> None:
         try:
@@ -2569,6 +2603,9 @@ class AgentService:
         """Project an unexpected stdio worker exit into the public runtime state."""
         if not unexpected or self.worker is not worker:
             return
+        await self._interrupt_shadow_runs(
+            "WORKER_EXITED", str(message or "worker 已退出")[:300],
+        )
         self.worker = None
         self.runtime_state = "crashed"
         self.runtime_error_code = "WORKER_EXITED"
@@ -2593,6 +2630,7 @@ class AgentService:
             except Exception:  # noqa: BLE001
                 pass
             self.worker = None
+        await self._interrupt_shadow_runs("RUNTIME_STOPPED", "runtime stopped")
         self._web_launch_url = ""
         self._web_origin = ""
         self.runtime_state = "stopped"
@@ -2759,11 +2797,54 @@ class AgentService:
 
     # ---------- Worker 事件投影 ----------
 
+    async def _interrupt_shadow_runs(self, error_code: str, message: str) -> None:
+        """Close every native-Web shadow run when its owning runtime disappears."""
+        code = str(error_code or "RUNTIME_INTERRUPTED")[:120]
+        detail = str(message or "runtime interrupted")[:300]
+        for runtime_session_id, run in list(self.shadow_runs.items()):
+            run_id = str(run.get("run_id") or "")
+            session_id = str(run.get("session_id") or "")
+            try:
+                await self._finalize_assistant_stream(run_id, mark_complete=True)
+                db.update_run(
+                    run_id,
+                    status="interrupted",
+                    error_code=code,
+                    error_message=detail,
+                    finished_at=_now_iso(),
+                )
+                db.update_turn(
+                    str(run.get("turn_id") or ""),
+                    status="interrupted",
+                    completed_at=_now_iso(),
+                )
+                db.update_session(session_id, status="idle")
+                await self.broadcast(session_id, 0, "run.interrupted", {
+                    "run_id": run_id,
+                    "status": "interrupted",
+                    "error_code": code,
+                    "error": detail,
+                })
+            except Exception as exc:  # noqa: BLE001
+                # In-memory context still must be revoked even if a damaged DB
+                # prevents terminal projection; startup recovery will repair
+                # any durable nonterminal row on the next process start.
+                print(f"[agent] native Web shadow run {run_id} 中断投影失败: {exc}", flush=True)
+            finally:
+                if self.shadow_runs.get(runtime_session_id) is run:
+                    self.shadow_runs.pop(runtime_session_id, None)
+                self.unregister_run_context(runtime_session_id, run_id)
+
     async def _on_worker_notification(self, method: str, params: dict) -> None:
         if method == "worker.status":
             state = params.get("status")
             if state in ("ready", "starting", "stopping", "stopped", "crashed"):
                 self.runtime_state = state
+            if state in ("stopped", "crashed"):
+                await self._interrupt_shadow_runs(
+                    "RUNTIME_CRASHED" if state == "crashed" else "RUNTIME_STOPPED",
+                    str(params.get("message") or f"runtime {state}")[:300],
+                )
             if state == "crashed":
                 self.runtime_error = str(params.get("message", ""))[:300]
                 self._note_crash(self.runtime_error)
@@ -2850,11 +2931,26 @@ class AgentService:
             else:
                 await self._finalize_assistant_stream(run["run_id"], mark_complete=True)
                 error_code = None
+                error_message = None
                 if isinstance(reason.get("error"), dict):
                     error_code = reason["error"].get("code")
-                db.update_run(run["run_id"], status="failed", error_code=error_code, finished_at=_now_iso())
-                await self.broadcast(session_id, 0, "run.failed",
-                                     {"run_id": run["run_id"], "kind": kind, "error_code": error_code})
+                    error_message = reason["error"].get("message")
+                terminal_status = "interrupted" if kind == "interrupted" else "failed"
+                db.update_run(
+                    run["run_id"],
+                    status=terminal_status,
+                    error_code=error_code,
+                    error_message=error_message,
+                    finished_at=_now_iso(),
+                )
+                db.update_turn(
+                    run.get("turn_id") or "",
+                    status=terminal_status,
+                    completed_at=_now_iso(),
+                )
+                await self.broadcast(session_id, 0, f"run.{terminal_status}", {
+                    "run_id": run["run_id"], "kind": kind, "error_code": error_code,
+                })
             db.update_session(session_id, status="idle")
             self.shadow_runs.pop(runtime_session_id, None)
             self.unregister_run_context(runtime_session_id, run["run_id"])

@@ -58,6 +58,36 @@ def _program() -> dict:
     }
 
 
+@pytest.mark.parametrize(("initial_mode", "requested_mode"), [
+    ("isolated", "inherited"),
+    ("inherited", "isolated"),
+])
+def test_context_mode_is_immutable_at_the_controller_boundary(
+    monkeypatch, tmp_path, initial_mode, requested_mode,
+):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    controller = AutomationController(None, sched_module)
+    automation = controller.create({
+        "title": "上下文边界",
+        "objective_prompt": "保持创建时的会话隔离语义",
+        "automation_kind": "scheduled",
+        "context_mode": initial_mode,
+        "source_session_id": "source-session" if initial_mode == "inherited" else "",
+        "source_runtime_session_id": "source-runtime" if initial_mode == "inherited" else "",
+        "schedule": {
+            "kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai",
+        },
+        "execution_policy": {"toolset": ["automation_record_verification"]},
+        "enabled": False,
+    })
+
+    with pytest.raises(ValueError, match="context_mode is immutable"):
+        controller.update(automation["automation_uid"], {"context_mode": requested_mode})
+
+    stored = data_sink.get_agent_automation(automation["automation_uid"])
+    assert stored["context_mode"] == initial_mode
+
+
 class _Executors:
     def __init__(self):
         self.observer_calls = []

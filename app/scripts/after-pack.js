@@ -74,6 +74,7 @@ const REQUIRED_DEEPSEEK_HARNESS_FILES = [
   'node_modules/@xmanrui/dsh-im/lib/index.js',
   'node_modules/@xmanrui/dsh-im/lib/client.js',
   'worker/worker.mjs',
+  'worker/native-web-follow-manager.mjs',
   'worker/web-rpc-client.mjs',
   'profiles/web/cordis.yml',
   'profiles/web/cordis.patch.yml',

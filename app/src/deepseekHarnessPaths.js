@@ -47,6 +47,7 @@ function assertDeepseekHarnessBundle(root) {
     'node_modules/@deepseek-ai/dsh-acp-app/cordis.patch.yml',
     'node_modules/@deepseek-ai/dsh-acp-app/node_modules/@deepseek-ai/dsh-acp/package.json',
     'profiles/web/cordis.patch.yml',
+    'worker/native-web-follow-manager.mjs',
     'worker/web-rpc-client.mjs',
   ]
   const missing = required.filter((rel) => !require('fs').existsSync(path.join(root, rel)))

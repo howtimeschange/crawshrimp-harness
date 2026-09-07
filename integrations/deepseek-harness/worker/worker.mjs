@@ -15,6 +15,7 @@
 import readline from 'node:readline'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { DshWebRuntime, activeTurnEvents } from './web-rpc-client.mjs'
+import { createNativeWebFollowManager } from './native-web-follow-manager.mjs'
 
 const PROTOCOL_VERSION = 1
 const MODEL_IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
@@ -113,129 +114,28 @@ function notifyHarnessShadow(sessionId, event) {
   })
 }
 
-const RUNTIME_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u
 const NATIVE_WEB_FOLLOW_FIRST_FRAME_TIMEOUT_MS = 8000
 
-function closeNativeWebFollows() {
-  for (const record of state.nativeWebFollows.values()) {
-    record.closed = true
-    record.state = 'closed'
-    try { record.follow?.close() } catch {}
-  }
-  state.nativeWebFollows.clear()
-}
+const nativeWebFollowManager = createNativeWebFollowManager({
+  records: state.nativeWebFollows,
+  getRuntime: () => state.runtime,
+  getProductSessionId: () => state.activeRun?.sessionId || '',
+  activeTurnEvents,
+  notify: notifyHarnessShadow,
+  logError: (message) => console.error(message),
+  firstFrameTimeoutMs: NATIVE_WEB_FOLLOW_FIRST_FRAME_TIMEOUT_MS,
+})
 
-function closeNativeWebFollow(record) {
-  if (!record || record.closed) return
-  record.closed = true
-  record.state = 'closed'
-  try { record.follow?.close() } catch {}
-  if (state.nativeWebFollows.get(record.sessionId) === record) {
-    state.nativeWebFollows.delete(record.sessionId)
-  }
-}
-
-function forwardNativeWebEvent(record, event) {
-  if (record.closed || !event || typeof event !== 'object') return
-  const seq = Number(event.seq || 0)
-  if (seq && seq <= record.lastSeq) return
-  if (seq) record.lastSeq = seq
-  notifyHarnessShadow(record.sessionId, event)
-}
-
-function forwardNativeWebSnapshot(record, events) {
-  // A first snapshot replays historical turns whenever the iframe reloads.
-  // Only an unterminated final turn may need a shadow context; replaying a
-  // completed turn would create duplicate product run/audit rows.
-  for (const event of activeTurnEvents(events)) forwardNativeWebEvent(record, event)
-  const maxSnapshotSeq = (Array.isArray(events) ? events : []).reduce((max, event) => (
-    Math.max(max, Number(event?.seq || 0) || 0)
-  ), record.lastSeq)
-  record.lastSeq = maxSnapshotSeq
+function closeNativeWebFollows(reason) {
+  return nativeWebFollowManager.closeAll(reason)
 }
 
 async function observeNativeWebSession(sessionId, { refresh = false, owner = '' } = {}) {
-  const runtime = state.runtime
-  if (!runtime) return { ok: false, error: { code: 'RUNTIME_UNAVAILABLE', message: 'DSH Web runtime is not ready' } }
-  const normalized = String(sessionId || '').trim()
-  if (!RUNTIME_SESSION_ID.test(normalized)) {
-    return { ok: false, error: { code: 'INVALID_SESSION_ID', message: 'invalid runtime session id' } }
-  }
-  if (state.activeRun?.sessionId === normalized) {
-    return { ok: true, following: false, reason: 'product-run-already-followed' }
-  }
-  const ownerId = String(owner || 'api').trim() || 'api'
-  const existing = state.nativeWebFollows.get(normalized)
-  if (existing && !existing.closed && !refresh) {
-    existing.owners.add(ownerId)
-    if (existing.state === 'ready') return { ok: true, following: true, idempotent: true, state: 'ready' }
-    try {
-      await existing.follow.ready
-      if (existing.closed || existing.state !== 'ready') {
-        return { ok: false, error: { code: 'SESSION_FOLLOW_FAILED', message: 'follow closed before ready' } }
-      }
-      return { ok: true, following: true, idempotent: true, state: 'ready' }
-    } catch (error) {
-      return { ok: false, error: { code: 'SESSION_FOLLOW_FAILED', message: String(error?.message || error) } }
-    }
-  }
-  if (existing && !existing.closed && refresh) {
-    // The renderer follow can be alive while its first snapshot was missed by
-    // FastAPI. Re-follow this exact session to request a fresh active-turn
-    // snapshot; never substitute a run from a different Web session.
-    closeNativeWebFollow(existing)
-  }
-
-  const record = {
-    sessionId: normalized, follow: null, closed: false, state: 'connecting',
-    lastSeq: 0, owners: new Set([ownerId]),
-  }
-  state.nativeWebFollows.set(normalized, record)
-  const onError = (error) => {
-    if (record.closed) return
-    record.closed = true
-    record.state = 'failed'
-    if (state.nativeWebFollows.get(normalized) === record) state.nativeWebFollows.delete(normalized)
-    console.error(`[worker] native Web Session follow ${normalized} failed: ${error.message}`)
-    // A follow failure during a native turn must release the exact shadow
-    // context. Do not leave a stale run available to a later MCP request.
-    notifyHarnessShadow(normalized, {
-      type: 'turn/end',
-      data: { reason: { kind: 'interrupted', error: { code: 'SESSION_FOLLOW_FAILED', message: error.message } } },
-      seq: record.lastSeq,
-    })
-  }
-  record.follow = runtime.follow(normalized, {
-    onSnapshot: () => {},
-    onSnapshotComplete: (events) => forwardNativeWebSnapshot(record, events),
-    onEvent: (event) => forwardNativeWebEvent(record, event),
-    onError,
-    firstFrameTimeoutMs: NATIVE_WEB_FOLLOW_FIRST_FRAME_TIMEOUT_MS,
-  })
-  try {
-    await record.follow.ready
-    if (record.closed || state.nativeWebFollows.get(normalized) !== record) {
-      return { ok: false, error: { code: 'SESSION_FOLLOW_FAILED', message: 'follow closed before ready' } }
-    }
-    record.state = 'ready'
-    return { ok: true, following: true, state: 'ready' }
-  } catch (error) {
-    onError(error instanceof Error ? error : new Error(String(error)))
-    return { ok: false, error: { code: 'SESSION_FOLLOW_FAILED', message: error.message } }
-  }
+  return await nativeWebFollowManager.observe(sessionId, { refresh, owner })
 }
 
 function unobserveNativeWebSession(sessionId, { owner = '' } = {}) {
-  const normalized = String(sessionId || '').trim()
-  const record = state.nativeWebFollows.get(normalized)
-  if (!record) return { ok: true, following: false, idempotent: true }
-  const ownerId = String(owner || 'api').trim() || 'api'
-  record.owners.delete(ownerId)
-  if (record.owners.size > 0) {
-    return { ok: true, following: true, owners: record.owners.size }
-  }
-  closeNativeWebFollow(record)
-  return { ok: true, following: false }
+  return nativeWebFollowManager.unobserve(sessionId, { owner })
 }
 
 // ---------- DSH runtime 生命周期 ----------
@@ -287,7 +187,13 @@ async function spawnRuntime({ cwd, webPort }) {
     if (state.runtime === runtime) state.runtime = null
     state.startedSessions.clear()
     state.selectedModels.clear()
-    closeNativeWebFollows()
+    closeNativeWebFollows({
+      kind: 'interrupted',
+      error: {
+        code: 'RUNTIME_EXITED',
+        message: `runtime exit code=${code} signal=${signal}`,
+      },
+    })
     if (wasActive) {
       console.error(`[worker] runtime 在 run ${wasActive.runId} 期间退出 code=${code} signal=${signal}`)
       finishRun({ status: 'interrupted', reason: { kind: 'interrupted', detail: `runtime exit code=${code} signal=${signal}` } })
@@ -670,7 +576,10 @@ async function stopRuntime() {
   state.runtime = null
   state.startedSessions.clear()
   state.selectedModels.clear()
-  closeNativeWebFollows()
+  closeNativeWebFollows({
+    kind: 'interrupted',
+    error: { code: 'RUNTIME_STOPPED', message: 'runtime stopped' },
+  })
   if (state.activeRun) {
     finishRun({
       status: 'interrupted',

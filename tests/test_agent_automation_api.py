@@ -272,6 +272,31 @@ def test_patch_cannot_redirect_an_automation_source_conversation(monkeypatch, tm
     assert stored["source_runtime_session_id"] == "dsh-original"
 
 
+def test_patch_cannot_change_automation_context_mode(monkeypatch, tmp_path):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    controller = AutomationController(None, sched_module)
+    monkeypatch.setattr(api_server, "get_automation_controller", lambda: controller)
+    created = controller.create({
+        "title": "隔离语义不可变",
+        "objective_prompt": "不继承交互会话权限",
+        "automation_kind": "scheduled",
+        "context_mode": "isolated",
+        "schedule": {
+            "kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai",
+        },
+        "execution_policy": {"toolset": ["automation_record_verification"]},
+        "enabled": False,
+    })
+
+    response = _request("PATCH", f"/automations/{created['automation_uid']}", json={
+        "context_mode": "inherited",
+    })
+
+    assert response.status_code == 422
+    assert "context_mode is immutable" in response.json()["detail"]
+    assert data_sink.get_agent_automation(created["automation_uid"])["context_mode"] == "isolated"
+
+
 def test_execution_policy_rejects_an_unbounded_or_fractional_timeout(monkeypatch, tmp_path):
     _use_temp_product_db(monkeypatch, tmp_path)
     controller = AutomationController(None, sched_module)

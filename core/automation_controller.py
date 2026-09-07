@@ -480,6 +480,11 @@ class AutomationController:
     def update(self, automation_uid: str, values: Mapping[str, Any], *, now: Any = None) -> dict:
         """Update a definition through the Controller and version a new Program."""
         existing = self._automation_or_raise(automation_uid)
+        if "context_mode" in values:
+            previous_mode = str(existing.get("context_mode") or "isolated").strip().lower()
+            proposed_mode = str(values.get("context_mode") or "").strip().lower()
+            if proposed_mode != previous_mode:
+                raise ValueError("context_mode is immutable after Automation creation")
         # The source conversation is an auditable origin binding, not mutable
         # delivery routing.  Allowing a later PATCH to replace it lets an
         # untrusted model turn redirect a scheduled receipt into a different

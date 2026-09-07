@@ -13,7 +13,7 @@ import uuid
 import socket
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -186,6 +186,24 @@ def test_native_dsh_policy_denial_marks_the_exact_automation_run_before_cancelin
     asyncio.run(scenario())
 
 
+def test_native_policy_hook_cancel_preserves_the_exact_denial_code_for_terminal_projection():
+    from core.agent.service import _result_error_code, _result_error_message
+
+    result = {
+        "status": "canceled",
+        "reason": {
+            "kind": "aborted",
+            "reason": {
+                "kind": "hook",
+                "reason": "AUTOMATION_POLICY_DENIED: unknown native tool \"future_native_tool\" is outside this Automation execution policy",
+            },
+        },
+    }
+
+    assert _result_error_code(result) == "AUTOMATION_POLICY_DENIED"
+    assert _result_error_message(result) == result["reason"]["reason"]["reason"]
+
+
 def test_native_web_mcp_context_waits_for_its_session_projection_before_reconnecting(monkeypatch):
     """The first native tool waits for its renderer-owned follow before refreshing it."""
     async def scenario():
@@ -231,11 +249,15 @@ def test_native_web_mcp_context_recovers_the_exact_session_after_a_missed_initia
 
         async def request(method, params, timeout):
             calls.append((method, params, timeout))
-            assert method == "worker.observe_web_session"
-            assert params["sessionId"] == "native-runtime"
-            assert params["refresh"] is True
-            service.register_run_context("native-runtime", recovered_run)
-            return {"ok": True, "following": True}
+            if method == "worker.observe_web_session":
+                assert params == {
+                    "sessionId": "native-runtime", "refresh": True, "owner": "mcp-recovery",
+                }
+                service.register_run_context("native-runtime", recovered_run)
+                return {"ok": True, "following": True}
+            assert method == "worker.unobserve_web_session"
+            assert params == {"sessionId": "native-runtime", "owner": "mcp-recovery"}
+            return {"ok": True, "following": True, "owners": 1}
 
         service.worker = SimpleNamespace(request=request)
         lease = await service.acquire_mcp_context("native-runtime", "tool-call")
@@ -245,7 +267,89 @@ def test_native_web_mcp_context_recovers_the_exact_session_after_a_missed_initia
             assert service._mcp_context_leases[lease["lease_id"]]["active_run"]["run_id"] == "native-run"
         finally:
             assert service.release_mcp_context(lease["lease_id"])
-        assert calls == [("worker.observe_web_session", {"sessionId": "native-runtime", "refresh": True}, 4)]
+        assert calls == [
+            ("worker.observe_web_session", {
+                "sessionId": "native-runtime", "refresh": True, "owner": "mcp-recovery",
+            }, 4),
+            ("worker.unobserve_web_session", {
+                "sessionId": "native-runtime", "owner": "mcp-recovery",
+            }, 5),
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_runtime_crash_interrupts_shadow_runs_and_releases_all_context(tmp_path, monkeypatch):
+    db = _init_temp_agent_db(monkeypatch, tmp_path)
+
+    async def scenario():
+        service = AgentService()
+        service.generation_model_provider = "crawshrimp-test"
+        service.generation_model = "test-model"
+        monkeypatch.setattr(service, "_grant_for_run", lambda _run: {
+            "toolset": [], "filesystem": False, "network": False,
+        })
+        await service._project_shadow_event("native-runtime", {
+            "type": "turn/start", "data": {"turn": 1}, "seq": 1,
+        })
+        run = service.shadow_runs["native-runtime"]
+        lease = await service.acquire_mcp_context("native-runtime", "tool-call")
+        assert lease["lease_id"] in service._mcp_context_leases
+        assert run["run_id"] in service.grants_by_run
+
+        await service._on_worker_notification("worker.status", {
+            "status": "crashed", "message": "DSH runtime exited",
+        })
+
+        assert service.runtime_state == "crashed"
+        assert service.shadow_runs == {}
+        assert service.active_runs_by_runtime == {}
+        assert service.grants_by_run == {}
+        assert service._mcp_context_leases == {}
+        assert db.get_run(run["run_id"])["status"] == "interrupted"
+        assert db.get_turn(run["turn_id"])["status"] == "interrupted"
+        assert db.get_session(run["session_id"])["status"] == "idle"
+
+        service.start_generation = AsyncMock(return_value=True)
+        assert await service.restart_runtime() == {
+            "ok": True, "state": "crashed", "error": "DSH runtime exited",
+        }
+        service.start_generation.assert_awaited_once_with()
+
+    asyncio.run(scenario())
+
+
+def test_native_web_interrupted_turn_end_projects_interrupted_not_failed(tmp_path, monkeypatch):
+    db = _init_temp_agent_db(monkeypatch, tmp_path)
+
+    async def scenario():
+        service = AgentService()
+        service.generation_model_provider = "crawshrimp-test"
+        service.generation_model = "test-model"
+        monkeypatch.setattr(service, "_grant_for_run", lambda _run: {
+            "toolset": [], "filesystem": False, "network": False,
+        })
+        await service._project_shadow_event("native-runtime", {
+            "type": "turn/start", "data": {"turn": 1}, "seq": 1,
+        })
+        run = service.shadow_runs["native-runtime"]
+
+        await service._project_shadow_event("native-runtime", {
+            "type": "turn/end",
+            "data": {
+                "reason": {
+                    "kind": "interrupted",
+                    "error": {"code": "RUNTIME_STOPPED", "message": "runtime stopped"},
+                },
+            },
+            "seq": 2,
+        })
+
+        assert db.get_run(run["run_id"])["status"] == "interrupted"
+        assert db.get_turn(run["turn_id"])["status"] == "interrupted"
+        assert db.get_session(run["session_id"])["status"] == "idle"
+        assert service.shadow_runs == {}
+        assert service.active_runs_by_runtime == {}
 
     asyncio.run(scenario())
 
@@ -272,9 +376,14 @@ def test_native_web_mcp_context_never_falls_back_to_an_unrelated_live_run(monkey
         assert raised.value.retry_after_ms == 1500
         assert "当前会话仍在建立执行上下文" in str(raised.value)
         assert "active run" not in str(raised.value)
-        worker.request.assert_awaited_once_with(
-            "worker.observe_web_session", {"sessionId": "missing-runtime", "refresh": True}, timeout=4,
-        )
+        assert worker.request.await_args_list == [
+            call("worker.observe_web_session", {
+                "sessionId": "missing-runtime", "refresh": True, "owner": "mcp-recovery",
+            }, timeout=4),
+            call("worker.unobserve_web_session", {
+                "sessionId": "missing-runtime", "owner": "mcp-recovery",
+            }, timeout=5),
+        ]
         assert service._mcp_context_leases == {}
         assert service.active_runs_by_runtime["other-runtime"]["run_id"] == "other-run"
 
