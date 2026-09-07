@@ -43,6 +43,79 @@ const AUTOMATION_RECEIPT_PROVIDER = 'crawshrimp-automation'
 const AUTOMATION_RECEIPT_MODEL_PREFIX = 'receipt:'
 const AUTOMATION_RECEIPT_MAX_CHARS = 2_000
 const AUTOMATION_RECEIPT_ID_MAX_CHARS = 256
+const AUTOMATION_POLICY_DENIED = 'AUTOMATION_POLICY_DENIED'
+// Kept only in the Web Host process.  The Python service sends one immutable
+// snapshot immediately before an Automation prompt and removes it as that run
+// settles; no interactive Session permission state is changed or persisted.
+const automationNativePolicies = new Map()
+
+function automationPolicySnapshot(policy) {
+  const source = policy && typeof policy === 'object' ? policy : {}
+  const execution = source.execution_policy && typeof source.execution_policy === 'object'
+    ? source.execution_policy
+    : source
+  const toolset = Array.isArray(source.toolset)
+    ? source.toolset
+    : (Array.isArray(execution.toolset) ? execution.toolset : [])
+  return Object.freeze({
+    toolset: Object.freeze([...new Set(toolset.map((tool) => String(tool || '').trim()).filter(Boolean))]),
+    allow_filesystem: execution.allow_filesystem === true,
+    allow_network: execution.allow_network === true,
+  })
+}
+
+function nativeToolKind(toolName) {
+  const name = String(toolName || '').trim().toLowerCase()
+  if (/^(subagent(?:_|$)|workflow(?:_|$)|ralph(?:_|$)|fork(?:_|$))/u.test(name)) return 'delegation'
+  if (/^(web_fetch|web_search|web[_-])/u.test(name)) return 'network'
+  if (/^(bash|pwsh|shell|terminal)(?:_|$)/u.test(name)) return 'shell'
+  if (/(^|_)(read|write|edit|replace|patch|delete|move|copy|glob|grep|find|search)(?:_|$)/u.test(name)
+    || /^(fs|file)(?:_|$)/u.test(name)) return 'filesystem'
+  return ''
+}
+
+/**
+ * Return the DSH pre-execute denial text for a native tool, or undefined to
+ * leave it to the normal DSH tool chain.  This is deliberately separate from
+ * MCP policy enforcement: the latter remains scoped through the lease bridge.
+ */
+export function automationNativeToolDecision(policy, toolName) {
+  if (!policy || typeof policy !== 'object') return undefined
+  const snapshot = automationPolicySnapshot(policy)
+  const name = String(toolName || '').trim()
+  if (!name || name.startsWith(MCP_TOOL_PREFIX)) return undefined
+  const kind = nativeToolKind(name)
+  if (!kind) return undefined
+  const permitted = snapshot.toolset.includes(name)
+  let denied = !permitted
+  if (kind === 'delegation') denied = true // children cannot prove inheritance of this run-scoped guard.
+  if (kind === 'filesystem' && !snapshot.allow_filesystem) denied = true
+  // An arbitrary shell command can both read/write the filesystem and open a
+  // network connection, so require both explicit grants before allowing it.
+  if (kind === 'shell' && (!snapshot.allow_filesystem || !snapshot.allow_network)) denied = true
+  if (kind === 'network' && !snapshot.allow_network) denied = true
+  if (!denied) return undefined
+  return `${AUTOMATION_POLICY_DENIED}: native tool "${name}" is outside this Automation execution policy`
+}
+
+function setAutomationNativePolicy(sessionId, runId, policy) {
+  const id = String(sessionId || '').trim()
+  const run = String(runId || '').trim()
+  if (!id || !run || !policy || typeof policy !== 'object') {
+    return { ok: false, status: 400, error: { code: 'bad-request', message: 'sessionId, runId and policy are required' } }
+  }
+  automationNativePolicies.set(id, Object.freeze({ runId: run, policy: automationPolicySnapshot(policy) }))
+  return { ok: true, status: 200 }
+}
+
+function clearAutomationNativePolicy(sessionId, runId) {
+  const id = String(sessionId || '').trim()
+  const run = String(runId || '').trim()
+  const current = automationNativePolicies.get(id)
+  // A late cleanup from an older run must never clear a newer policy.
+  if (current && (!run || current.runId === run)) automationNativePolicies.delete(id)
+  return { ok: true, status: 200 }
+}
 
 function imSessionRegistry() {
   if (!(globalThis[CRAWSHRIMP_IM_SESSION_REGISTRY] instanceof Set)) {
@@ -770,6 +843,30 @@ export function apply(ctx) {
   installImApprovalGuard(ctx.approval, sessionRegistry)
   installImConnectionRpcPolicy(ctx, workspaceRoot)
 
+  // Run before DSH's approval resolution.  Returning a deny decision here is
+  // a final tool result, not a native unattended approval request, so an
+  // Automation can never wait forever for a user who is not present.
+  ctx.on('tools/pre-execute', async (exec, next) => {
+    const runtimeSessionId = String(exec?.agent?.id || '')
+    const record = automationNativePolicies.get(runtimeSessionId)
+    const denial = record && automationNativeToolDecision(record.policy, exec?.name)
+    if (denial) {
+      try {
+        // Mark durable needs_review before returning the final DSH denial.
+        // This route is bearer-authenticated with the generation-only token;
+        // it is not an MCP tool call and cannot inherit a lease from another
+        // Session.
+        await postMcpContext('native-policy-denied', {
+          runtime_session_id: runtimeSessionId,
+          tool_name: String(exec?.name || ''),
+        })
+      } catch (error) {
+        ctx.logger?.error?.(`Unable to record Automation native-tool denial: ${String(error?.message || error)}`)
+      }
+    }
+    return denial ? next({ kind: 'deny', reason: denial }) : next()
+  }, { prepend: true })
+
   // DSH 的 MCP transport 是 runtime 级单连接，请求上没有 session header。
   // tools/execute 的 exec.agent.id 是可靠会话身份：先租用后端对应 run 上下文，
   // 再执行真实 MCP HTTP 调用，finally 释放。lease 通过 fetch bridge 仅绑定本次调用链。
@@ -807,6 +904,15 @@ export function apply(ctx) {
     path: '/api/crawshrimp',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://x')
+      if (url.pathname === '/api/crawshrimp/session/automation-policy' && req.method === 'POST') {
+        const body = await readBody(req)
+        const result = body?.clear === true
+          ? clearAutomationNativePolicy(body?.sessionId, body?.runId)
+          : setAutomationNativePolicy(body?.sessionId, body?.runId, body?.policy)
+        res.writeHead(result.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+        res.end(JSON.stringify(result.ok ? { ok: true } : { ok: false, error: result.error }))
+        return
+      }
       if (url.pathname === '/api/crawshrimp/model-catalog' && req.method === 'GET') {
         try {
           const catalog = await fetchCrawshrimpModelCatalog()

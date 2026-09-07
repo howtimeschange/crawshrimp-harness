@@ -97,6 +97,35 @@ test('IM policy confines returned files to the active workspace, including symli
   assert.equal(await bridge.isImArtifactPathAllowed(workspace, 'escape.txt'), false)
 })
 
+test('Automation native tool policy denies unauthorized tools before execution and allows explicit scoped grants', async () => {
+  const bridge = await import(pathToFileURL(resolve(harnessRoot, 'crawshrimp-product-bridge/lib/index.js')).href)
+  const denied = bridge.automationNativeToolDecision({ toolset: [], allow_filesystem: false }, 'bash')
+  const scoped = {
+    toolset: ['bash', 'read_file', 'write_file', 'web_fetch'],
+    allow_filesystem: true,
+    allow_network: true,
+  }
+
+  assert.match(denied, /AUTOMATION_POLICY_DENIED/)
+  for (const nativeTool of ['read_file', 'write_file', 'bash', 'web_fetch', 'web_search', 'subagent', 'workflow']) {
+    assert.match(
+      bridge.automationNativeToolDecision({ toolset: [], allow_filesystem: false, allow_network: false }, nativeTool),
+      /AUTOMATION_POLICY_DENIED/,
+      nativeTool,
+    )
+  }
+  assert.match(bridge.automationNativeToolDecision({ toolset: ['read_file'], allow_filesystem: false }, 'read_file'), /AUTOMATION_POLICY_DENIED/)
+  assert.match(bridge.automationNativeToolDecision({ toolset: ['web_fetch'], allow_network: false }, 'web_fetch'), /AUTOMATION_POLICY_DENIED/)
+  assert.equal(bridge.automationNativeToolDecision(scoped, 'read_file'), undefined)
+  assert.equal(bridge.automationNativeToolDecision(scoped, 'write_file'), undefined)
+  assert.equal(bridge.automationNativeToolDecision(scoped, 'bash'), undefined)
+  assert.equal(bridge.automationNativeToolDecision(scoped, 'web_fetch'), undefined)
+  assert.match(
+    bridge.automationNativeToolDecision({ toolset: ['subagent'], allow_filesystem: true }, 'subagent'),
+    /AUTOMATION_POLICY_DENIED/,
+  )
+})
+
 test('MCP context acquire exposes a user-safe retryable session-readiness error', async (t) => {
   const bridge = await import(`${pathToFileURL(resolve(harnessRoot, 'crawshrimp-product-bridge/lib/index.js')).href}?context-error=${Date.now()}`)
   const originalFetch = globalThis.fetch

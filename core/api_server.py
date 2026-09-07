@@ -12866,6 +12866,37 @@ def _serialize_automation(row: dict) -> dict:
     return data
 
 
+def _serialize_automation_run(row: dict) -> dict:
+    """Serialize durable run evidence without impersonating a definition.
+
+    Runs carry immutable policy/definition snapshots plus checkpoint and result
+    evidence.  Definition state such as enabled, archived, or next_run belongs
+    to the Automation endpoint and must never be fabricated for a historical
+    run response.
+    """
+    data = dict(row or {})
+    for key in (
+        "enabled", "archived", "next_run", "next_run_at", "retry_at",
+        "title", "objective_prompt", "automation_kind", "context_mode",
+        "source_session_id", "source_runtime_session_id", "schedule",
+        "loop_policy", "execution_policy", "program",
+    ):
+        data.pop(key, None)
+    for key in (
+        "execution_policy_snapshot", "definition_snapshot", "checkpoint",
+        "checkpoint_before", "checkpoint_after", "facts_summary",
+        "result_summary",
+    ):
+        if not isinstance(data.get(key), dict):
+            data[key] = {}
+    # Resource links are evidence, not a definition field.  Persisted rows
+    # currently use a list, while older callers may carry a mapping; preserve
+    # either form verbatim rather than silently erasing historical evidence.
+    if "links" not in data or data["links"] is None:
+        data["links"] = []
+    return data
+
+
 def _validate_automation_inherited_session(values: dict, *, existing: Optional[dict] = None) -> None:
     context_mode = str(values.get("context_mode") if "context_mode" in values else (existing or {}).get("context_mode") or "isolated").strip().lower()
     requested_source_session_id = str(values.get("source_session_id") or "").strip()
@@ -12989,7 +13020,7 @@ async def archive_automation_endpoint(automation_uid: str):
 @app.post("/automations/{automation_uid}/run-now")
 async def run_automation_now_endpoint(automation_uid: str, request_uid: str = ""):
     try:
-        return {"run": _serialize_automation(await get_automation_controller().run_now(automation_uid, request_uid=request_uid))}
+        return {"run": _serialize_automation_run(await get_automation_controller().run_now(automation_uid, request_uid=request_uid))}
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
 
@@ -13013,7 +13044,7 @@ def resume_automation_endpoint(automation_uid: str):
 @app.get("/automations/{automation_uid}/runs")
 def list_automation_runs_endpoint(automation_uid: str, limit: int = 50):
     try:
-        return {"items": [_serialize_automation(item) for item in get_automation_controller().runs(automation_uid, limit=limit)]}
+        return {"items": [_serialize_automation_run(item) for item in get_automation_controller().runs(automation_uid, limit=limit)]}
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
 

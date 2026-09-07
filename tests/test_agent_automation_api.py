@@ -72,6 +72,30 @@ def test_create_loop_returns_program_and_next_cycle(monkeypatch, tmp_path):
     assert body["automation"]["enabled"] is True
 
 
+def test_automation_run_serializer_keeps_run_evidence_without_definition_fields():
+    serializer = getattr(api_server, "_serialize_automation_run", None)
+    assert callable(serializer)
+    data = serializer({
+        "run_uid": "run-1",
+        "automation_uid": "automation-1",
+        "execution_policy_snapshot": {"toolset": ["read_file"]},
+        "definition_snapshot": {"title": "original"},
+        "checkpoint_before": {"v": 1},
+        "facts_summary": {"available": 2},
+        "result_summary": {"verified": True},
+        "links": {"agent_run_id": "agent-1"},
+        "enabled": 1,
+        "archived": 0,
+        "next_run_at": "2026-09-07T10:00:00+08:00",
+    })
+    assert data["execution_policy_snapshot"] == {"toolset": ["read_file"]}
+    assert data["definition_snapshot"] == {"title": "original"}
+    assert data["links"] == {"agent_run_id": "agent-1"}
+    assert "enabled" not in data
+    assert "archived" not in data
+    assert "next_run" not in data
+
+
 def test_program_mutation_requires_a_fresh_matching_test_proof(monkeypatch, tmp_path):
     _use_temp_product_db(monkeypatch, tmp_path)
     controller = AutomationController(None, sched_module)

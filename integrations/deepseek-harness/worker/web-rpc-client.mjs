@@ -325,18 +325,50 @@ export class DshWebRuntime {
     return body
   }
 
+  async setAutomationPolicy({ sessionId, runId, policy }) {
+    const response = await fetch(this.#origin + '/api/crawshrimp/session/automation-policy', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: this.#cookie },
+      body: JSON.stringify({ sessionId, runId, policy }),
+    })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok || body?.ok !== true) {
+      throw new Error('DSH Automation policy install failed: ' + String(body?.error?.message || body?.error || response.status))
+    }
+    return body
+  }
+
+  async clearAutomationPolicy({ sessionId, runId }) {
+    const response = await fetch(this.#origin + '/api/crawshrimp/session/automation-policy', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: this.#cookie },
+      body: JSON.stringify({ sessionId, runId, clear: true }),
+    })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok || body?.ok !== true) {
+      throw new Error('DSH Automation policy cleanup failed: ' + String(body?.error?.message || body?.error || response.status))
+    }
+    return body
+  }
+
   /**
    * Open a scoped Session follow stream. The caller owns the returned close
    * handle; malformed/ended streams report through onError rather than being
    * treated as a successful end of an active run.
    */
-  follow(sessionId, { onEvent, onError, onSnapshot, onSnapshotComplete }) {
+  follow(sessionId, {
+    onEvent, onError, onSnapshot, onSnapshotComplete,
+    firstFrameTimeoutMs = 8000,
+  } = {}) {
     const socket = new WebSocket(this.#origin.replace(/^http/u, 'ws') + '/api/remote.mux', {
       headers: { cookie: this.#cookie },
     })
     const streamId = 'crawshrimp-follow-' + randomUUID()
     let closed = false
+    let lifecycle = 'connecting'
     let settled = false
+    let errorNotified = false
+    let firstFrameTimer = null
     let resolveReady
     let rejectReady
     const ready = new Promise((resolveReadyPromise, rejectReadyPromise) => {
@@ -346,15 +378,29 @@ export class DshWebRuntime {
     const settleReady = () => {
       if (settled) return
       settled = true
+      lifecycle = 'ready'
+      if (firstFrameTimer) clearTimeout(firstFrameTimer)
+      firstFrameTimer = null
       resolveReady()
     }
     const fail = (error) => {
-      if (closed) return
+      const failure = error instanceof Error ? error : new Error(String(error))
+      if (lifecycle === 'failed' || lifecycle === 'closed') return
+      lifecycle = 'failed'
+      if (firstFrameTimer) clearTimeout(firstFrameTimer)
+      firstFrameTimer = null
       if (!settled) {
         settled = true
-        rejectReady(error instanceof Error ? error : new Error(String(error)))
+        rejectReady(failure)
       }
-      onError(error instanceof Error ? error : new Error(String(error)))
+      if (!errorNotified) {
+        errorNotified = true
+        onError?.(failure)
+      }
+      if (!closed) {
+        closed = true
+        try { socket.close() } catch {}
+      }
     }
     socket.on('open', () => {
       socket.send(JSON.stringify({
@@ -392,10 +438,17 @@ export class DshWebRuntime {
     socket.on('close', () => {
       if (!closed) fail(new Error('DSH Session follow socket closed unexpectedly'))
     })
+    const boundedFirstFrameMs = Math.max(1, Number(firstFrameTimeoutMs) || 8000)
+    firstFrameTimer = setTimeout(() => {
+      fail(new Error(`DSH Session follow initial snapshot timed out after ${boundedFirstFrameMs}ms`))
+    }, boundedFirstFrameMs)
     return {
       close: () => {
         if (closed) return
         closed = true
+        lifecycle = 'closed'
+        if (firstFrameTimer) clearTimeout(firstFrameTimer)
+        firstFrameTimer = null
         if (!settled) {
           settled = true
           rejectReady(new Error('DSH Session follow was closed before its initial snapshot'))
@@ -403,6 +456,7 @@ export class DshWebRuntime {
         try { socket.close() } catch {}
       },
       ready,
+      get state() { return lifecycle },
     }
   }
 

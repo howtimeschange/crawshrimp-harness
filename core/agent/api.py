@@ -41,6 +41,7 @@ class SessionCreateRequest(BaseModel):
 
 class RuntimeSessionObserveRequest(BaseModel):
     runtime_session_id: str
+    owner: str = ""
 
 
 class TurnCreateRequest(BaseModel):
@@ -94,7 +95,13 @@ async def runtime_restart() -> dict:
 @router.post("/runtime/web-session")
 async def observe_runtime_web_session(req: RuntimeSessionObserveRequest) -> dict:
     """Start the session-specific follow used by native Web MCP calls."""
-    return await get_agent_service().observe_native_web_session(req.runtime_session_id)
+    return await get_agent_service().observe_native_web_session(req.runtime_session_id, owner=req.owner)
+
+
+@router.delete("/runtime/web-session")
+async def unobserve_runtime_web_session(req: RuntimeSessionObserveRequest) -> dict:
+    """Release one renderer owner's native Web Session follow."""
+    return await get_agent_service().unobserve_native_web_session(req.runtime_session_id, owner=req.owner)
 
 
 # ---------- 模型(参考 DSH 的模型切换交互) ----------
@@ -1079,7 +1086,7 @@ def install_approved_script_revision(rev_id: str, *, expected_source_sha256: str
 
 def build_agent_mcp_asgi(token_provider, context_acquirer=None,
                          context_releaser=None, context_binder=None,
-                         context_resetter=None) -> Any:
+                         context_resetter=None, native_policy_reporter=None) -> Any:
     """构建带 Bearer 鉴权的 MCP ASGI 应用(独立端口服务,SDK session manager 需要自身 lifespan)。
 
     挂在 FastAPI 子路由上时 MCP SDK 2.0 的 lifespan 不会运行(Task group 未初始化),
@@ -1140,6 +1147,20 @@ def build_agent_mcp_asgi(token_provider, context_acquirer=None,
                 if not released:
                     return JSONResponse({"detail": "Unknown context lease"}, status_code=409)
                 return JSONResponse({"ok": True, "released": True})
+            if path == "/context/native-policy-denied" and request.method == "POST":
+                if native_policy_reporter is None:
+                    return JSONResponse({"detail": "Native policy reporting unavailable"}, status_code=503)
+                try:
+                    body = await request.json()
+                    reported = native_policy_reporter(
+                        str(body.get("runtime_session_id") or ""),
+                        str(body.get("tool_name") or ""),
+                    )
+                    if asyncio.iscoroutine(reported):
+                        reported = await reported
+                    return JSONResponse({"ok": bool(reported)})
+                except Exception as exc:  # noqa: BLE001
+                    return JSONResponse({"detail": str(exc)}, status_code=500)
             context_token = None
             if path == "/mcp":
                 lease_id = str(request.headers.get("x-crawshrimp-mcp-lease") or "").strip()

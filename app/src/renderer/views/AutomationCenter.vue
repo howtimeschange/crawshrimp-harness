@@ -47,14 +47,14 @@
             </label>
             <label>
               <span>会话上下文</span>
-              <select v-model="form.context_mode">
+              <select v-model="form.context_mode" :disabled="Boolean(editingUid)">
                 <option value="isolated">隔离会话（推荐）</option>
                 <option value="inherited">继承已有会话</option>
               </select>
             </label>
             <label v-if="form.context_mode === 'inherited'">
               <span>来源会话 ID</span>
-              <input v-model.trim="form.source_session_id" required placeholder="已有智能体会话 ID" />
+              <input v-model.trim="form.source_session_id" required :readonly="Boolean(editingUid)" placeholder="已有智能体会话 ID" />
             </label>
           </div>
         </section>
@@ -76,7 +76,7 @@
             </label>
             <label v-if="form.schedule_kind === 'at'">
               <span>执行时间</span>
-              <input v-model="form.schedule_value" type="datetime-local" required />
+              <input v-model="form.schedule_value" type="datetime-local" step="1" required />
             </label>
             <label v-else-if="form.schedule_kind === 'every'">
               <span>间隔（秒）</span>
@@ -176,6 +176,7 @@
           </label>
           <p v-if="hasProgram && !hasSuccessfulProgramTest" class="ac-policy-warning">请先测试 Program；已编辑的 Program 或测试输入会使原测试结果失效。</p>
           <p class="ac-help">填写实际 MCP 工具名，而不是“观察、验证”等抽象能力。例如闭环观察用 automation_record_observation，完成回执用 automation_record_verification。需要原本审批的操作，还必须填写具体风险类别：read_only、local_write、external_write 或 destructive；工具和风险必须同时匹配才会无人值守执行。策略与 Program 分支允许工具的交集之外，一律拒绝并转人工复核。继承会话会等待原会话空闲；超时会记录为“因并发跳过”，不会抢占用户对话。</p>
+          <p v-if="editingUid" class="ac-policy-warning">会话上下文和来源会话在创建后不可修改；如需更换，请使用“复制为新 Automation”。</p>
         </section>
 
         <div class="ac-form-actions">
@@ -225,6 +226,7 @@
             </div>
             <div class="ac-actions" @click.stop>
               <button type="button" @click="runNow(automation)">运行一次</button>
+              <button type="button" @click.stop="copyAutomation(automation)">复制为新 Automation</button>
               <button v-if="automation.enabled" type="button" @click="pause(automation)">暂停</button>
               <button v-else type="button" @click="resume(automation)">恢复</button>
               <button type="button" @click="editAutomation(automation)">编辑</button>
@@ -270,6 +272,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { formFromAutomation, payloadFromAutomationForm } from '../utils/automationCenterState.mjs'
 
 const automations = ref([])
 const selectedAutomation = ref(null)
@@ -289,6 +292,9 @@ const testedProgramFingerprint = ref('')
 const programTestProof = ref('')
 const initialExampleProgramText = JSON.stringify(exampleProgram(), null, 2)
 let refreshTimer = null
+let selectionSequence = 0
+let runsSequence = 0
+const runsByAutomation = new Map()
 
 function exampleProgram() {
   return {
@@ -459,34 +465,7 @@ async function testProgram() {
 }
 
 function payloadFromForm() {
-  const schedule = { timezone: form.value.timezone.trim() || 'Asia/Shanghai' }
-  if (form.value.automation_kind === 'scheduled') {
-    schedule.kind = form.value.schedule_kind
-    if (schedule.kind === 'every') schedule.interval_seconds = Number(form.value.schedule_interval_seconds || 0)
-    else schedule.value = form.value.schedule_value
-  }
-  const payload = {
-    title: form.value.title.trim(),
-    objective_prompt: form.value.objective_prompt.trim(),
-    automation_kind: form.value.automation_kind,
-    context_mode: form.value.context_mode,
-    schedule,
-    loop_policy: {
-      cycle_interval_seconds: Number(form.value.cycle_interval_seconds || 0),
-      max_cycles: Number(form.value.max_cycles || 0),
-      failure_threshold: Number(form.value.failure_threshold || 0),
-    },
-        execution_policy: {
-          toolset: splitToolset(form.value.toolset_text),
-          allowed_risks: splitToolset(form.value.allowed_risks_text),
-          timeout_seconds: Number(form.value.timeout_seconds || 0),
-      max_retries: Number(form.value.max_retries || 0),
-      ...(form.value.context_mode === 'inherited'
-        ? { inherited_wait_seconds: Number(form.value.inherited_wait_seconds || 0) }
-        : {}),
-    },
-    enabled: Boolean(form.value.enabled),
-  }
+  const payload = payloadFromAutomationForm(form.value, { editing: Boolean(editingUid.value) })
   // Origin session bindings are assigned when an Automation is created and
   // remain immutable thereafter.  In particular, MCP-created isolated tasks
   // retain an origin session solely for their final receipt; serializing an
@@ -560,45 +539,30 @@ function onKindChange() {
   }
 }
 
-function scheduleValueForInput(value) {
-  const text = String(value || '')
-  return text ? text.replace(/([+-]\d\d:\d\d|Z)$/, '').slice(0, 16) : ''
-}
-
 async function editAutomation(automation) {
   error.value = ''
   notice.value = ''
   try {
     const response = await window.cs.getAutomation(automation.automation_uid)
     const item = response?.automation || response
-    const schedule = item?.schedule || {}
-    const loop = item?.loop_policy || {}
-    const policy = item?.execution_policy || {}
-    form.value = {
-      ...defaultForm(),
-      title: item.title || '',
-      objective_prompt: item.objective_prompt || '',
-      automation_kind: item.automation_kind || 'loop',
-      context_mode: item.context_mode || 'isolated',
-      source_session_id: item.source_session_id || '',
-      timezone: schedule.timezone || 'Asia/Shanghai',
-      schedule_kind: schedule.kind || 'every',
-      schedule_value: schedule.kind === 'at' ? scheduleValueForInput(schedule.value || schedule.at || schedule.run_at) : (schedule.value || schedule.cron || ''),
-      schedule_interval_seconds: Number(schedule.interval_seconds || schedule.seconds || 3600),
-      cycle_interval_seconds: Number(loop.cycle_interval_seconds || loop.interval_seconds || 1800),
-      max_cycles: Number(loop.max_cycles || 0),
-      failure_threshold: Number(loop.failure_threshold || 3),
-      toolset_text: Array.isArray(policy.toolset) ? policy.toolset.join(', ') : '',
-      allowed_risks_text: Array.isArray(policy.allowed_risks) ? policy.allowed_risks.join(', ') : '',
-      timeout_seconds: Number(policy.timeout_seconds || 300),
-      max_retries: Number(policy.max_retries || 1),
-      inherited_wait_seconds: Number(policy.inherited_wait_seconds || 300),
-      enabled: Boolean(item.enabled),
-      program_text: item.program && Object.keys(item.program).length ? JSON.stringify(item.program, null, 2) : '',
-      facts_text: JSON.stringify({}, null, 2),
-      checkpoint_text: JSON.stringify(item.checkpoint || {}, null, 2),
-    }
+    form.value = formFromAutomation(item, defaultForm())
     editingUid.value = item.automation_uid
+    editing.value = true
+    invalidateProgramTest()
+  } catch (err) {
+    error.value = err?.message || String(err)
+  }
+}
+
+async function copyAutomation(automation) {
+  error.value = ''
+  notice.value = ''
+  try {
+    const response = await window.cs.getAutomation(automation.automation_uid)
+    const item = response?.automation || response
+    form.value = formFromAutomation(item, defaultForm())
+    form.value.title = `${form.value.title || '自动化'} 副本`
+    editingUid.value = ''
     editing.value = true
     invalidateProgramTest()
   } catch (err) {
@@ -625,26 +589,47 @@ async function loadAutomations() {
 
 async function loadRuns(automationUid) {
   if (!automationUid) return
-  runsLoading.value = true
+  const uid = String(automationUid)
+  const selectionAtRequest = selectionSequence
+  const request = ++runsSequence
+  const selectedAtRequest = selectedUid.value === uid
+  if (selectedAtRequest) runsLoading.value = true
   try {
-    const response = await window.cs.listAutomationRuns(automationUid, 20)
-    runs.value = Array.isArray(response?.items) ? response.items : []
+    const response = await window.cs.listAutomationRuns(uid, 20)
+    const items = Array.isArray(response?.items) ? response.items : []
+    if (selectedUid.value === uid && selectionAtRequest === selectionSequence && request === runsSequence) {
+      runsByAutomation.set(uid, items)
+      runs.value = items
+    }
   } catch (err) {
-    error.value = err?.message || String(err)
+    if (selectedUid.value === uid && selectionAtRequest === selectionSequence && request === runsSequence) {
+      error.value = err?.message || String(err)
+    }
   } finally {
-    runsLoading.value = false
+    if (selectedUid.value === uid && selectionAtRequest === selectionSequence && request === runsSequence) {
+      runsLoading.value = false
+    }
   }
 }
 
 async function selectAutomation(automationUid) {
   if (!automationUid) return
-  selectedUid.value = automationUid
+  const uid = String(automationUid)
+  const request = ++selectionSequence
+  selectedUid.value = uid
+  selectedAutomation.value = null
+  runs.value = runsByAutomation.get(uid) || []
+  runsLoading.value = true
   try {
-    const response = await window.cs.getAutomation(automationUid)
+    const response = await window.cs.getAutomation(uid)
+    if (selectedUid.value !== uid || request !== selectionSequence) return
     selectedAutomation.value = response?.automation || response || null
-    await loadRuns(automationUid)
+    await loadRuns(uid)
   } catch (err) {
-    error.value = err?.message || String(err)
+    if (selectedUid.value === uid && request === selectionSequence) {
+      error.value = err?.message || String(err)
+      runsLoading.value = false
+    }
   }
 }
 
@@ -652,8 +637,12 @@ async function runNow(automation) {
   error.value = ''
   try {
     const requestUid = `desktop:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`
-    await window.cs.runAutomationNow(automation.automation_uid, requestUid)
-    await Promise.all([loadAutomations(), loadRuns(automation.automation_uid)])
+    const uid = String(automation.automation_uid || '')
+    await window.cs.runAutomationNow(uid, requestUid)
+    await loadAutomations()
+    // A run requested from a non-selected card must never replace the
+    // evidence panel belonging to the current selection.
+    if (selectedUid.value === uid) await loadRuns(uid)
     notice.value = '已请求运行一次；运行结果会在下方证据中更新。'
   } catch (err) {
     error.value = err?.message || String(err)

@@ -10,7 +10,7 @@ import json
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Mapping, Optional
 
 WORKER_ENTRY = "worker/worker.mjs"
 WORKER_STREAM_LIMIT_BYTES = 4 * 1024 * 1024 + 64 * 1024
@@ -73,12 +73,17 @@ class AgentWorker:
 
     def __init__(self, *, runtime_root: str, data_root: str,
                  mcp_url: str, session_root: str,
+                 runtime_env: Optional[Mapping[str, str]] = None,
                  on_notification: Optional[NotificationHandler] = None,
                  on_exit: Optional[WorkerExitHandler] = None):
         self.runtime_root = runtime_root
         self.data_root = data_root
         self.mcp_url = mcp_url
         self.session_root = session_root
+        # Keep each DSH generation's settings in an explicit child-process
+        # environment. Re-copying os.environ would resurrect credentials from
+        # a preceding generation after a user clears settings.
+        self.runtime_env = dict(runtime_env) if runtime_env is not None else None
         self.on_notification = on_notification
         self.on_exit = on_exit
         self.proc: Optional[asyncio.subprocess.Process] = None
@@ -95,7 +100,7 @@ class AgentWorker:
         if not Path(worker_entry).exists():
             raise WorkerProtocolError(f"worker 入口不存在: {worker_entry}")
 
-        env = dict(os.environ)
+        env = dict(self.runtime_env) if self.runtime_env is not None else dict(os.environ)
         env["ELECTRON_RUN_AS_NODE"] = "1"
         env["CRAWSHRIMP_NODE_EXECUTABLE"] = node_executable
         env["CRAWSHRIMP_MCP_URL"] = self.mcp_url

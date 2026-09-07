@@ -69,6 +69,51 @@ def test_native_approval_is_agent_service_method():
     assert callable(service._ds_native_approval)
 
 
+def test_runtime_environment_replaces_service_owned_credentials_but_keeps_external_fallback():
+    from core.agent import service as service_module
+
+    build_environment = getattr(service_module, "build_llm_runtime_environment", None)
+    assert callable(build_environment)
+    base_config = {
+        "ai": {"llm": {
+            "deepseek_api_key": "key-a",
+            "deepseek_base_url": "https://a.example/v1",
+            "custom_providers": [{
+                "id": "demo", "name": "Demo", "protocol": "openai",
+                "api_key": "custom-a", "base_url": "https://custom-a.example/v1",
+                "models": [{"id": "demo-model"}],
+            }],
+        }},
+    }
+    updated_config = {
+        "ai": {"llm": {
+            "deepseek_api_key": "key-b",
+            "deepseek_base_url": "https://b.example/v1",
+            "custom_providers": [],
+        }},
+    }
+    empty_config = {"ai": {"llm": {"deepseek_api_key": "", "deepseek_base_url": "", "custom_providers": []}}}
+
+    first = build_environment({}, base_config)
+    second = build_environment({}, updated_config)
+    cleared = build_environment({}, empty_config)
+    external = build_environment({
+        "CRAWSHRIMP_DEEPSEEK_API_KEY": "external-key",
+        "CRAWSHRIMP_DEEPSEEK_BASE_URL": "https://external.example/v1",
+    }, empty_config)
+
+    assert first["CRAWSHRIMP_DEEPSEEK_API_KEY"] == "key-a"
+    assert first["DEEPSEEK_API_KEY"] == "key-a"
+    assert first["CRAWSHRIMP_CUSTOM_LLM_KEY_DEMO"] == "custom-a"
+    assert second["CRAWSHRIMP_DEEPSEEK_API_KEY"] == "key-b"
+    assert "CRAWSHRIMP_CUSTOM_LLM_KEY_DEMO" not in second
+    assert "CRAWSHRIMP_DEEPSEEK_API_KEY" not in cleared
+    assert "DEEPSEEK_API_KEY" not in cleared
+    assert "CRAWSHRIMP_DEEPSEEK_BASE_URL" not in cleared
+    assert external["CRAWSHRIMP_DEEPSEEK_API_KEY"] == "external-key"
+    assert external["CRAWSHRIMP_DEEPSEEK_BASE_URL"] == "https://external.example/v1"
+
+
 def test_native_web_session_observer_leases_only_an_explicit_ready_runtime_session():
     service = AgentService()
     worker = SimpleNamespace(request=AsyncMock(return_value={"ok": True, "following": True}))
@@ -91,6 +136,52 @@ def test_native_web_session_observer_leases_only_an_explicit_ready_runtime_sessi
             "ok": False, "error": "RUNTIME_UNAVAILABLE",
         }
         assert worker.request.await_count == 1
+
+    asyncio.run(scenario())
+
+
+def test_native_web_session_unobserve_releases_only_its_named_owner():
+    service = AgentService()
+    worker = SimpleNamespace(request=AsyncMock(return_value={"ok": True, "following": False}))
+    service.worker = worker
+    service.runtime_state = "ready"
+
+    async def scenario():
+        assert await service.unobserve_native_web_session("web-session:1", owner="renderer-a") == {
+            "ok": True, "following": False,
+        }
+        worker.request.assert_awaited_once_with(
+            "worker.unobserve_web_session", {"sessionId": "web-session:1", "owner": "renderer-a"}, timeout=5,
+        )
+
+    asyncio.run(scenario())
+
+
+def test_native_dsh_policy_denial_marks_the_exact_automation_run_before_canceling_it():
+    service = AgentService()
+    calls = []
+
+    class Controller:
+        def mark_needs_review(self, *args):
+            calls.append(args)
+            return {"status": "needs_review"}
+
+    service.set_automation_controller(Controller())
+    service.active_runs_by_runtime["dsh-automation"] = {
+        "run_id": "agent-run-1",
+        "automation_run_uid": "automation-run-1",
+    }
+    worker = SimpleNamespace(request=AsyncMock(return_value={"ok": True, "canceled": True}))
+    service.worker = worker
+
+    async def scenario():
+        assert await service.report_native_automation_policy_denied("dsh-automation", "web_fetch") is True
+        assert calls == [
+            ("automation-run-1", "AUTOMATION_POLICY_DENIED", 'Native DSH tool "web_fetch" is outside the Automation execution policy'),
+        ]
+        worker.request.assert_awaited_once_with(
+            "worker.cancel_active", {"runId": "agent-run-1"}, timeout=15,
+        )
 
     asyncio.run(scenario())
 
@@ -2341,8 +2432,13 @@ def test_agent_start_generation_uses_authenticated_web_profile_without_install_w
     # The DSH Web profile and the Session runtime share this workspace so Web
     # can list its native session and render the corresponding approval cards.
     assert calls["worker.start_generation"]["params"]["cwd"] == str(data_root / "agent" / "workspace")
-    assert service_mod.os.environ["CRAWSHRIMP_AGENT_PROVIDER"] == "crawshrimp-overseas-openai"
-    assert service_mod.os.environ["CRAWSHRIMP_AGENT_MODEL"] == "gpt-5.6-terra"
+    runtime_env = calls["worker_kwargs"]["runtime_env"]
+    assert runtime_env["CRAWSHRIMP_AGENT_PROVIDER"] == "crawshrimp-overseas-openai"
+    assert runtime_env["CRAWSHRIMP_AGENT_MODEL"] == "gpt-5.6-terra"
+    # Generation metadata is child-process scoped; a stale parent environment
+    # must not be rewritten by the settings UI/runtime restart path.
+    assert service_mod.os.environ["CRAWSHRIMP_AGENT_PROVIDER"] == "stale-provider"
+    assert service_mod.os.environ["CRAWSHRIMP_AGENT_MODEL"] == "stale-model"
     assert not (harness_root / "runtime-cordis.yml").exists()
     assert not (data_root / "agent" / "runtime-cordis.yml").exists()
 
@@ -2442,10 +2538,12 @@ def test_agent_start_generation_exposes_deepseek_compatibility_aliases_only_in_r
     assert asyncio.run(service.start_generation())
 
     assert calls["worker.start_generation"]["params"]["provider"] == "crawshrimp-deepseek-official"
-    assert service_mod.os.environ["CRAWSHRIMP_DEEPSEEK_API_KEY"] == "sk-ds-official-unit"
-    assert service_mod.os.environ["DEEPSEEK_API_KEY"] == "sk-ds-official-unit"
-    assert service_mod.os.environ["DEEPSEEK_BASE_URL"] == "https://api.deepseek.example/v1"
-    assert service_mod.os.environ["CRAWSHRIMP_DEEPSEEK_COMPAT_ALIAS"] == "1"
+    runtime_env = calls["worker_kwargs"]["runtime_env"]
+    assert runtime_env["CRAWSHRIMP_DEEPSEEK_API_KEY"] == "sk-ds-official-unit"
+    assert runtime_env["DEEPSEEK_API_KEY"] == "sk-ds-official-unit"
+    assert runtime_env["DEEPSEEK_BASE_URL"] == "https://api.deepseek.example/v1"
+    assert "CRAWSHRIMP_DEEPSEEK_COMPAT_ALIAS" not in runtime_env
+    assert "CRAWSHRIMP_DEEPSEEK_API_KEY" not in service_mod.os.environ
     settings = (data_root / "agent" / "dsh-home" / "settings.yaml").read_text(encoding="utf-8")
     assert "sk-ds-official-unit" not in settings
 
@@ -2460,19 +2558,21 @@ def test_agent_restart_uses_the_newly_saved_deepseek_key_instead_of_its_previous
         "deepseek_api_key": "sk-ds-before-save",
         "default_model": "deepseek-official-v4-flash",
     }}}
-    _calls, _harness_root, _data_root = _patch_agent_generation_runtime(
+    calls, _harness_root, _data_root = _patch_agent_generation_runtime(
         monkeypatch, service_mod, tmp_path, config,
     )
     service = service_mod.AgentService()
     service.mcp_port = 18965
 
     assert asyncio.run(service.start_generation())
-    assert service_mod.os.environ["CRAWSHRIMP_DEEPSEEK_API_KEY"] == "sk-ds-before-save"
+    assert calls["worker_kwargs"]["runtime_env"]["CRAWSHRIMP_DEEPSEEK_API_KEY"] == "sk-ds-before-save"
     config["ai"]["llm"]["deepseek_api_key"] = "sk-ds-after-save"
 
     assert asyncio.run(service.restart_runtime())["ok"] is True
-    assert service_mod.os.environ["CRAWSHRIMP_DEEPSEEK_API_KEY"] == "sk-ds-after-save"
-    assert service_mod.os.environ["DEEPSEEK_API_KEY"] == "sk-ds-after-save"
+    runtime_env = calls["worker_kwargs"]["runtime_env"]
+    assert runtime_env["CRAWSHRIMP_DEEPSEEK_API_KEY"] == "sk-ds-after-save"
+    assert runtime_env["DEEPSEEK_API_KEY"] == "sk-ds-after-save"
+    assert "CRAWSHRIMP_DEEPSEEK_API_KEY" not in service_mod.os.environ
 
 
 def test_dsh_settings_sync_writes_runtime_provider_profiles_without_secrets(tmp_path):
@@ -2578,8 +2678,9 @@ def test_agent_start_generation_falls_back_from_unkeyed_gateway_model_to_deepsee
 
     assert calls["worker.start_generation"]["params"]["provider"] == "crawshrimp-deepseek-official"
     assert calls["worker.start_generation"]["params"]["model"] == "deepseek-v4-flash"
-    assert service_mod.os.environ["CRAWSHRIMP_AGENT_PROVIDER"] == "crawshrimp-deepseek-official"
-    assert service_mod.os.environ["CRAWSHRIMP_AGENT_MODEL"] == "deepseek-v4-flash"
+    runtime_env = calls["worker_kwargs"]["runtime_env"]
+    assert runtime_env["CRAWSHRIMP_AGENT_PROVIDER"] == "crawshrimp-deepseek-official"
+    assert runtime_env["CRAWSHRIMP_AGENT_MODEL"] == "deepseek-v4-flash"
 
 
 def test_agent_start_generation_uses_custom_provider_for_duplicate_builtin_model(tmp_path, monkeypatch):
@@ -2617,10 +2718,12 @@ def test_agent_start_generation_uses_custom_provider_for_duplicate_builtin_model
     assert service.runtime_error == ""
     assert calls["worker.start_generation"]["params"]["provider"] == "custom-1xm"
     assert calls["worker.start_generation"]["params"]["model"] == "gpt-5.6-luna"
-    assert service_mod.os.environ["CRAWSHRIMP_AGENT_PROVIDER"] == "custom-1xm"
-    assert service_mod.os.environ["CRAWSHRIMP_AGENT_MODEL"] == "gpt-5.6-luna"
-    assert service_mod.os.environ["CRAWSHRIMP_CUSTOM_LLM_KEY_CUSTOM_1XM"] == "custom-key"
-    assert service_mod.os.environ.get("CRAWSHRIMP_LLM_CONFIG_REQUIRED") != "1"
+    runtime_env = calls["worker_kwargs"]["runtime_env"]
+    assert runtime_env["CRAWSHRIMP_AGENT_PROVIDER"] == "custom-1xm"
+    assert runtime_env["CRAWSHRIMP_AGENT_MODEL"] == "gpt-5.6-luna"
+    assert runtime_env["CRAWSHRIMP_CUSTOM_LLM_KEY_CUSTOM_1XM"] == "custom-key"
+    assert runtime_env.get("CRAWSHRIMP_LLM_CONFIG_REQUIRED") != "1"
+    assert "CRAWSHRIMP_CUSTOM_LLM_KEY_CUSTOM_1XM" not in service_mod.os.environ
 
 
 def test_agent_start_generation_missing_all_model_keys_launches_config_gate_runtime(tmp_path, monkeypatch):
@@ -2649,6 +2752,8 @@ def test_agent_start_generation_missing_all_model_keys_launches_config_gate_runt
     assert "started" in calls
     assert service.runtime_state == "ready"
     assert service.runtime_error == ""
-    assert os.environ["CRAWSHRIMP_LLM_CONFIG_REQUIRED"] == "1"
-    assert os.environ["CRAWSHRIMP_LLM_CONFIG_PLACEHOLDER_KEY"] == "cs-config-required-placeholder"
+    runtime_env = calls["worker_kwargs"]["runtime_env"]
+    assert runtime_env["CRAWSHRIMP_LLM_CONFIG_REQUIRED"] == "1"
+    assert runtime_env["CRAWSHRIMP_LLM_CONFIG_PLACEHOLDER_KEY"] == "cs-config-required-placeholder"
+    assert "CRAWSHRIMP_LLM_CONFIG_REQUIRED" not in os.environ
     assert service.crash_budget == []

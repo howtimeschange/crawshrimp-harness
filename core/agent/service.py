@@ -499,7 +499,58 @@ def _compact_text(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _dsh_llm_pi_ai_settings(cfg: dict, custom_provider_profiles: list[dict[str, Any]]) -> dict[str, Any]:
+def build_llm_runtime_environment(external_env: Mapping[str, str], cfg: Mapping[str, Any]) -> dict[str, str]:
+    """Build a fresh DSH child environment from external values and current config.
+
+    The caller supplies a process-start snapshot of truly external variables.
+    Settings override that snapshot for this generation only; clearing a setting
+    means no service-owned value is exported, so old keys cannot survive a
+    runtime restart through ``os.environ``.
+    """
+    env = {str(key): str(value) for key, value in dict(external_env or {}).items()}
+    ai = cfg.get("ai") if isinstance(cfg, Mapping) else None
+    llm = ai.get("llm") if isinstance(ai, Mapping) else None
+    llm = llm if isinstance(llm, Mapping) else {}
+
+    legacy_config_key = _compact_text(llm.get("api_key"))
+    if legacy_config_key:
+        env["CRAWSHRIMP_LLM_API_KEY"] = legacy_config_key
+    for provider in BUILTIN_LLM_PROVIDERS:
+        env_key = _compact_text(provider.get("api_key_env"))
+        config_key = _compact_text(provider.get("api_key_key"))
+        if env_key and config_key:
+            configured = _compact_text(llm.get(config_key))
+            if not configured and provider.get("legacy_gateway"):
+                configured = legacy_config_key
+            if configured:
+                env[env_key] = configured
+        base_env_key = _compact_text(provider.get("base_url_env"))
+        base_config_key = _compact_text(provider.get("base_url_key"))
+        configured_base = _compact_text(llm.get(base_config_key)) if base_config_key else ""
+        if base_env_key and configured_base:
+            env[base_env_key] = configured_base
+
+    # The temporary upstream alias lives only in this child environment.  Do
+    # not overwrite a real process-start DEEPSEEK_* override, and do not leave
+    # any alias behind once the service-owned Crawshrimp setting is cleared.
+    deepseek_key = _compact_text(env.get("CRAWSHRIMP_DEEPSEEK_API_KEY"))
+    deepseek_base = _compact_text(env.get("CRAWSHRIMP_DEEPSEEK_BASE_URL"))
+    if deepseek_key and not _compact_text(external_env.get("DEEPSEEK_API_KEY")):
+        env["DEEPSEEK_API_KEY"] = deepseek_key
+    if deepseek_base and not _compact_text(external_env.get("DEEPSEEK_BASE_URL")):
+        env["DEEPSEEK_BASE_URL"] = deepseek_base
+
+    custom_providers, custom_env = custom_providers_runtime_payload(dict(cfg))
+    env.update(custom_env)
+    env["CRAWSHRIMP_LLM_PROVIDERS_JSON"] = json.dumps(custom_providers, ensure_ascii=False)
+    return env
+
+
+def _dsh_llm_pi_ai_settings(
+    cfg: dict,
+    custom_provider_profiles: list[dict[str, Any]],
+    runtime_env: Optional[Mapping[str, str]] = None,
+) -> dict[str, Any]:
     llm = (cfg.get("ai") or {}).get("llm") or {}
     llm = llm if isinstance(llm, dict) else {}
     providers: dict[str, Any] = {}
@@ -523,8 +574,8 @@ def _dsh_llm_pi_ai_settings(cfg: dict, custom_provider_profiles: list[dict[str, 
                 model["reasoningEfforts"] = {"off": None, "low": "low", "high": "high", "max": "max"}
             models.append(model)
         base_url = (
-            _compact_text(os.environ.get(str(provider.get("base_url_env") or "")))
-            or _compact_text(llm.get(str(provider.get("base_url_key") or "")))
+            _compact_text(llm.get(str(provider.get("base_url_key") or "")))
+            or _compact_text((runtime_env or os.environ).get(str(provider.get("base_url_env") or "")))
             or str(provider.get("base_url_default") or "")
         )
         entry: dict[str, Any] = {
@@ -555,6 +606,7 @@ def _sync_dsh_default_model_settings(
     runtime_model_id: str,
     cfg: Optional[dict] = None,
     custom_provider_profiles: Optional[list[dict[str, Any]]] = None,
+    runtime_env: Optional[Mapping[str, str]] = None,
 ) -> None:
     settings_path = agent_dir / "dsh-home" / "settings.yaml"
     try:
@@ -587,6 +639,7 @@ def _sync_dsh_default_model_settings(
     settings["llm-pi-ai"] = _dsh_llm_pi_ai_settings(
         cfg if isinstance(cfg, dict) else {},
         custom_provider_profiles if isinstance(custom_provider_profiles, list) else [],
+        runtime_env,
     )
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(settings_path, yaml.safe_dump(settings, allow_unicode=True, sort_keys=False))
@@ -749,6 +802,10 @@ def _approval_display_arguments(summary: dict, plan: dict, risk: str) -> Any:
 
 class AgentService:
     def __init__(self) -> None:
+        # Snapshot only actual process-start values. Runtime generations never
+        # write their own credentials back to os.environ, so a subsequent
+        # restart can distinguish an operator fallback from an old UI setting.
+        self._external_runtime_env = dict(os.environ)
         self.main_loop: Optional[asyncio.AbstractEventLoop] = None
         self.worker: Optional[AgentWorker] = None
         self.generation = 0
@@ -1036,6 +1093,37 @@ class AgentService:
         except asyncio.CancelledError:
             return
 
+    async def report_native_automation_policy_denied(self, runtime_session_id: str, tool_name: str) -> bool:
+        """Atomically contain a DSH-native Automation policy violation.
+
+        `tools/pre-execute` executes before native approval and before the tool
+        body.  Persist needs_review first, then cancel the exact active Session
+        so a model cannot continue an unattended Automation after observing a
+        denial result.
+        """
+        runtime_id = str(runtime_session_id or "").strip()
+        run = self.active_runs_by_runtime.get(runtime_id) or {}
+        automation_run_uid = str(run.get("automation_run_uid") or "").strip()
+        run_id = str(run.get("run_id") or "").strip()
+        if not automation_run_uid or not run_id:
+            return False
+        controller = self.automation_controller or getattr(mcp_gateway.ctx, "automation_controller", None)
+        mark = getattr(controller, "mark_needs_review", None)
+        if not callable(mark):
+            return False
+        message = f'Native DSH tool "{str(tool_name or "unknown")[:120]}" is outside the Automation execution policy'
+        result = mark(automation_run_uid, "AUTOMATION_POLICY_DENIED", message)
+        if inspect.isawaitable(result):
+            await result
+        if self.worker is not None:
+            try:
+                await self.worker.request("worker.cancel_active", {"runId": run_id}, timeout=15)
+            except Exception:  # noqa: BLE001
+                # The durable needs_review audit is already authoritative; the
+                # worker's own absolute timeout remains the secondary stop.
+                pass
+        return True
+
     def release_mcp_context(self, lease_id: str) -> bool:
         supplied = str(lease_id or "").strip()
         if not supplied:
@@ -1178,6 +1266,7 @@ class AgentService:
             context_releaser=self.release_mcp_context,
             context_binder=self.bind_mcp_context_for_request,
             context_resetter=self.reset_mcp_context_for_request,
+            native_policy_reporter=self.report_native_automation_policy_denied,
         )
         config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
         self._mcp_uvicorn = uvicorn.Server(config)
@@ -2092,6 +2181,11 @@ class AgentService:
                 "model": official_real_model(item["model_id"]),
                 "budget": budget,
             }
+            if isinstance(item.get("automation_policy"), dict):
+                # The policy snapshot was captured at Automation claim time;
+                # send that immutable copy to the native DSH boundary as well
+                # as retaining it for MCP lease enforcement.
+                worker_payload["automationPolicy"] = copy.deepcopy(item["automation_policy"])
             worker_timeout = _automation_worker_timeout_seconds(item)
             try:
                 summary = await self.worker.request("worker.run", worker_payload, timeout=worker_timeout)
@@ -2130,15 +2224,18 @@ class AgentService:
                 await self.broadcast(session_id, 0, "session.updated",
                                      {"session_id": session_id, "notice": notice, "new_context": True})
                 try:
-                    summary = await self.worker.request("worker.run", {
-                    "runId": run_id,
-                    "sessionId": new_sid,
-                    "text": item["text"],
-                    "images": item.get("image_attachments") or [],
-                    "provider": item["provider_id"],
-                    "model": official_real_model(item["model_id"]),
-                    "budget": budget,
-                    }, timeout=worker_timeout)
+                    retry_payload = {
+                        "runId": run_id,
+                        "sessionId": new_sid,
+                        "text": item["text"],
+                        "images": item.get("image_attachments") or [],
+                        "provider": item["provider_id"],
+                        "model": official_real_model(item["model_id"]),
+                        "budget": budget,
+                    }
+                    if isinstance(item.get("automation_policy"), dict):
+                        retry_payload["automationPolicy"] = copy.deepcopy(item["automation_policy"])
+                    summary = await self.worker.request("worker.run", retry_payload, timeout=worker_timeout)
                 except asyncio.TimeoutError as exc:
                     if not str(item.get("automation_run_uid") or "").strip():
                         raise
@@ -2347,87 +2444,40 @@ class AgentService:
                 return False
         runtime_model_id = official_real_model(model_id)
 
+        runtime_env = build_llm_runtime_environment(self._external_runtime_env, cfg)
         if config_required_mode:
-            os.environ["CRAWSHRIMP_LLM_CONFIG_REQUIRED"] = "1"
-            os.environ["CRAWSHRIMP_LLM_CONFIG_PLACEHOLDER_KEY"] = "cs-config-required-placeholder"
+            runtime_env["CRAWSHRIMP_LLM_CONFIG_REQUIRED"] = "1"
+            runtime_env["CRAWSHRIMP_LLM_CONFIG_PLACEHOLDER_KEY"] = "cs-config-required-placeholder"
         else:
-            os.environ.pop("CRAWSHRIMP_LLM_CONFIG_REQUIRED", None)
-            os.environ.pop("CRAWSHRIMP_LLM_CONFIG_PLACEHOLDER_KEY", None)
+            runtime_env.pop("CRAWSHRIMP_LLM_CONFIG_REQUIRED", None)
+            runtime_env.pop("CRAWSHRIMP_LLM_CONFIG_PLACEHOLDER_KEY", None)
 
-        legacy_gateway_key = os.environ.get("CRAWSHRIMP_LLM_API_KEY", "").strip() or str(llm.get("api_key") or "").strip()
-        if legacy_gateway_key:
-            os.environ["CRAWSHRIMP_LLM_API_KEY"] = legacy_gateway_key
-        for provider in BUILTIN_LLM_PROVIDERS:
-            env_key = str(provider.get("api_key_env") or "")
-            cfg_key = str(provider.get("api_key_key") or "")
-            if not env_key or not cfg_key:
-                continue
-            # A value saved through the Crawshrimp settings UI is the current
-            # local-user choice and must replace any value this long-lived
-            # backend exported for the previous runtime generation.  An
-            # externally supplied environment variable remains the fallback
-            # when the product configuration is blank.
-            value = str(llm.get(cfg_key) or "").strip() or os.environ.get(env_key, "").strip()
-            if not value and provider.get("legacy_gateway"):
-                value = legacy_gateway_key
-            if value:
-                os.environ[env_key] = value
-        os.environ["CRAWSHRIMP_AGENT_PROVIDER"] = provider_id
-        os.environ["CRAWSHRIMP_AGENT_MODEL"] = runtime_model_id
+        runtime_env["CRAWSHRIMP_AGENT_PROVIDER"] = provider_id
+        runtime_env["CRAWSHRIMP_AGENT_MODEL"] = runtime_model_id
         # rc.1 Web profile owns system-prompt composition. Keep the product
         # persona in process memory and overlay it through the profile instead
         # of writing a mutable Cordis config into the installed runtime.
-        os.environ["CRAWSHRIMP_AGENT_PERSONA"] = AGENT_PERSONA
+        runtime_env["CRAWSHRIMP_AGENT_PERSONA"] = AGENT_PERSONA
 
         # 轮换 runtime token
         self.runtime_token = secrets.token_hex(32)
-        os.environ["CRAWSHRIMP_MCP_TOKEN"] = self.runtime_token
+        runtime_env["CRAWSHRIMP_MCP_TOKEN"] = self.runtime_token
 
         # Web Host 端口取 MCP 端口 + 100(API+300),避开 main.js 端口回退区间。
         self.web_port = getattr(self, "web_port", 0) or (self.mcp_port + 100)
-        os.environ["CRAWSHRIMP_WEB_PORT"] = str(self.web_port)
+        runtime_env["CRAWSHRIMP_WEB_PORT"] = str(self.web_port)
         # DSH Web UI「工作区」默认指向抓虾运行时目录(data/agent/workspace)
         workspace_root = _data_root() / "agent" / "workspace"
         workspace_root.mkdir(parents=True, exist_ok=True)
-        os.environ["CRAWSHRIMP_WORKSPACE_ROOT"] = str(workspace_root)
-        base = (cfg.get("ai") or {}).get("llm") or {}
-        for env_key, cfg_key, default in (
-            ("CRAWSHRIMP_OVERSEAS_OPENAI_BASE_URL", "overseas_openai_base_url", None),
-            ("CRAWSHRIMP_OVERSEAS_ANTHROPIC_BASE_URL", "overseas_anthropic_base_url", None),
-            ("CRAWSHRIMP_DOMESTIC_OPENAI_BASE_URL", "domestic_base_url", None),
-            ("CRAWSHRIMP_DEEPSEEK_BASE_URL", "deepseek_base_url", None),
-            ("CRAWSHRIMP_GLM_BASE_URL", "glm_base_url", None),
-        ):
-            value = str(base.get(cfg_key) or "").strip()
-            if value:
-                os.environ[env_key] = value
-        # The profile deliberately suppresses DSH's generic `llm-deepseek`
-        # adapter in favor of the Crawshrimp-owned pi-ai route.  Keep a
-        # process-only compatibility alias nonetheless: an existing DSH
-        # session/config can briefly retain the upstream route while the Web
-        # host reloads, and it must resolve the same official credential rather
-        # than emit a false MISSING_CREDENTIAL error.  Do not persist either
-        # alias, and remove only aliases this service created on a later empty
-        # configuration so an externally supplied environment remains intact.
-        deepseek_key = os.environ.get("CRAWSHRIMP_DEEPSEEK_API_KEY", "").strip()
-        deepseek_base_url = os.environ.get("CRAWSHRIMP_DEEPSEEK_BASE_URL", "").strip()
-        if deepseek_key:
-            os.environ["DEEPSEEK_API_KEY"] = deepseek_key
-            os.environ["CRAWSHRIMP_DEEPSEEK_COMPAT_ALIAS"] = "1"
-            if deepseek_base_url:
-                os.environ["DEEPSEEK_BASE_URL"] = deepseek_base_url
-        elif os.environ.pop("CRAWSHRIMP_DEEPSEEK_COMPAT_ALIAS", "") == "1":
-            os.environ.pop("DEEPSEEK_API_KEY", None)
-            os.environ.pop("DEEPSEEK_BASE_URL", None)
+        runtime_env["CRAWSHRIMP_WORKSPACE_ROOT"] = str(workspace_root)
         custom_providers, custom_env = custom_providers_runtime_payload(cfg)
-        for key, value in custom_env.items():
-            os.environ[key] = value
-        os.environ["CRAWSHRIMP_LLM_PROVIDERS_JSON"] = json.dumps(custom_providers, ensure_ascii=False)
 
         data_root = _data_root()
         agent_dir = data_root / "agent"
         try:
-            _sync_dsh_default_model_settings(agent_dir, provider_id, runtime_model_id, cfg, custom_providers)
+            _sync_dsh_default_model_settings(
+                agent_dir, provider_id, runtime_model_id, cfg, custom_providers, runtime_env,
+            )
         except AgentModelConfigurationError as exc:
             self.runtime_error = str(exc)
             self.runtime_error_code = "MODEL_CONFIGURATION"
@@ -2440,7 +2490,7 @@ class AgentService:
         # profile.  Its authenticated launch response is the readiness proof;
         # never probe GET / because it correctly returns 401 without a cookie.
         self.web_port = _pick_free_port(self.web_port, 8)
-        os.environ["CRAWSHRIMP_WEB_PORT"] = str(self.web_port)
+        runtime_env["CRAWSHRIMP_WEB_PORT"] = str(self.web_port)
 
         worker: Optional[AgentWorker] = None
 
@@ -2455,6 +2505,7 @@ class AgentService:
             data_root=str(data_root),
             mcp_url=getattr(self, "mcp_url", "http://127.0.0.1:18965/mcp"),
             session_root=str(agent_dir / "harness-sessions"),
+            runtime_env=runtime_env,
             on_notification=self._on_worker_notification,
             on_exit=on_worker_exit,
         )
@@ -2553,7 +2604,8 @@ class AgentService:
         return {"ok": ok, "state": self.runtime_state, "error": self.runtime_error}
 
     async def observe_native_web_session(self, runtime_session_id: str,
-                                         *, refresh: bool = False, timeout: int = 15) -> dict:
+                                         *, refresh: bool = False, timeout: int = 15,
+                                         owner: str = "") -> dict:
         """Open one scoped shadow follow for a renderer-announced Web session.
 
         A native DSH Web session is not interchangeable with a product API run:
@@ -2570,14 +2622,42 @@ class AgentService:
             params = {"sessionId": runtime_id}
             if refresh:
                 params["refresh"] = True
+            if str(owner or "").strip():
+                params["owner"] = str(owner).strip()
             response = await self.worker.request(
                 "worker.observe_web_session", params, timeout=timeout,
             )
         except Exception as exc:  # noqa: BLE001
+            # A Python-side timeout must actively release the Node follow;
+            # otherwise a late initial frame could retain an orphan socket and
+            # recreate a shadow context after the caller has given up.
+            if isinstance(exc, asyncio.TimeoutError):
+                try:
+                    cancel_params = {"sessionId": runtime_id}
+                    if str(owner or "").strip():
+                        cancel_params["owner"] = str(owner).strip()
+                    await self.worker.request("worker.unobserve_web_session", cancel_params, timeout=3)
+                except Exception:  # noqa: BLE001
+                    pass
             return {"ok": False, "error": "SESSION_FOLLOW_FAILED", "message": str(exc)[:300]}
         if not isinstance(response, dict):
             return {"ok": False, "error": "INVALID_WORKER_RESPONSE"}
         return response
+
+    async def unobserve_native_web_session(self, runtime_session_id: str, *, owner: str = "") -> dict:
+        runtime_id = str(runtime_session_id or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}", runtime_id):
+            return {"ok": False, "error": "INVALID_SESSION_ID"}
+        if self.runtime_state != "ready" or self.worker is None:
+            return {"ok": True, "following": False, "idempotent": True}
+        params = {"sessionId": runtime_id}
+        if str(owner or "").strip():
+            params["owner"] = str(owner).strip()
+        try:
+            response = await self.worker.request("worker.unobserve_web_session", params, timeout=5)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": "SESSION_UNFOLLOW_FAILED", "message": str(exc)[:300]}
+        return response if isinstance(response, dict) else {"ok": False, "error": "INVALID_WORKER_RESPONSE"}
 
     def runtime_status(self) -> dict:
         cfg = load_config()

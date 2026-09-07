@@ -114,13 +114,25 @@ function notifyHarnessShadow(sessionId, event) {
 }
 
 const RUNTIME_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u
+const NATIVE_WEB_FOLLOW_FIRST_FRAME_TIMEOUT_MS = 8000
 
 function closeNativeWebFollows() {
   for (const record of state.nativeWebFollows.values()) {
     record.closed = true
+    record.state = 'closed'
     try { record.follow?.close() } catch {}
   }
   state.nativeWebFollows.clear()
+}
+
+function closeNativeWebFollow(record) {
+  if (!record || record.closed) return
+  record.closed = true
+  record.state = 'closed'
+  try { record.follow?.close() } catch {}
+  if (state.nativeWebFollows.get(record.sessionId) === record) {
+    state.nativeWebFollows.delete(record.sessionId)
+  }
 }
 
 function forwardNativeWebEvent(record, event) {
@@ -142,7 +154,7 @@ function forwardNativeWebSnapshot(record, events) {
   record.lastSeq = maxSnapshotSeq
 }
 
-async function observeNativeWebSession(sessionId, { refresh = false } = {}) {
+async function observeNativeWebSession(sessionId, { refresh = false, owner = '' } = {}) {
   const runtime = state.runtime
   if (!runtime) return { ok: false, error: { code: 'RUNTIME_UNAVAILABLE', message: 'DSH Web runtime is not ready' } }
   const normalized = String(sessionId || '').trim()
@@ -152,22 +164,37 @@ async function observeNativeWebSession(sessionId, { refresh = false } = {}) {
   if (state.activeRun?.sessionId === normalized) {
     return { ok: true, following: false, reason: 'product-run-already-followed' }
   }
+  const ownerId = String(owner || 'api').trim() || 'api'
   const existing = state.nativeWebFollows.get(normalized)
-  if (existing && !existing.closed && !refresh) return { ok: true, following: true, idempotent: true }
+  if (existing && !existing.closed && !refresh) {
+    existing.owners.add(ownerId)
+    if (existing.state === 'ready') return { ok: true, following: true, idempotent: true, state: 'ready' }
+    try {
+      await existing.follow.ready
+      if (existing.closed || existing.state !== 'ready') {
+        return { ok: false, error: { code: 'SESSION_FOLLOW_FAILED', message: 'follow closed before ready' } }
+      }
+      return { ok: true, following: true, idempotent: true, state: 'ready' }
+    } catch (error) {
+      return { ok: false, error: { code: 'SESSION_FOLLOW_FAILED', message: String(error?.message || error) } }
+    }
+  }
   if (existing && !existing.closed && refresh) {
     // The renderer follow can be alive while its first snapshot was missed by
     // FastAPI. Re-follow this exact session to request a fresh active-turn
     // snapshot; never substitute a run from a different Web session.
-    existing.closed = true
-    try { existing.follow?.close() } catch {}
-    if (state.nativeWebFollows.get(normalized) === existing) state.nativeWebFollows.delete(normalized)
+    closeNativeWebFollow(existing)
   }
 
-  const record = { sessionId: normalized, follow: null, closed: false, lastSeq: 0 }
+  const record = {
+    sessionId: normalized, follow: null, closed: false, state: 'connecting',
+    lastSeq: 0, owners: new Set([ownerId]),
+  }
   state.nativeWebFollows.set(normalized, record)
   const onError = (error) => {
     if (record.closed) return
     record.closed = true
+    record.state = 'failed'
     if (state.nativeWebFollows.get(normalized) === record) state.nativeWebFollows.delete(normalized)
     console.error(`[worker] native Web Session follow ${normalized} failed: ${error.message}`)
     // A follow failure during a native turn must release the exact shadow
@@ -183,14 +210,32 @@ async function observeNativeWebSession(sessionId, { refresh = false } = {}) {
     onSnapshotComplete: (events) => forwardNativeWebSnapshot(record, events),
     onEvent: (event) => forwardNativeWebEvent(record, event),
     onError,
+    firstFrameTimeoutMs: NATIVE_WEB_FOLLOW_FIRST_FRAME_TIMEOUT_MS,
   })
   try {
     await record.follow.ready
-    return { ok: true, following: true }
+    if (record.closed || state.nativeWebFollows.get(normalized) !== record) {
+      return { ok: false, error: { code: 'SESSION_FOLLOW_FAILED', message: 'follow closed before ready' } }
+    }
+    record.state = 'ready'
+    return { ok: true, following: true, state: 'ready' }
   } catch (error) {
     onError(error instanceof Error ? error : new Error(String(error)))
     return { ok: false, error: { code: 'SESSION_FOLLOW_FAILED', message: error.message } }
   }
+}
+
+function unobserveNativeWebSession(sessionId, { owner = '' } = {}) {
+  const normalized = String(sessionId || '').trim()
+  const record = state.nativeWebFollows.get(normalized)
+  if (!record) return { ok: true, following: false, idempotent: true }
+  const ownerId = String(owner || 'api').trim() || 'api'
+  record.owners.delete(ownerId)
+  if (record.owners.size > 0) {
+    return { ok: true, following: true, owners: record.owners.size }
+  }
+  closeNativeWebFollow(record)
+  return { ok: true, following: false }
 }
 
 // ---------- DSH runtime 生命周期 ----------
@@ -529,6 +574,10 @@ async function startRun(params) {
   }
   const done = new Promise((resolve) => { run.resolve = resolve })
   state.activeRun = run
+  const automationPolicy = params.automationPolicy && typeof params.automationPolicy === 'object'
+    ? params.automationPolicy
+    : null
+  let policyInstalled = false
 
   try {
     const contentBlocks = []
@@ -557,6 +606,13 @@ async function startRun(params) {
       })
       state.startedSessions.add(sessionId)
     }
+    if (automationPolicy) {
+      // The bridge snapshots this policy in the authenticated DSH Web Host;
+      // inherited Automations therefore never inherit a source Session's
+      // temporary danger-full-access selection.
+      await state.runtime.setAutomationPolicy({ sessionId, runId, policy: automationPolicy })
+      policyInstalled = true
+    }
     const provider = String(params.provider || state.provider || '')
     const model = String(params.model || state.model || '')
     if (!provider || !model) throw new Error('runtime model selection is missing provider or model')
@@ -581,6 +637,18 @@ async function startRun(params) {
     console.error(`[worker] run ${runId} prompt 失败: ${error.message}`)
     finishRun({ status: 'failed', reason: { kind: 'error', error: { code: 'PROMPT_FAILED', message: error.message } } })
     return { ok: false, error: { code: 'PROMPT_FAILED', message: error.message } }
+  } finally {
+    if (policyInstalled && state.runtime) {
+      try {
+        await state.runtime.clearAutomationPolicy({ sessionId, runId })
+      } catch (error) {
+        // Leaving a restrictive policy on an inherited interactive Session is
+        // worse than restarting this private runtime: stop it so the in-memory
+        // policy map is discarded rather than mutating user permissions.
+        console.error(`[worker] Automation policy cleanup failed: ${error.message}`)
+        await stopRuntime()
+      }
+    }
   }
 }
 
@@ -695,7 +763,12 @@ async function handleRequest(method, params) {
     case 'worker.cancel_active':
       return cancelActiveRun()
     case 'worker.observe_web_session':
-      return await observeNativeWebSession(params.sessionId, { refresh: params.refresh === true })
+      return await observeNativeWebSession(params.sessionId, {
+        refresh: params.refresh === true,
+        owner: params.owner,
+      })
+    case 'worker.unobserve_web_session':
+      return unobserveNativeWebSession(params.sessionId, { owner: params.owner })
     case 'worker.request_approval': {
       if (!state.runtime) {
         return { ok: false, error: { code: 'RUNTIME_UNAVAILABLE', message: 'DSH Web runtime is not ready' } }

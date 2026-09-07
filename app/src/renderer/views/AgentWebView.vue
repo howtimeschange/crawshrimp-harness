@@ -252,6 +252,7 @@ let browserDockResizeObserver = null
 let stopDockedBrowserResize = null
 let nativeWebFollowRetryTimer = null
 let nativeWebFollowSessionId = ''
+const nativeWebFollowOwner = `agent-webview:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`
 const MISSING_LLM_PROVIDER_MESSAGE = '请先配置任一可用的大模型供应商。'
 const NATIVE_WEB_FOLLOW_RETRY_DELAYS_MS = [250, 750, 1500]
 
@@ -738,10 +739,14 @@ function onWindowMessage(event) {
   } else if (data.__crawshrimp === 'session-nav') {
     emit('session-nav', data.kind || 'session')
   } else if (data.__crawshrimp === 'active-runtime-session') {
+    const previousRuntimeSessionId = activeRuntimeSessionId.value
     activeRuntimeSessionId.value = String(data.runtimeSessionId || '')
     emit('runtime-session', activeRuntimeSessionId.value)
-    if (!activeRuntimeSessionId.value && nativeWebFollowRetryTimer) {
-      clearTimeout(nativeWebFollowRetryTimer)
+    if (previousRuntimeSessionId && previousRuntimeSessionId !== activeRuntimeSessionId.value) {
+      void unobserveNativeWebSession(previousRuntimeSessionId)
+    }
+    if (!activeRuntimeSessionId.value) {
+      if (nativeWebFollowRetryTimer) clearTimeout(nativeWebFollowRetryTimer)
       nativeWebFollowRetryTimer = null
       nativeWebFollowSessionId = ''
     } else {
@@ -798,7 +803,10 @@ async function observeNativeWebSession(runtimeSessionId, attempt = 0) {
     nativeWebFollowSessionId = runtimeId
   }
   try {
-    const result = await window.cs.agentApi('POST', '/agent/runtime/web-session', { runtime_session_id: runtimeId })
+    const result = await window.cs.agentApi('POST', '/agent/runtime/web-session', {
+      runtime_session_id: runtimeId,
+      owner: nativeWebFollowOwner,
+    })
     if (result?.ok) return
     scheduleNativeWebSessionFollow(runtimeId, attempt)
   } catch (error) {
@@ -807,6 +815,20 @@ async function observeNativeWebSession(runtimeSessionId, attempt = 0) {
       // Do not expose backend transport detail as a fake composer success.
       console.warn('[agent] 原生 Web 会话绑定失败:', error?.message)
     }
+  }
+}
+
+async function unobserveNativeWebSession(runtimeSessionId) {
+  const runtimeId = String(runtimeSessionId || '').trim()
+  if (!runtimeId || typeof window.cs?.agentApi !== 'function') return
+  try {
+    await window.cs.agentApi('DELETE', '/agent/runtime/web-session', {
+      runtime_session_id: runtimeId,
+      owner: nativeWebFollowOwner,
+    })
+  } catch {
+    // The worker also clears all follows on runtime stop.  A UI unmount must
+    // remain idempotent while that shutdown race is in progress.
   }
 }
 
@@ -966,6 +988,8 @@ onUnmounted(() => {
   browserDockResizeObserver = null
   if (nativeWebFollowRetryTimer) clearTimeout(nativeWebFollowRetryTimer)
   nativeWebFollowRetryTimer = null
+  void unobserveNativeWebSession(nativeWebFollowSessionId || activeRuntimeSessionId.value)
+  nativeWebFollowSessionId = ''
   stopDockedBrowserResize?.({ persist: true })
 })
 

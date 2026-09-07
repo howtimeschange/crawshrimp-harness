@@ -2032,6 +2032,15 @@ class AutomationController:
                 "VERIFICATION_EVIDENCE_REQUIRED",
                 "Agent completed without automation_record_observation or automation_record_verification evidence",
             )
+        if str(error_code or "").strip().upper() == "AUTOMATION_POLICY_DENIED":
+            # Native DSH pre-execute policy rejection is deliberate authority
+            # containment, never a transient worker failure.  Keep its exact
+            # audit reason and do not schedule an unattended retry.
+            return self.mark_needs_review(
+                automation_run_uid,
+                "AUTOMATION_POLICY_DENIED",
+                error_message or "A native DSH tool was outside the Automation execution policy",
+            )
         if terminal == "failed":
             return self._record_execution_failure_for_run(
                 automation_run_uid,

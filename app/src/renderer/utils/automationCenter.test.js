@@ -68,8 +68,9 @@ test('automation center requires a source session before creating an inherited a
 
 test('automation center exposes explicit unattended risk approval alongside its MCP tool allowlist', () => {
   const source = readFileSync(path.join(srcRoot, 'renderer', 'views', 'AutomationCenter.vue'), 'utf8')
+  const state = readFileSync(path.join(srcRoot, 'renderer', 'utils', 'automationCenterState.mjs'), 'utf8')
   assert.match(source, /allowed_risks_text/)
-  assert.match(source, /allowed_risks:\s*splitToolset\(form\.value\.allowed_risks_text\)/)
+  assert.match(state, /allowed_risks:\s*splitToolset\(form\.allowed_risks_text\)/)
   assert.match(source, /无人值守允许风险/)
 })
 

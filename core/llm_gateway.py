@@ -271,22 +271,27 @@ def _provider_for_builtin_model(model_id: str) -> dict | None:
 
 
 def _key_for_builtin_provider(provider: dict, llm: dict) -> str:
-    env_value = _compact(os.environ.get(str(provider.get("api_key_env") or "")))
-    if env_value:
-        return env_value
     value = _compact(llm.get(str(provider.get("api_key_key") or "")))
     if value:
         return value
+    if provider.get("legacy_gateway"):
+        value = _compact(llm.get("api_key"))
+        if value:
+            return value
+    env_value = _compact(os.environ.get(str(provider.get("api_key_env") or "")))
+    if env_value:
+        return env_value
     if provider.get("legacy_gateway"):
         return _compact(os.environ.get("CRAWSHRIMP_LLM_API_KEY")) or _compact(llm.get("api_key"))
     return ""
 
 
 def _base_url_for_builtin_provider(provider: dict, llm: dict) -> str:
+    value = _compact(llm.get(str(provider.get("base_url_key") or "")))
+    if value:
+        return value
     env_value = _compact(os.environ.get(str(provider.get("base_url_env") or "")))
-    if env_value:
-        return env_value
-    return _compact(llm.get(str(provider.get("base_url_key") or ""))) or str(provider.get("base_url_default") or "")
+    return env_value or str(provider.get("base_url_default") or "")
 
 
 def gateway_api_key_configured(config: dict | None = None) -> bool:

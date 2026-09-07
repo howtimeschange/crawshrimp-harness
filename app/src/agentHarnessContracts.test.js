@@ -791,12 +791,15 @@ test('native Web sessions obtain a per-session shadow follow without a latest-ru
   assert.match(service, /refresh=True/)
   assert.match(service, /McpContextUnavailableError/)
   assert.match(worker, /nativeWebFollows:\s*new Map\(\)/)
-  assert.match(worker, /async function observeNativeWebSession\(sessionId, \{ refresh = false \} = \{\}\)/)
+  assert.match(worker, /async function observeNativeWebSession\(sessionId, \{ refresh = false, owner = '' \} = \{\}\)/)
   assert.match(worker, /RUNTIME_SESSION_ID\.test\(normalized\)/)
   assert.match(worker, /runtime\.follow\(normalized, \{/)
+  assert.match(worker, /firstFrameTimeoutMs:\s*NATIVE_WEB_FOLLOW_FIRST_FRAME_TIMEOUT_MS/)
+  assert.match(worker, /await record\.follow\.ready/)
   assert.match(worker, /notifyHarnessShadow\(sessionId, event\)/)
   assert.match(worker, /refresh: params\.refresh === true/)
   assert.match(worker, /case 'worker\.observe_web_session'/)
+  assert.match(worker, /case 'worker\.unobserve_web_session'/)
   assert.doesNotMatch(worker, /latest.*active.*run/i)
 })
 
@@ -1023,9 +1026,11 @@ test('native DSH model discovery suppresses the duplicate upstream DeepSeek cred
 
   assert.match(upstreamRoute, /disabled:\s*true/)
   assert.match(staging, /duplicateDeepSeekRouteDisabled/)
-  assert.match(service, /DEEPSEEK_API_KEY.*deepseek_key/)
-  assert.match(service, /DEEPSEEK_BASE_URL.*deepseek_base_url/)
-  assert.match(service, /CRAWSHRIMP_DEEPSEEK_COMPAT_ALIAS/)
+  assert.match(service, /def build_llm_runtime_environment\(external_env: Mapping\[str, str\], cfg: Mapping\[str, Any\]\)/)
+  assert.match(service, /env\[env_key\] = configured/)
+  assert.match(service, /if deepseek_key and not _compact_text\(external_env\.get\("DEEPSEEK_API_KEY"\)\)/)
+  assert.match(service, /env\["DEEPSEEK_API_KEY"\] = deepseek_key/)
+  assert.match(service, /env\["DEEPSEEK_BASE_URL"\] = deepseek_base/)
 })
 
 test('development bridge never accepts API credentials from URL query', () => {
