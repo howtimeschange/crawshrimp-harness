@@ -1566,9 +1566,16 @@ window.__ModuleLoader__.load({
 
       const snap = ctx.workspaces.list?.getSnapshot?.() || {}
       const items = Array.isArray(snap.items) ? snap.items : []
-      if (!run.workspaceId && items.length > 0) {
+      const existingProductWorkspace = !run.workspaceId
+        ? items.find((item) => String(item?.path || '').trim() === run.root)
+        : null
+      if (!run.workspaceId && items.length > 0 && !existingProductWorkspace) {
         finishDefaultWorkspaceRun(ctx, run, { status: 'existing', workspaceId: items[0]?.workspaceId || '' })
         return
+      }
+      if (existingProductWorkspace?.workspaceId) {
+        run.workspaceId = existingProductWorkspace.workspaceId
+        run.workspaceExisted = true
       }
       const { ready: baselinesReady, sessionSnapshot } = defaultWorkspaceBaselinesReady(ctx, snap)
       if (!baselinesReady) return
@@ -1599,6 +1606,14 @@ window.__ModuleLoader__.load({
 
         let sessionId = sessionSnapshot.current
         const navigation = defaultWorkspaceNavigator(ctx)
+        if (!sessionId && !navigation) {
+          // The slots client can receive the Shell workspace message while
+          // the rc.1 uiWorkspace service is still being wired.  A workspace
+          // may already have been created at this point; treating the missing
+          // navigation service as success leaves that workspace permanently
+          // selected nowhere.  Retry through the existing bounded backoff.
+          throw new Error('workspace navigation is not ready')
+        }
         if (!sessionId && navigation && ctx.sessions) {
           sessionId = await navigation.connectWorkspace(projected.workspaceId)
           if (run.done || defaultWorkspaceRuns.get(ctx) !== run) {
@@ -1612,7 +1627,7 @@ window.__ModuleLoader__.load({
 
         run.inFlight = false
         finishDefaultWorkspaceRun(ctx, run, {
-          status: 'created',
+          status: run.workspaceExisted ? 'existing' : 'created',
           workspaceId: projected.workspaceId,
           sessionId: sessionId || '',
         })
@@ -1656,6 +1671,7 @@ window.__ModuleLoader__.load({
         retryDelaysMs,
         attempts: 0,
         workspaceId: '',
+        workspaceExisted: false,
         inFlight: false,
         done: false,
         result: null,

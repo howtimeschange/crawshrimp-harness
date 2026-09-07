@@ -35,6 +35,10 @@ export const CRAWSHRIMP_DSH_IM_APPROVAL_DISPLAY_ARGUMENTS_MARKER = 'crawshrimp-a
 export const CRAWSHRIMP_DSH_IM_PRODUCT_MODEL_CATALOG_MARKER = 'crawshrimp-dsh-im-411-product-model-catalog-v1'
 export const CRAWSHRIMP_DSH_IM_APPROVAL_REPLIES_MARKER = 'crawshrimp-dsh-im-411-approval-replies-v2'
 export const CRAWSHRIMP_DSH_IM_BUILT_OVERLAY_MARKER = 'crawshrimp-dsh-im-411-built-overlay-v2'
+export const CRAWSHRIMP_DEEPSEEK_VISION_BRIDGE_MARKER = 'crawshrimp-deepseek-vision-bridge-v3'
+export const CRAWSHRIMP_DEEPSEEK_VISION_ADMISSION_MARKER = 'crawshrimp-deepseek-vision-admission-v1'
+export const CRAWSHRIMP_DISABLE_NATIVE_WEB_TOOLS_MARKER = 'crawshrimp-disable-native-web-tools-v1'
+export const CRAWSHRIMP_WORKSPACE_ACCESS_PROBE_MARKER = 'crawshrimp-workspace-access-probe-v1'
 
 const NATURAL_MODEL_CONTROLS_SOURCE = `// ${CRAWSHRIMP_DSH_IM_NATURAL_CONTROLS_MARKER}
 import { runModelCommand } from './model-command.mjs';
@@ -1250,6 +1254,320 @@ function assertStandardPresetRootClosure(root) {
 }
 
 /**
+ * DSH rc.1 correctly rejects an image-bearing session on a text-only model.
+ * Crawshrimp's official DeepSeek Flash/Pro routes are the deliberate exception:
+ * use the paired official vision route to describe the newest image-bearing
+ * user message, then replay a text-only version to the selected text model.
+ *
+ * This remains a narrow product compatibility bridge. It never makes another
+ * provider appear image-capable and it never sends the final text-model call
+ * any image attachment.
+ */
+function patchPiAiDeepSeekVisionBridge(root) {
+  const entry = requireFile(root, 'node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js')
+  let source = readFileSync(entry, 'utf8')
+  if (source.includes(CRAWSHRIMP_DEEPSEEK_VISION_BRIDGE_MARKER)) {
+    return { entry, patched: false }
+  }
+  if (source.includes('crawshrimp-deepseek-vision-bridge-v2')) {
+    const legacyHelperName = ['crawshrimpLatest', 'ImageMessageIndex'].join('')
+    const legacyHelper = new RegExp(`function ${legacyHelperName}\\(messages\\) \\{[\\s\\S]*?\\n\\}`, 'u')
+    const matches = source.match(legacyHelper)
+    if (!matches || matches.length !== 1) {
+      throw new Error('llm-pi-ai legacy vision bridge helper anchor changed')
+    }
+    source = source
+      .replace(legacyHelper, `function crawshrimpLatestImageUserMessageIndex(messages) {
+\\tfor (let index = messages.length - 1; index >= 0; index -= 1) {
+\\t\\tconst message = messages[index];
+\\t\\tif (message.role === "user" && contentHasImage(message.content)) return index;
+\\t}
+\\treturn -1;
+}`)
+      .replaceAll(legacyHelperName, 'crawshrimpLatestImageUserMessageIndex')
+      .replaceAll('crawshrimp-deepseek-vision-bridge-v2', CRAWSHRIMP_DEEPSEEK_VISION_BRIDGE_MARKER)
+    writeFileSync(entry, source, 'utf8')
+    return { entry, patched: true }
+  }
+
+  source = replaceRequired(
+    source,
+    'function toPiContext(options, images, onReplayDegrade) {\n\treturn images === void 0 ? textOnlyContext(options, onReplayDegrade) : toPiContextWithImages(options, images, onReplayDegrade);\n}',
+    `function toPiContext(options, images, onReplayDegrade) {
+\treturn images === void 0 ? textOnlyContext(options, onReplayDegrade) : toPiContextWithImages(options, images, onReplayDegrade);
+}
+const CRAWSHRIMP_DEEPSEEK_OFFICIAL_PROVIDER = "crawshrimp-deepseek-official";
+const CRAWSHRIMP_DEEPSEEK_VISION_MODEL = "deepseek-v4-flash-vision-exp";
+function crawshrimpDeepSeekTextModelCanUseVisionBridge(provider, model) {
+\treturn provider === CRAWSHRIMP_DEEPSEEK_OFFICIAL_PROVIDER && (model === "deepseek-v4-flash" || model === "deepseek-v4-pro");
+}
+function crawshrimpLatestImageUserMessageIndex(messages) {
+\tfor (let index = messages.length - 1; index >= 0; index -= 1) {
+\t\tconst message = messages[index];
+\t\tif (message.role === "user" && contentHasImage(message.content)) return index;
+\t}
+\treturn -1;
+}
+function crawshrimpReplaceImages(blocks, textForImage) {
+\tconst content = [];
+\tfor (const block of blocks) {
+\t\tif (block.type === "image") {
+\t\t\tcontent.push({ type: "text", text: textForImage() });
+\t\t\tcontinue;
+\t\t}
+\t\tif (block.type === "tool-result") {
+\t\t\tcontent.push({ ...block, content: crawshrimpReplaceImages(block.content, textForImage) });
+\t\t\tcontinue;
+\t\t}
+\t\tcontent.push(block);
+\t}
+\treturn content;
+}
+function crawshrimpVisionOptions(options) {
+\tconst target = crawshrimpLatestImageUserMessageIndex(options.messages);
+\treturn {
+\t\t...options,
+\t\tmessages: options.messages.map((message, index) => index === target || !contentHasImage(message.content) ? message : {
+\t\t\t...message,
+\t\t\tcontent: crawshrimpReplaceImages(message.content, () => "[较早图片不会重复发送给视觉预处理；后续文本模型会收到当前图片的识别结果。]")
+\t\t})
+\t};
+}
+function crawshrimpTextOnlyOptionsFromVision(options, visionText) {
+\tconst target = crawshrimpLatestImageUserMessageIndex(options.messages);
+\tlet injected = false;
+\treturn {
+\t\t...options,
+\t\tmessages: options.messages.map((message, index) => !contentHasImage(message.content) ? message : {
+\t\t\t...message,
+\t\t\tcontent: crawshrimpReplaceImages(message.content, () => {
+\t\t\t\tif (index === target && !injected) {
+\t\t\t\t\tinjected = true;
+\t\t\t\t\treturn \`\\n\\n[DeepSeek Vision 识别结果]\\n\${visionText}\\n\\n[兼容说明]\\n原始图片已经由 DeepSeek Vision 转写成以上文字；当前 DeepSeek 文本模型应直接基于这些文字继续回答，不要因为原始会话含图而要求用户切换到视觉模型。\\n\\n\`;
+\t\t\t\t}
+\t\t\t\treturn "[图片已由 DeepSeek Vision 处理；当前文本模型不再接收原始图片。]";
+\t\t\t})
+\t\t})
+\t};
+}
+function crawshrimpImageOptions(adapter, attachments, profile) {
+\treturn {
+\t\tattachments,
+\t\tresolveImageAccess: (ref) => adapter.config.resolveImageAccess?.(attachments, ref),
+\t\tmaxRequestImageBytes: profile.maxRequestImageBytes,
+\t\trequestImagePolicy: {
+\t\t\tmaxPixels: profile.requestImagePixelBudget,
+\t\t\tmaxBytes: profile.requestImageMaxBytes
+\t\t}
+\t};
+}
+function crawshrimpTextFromPiMessage(message) {
+\treturn message.content.filter((block) => block.type === "text").map((block) => block.text).join("").trim();
+}
+async function crawshrimpBridgeDeepSeekImages(snapshot, profile, options, apiKey, signal, onReplayDegrade) {
+\t/* ${CRAWSHRIMP_DEEPSEEK_VISION_BRIDGE_MARKER}: DeepSeek text models consume images through a single vision preflight. */
+\tif (!crawshrimpDeepSeekTextModelCanUseVisionBridge(options.provider, options.model)) return void 0;
+\tconst attachments = this.config.resolveAttachments?.();
+\tif (attachments === void 0) return void 0;
+\tconst visionModel = snapshot.models.getModel(options.provider, CRAWSHRIMP_DEEPSEEK_VISION_MODEL);
+\tif (visionModel === void 0 || !visionModel.input.includes("image")) return void 0;
+\tconst target = crawshrimpLatestImageUserMessageIndex(options.messages);
+\tif (target < 0) return void 0;
+\tthis.config.onVisionPreflight?.({
+\t\tprovider: options.provider,
+\t\tmodel: options.model,
+\t\tvisionModel: CRAWSHRIMP_DEEPSEEK_VISION_MODEL,
+\t\tsessionId: options.sessionId === void 0 ? void 0 : String(options.sessionId)
+\t});
+\tconst visionSystem = [
+\t\toptions.system,
+\t\t"你是抓虾 Harness 的图片识别前置模型。只描述最新一条含图片的用户消息，保留界面文字、数字、按钮、错误码、商品/页面结构和用户可能关心的关键事实。不要执行任务，不要给操作建议。"
+\t].filter((part) => typeof part === "string" && part.trim()).join("\\n\\n");
+\tconst visionContext = await toPiContext({
+\t\t...crawshrimpVisionOptions(options),
+\t\t...visionSystem ? { system: visionSystem } : {},
+\t\ttools: void 0,
+\t\tsignal
+\t}, crawshrimpImageOptions(this, attachments, profile), onReplayDegrade);
+\tconst visionMessage = await snapshot.models.completeSimple(visionModel, visionContext, {
+\t\t...profileOptions(profile, void 0, apiKey),
+\t\tmaxTokens: 2048,
+\t\t...options.sessionId === void 0 ? {} : { sessionId: \`\${options.sessionId}:vision\` },
+\t\tsignal,
+\t\theaders: requestHeaders(profile.headers)
+\t});
+\tif (visionMessage.stopReason === "error") throw new LlmError(\`DeepSeek vision preflight failed: \${visionMessage.errorMessage ?? "unknown error"}\`, "UNSUPPORTED_CONTENT");
+\tconst visionText = crawshrimpTextFromPiMessage(visionMessage) || "DeepSeek Vision 未返回可用图片描述。";
+\treturn crawshrimpTextOnlyOptionsFromVision(options, visionText);
+}`,
+    'llm-pi-ai DeepSeek vision bridge helpers',
+  )
+  source = replaceRequired(
+    source,
+    '\t\t\t\tconst containsImage = options.messages.some((message) => contentHasImage(message.content));\n\t\t\t\tif (containsImage && !model.input.includes("image")) throw new LlmError(`pi-ai model "${model.id}" does not support image input`, "UNSUPPORTED_CONTENT");\n\t\t\t\tconst attachments = containsImage ? this.config.resolveAttachments?.() : void 0;\n\t\t\t\tif (containsImage && attachments === void 0) throw new LlmError("pi-ai image input requires the durable attachment service", "UNSUPPORTED_CONTENT");\n\t\t\t\tconst onReplayDegrade = (reason) => {\n\t\t\t\t\tthis.config.onReplayDegrade?.({\n\t\t\t\t\t\tprovider: options.provider,\n\t\t\t\t\t\tmodel: options.model,\n\t\t\t\t\t\treason\n\t\t\t\t\t});\n\t\t\t\t};',
+    '\t\t\t\tconst onReplayDegrade = (reason) => {\n\t\t\t\t\tthis.config.onReplayDegrade?.({\n\t\t\t\t\t\tprovider: options.provider,\n\t\t\t\t\t\tmodel: options.model,\n\t\t\t\t\t\treason\n\t\t\t\t\t});\n\t\t\t\t};\n\t\t\t\tconst containsImage = options.messages.some((message) => contentHasImage(message.content));\n\t\t\t\tlet requestOptions = options;\n\t\t\t\tif (containsImage && !model.input.includes("image")) {\n\t\t\t\t\trequestOptions = await crawshrimpBridgeDeepSeekImages.call(this, snapshot, profile, options, apiKey, watchdog.signal, onReplayDegrade) ?? options;\n\t\t\t\t\tif (requestOptions === options) throw new LlmError(`pi-ai model "${model.id}" does not support image input`, "UNSUPPORTED_CONTENT");\n\t\t\t\t}\n\t\t\t\tconst requestContainsImage = requestOptions.messages.some((message) => contentHasImage(message.content));\n\t\t\t\tconst attachments = requestContainsImage ? this.config.resolveAttachments?.() : void 0;\n\t\t\t\tif (requestContainsImage && attachments === void 0) throw new LlmError("pi-ai image input requires the durable attachment service", "UNSUPPORTED_CONTENT");',
+    'llm-pi-ai DeepSeek vision bridge dispatch',
+  )
+  source = replaceRequired(
+    source,
+    '\t\t\t\tconst context = attachments === void 0 ? toPiContext(options, void 0, onReplayDegrade) : await toPiContext({\n\t\t\t\t\t...options,\n\t\t\t\t\tsignal: watchdog.signal\n\t\t\t\t}, {\n\t\t\t\t\tattachments,\n\t\t\t\t\tresolveImageAccess: (ref) => this.config.resolveImageAccess?.(attachments, ref),\n\t\t\t\t\tmaxRequestImageBytes: profile.maxRequestImageBytes,\n\t\t\t\t\trequestImagePolicy: {\n\t\t\t\t\t\tmaxPixels: profile.requestImagePixelBudget,\n\t\t\t\t\t\tmaxBytes: profile.requestImageMaxBytes\n\t\t\t\t\t}\n\t\t\t\t}, onReplayDegrade);\n\t\t\t\tconst iterator = toStreamChunks(snapshot.models.streamSimple(model, context, {\n\t\t\t\t\t...profileOptions(profile, reasoning, apiKey),\n\t\t\t\t\t...options.temperature === void 0 ? {} : { temperature: options.temperature },\n\t\t\t\t\t...options.maxTokens === void 0 ? {} : { maxTokens: options.maxTokens },\n\t\t\t\t\t...options.sessionId === void 0 ? {} : { sessionId: String(options.sessionId) },',
+    '\t\t\t\tconst context = attachments === void 0 ? toPiContext(requestOptions, void 0, onReplayDegrade) : await toPiContext({\n\t\t\t\t\t...requestOptions,\n\t\t\t\t\tsignal: watchdog.signal\n\t\t\t\t}, crawshrimpImageOptions(this, attachments, profile), onReplayDegrade);\n\t\t\t\tconst iterator = toStreamChunks(snapshot.models.streamSimple(model, context, {\n\t\t\t\t\t...profileOptions(profile, reasoning, apiKey),\n\t\t\t\t\t...requestOptions.temperature === void 0 ? {} : { temperature: requestOptions.temperature },\n\t\t\t\t\t...requestOptions.maxTokens === void 0 ? {} : { maxTokens: requestOptions.maxTokens },\n\t\t\t\t\t...requestOptions.sessionId === void 0 ? {} : { sessionId: String(requestOptions.sessionId) },',
+    'llm-pi-ai DeepSeek vision bridge context replay',
+  )
+  source = replaceRequired(
+    source,
+    '\t\tresolveAttachments: () => ctx.get("attachments"),\n\t\tresolveImageAccess: (attachments, ref) => resolveImageAttachmentAccess(attachments, (hostPath) => ctx.get("fs")?.processPathFromHostPath(hostPath), ref),\n\t\tonReplayDegrade: ({ provider, model, reason }) => {',
+    '\t\tresolveAttachments: () => ctx.get("attachments"),\n\t\tresolveImageAccess: (attachments, ref) => resolveImageAttachmentAccess(attachments, (hostPath) => ctx.get("fs")?.processPathFromHostPath(hostPath), ref),\n\t\tonVisionPreflight: ({ provider, model, visionModel, sessionId }) => {\n\t\t\tctx.logger.info("crawshrimp.audit " + JSON.stringify({ event: "deepseek_vision_preflight", provider, model, vision_model: visionModel, session_id: sessionId ?? null }));\n\t\t},\n\t\tonReplayDegrade: ({ provider, model, reason }) => {',
+    'llm-pi-ai DeepSeek vision bridge audit',
+  )
+  writeFileSync(entry, source, 'utf8')
+  return { entry, patched: true }
+}
+
+/**
+ * The Session controller runs before the Pi-AI adapter.  It must therefore
+ * admit the two official DeepSeek text models that the installed bridge turns
+ * into a Vision preflight plus a text-only replay.  Keep every other
+ * text-only selection behind the upstream rejection so an image can never
+ * escape this deliberately narrow compatibility path.
+ */
+function patchDeepSeekVisionAdmission(root, visionBridge) {
+  if (!visionBridge || !readFileSync(visionBridge.entry, 'utf8').includes(CRAWSHRIMP_DEEPSEEK_VISION_BRIDGE_MARKER)) {
+    throw new Error('DeepSeek Vision admission requires the installed Pi-AI bridge')
+  }
+  const entry = requireFile(root, 'node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js')
+  let source = readFileSync(entry, 'utf8')
+  if (source.includes(CRAWSHRIMP_DEEPSEEK_VISION_ADMISSION_MARKER)) {
+    return { entry, patched: false }
+  }
+  source = replaceRequired(
+    source,
+    'if (model.inputModalities !== void 0 && !model.inputModalities.includes("image")) throw new RemoteError("session/attachment-invalid", `Model "${current.model}" does not support image input.`, { reason: "MODEL_DOES_NOT_SUPPORT_IMAGES" });',
+    `/* ${CRAWSHRIMP_DEEPSEEK_VISION_ADMISSION_MARKER}: Pi-AI rewrites these two official text-model prompts through Vision first. */
+\t\t\t\t\tconst crawshrimpVisionBridgeAllowsImageAdmission = current.provider === "crawshrimp-deepseek-official" && (current.model === "deepseek-v4-flash" || current.model === "deepseek-v4-pro");
+\t\t\t\t\tif (model.inputModalities !== void 0 && !model.inputModalities.includes("image") && !crawshrimpVisionBridgeAllowsImageAdmission) throw new RemoteError("session/attachment-invalid", \`Model "\${current.model}" does not support image input.\`, { reason: "MODEL_DOES_NOT_SUPPORT_IMAGES" });`,
+    'DeepSeek Vision session admission boundary',
+  )
+  writeFileSync(entry, source, 'utf8')
+  return { entry, patched: true }
+}
+
+/**
+ * The Web profile retains the upstream package for dependency-closure
+ * compatibility, and an old/custom preset can still mount it. Disable the
+ * package at its registration boundary so neither prompt guidance nor
+ * web_search/web_fetch enter a Crawshrimp Session header.
+ */
+function patchNativeWebToolRegistration(root) {
+  const entry = requireFile(root, 'node_modules/@deepseek-ai/dsh-tool-web/lib/index.js')
+  let source = readFileSync(entry, 'utf8')
+  if (source.includes(CRAWSHRIMP_DISABLE_NATIVE_WEB_TOOLS_MARKER)) {
+    return { entry, patched: false }
+  }
+  source = replaceRequired(
+    source,
+    'function apply(ctx, config) {\n\tconst resolved = config;',
+    `function apply(ctx, config) {
+\t/* ${CRAWSHRIMP_DISABLE_NATIVE_WEB_TOOLS_MARKER}: Crawshrimp owns webpage work through its CDP MCP tools. */
+\tif (process.env.CRAWSHRIMP_DISABLE_NATIVE_WEB === "1") return;
+\tconst resolved = config;`,
+    'native Web tool registration boundary',
+  )
+  writeFileSync(entry, source, 'utf8')
+  return { entry, patched: true }
+}
+
+/**
+ * A directory stat alone cannot prove the runtime can persist a workspace.
+ * Restore the rc.8 durability probe against rc.1's dsh-workspace entry:
+ * enumerate, exclusive-create, write, fsync, rename, stat and clean up.
+ */
+function patchWorkspaceAccessProbe(root) {
+  const entry = requireFile(root, 'node_modules/@deepseek-ai/dsh-workspace/lib/index.js')
+  let source = readFileSync(entry, 'utf8')
+  if (source.includes(CRAWSHRIMP_WORKSPACE_ACCESS_PROBE_MARKER)) {
+    return { entry, patched: false }
+  }
+  const escaped = String.fromCharCode(92)
+  const decodeWorkspacePatchText = (value) => String(value)
+    .replaceAll(escaped + 'n', '\n')
+    .replaceAll(escaped + 't', '\t')
+    .replaceAll(escaped + "'", "'")
+  const replaceWorkspace = (current, expected, replacement, label) => replaceRequired(
+    current,
+    decodeWorkspacePatchText(expected),
+    decodeWorkspacePatchText(replacement),
+    label,
+  )
+  source = replaceWorkspace(
+    source,
+    'import { realpath, stat } from "node:fs/promises";',
+    'import { open, readdir, realpath, rename, stat, unlink } from "node:fs/promises";',
+    'workspace fs imports',
+  )
+  source = replaceWorkspace(
+    source,
+    'import { basename } from "node:path";',
+    'import { basename, join } from "node:path";',
+    'workspace path imports',
+  )
+  source = replaceWorkspace(
+    source,
+    'async function realpathNormalize(path) {\\n\\treturn await realpath(path);\\n}',
+    `async function realpathNormalize(path) {
+\\treturn await realpath(path);
+}
+// ${CRAWSHRIMP_WORKSPACE_ACCESS_PROBE_MARKER}
+async function probeWorkspaceDirectoryAccess(directory) {
+\\tawait readdir(directory);
+\\tconst temporary = join(directory, \`.dsh-workspace-probe-\${process.pid}-\${randomUUID()}\`);
+\\tconst renamed = \`\${temporary}.renamed\`;
+\\tlet handle;
+\\ttry {
+\\t\\thandle = await open(temporary, "wx", 384);
+\\t\\tawait handle.writeFile("workspace-probe", "utf8");
+\\t\\tawait handle.sync();
+\\t\\tawait handle.close();
+\\t\\thandle = void 0;
+\\t\\tawait rename(temporary, renamed);
+\\t\\tif (!(await stat(renamed)).isFile()) throw new Error("workspace probe target is not a file");
+\\t\\tawait unlink(renamed);
+\\t} finally {
+\\t\\tif (handle) await handle.close().catch(() => {});
+\\t\\tawait unlink(temporary).catch(() => {});
+\\t\\tawait unlink(renamed).catch(() => {});
+\\t}
+}`,
+    'workspace access probe helper',
+  )
+  source = replaceWorkspace(
+    source,
+    '\\tasync status() {\\n\\t\\ttry {\\n\\t\\t\\treturn (await stat(this.record.path)).isDirectory() ? "ok" : "missing-dir";\\n\\t\\t} catch {\\n\\t\\t\\treturn "missing-dir";\\n\\t\\t}\\n\\t}',
+    '\\tasync status() {\\n\\t\\ttry {\\n\\t\\t\\tif (!(await stat(this.record.path)).isDirectory()) return "missing-dir";\\n\\t\\t\\tawait probeWorkspaceDirectoryAccess(this.record.path);\\n\\t\\t\\treturn "ok";\\n\\t\\t} catch {\\n\\t\\t\\treturn "missing-dir";\\n\\t\\t}\\n\\t}',
+    'workspace status access probe',
+  )
+  const createStart = source.indexOf(decodeWorkspacePatchText('\\tasync create(path, title) {'))
+  const createEnd = createStart < 0
+    ? -1
+    : source.indexOf(decodeWorkspacePatchText('\\n\\t}'), createStart)
+  const createReturn = decodeWorkspacePatchText(
+    '\\t\\treturn await this.enqueueOperation(() => this.createCanonical(canonical, title));',
+  )
+  if (createEnd < 0 || !source.slice(createStart, createEnd).includes(createReturn)) {
+    throw new Error('dsh-workspace create anchor changed before access probe')
+  }
+  const createBlock = source.slice(createStart, createEnd)
+  source = source.slice(0, createStart)
+    + createBlock.replace(
+      createReturn,
+      decodeWorkspacePatchText('\\t\\tawait probeWorkspaceDirectoryAccess(canonical);\\n') + createReturn,
+    )
+    + source.slice(createEnd)
+  writeFileSync(entry, source, 'utf8')
+  return { entry, patched: true }
+}
+
+/**
  * Validate and apply product-owned 4.11 overlays to a freshly installed
  * runtime. The old rc.8 binary graph is deliberately not revived: every
  * mutation below targets readable 4.11 source and is idempotent.
@@ -1268,11 +1586,13 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const dshWebAppPatch = requireFile(root, 'node_modules/@deepseek-ai/dsh-web-app/cordis.patch.yml')
   const dshWorkspaceController = requireText(root, 'node_modules/@deepseek-ai/dsh-api-workspace-controller/package.json', '"0.1.2-rc.1"')
   const dshCordisHostRunner = requireText(root, 'node_modules/@deepseek-ai/dsh-cordis-host-runner/package.json', '"0.1.2-rc.1"')
+  const dshApiSessionController = requireText(root, 'node_modules/@deepseek-ai/dsh-api-session-controller/package.json', '"0.1.2-rc.1"')
   // These active rows come from the standard Web profile plus Crawshrimp's
   // official-profile overlay.  They are intentionally direct dependencies:
   // the Cordis loader imports every active row from this runtime root.
   const dshAttachmentLocal = requireText(root, 'node_modules/@deepseek-ai/dsh-attachment-local/package.json', '"0.1.2-rc.1"')
   const dshLlMPiAi = requireText(root, 'node_modules/@deepseek-ai/dsh-llm-pi-ai/package.json', '"0.1.2-rc.1"')
+  const dshToolWeb = requireText(root, 'node_modules/@deepseek-ai/dsh-tool-web/package.json', '"0.1.2-rc.1"')
   const dshTimeContext = requireText(root, 'node_modules/@deepseek-ai/dsh-time-context/package.json', '"0.1.2-rc.1"')
   const dshSchedule = requireText(root, 'node_modules/@deepseek-ai/dsh-schedule/package.json', '"0.1.2-rc.1"')
   const dshImManifest = requireText(root, 'node_modules/@xmanrui/dsh-im/package.json', '"4.11.0"')
@@ -1285,6 +1605,10 @@ export function patchRuntimeDependencies(runtimeRoot) {
   // development runtime produce the same user-visible source and Host bundle.
   const dshImBrand = patchDshImUserVisibleBrand(root)
   const dshImBuiltEntry = buildPatchedDshImBundle(root)
+  const nativeWebTools = patchNativeWebToolRegistration(root)
+  const workspaceAccessProbe = patchWorkspaceAccessProbe(root)
+  const deepseekVisionBridge = patchPiAiDeepSeekVisionBridge(root)
+  const deepseekVisionAdmission = patchDeepSeekVisionAdmission(root, deepseekVisionBridge)
   const profilePackages = assertEffectiveProfileRootClosure(root)
   const standardPreset = assertStandardPresetRootClosure(root)
   const inboundTtl = requireText(
@@ -1310,19 +1634,25 @@ export function patchRuntimeDependencies(runtimeRoot) {
     dshWebAppPatch,
     dshWorkspaceController,
     dshCordisHostRunner,
+    dshApiSessionController,
     dshAttachmentLocal,
     dshLlMPiAi,
+    dshToolWeb,
     dshTimeContext,
     dshSchedule,
     dshImManifest,
     dshImEntry,
     dshImBuiltEntry,
+    nativeWebTools,
+    workspaceAccessProbe,
     dshImBrandFiles: dshImBrand.files,
     dshImBrandChangedFiles: dshImBrand.changed,
     dshImNaturalModelControls,
     dshImApprovalControls,
     dshImNativeChannelControls,
     dshImSessionPermission,
+    deepseekVisionBridge,
+    deepseekVisionAdmission,
     profilePackages,
     standardPresetPackages: standardPreset.packages,
     crawshrimpPreset: standardPreset.crawshrimpPath,

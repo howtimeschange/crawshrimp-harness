@@ -93,6 +93,25 @@ class CdpError(Exception):
     pass
 
 
+CDP_CONNECT_TIMEOUT_SECONDS = 5.0
+CDP_CONNECT_ATTEMPTS = 3
+
+
+def _is_retryable_connect_error(exc: BaseException) -> bool:
+    if isinstance(exc, (OSError, TimeoutError, asyncio.TimeoutError)):
+        return True
+    text = str(exc or "").lower()
+    return any(marker in text for marker in (
+        "connection reset",
+        "connection aborted",
+        "connection refused",
+        "connection closed",
+        "timed out",
+        "timeout",
+        "temporarily unavailable",
+    ))
+
+
 class CdpClient:
     """单个 tab 的 CDP 会话(每工具调用短连接)。"""
 
@@ -113,14 +132,23 @@ class CdpClient:
         await self.close()
 
     async def connect(self) -> None:
-        try:
-            self._ws = await asyncio.wait_for(
-                websockets.connect(self.ws_url, max_size=8 * 1024 * 1024, proxy=None),
-                timeout=10,
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise CdpError(f"CDP 连接失败: {exc}") from exc
-        self._reader = asyncio.create_task(self._read_loop())
+        last_error: Optional[BaseException] = None
+        for attempt in range(1, CDP_CONNECT_ATTEMPTS + 1):
+            try:
+                self._ws = await asyncio.wait_for(
+                    websockets.connect(self.ws_url, max_size=8 * 1024 * 1024, proxy=None),
+                    timeout=CDP_CONNECT_TIMEOUT_SECONDS,
+                )
+                self._reader = asyncio.create_task(self._read_loop())
+                return
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                if attempt >= CDP_CONNECT_ATTEMPTS or not _is_retryable_connect_error(exc):
+                    break
+                await asyncio.sleep(0.2 * attempt)
+        raise CdpError(
+            f"CDP 连接失败（已尝试 {CDP_CONNECT_ATTEMPTS} 次）: {last_error}"
+        ) from last_error
 
     async def _read_loop(self) -> None:
         try:

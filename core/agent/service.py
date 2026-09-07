@@ -2488,6 +2488,9 @@ class AgentService:
 
         runtime_env["CRAWSHRIMP_AGENT_PROVIDER"] = provider_id
         runtime_env["CRAWSHRIMP_AGENT_MODEL"] = runtime_model_id
+        # Product policy: the embedded DSH module must not register generic
+        # web_search/web_fetch under any preset or resumed Session.
+        runtime_env["CRAWSHRIMP_DISABLE_NATIVE_WEB"] = "1"
         # rc.1 Web profile owns system-prompt composition. Keep the product
         # persona in process memory and overlay it through the profile instead
         # of writing a mutable Cordis config into the installed runtime.

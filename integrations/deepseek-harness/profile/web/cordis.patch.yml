@@ -213,7 +213,8 @@
 # Keep the platform-specific PowerShell implementation and internal HMR /
 # compaction helpers at their upstream defaults.  The enabled rows below cover
 # Bash, file read/write/search, instructions, tasks/plans, skills, workflows,
-# subagents and Web Preview / web_fetch.
+# subagents. Web Preview / web_fetch are deliberately disabled below: every
+# webpage task belongs to the product's Crawshrimp CDP + skill route.
 - id: agent-instructions
   disabled: false
 
@@ -269,7 +270,7 @@
   disabled: false
 
 - id: tool-web
-  disabled: false
+  disabled: true
 
 # The base Web bundle also mounts a direct `deepseek-official` adapter.  It
 # registers a second generic “DeepSeek” group in the model picker and reads a

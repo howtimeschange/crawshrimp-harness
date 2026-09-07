@@ -155,6 +155,9 @@ test('staged DSH rc.1 runtime applies the small verified 4.11 source overlay aft
   assert.match(patcher, /DSH_IM_USER_VISIBLE_SOURCE_ROOTS = \['src', 'plugin-src', 'lib'\]/)
   assert.match(patcher, /CRAWSHRIMP_DSH_IM_NATURAL_CONTROLS_MARKER/)
   assert.match(patcher, /CRAWSHRIMP_DSH_IM_SESSION_PERMISSION_MARKER/)
+  assert.match(patcher, /CRAWSHRIMP_DEEPSEEK_VISION_BRIDGE_MARKER/)
+  assert.match(patcher, /crawshrimpBridgeDeepSeekImages/)
+  assert.match(patcher, /deepseek-v4-flash-vision-exp/)
   assert.match(patcher, /upstreamModelDispatch/)
   assert.match(patcher, /TextHarnessBridge natural model dispatch/)
   assert.match(patcher, /@deepseek-ai\/dsh\/package\.json[\s\S]*0\.1\.2-rc\.1/)
@@ -186,12 +189,95 @@ test('the runtime guard accepts both the source profile layout and the staged pr
   const result = patchRuntimeDependencies(runtimeRoot)
 
   assert.match(result.crawshrimpPreset, /profile\/web\/agent-presets\/crawshrimp-standard\/agent\.cordis\.yml$/)
+  assert.match(result.deepseekVisionBridge.entry, /dsh-llm-pi-ai\/lib\/index\.js$/)
 })
 
-test('Crawshrimp standard preset owns the effective persona without dropping the upstream tool plane', () => {
+test('runtime admits image prompts to the installed Vision bridge only for official DeepSeek Flash and Pro', async () => {
+  const patcherPath = resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs')
+  const runtimeRoot = resolve(appRoot, '../integrations/deepseek-harness')
+  const controllerPath = resolve(runtimeRoot, 'node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js')
+  const { patchRuntimeDependencies } = await import(`${pathToFileURL(patcherPath).href}?vision-admission=${Date.now()}`)
+
+  const result = patchRuntimeDependencies(runtimeRoot)
+  const controller = readFileSync(controllerPath, 'utf8')
+
+  assert.match(result.deepseekVisionAdmission.entry, /dsh-api-session-controller\/lib\/index\.js$/)
+  assert.match(controller, /crawshrimp-deepseek-vision-admission-v1/)
+  assert.match(controller, /current\.provider === "crawshrimp-deepseek-official"/)
+  assert.match(controller, /current\.model === "deepseek-v4-flash"/)
+  assert.match(controller, /current\.model === "deepseek-v4-pro"/)
+  assert.match(controller, /!crawshrimpVisionBridgeAllowsImageAdmission/)
+  assert.match(controller, /MODEL_DOES_NOT_SUPPORT_IMAGES/)
+})
+
+test('runtime suppresses native web registration even when an upstream preset mounts tool-web', async () => {
+  const patcherPath = resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs')
+  const runtimeRoot = resolve(appRoot, '../integrations/deepseek-harness')
+  const toolWebPath = resolve(runtimeRoot, 'node_modules/@deepseek-ai/dsh-tool-web/lib/index.js')
+  const { patchRuntimeDependencies } = await import(`${pathToFileURL(patcherPath).href}?native-web=${Date.now()}`)
+  patchRuntimeDependencies(runtimeRoot)
+  const toolWeb = await import(`${pathToFileURL(toolWebPath).href}?native-web=${Date.now()}`)
+  const calls = []
+  const original = process.env.CRAWSHRIMP_DISABLE_NATIVE_WEB
+  process.env.CRAWSHRIMP_DISABLE_NATIVE_WEB = '1'
+  try {
+    toolWeb.apply({
+      systemPrompt: { section: (...args) => calls.push(['prompt', args]) },
+      tools: { register: (...args) => calls.push(['tool', args]) },
+    }, {
+      search: true,
+      fetch: true,
+      searchMaxResults: 8,
+      searchMaxQueries: 4,
+      fetchTimeoutMs: 30_000,
+      searchTimeoutMs: 30_000,
+      fetchMaxOutputChars: 200_000,
+    })
+  } finally {
+    if (original === undefined) delete process.env.CRAWSHRIMP_DISABLE_NATIVE_WEB
+    else process.env.CRAWSHRIMP_DISABLE_NATIVE_WEB = original
+  }
+  assert.deepEqual(calls, [], 'web_search/web_fetch must never be registered in a Crawshrimp runtime')
+  assert.match(readFileSync(toolWebPath, 'utf8'), /crawshrimp-disable-native-web-tools-v1/)
+})
+
+test('session header guard rejects native web tools before a prompt can proceed', async () => {
+  const clientPath = resolve(appRoot, '../integrations/deepseek-harness/worker/web-rpc-client.mjs')
+  const { assertSessionHeadersExcludeNativeWebTools } = await import(`${pathToFileURL(clientPath).href}?header-guard=${Date.now()}`)
+  const nativeHeader = {
+    type: 'request/header',
+    data: { header: { tools: [{ name: 'browser_observe' }, { name: 'web_search' }, { name: 'web_fetch' }] } },
+  }
+
+  assert.throws(
+    () => assertSessionHeadersExcludeNativeWebTools([nativeHeader]),
+    (error) => error?.code === 'NATIVE_WEB_TOOL_POLICY' && /web_search, web_fetch/.test(error.message),
+  )
+  assert.doesNotThrow(() => assertSessionHeadersExcludeNativeWebTools([{
+    type: 'request/header',
+    data: { header: { tools: [{ name: 'browser_observe' }] } },
+  }]))
+  const worker = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/worker.mjs'), 'utf8')
+  assert.match(worker, /onSnapshotComplete:[\s\S]*?assertSessionHeadersExcludeNativeWebTools/)
+  assert.match(worker, /onEvent:[\s\S]*?assertSessionHeadersExcludeNativeWebTools/)
+})
+
+test('migration guard retains a real workspace write probe and strict user-image boundary', () => {
+  const patcher = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs'), 'utf8')
+  assert.match(patcher, /CRAWSHRIMP_WORKSPACE_ACCESS_PROBE_MARKER/)
+  assert.match(patcher, /probeWorkspaceDirectoryAccess/)
+  assert.match(patcher, /await handle\.sync\(\)/)
+  assert.match(patcher, /await rename\(temporary, renamed\)/)
+  assert.match(patcher, /function crawshrimpLatestImageUserMessageIndex\(messages\)/)
+  assert.match(patcher, /message\.role === "user" && contentHasImage\(message\.content\)/)
+  assert.doesNotMatch(patcher, /function crawshrimpLatestImageMessageIndex\(messages\)/)
+})
+
+test('Crawshrimp standard preset owns the effective persona and routes webpage work through the CDP skill', () => {
   const profilePatch = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/cordis.patch.yml'), 'utf8')
   const preset = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/agent-presets/crawshrimp-standard/agent.cordis.yml'), 'utf8')
   const presetMetadata = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/agent-presets/crawshrimp-standard/preset.yml'), 'utf8')
+  const personaExpression = /^\s+text: !!js (.+)$/mu.exec(preset)?.[1]
   const worker = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/worker.mjs'), 'utf8')
   const webClient = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/worker/web-rpc-client.mjs'), 'utf8')
   const staging = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/stage-runtime.mjs'), 'utf8')
@@ -210,8 +296,12 @@ test('Crawshrimp standard preset owns the effective persona without dropping the
     '@deepseek-ai/dsh-tool-skill',
     '@deepseek-ai/dsh-tool-subagent',
     '@deepseek-ai/dsh-tool-workflow',
-    '@deepseek-ai/dsh-tool-web',
   ]) assert.match(preset, new RegExp(`name: '${packageName}'`), `${packageName} must remain mounted`)
+  assert.match(preset, /所有网页任务必须使用抓虾 CDP 浏览器通道/)
+  assert.match(preset, /skill_read.*crawshrimp-skill\/SKILL\.md/)
+  assert.ok(personaExpression, 'product persona must be a single valid JavaScript expression')
+  assert.doesNotThrow(() => new Function(`return (${personaExpression})`))
+  assert.match(preset, /id: tool-web[\s\S]*?disabled: true/)
   assert.match(preset, /Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode/)
   assert.match(preset, /The tool catalog stays the same across modes for request-cache stability/)
   assert.match(preset, /Make exit_plan_mode the only and final tool call in that assistant response/)
@@ -219,7 +309,7 @@ test('Crawshrimp standard preset owns the effective persona without dropping the
   assert.match(webClient, /agentPreset = 'crawshrimp-standard'/)
 })
 
-test('standard rc.1 Web profile retains the full DSH operational surface', () => {
+test('standard rc.1 Web profile retains the product operational surface without the parallel generic web route', () => {
   const profile = JSON.parse(readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/package.json'), 'utf8'))
   const webBundle = JSON.parse(readFileSync(resolve(appRoot, '../integrations/deepseek-harness/node_modules/@deepseek-ai/dsh-web-app/package.json'), 'utf8'))
   const patch = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/cordis.patch.yml'), 'utf8')
@@ -247,7 +337,6 @@ test('standard rc.1 Web profile retains the full DSH operational surface', () =>
     ['tool-subagent-control', '@deepseek-ai/dsh-tool-subagent-control'],
     ['tool-subagent', '@deepseek-ai/dsh-tool-subagent'],
     ['tool-workflow', '@deepseek-ai/dsh-tool-workflow'],
-    ['tool-web', '@deepseek-ai/dsh-tool-web'],
   ]) {
     assert.match(standardPreset, new RegExp(`id: ${id}[\\s\\S]*?name: '${packageName}'`), `${id} must be usable by the standard preset`)
   }
@@ -273,10 +362,10 @@ test('standard rc.1 Web profile retains the full DSH operational surface', () =>
     'tool-subagent-list-agents',
     'tool-workflow',
     'workflow-worker-thread',
-    'tool-web',
   ]) {
     assert.match(patch, new RegExp(`- id: ${id}\\s+disabled: false`), `${id} must be enabled in Crawshrimp's Web profile`)
   }
+  assert.match(patch, /- id: tool-web\s+disabled: true/)
 })
 
 test('rc.1 Web transport keeps image input and session-follow without reviving the old SDK patch', () => {
@@ -930,7 +1019,7 @@ test('native DSH Web has one profile source of truth instead of a flat generated
   assert.equal(existsSync(resolve(appRoot, '../integrations/deepseek-harness/scripts/bisect-web.py')), false)
   assert.doesNotMatch(runtimeCordisSource, /build_cordis_yaml|_web_cordis_template|web-cordis\.yml/)
   assert.match(profilePatch, /id: agent-presets[\s\S]*?default: crawshrimp-standard/)
-  assert.match(profilePatch, /id: tool-web[\s\S]*?disabled: false/)
+  assert.match(profilePatch, /id: tool-web[\s\S]*?disabled: true/)
 })
 
 test('DSH rc.1 profile graph pins the supported Web and ACP runtime closure', () => {

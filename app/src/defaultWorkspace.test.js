@@ -201,6 +201,45 @@ test('default workspace leaves an existing workspace untouched', async () => {
   assert.equal(fixture.openCalls.length, 0)
 })
 
+test('default workspace connects a pre-created product workspace', async () => {
+  const ensureDefaultWorkspace = loadWorkspaceInitializer()
+  const root = 'C:\\runtime'
+  const existing = { workspaceId: 'workspace-product-default', path: root }
+  const fixture = fakeContext({ ready: true, items: [existing] })
+
+  const result = await ensureDefaultWorkspace(fixture.ctx, root, { timeoutMs: 500 })
+
+  assert.equal(result.status, 'existing')
+  assert.equal(result.workspaceId, 'workspace-product-default')
+  assert.equal(result.sessionId, 'session-default')
+  assert.equal(fixture.createCalls.length, 0)
+  assert.deepEqual(fixture.connectCalls, ['workspace-product-default'])
+  assert.deepEqual(fixture.openCalls, ['session-default'])
+})
+
+test('default workspace retries until uiWorkspace navigation is available', async () => {
+  const logs = []
+  const ensureDefaultWorkspace = loadWorkspaceInitializer(logs)
+  const root = 'C:\\runtime'
+  const existing = { workspaceId: 'workspace-product-default', path: root }
+  const fixture = fakeContext({ ready: true, items: [existing] })
+  const navigation = fixture.ctx.uiWorkspace
+  delete fixture.ctx.uiWorkspace
+
+  const completion = ensureDefaultWorkspace(fixture.ctx, root, {
+    retryDelaysMs: [0],
+    timeoutMs: 500,
+  })
+  fixture.ctx.uiWorkspace = navigation
+  const result = await completion
+
+  assert.equal(result.status, 'existing')
+  assert.equal(result.sessionId, 'session-default')
+  assert.deepEqual(fixture.connectCalls, ['workspace-product-default'])
+  assert.deepEqual(fixture.openCalls, ['session-default'])
+  assert.ok(logs.some(([level, message]) => level === 'warn' && /workspace navigation is not ready/.test(message)))
+})
+
 test('default workspace retries a transient create failure and then completes', async () => {
   const logs = []
   const ensureDefaultWorkspace = loadWorkspaceInitializer(logs)

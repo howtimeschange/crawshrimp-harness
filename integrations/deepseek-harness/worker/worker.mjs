@@ -14,7 +14,7 @@
 
 import readline from 'node:readline'
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { DshWebRuntime, activeTurnEvents } from './web-rpc-client.mjs'
+import { DshWebRuntime, activeTurnEvents, assertSessionHeadersExcludeNativeWebTools } from './web-rpc-client.mjs'
 import { createNativeWebFollowManager } from './native-web-follow-manager.mjs'
 
 const PROTOCOL_VERSION = 1
@@ -169,6 +169,9 @@ async function spawnRuntime({ cwd, webPort }) {
     CRAWSHRIMP_SESSION_ROOT: process.env.CRAWSHRIMP_SESSION_ROOT || `${state.dataRoot}/agent/harness-sessions`,
     CRAWSHRIMP_STORAGE_ROOT: process.env.CRAWSHRIMP_STORAGE_ROOT || `${state.dataRoot}/agent/storages`,
     CRAWSHRIMP_MCP_URL: process.env.CRAWSHRIMP_MCP_URL || 'http://127.0.0.1:18965/mcp',
+    // Product policy, not a user setting: patched dsh-tool-web must never
+    // register generic web_search/web_fetch in any effective preset.
+    CRAWSHRIMP_DISABLE_NATIVE_WEB: '1',
   }
 
   const runtime = await DshWebRuntime.launch({
@@ -222,9 +225,15 @@ function attachRunEventHandlers(run) {
   const runtime = state.runtime
   if (!runtime) throw new Error('runtime unavailable while opening Session follow stream')
   run.follow = runtime.follow(run.sessionId, {
+    onSnapshotComplete: (events) => {
+      // The opening snapshot is the pre-prompt gate for a resumed Session.
+      assertSessionHeadersExcludeNativeWebTools(events)
+    },
     onEvent: (event) => {
       // run 已结束后，follow 可能在关闭竞态中送达最后一个帧。
       if (state.activeRun !== run || !event || typeof event !== 'object') return
+      // A fresh request/header arrives before the model begins the next turn.
+      assertSessionHeadersExcludeNativeWebTools([event])
       const seq = Number(event.seq || 0)
       if (seq > run.lastSeq) run.lastSeq = seq
       const type = event.type
@@ -269,12 +278,18 @@ function attachRunEventHandlers(run) {
     onError: (error) => {
       if (state.activeRun !== run) return
       console.error(`[worker] run ${run.runId} Session follow 失败: ${error.message}`)
-      finishRun({
-        status: 'interrupted',
-        reason: { kind: 'interrupted', error: { code: 'SESSION_FOLLOW_FAILED', message: error.message } },
+      const code = typeof error?.code === 'string' ? error.code : 'SESSION_FOLLOW_FAILED'
+      const complete = () => finishRun({
+        status: 'failed',
+        reason: { kind: 'error', error: { code, message: error.message } },
         messageId: run.messageId,
         lastSeq: run.lastSeq,
       })
+      if (code === 'NATIVE_WEB_TOOL_POLICY') {
+        cancelActiveRuntimeSession(run, code).finally(complete)
+      } else {
+        complete()
+      }
     },
   })
   return run.follow
@@ -541,8 +556,9 @@ async function startRun(params) {
     return { ok: true, summary }
   } catch (error) {
     console.error(`[worker] run ${runId} prompt 失败: ${error.message}`)
-    finishRun({ status: 'failed', reason: { kind: 'error', error: { code: 'PROMPT_FAILED', message: error.message } } })
-    return { ok: false, error: { code: 'PROMPT_FAILED', message: error.message } }
+    const code = typeof error?.code === 'string' ? error.code : 'PROMPT_FAILED'
+    finishRun({ status: 'failed', reason: { kind: 'error', error: { code, message: error.message } } })
+    return { ok: false, error: { code, message: error.message } }
   } finally {
     if (policyInstalled && state.runtime) {
       try {

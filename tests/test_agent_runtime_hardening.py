@@ -622,6 +622,87 @@ def test_browser_navigate_reports_unresponsive_page_without_claiming_context_is_
     assert "页面可能无响应" in result["error"]["message"]
 
 
+def test_browser_tab_retries_transient_cdp_target_discovery(monkeypatch):
+    attempts = 0
+
+    class FakeBridge:
+        @staticmethod
+        def get_tabs(timeout=0):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise OSError("connection reset")
+            return [{
+                "id": "tab-recovered",
+                "type": "page",
+                "url": "https://example.test/recovered",
+                "webSocketDebuggerUrl": "ws://tab-recovered",
+            }]
+
+    monkeypatch.setattr("core.cdp_bridge.get_bridge", lambda: FakeBridge())
+    monkeypatch.setattr(mcp_gateway.time, "sleep", lambda _seconds: None)
+
+    tab = mcp_gateway._browser_tab()
+
+    assert tab and tab["id"] == "tab-recovered"
+    assert attempts == 3
+
+
+def test_browser_navigate_retries_the_same_url_only_after_transient_transport_failure(monkeypatch):
+    from core.agent.cdp import CdpError
+
+    clients = []
+
+    class FakeBridge:
+        calls = 0
+
+        @classmethod
+        def get_tabs(cls, timeout=0):
+            cls.calls += 1
+            socket = "ws://tab-original" if cls.calls == 1 else "ws://tab-reconnected"
+            return [{
+                "id": "tab-1",
+                "type": "page",
+                "url": "https://example.test/original",
+                "webSocketDebuggerUrl": socket,
+            }]
+
+    class FakeClient:
+        def __init__(self, ws_url):
+            self.ws_url = ws_url
+            clients.append(self)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def navigate(self, target):
+            if self.ws_url == "ws://tab-original":
+                raise CdpError("CDP websocket connection reset")
+            assert target == "https://example.test/target"
+
+    previous_run = mcp_gateway.ctx.active_run
+    previous_grant = mcp_gateway.ctx.grant
+    previous_emit = mcp_gateway.ctx.emit_event
+    mcp_gateway.ctx.active_run = {"run_id": "run-retry", "session_id": "session-retry"}
+    mcp_gateway.ctx.grant = None
+    mcp_gateway.ctx.emit_event = None
+    monkeypatch.setattr("core.cdp_bridge.get_bridge", lambda: FakeBridge())
+    monkeypatch.setattr(mcp_gateway, "CdpClient", FakeClient)
+    try:
+        result = asyncio.run(mcp_gateway.tool_browser_navigate("https://example.test/target"))
+    finally:
+        mcp_gateway.ctx.active_run = previous_run
+        mcp_gateway.ctx.grant = previous_grant
+        mcp_gateway.ctx.emit_event = previous_emit
+
+    assert result["ok"] is True
+    assert [client.ws_url for client in clients] == ["ws://tab-original", "ws://tab-reconnected"]
+    assert FakeBridge.calls == 2
+
+
 def test_browser_activity_exposes_only_granted_tab():
     events = []
     previous = mcp_gateway.ctx.emit_event
@@ -2268,8 +2349,128 @@ def test_dsh_runtime_guard_checks_rc1_and_dsh_im_contracts_with_verified_source_
     assert "harness-session-binding.mjs" in patcher
     assert "model-setting.mjs" in patcher
     assert "patched: true" in patcher
-    assert "DEEPSEEK_MULTIMODAL_FALLBACK_PATCH_MARKER" not in patcher
-    assert "SDK_JSONRPC_IMAGE_ADMISSION_PATCH_MARKER" not in patcher
+    assert "CRAWSHRIMP_DEEPSEEK_VISION_BRIDGE_MARKER" in patcher
+    assert "deepseek-v4-flash-vision-exp" in patcher
+    assert "当前 DeepSeek 文本模型应直接基于这些文字继续回答" in patcher
+    assert "CRAWSHRIMP_DISABLE_NATIVE_WEB_TOOLS_MARKER" in patcher
+    assert "CRAWSHRIMP_WORKSPACE_ACCESS_PROBE_MARKER" in patcher
+    assert "crawshrimpLatestImageUserMessageIndex" in patcher
+    assert "crawshrimpLatestImageMessageIndex" not in patcher
+
+
+def test_cdp_client_retries_a_transient_websocket_connect_failure(monkeypatch):
+    from core.agent import cdp as cdp_module
+
+    class FakeWebSocket:
+        def __init__(self):
+            self.closed = asyncio.Event()
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await self.closed.wait()
+            raise StopAsyncIteration
+
+        async def close(self):
+            self.closed.set()
+
+    attempts = 0
+    socket = FakeWebSocket()
+
+    async def connect(_url, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("connection reset")
+        return socket
+
+    monkeypatch.setattr(cdp_module.websockets, "connect", connect)
+
+    async def scenario():
+        client = cdp_module.CdpClient("ws://127.0.0.1:9222/devtools/page/test")
+        await client.connect()
+        await client.close()
+
+    asyncio.run(scenario())
+    assert attempts == 2
+
+
+def test_browser_read_reconnects_once_after_a_transient_cdp_transport_error(monkeypatch):
+    from core.agent.cdp import CdpError
+
+    clients = []
+
+    class FakeClient:
+        def __init__(self, ws_url):
+            self.ws_url = ws_url
+            self.index = len(clients)
+            clients.append(self)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        async def observe(self):
+            if self.index == 0:
+                raise CdpError("CDP websocket connection closed")
+            return {"title": "reconnected"}
+
+    initial = FakeClient("ws://127.0.0.1:9222/devtools/page/original")
+    monkeypatch.setattr(mcp_gateway, "CdpClient", FakeClient)
+    monkeypatch.setattr("core.cdp_bridge.get_bridge", lambda: type("Bridge", (), {
+        "get_tabs": staticmethod(lambda timeout=0: [{
+            "id": "tab-1",
+            "type": "page",
+            "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/reconnected",
+        }]),
+    })())
+
+    result = asyncio.run(mcp_gateway._browser_read_with_retry(
+        initial,
+        {"id": "tab-1"},
+        lambda client: client.observe(),
+    ))
+
+    assert result == {"title": "reconnected"}
+    assert [client.ws_url for client in clients] == [
+        "ws://127.0.0.1:9222/devtools/page/original",
+        "ws://127.0.0.1:9222/devtools/page/reconnected",
+    ]
+
+
+def test_browser_act_never_replays_a_transient_cdp_failure(monkeypatch):
+    from core.agent.cdp import CdpError
+
+    class FakeClient:
+        calls = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        async def act(self, *_args):
+            type(self).calls += 1
+            raise CdpError("CDP websocket connection reset")
+
+    previous_grant = mcp_gateway.ctx.grant
+    mcp_gateway.ctx.grant = {"toolset_json": json.dumps(["act"])}
+    monkeypatch.setattr(
+        mcp_gateway,
+        "_browser_client",
+        lambda: (FakeClient(), {"id": "tab-1", "url": "https://example.test"}, None),
+    )
+    try:
+        result = asyncio.run(mcp_gateway.tool_browser_act("click", selector="#safe", text="open"))
+    finally:
+        mcp_gateway.ctx.grant = previous_grant
+
+    assert result["ok"] is False
+    assert FakeClient.calls == 1
 
 
 def test_agent_default_model_prefers_deepseek_flash_when_key_is_configured(monkeypatch):
@@ -2544,6 +2745,7 @@ def test_agent_start_generation_uses_authenticated_web_profile_without_install_w
     runtime_env = calls["worker_kwargs"]["runtime_env"]
     assert runtime_env["CRAWSHRIMP_AGENT_PROVIDER"] == "crawshrimp-overseas-openai"
     assert runtime_env["CRAWSHRIMP_AGENT_MODEL"] == "gpt-5.6-terra"
+    assert runtime_env["CRAWSHRIMP_DISABLE_NATIVE_WEB"] == "1"
     # Generation metadata is child-process scoped; a stale parent environment
     # must not be rewritten by the settings UI/runtime restart path.
     assert service_mod.os.environ["CRAWSHRIMP_AGENT_PROVIDER"] == "stale-provider"

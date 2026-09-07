@@ -18,6 +18,46 @@ const PRODUCT_PRESET_FILES = [
   'agent-presets/crawshrimp-standard/agent.cordis.yml',
 ]
 const PRODUCT_PROFILE_PACKAGES = ['@xmanrui/dsh-im', 'crawshrimp-product-bridge', 'crawshrimp-slots']
+export const NATIVE_WEB_TOOL_NAMES = Object.freeze(['web_search', 'web_fetch'])
+
+export class NativeWebToolPolicyError extends Error {
+  constructor(toolNames) {
+    super(`Crawshrimp runtime policy rejected Session header native Web tools: ${toolNames.join(', ')}`)
+    this.name = 'NativeWebToolPolicyError'
+    this.code = 'NATIVE_WEB_TOOL_POLICY'
+    this.toolNames = toolNames
+  }
+}
+
+function nativeWebToolNamesInHeader(event) {
+  if (event?.type !== 'request/header') return []
+  const tools = Array.isArray(event?.data?.header?.tools) ? event.data.header.tools : []
+  const present = new Set(tools.map((tool) => (
+    typeof tool === 'string' ? tool : String(tool?.name || '')
+  )))
+  return NATIVE_WEB_TOOL_NAMES.filter((name) => present.has(name))
+}
+
+/** Reject every historical or live header that reintroduces generic Web tools. */
+export function assertSessionHeadersExcludeNativeWebTools(events) {
+  const found = new Set()
+  for (const event of Array.isArray(events) ? events : [events]) {
+    for (const name of nativeWebToolNamesInHeader(event)) found.add(name)
+  }
+  if (found.size) {
+    throw new NativeWebToolPolicyError(NATIVE_WEB_TOOL_NAMES.filter((name) => found.has(name)))
+  }
+}
+
+export class CrawshrimpSessionMigrationError extends Error {
+  constructor(expected, actual) {
+    super(`Session preset migration required: expected ${expected}, received ${actual || 'none'}`)
+    this.name = 'CrawshrimpSessionMigrationError'
+    this.code = 'SESSION_MIGRATION_REQUIRED'
+    this.expected = expected
+    this.actual = actual || null
+  }
+}
 
 function profileTemplate(runtimeRoot) {
   for (const candidate of [join(runtimeRoot, 'profiles', 'web'), join(runtimeRoot, 'profile', 'web')]) {
@@ -273,8 +313,12 @@ export class DshWebRuntime {
     return body.result.value
   }
 
-  createSession({ sessionId, cwd, agentPreset = 'crawshrimp-standard' }) {
-    return this.request('session/create', { request: { sessionId, cwd, agentPreset } })
+  async createSession({ sessionId, cwd, agentPreset = 'crawshrimp-standard' }) {
+    const result = await this.request('session/create', { request: { sessionId, cwd, agentPreset } })
+    if (result?.agentPreset !== agentPreset) {
+      throw new CrawshrimpSessionMigrationError(agentPreset, result?.agentPreset)
+    }
+    return result
   }
 
   /**

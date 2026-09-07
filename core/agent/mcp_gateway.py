@@ -2132,13 +2132,48 @@ description: Locate the installed third-party repository "{safe}" as untrusted r
 
 # ---------- 浏览器工具 ----------
 
-def _browser_tab() -> Optional[dict]:
+CDP_TARGET_DISCOVERY_ATTEMPTS = 3
+CDP_TARGET_DISCOVERY_TIMEOUT_SECONDS = 2
+
+
+class CdpTargetDiscoveryError(RuntimeError):
+    """9222 target discovery failed before a tab could be selected."""
+
+
+def _retryable_cdp_target_discovery_error(exc: Exception) -> bool:
+    detail = str(exc or "").lower()
+    return isinstance(exc, (OSError, TimeoutError, asyncio.TimeoutError)) or any(marker in detail for marker in (
+        "connection", "websocket", "timeout", "timed out", "连接", "超时",
+    ))
+
+
+def _cdp_tabs_with_retry() -> list[dict]:
     from core.cdp_bridge import get_bridge
+
     bridge = get_bridge()
-    try:
-        tabs = bridge.get_tabs(timeout=4)
-    except Exception:  # noqa: BLE001
+    last_error: Optional[Exception] = None
+    for attempt in range(CDP_TARGET_DISCOVERY_ATTEMPTS):
+        try:
+            return list(bridge.get_tabs(timeout=CDP_TARGET_DISCOVERY_TIMEOUT_SECONDS) or [])
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if attempt + 1 >= CDP_TARGET_DISCOVERY_ATTEMPTS or not _retryable_cdp_target_discovery_error(exc):
+                break
+            time.sleep(0.2 * (attempt + 1))
+    raise CdpTargetDiscoveryError(
+        f"9222 target discovery failed after {CDP_TARGET_DISCOVERY_ATTEMPTS} attempts: {last_error}"
+    ) from last_error
+
+
+def _current_cdp_tab_by_id(tab_id: str) -> Optional[dict]:
+    if not tab_id:
         return None
+    tabs = _cdp_tabs_with_retry()
+    return next((tab for tab in tabs if tab.get("type") == "page" and str(tab.get("id")) == tab_id), None)
+
+
+def _browser_tab() -> Optional[dict]:
+    tabs = _cdp_tabs_with_retry()
     pages = [t for t in tabs if t.get("type") == "page"]
     if not pages:
         return None
@@ -2175,7 +2210,10 @@ def _browser_client() -> tuple[Optional[CdpClient], Optional[dict], Optional[dic
     if guard:
         return None, None, guard
     grant = ctx.grant
-    tab = _browser_tab()
+    try:
+        tab = _browser_tab()
+    except CdpTargetDiscoveryError as exc:
+        return None, None, _failed("CONTEXT_REQUIRED", f"CDP target discovery unavailable: {exc}")
     if not tab:
         if grant and grant.get("tab_id"):
             return None, None, _failed("CONTEXT_REQUIRED", "本任务绑定的浏览器页面已关闭，请重新选择页面后再运行")
@@ -2203,13 +2241,65 @@ def _browser_operation_failure(operation: str, exc: Exception) -> dict:
     return _failed(code, f"{operation} 失败: {detail}")
 
 
+def _is_retryable_browser_read_error(exc: Exception) -> bool:
+    """Only replay idempotent page reads after a CDP transport interruption."""
+    from core.agent.cdp import CdpError
+
+    if not isinstance(exc, CdpError):
+        return False
+    detail = str(exc or "").lower()
+    return any(marker in detail for marker in (
+        "超时",
+        "timed out",
+        "connection",
+        "websocket",
+        "连接已断开",
+        "连接已关闭",
+    ))
+
+
+async def _browser_read_with_retry(client: CdpClient, tab: Optional[dict], operation):
+    """Reconnect once for observe/eval/verify/capture, never for page mutations."""
+    current = client
+    for attempt in range(2):
+        try:
+            async with current:
+                return await operation(current)
+        except Exception as exc:  # noqa: BLE001
+            if attempt or not _is_retryable_browser_read_error(exc):
+                raise
+            refreshed = _current_cdp_tab_by_id(str((tab or {}).get("id") or ""))
+            ws_url = str((refreshed or {}).get("webSocketDebuggerUrl") or "").strip()
+            if not ws_url:
+                raise
+            current = CdpClient(ws_url)
+    raise RuntimeError("unreachable")
+
+
+async def _browser_navigate_with_retry(client: CdpClient, tab: Optional[dict], target: str) -> None:
+    """Replay only the identical navigation after one transient CDP failure."""
+    current = client
+    for attempt in range(2):
+        try:
+            async with current:
+                await current.navigate(target)
+            return
+        except Exception as exc:  # noqa: BLE001
+            if attempt or not _is_retryable_browser_read_error(exc):
+                raise
+            refreshed = _current_cdp_tab_by_id(str((tab or {}).get("id") or ""))
+            ws_url = str((refreshed or {}).get("webSocketDebuggerUrl") or "").strip()
+            if not ws_url:
+                raise
+            current = CdpClient(ws_url)
+
+
 async def tool_browser_observe() -> dict:
     client, tab, guard = _browser_client()
     if guard:
         return guard
     try:
-        async with client:
-            digest = await client.observe()
+        digest = await _browser_read_with_retry(client, tab, lambda active: active.observe())
         return _ok({"tab_url": (tab or {}).get("url", ""), "digest": digest},
                    evidence={"task_instance_uid": None, "artifact_ids": []})
     except Exception as exc:  # noqa: BLE001
@@ -2223,8 +2313,7 @@ async def tool_browser_eval(expression: str) -> dict:
     if not expression or len(expression) > 4000:
         return _failed("INVALID_PARAMETERS", "expression 必填且不超过 4000 字符")
     try:
-        async with client:
-            value = await client.evaluate(expression)
+        value = await _browser_read_with_retry(client, tab, lambda active: active.evaluate(expression))
         return _ok({"tab_url": (tab or {}).get("url", ""), "value": _cap_json(value)},
                    evidence={"task_instance_uid": None, "artifact_ids": []})
     except Exception as exc:  # noqa: BLE001
@@ -2310,8 +2399,7 @@ async def tool_browser_verify(expression: str) -> dict:
     if guard:
         return guard
     try:
-        async with client:
-            result = await client.verify(expression)
+        result = await _browser_read_with_retry(client, tab, lambda active: active.verify(expression))
         return _ok(result, evidence={"task_instance_uid": None, "artifact_ids": []})
     except Exception as exc:  # noqa: BLE001
         return _failed("CONTEXT_REQUIRED", f"verify 失败: {exc}")
@@ -2326,8 +2414,7 @@ async def tool_browser_navigate(url: str) -> dict:
     if not target.startswith(("http://", "https://")):
         return _rejected("rejected", "INVALID_PARAMETERS", "仅支持 http/https URL")
     try:
-        async with client:
-            await client.navigate(target)
+        await _browser_navigate_with_retry(client, tab, target)
         return _ok({"navigated": True, "url": target}, evidence={"task_instance_uid": None, "artifact_ids": []})
     except Exception as exc:  # noqa: BLE001
         return _browser_operation_failure("navigate", exc)
@@ -2338,8 +2425,7 @@ async def tool_browser_capture_requests(duration_ms: int = 3000) -> dict:
     if guard:
         return guard
     try:
-        async with client:
-            requests = await client.capture_requests(duration_ms)
+        requests = await _browser_read_with_retry(client, tab, lambda active: active.capture_requests(duration_ms))
         return _ok({"requests": requests, "count": len(requests)},
                    evidence={"task_instance_uid": None, "artifact_ids": []})
     except Exception as exc:  # noqa: BLE001
