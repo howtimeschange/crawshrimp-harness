@@ -59,6 +59,24 @@ class AiImageServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "1XM GPT Image 4K Key"):
             ai_image_service.select_model_key({"size": "4096x4096"}, {"2k": "key-2k", "4k": ""})
 
+    def test_select_model_key_uses_available_4k_for_small_output(self):
+        settings = {"ai.1xm.gpt_image_4k_key": "private-4k"}
+        self.assertEqual(
+            ai_image_service.select_model_key({"params": {"size": "1024x1024"}}, settings),
+            ("4k", "private-4k"),
+        )
+        for field in ("key_tier", "model_key_tier"):
+            for request in ({field: "2k"}, {"params": {field: "2k"}}):
+                with self.assertRaises(ai_image_service.MissingModelKeyError) as caught:
+                    ai_image_service.select_model_key(request, settings)
+                self.assertEqual(caught.exception.configured_tiers, {"2k": False, "4k": True})
+                self.assertNotIn("private-4k", str(caught.exception))
+        with self.assertRaises(ai_image_service.MissingModelKeyError) as caught:
+            ai_image_service.select_model_key({"size": "1024x1024"}, {})
+        self.assertEqual(caught.exception.configured_tiers, {"2k": False, "4k": False})
+        both = {"2k": "private-2k", "4k": "private-4k"}
+        self.assertEqual(ai_image_service.select_model_key({"key_tier": "4k", "size": "1024x1024"}, both), ("4k", "private-4k"))
+
     def test_select_model_key_uses_independent_gemini_config_ids(self):
         settings = {
             "2k": "gpt-2k",

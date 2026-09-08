@@ -6,6 +6,7 @@
 # the staged package or user profile.
 - id: system-prompt
   config:
+    includeHarnessIdentity: false
     persona: !!js process.env.CRAWSHRIMP_AGENT_PERSONA ?? 'You are a Crawshrimp agent running in the Crawshrimp desktop application.'
 
 # The agent plane has one product-owned composition.  Do not expose upstream

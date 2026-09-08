@@ -167,14 +167,15 @@ def reset_tool_context(token: contextvars.Token) -> None:
     _TOOL_CONTEXT_CTX.reset(token)
 
 
-def _broadcast_media_artifacts(paths, media_kind: str) -> None:
+def _broadcast_media_artifacts(paths, media_kind: str) -> list[str]:
     """AI 生图/生视频产物直接进会话消息流展示(不再只是路径文本)。
 
     经 ctx.emit_event 广播 artifact.created,shell 转发给 DSH 会话界面注入
     图片网格/视频播放器;路径不存在的文件跳过。
     """
     if not ctx.emit_event:
-        return
+        return []
+    artifact_ids = []
     import hashlib as _hashlib
     import os as _os
     for raw in paths or []:
@@ -201,6 +202,8 @@ def _broadcast_media_artifacts(paths, media_kind: str) -> None:
             "media_kind": media_kind,
             "zip_images": [],
         })
+        artifact_ids.append(artifact_id)
+    return artifact_ids
 
 
 def _run_ok() -> bool:
@@ -1726,7 +1729,7 @@ def _normalize_agent_image_size(size: Any) -> str:
 
 
 def _agent_image_job(settings: dict, params: dict) -> dict:
-    """智能体专用生图 job(按本次调用参数创建或刷新)。"""
+    """每次调用独立 job，避免并发会话覆盖参考图与生成参数。"""
     model_key = str(
         params.get("model")
         or params.get("model_key")
@@ -1738,9 +1741,6 @@ def _agent_image_job(settings: dict, params: dict) -> dict:
         "model_key": model_key,
         "params": params,
     }
-    for job in data_sink.list_ai_image_jobs(200):
-        if str(job.get("title") or "") == "智能体生图":
-            return data_sink.update_ai_image_job(job["job_uid"], payload)
     return data_sink.create_ai_image_job({
         "title": "智能体生图",
         "model_key": model_key,
@@ -1758,6 +1758,8 @@ def tool_image_generate(
     key_tier: str = "",
     model_key_tier: str = "",
     model: str = "gpt-image-2",
+    reference_image_paths: Optional[list[str]] = None,
+    reference_attachment_ids: Optional[list[str]] = None,
 ) -> dict:
     """调用抓虾 AI 生图(1XM):支持自定义尺寸/质量与 2K/4K key 档位。"""
     guard = _require_run()
@@ -1769,6 +1771,42 @@ def tool_image_generate(
     prompt_text = str(prompt or "").strip()
     if not prompt_text:
         return _failed("BAD_PARAMS", "prompt 不能为空")
+    # Native DSH images expose normalized read-only paths (often extensionless).
+    # Product-upload attachments use session-scoped ids instead.
+    references = []
+    for values in (reference_image_paths, reference_attachment_ids):
+        if values is not None and (not isinstance(values, list) or any(not isinstance(value, str) or not value.strip() for value in values)):
+            return _failed("BAD_PARAMS", "参考图必须是非空字符串列表")
+    if len(reference_image_paths or []) + len(reference_attachment_ids or []) > 10:
+        return _failed("BAD_PARAMS", "最多支持 10 张参考图")
+    references.extend(reference_image_paths or [])
+    for attachment_id in reference_attachment_ids or []:
+        row = db.get_attachment(attachment_id.strip())
+        if not row:
+            return _failed("BAD_PARAMS", f"参考图附件不存在: {attachment_id}")
+        if row.get("session_id") != (ctx.active_run or {}).get("session_id"):
+            return _rejected("rejected", "ATTACHMENT_SESSION_MISMATCH", "参考图附件不属于当前会话")
+        references.append(row.get("path") or "")
+    reference_paths = []
+    try:
+        from PIL import Image
+        for value in references:
+            path = Path(value).expanduser()
+            if not path.is_absolute():
+                if not ctx.workspace_root:
+                    raise ValueError("相对参考图路径需要当前工作区")
+                path = ctx.workspace_root / path
+            path = path.resolve(strict=True)
+            if not path.is_file() or path.stat().st_size > 20 * 1024 * 1024:
+                raise ValueError("参考图必须是本地图片文件且不超过 20MB")
+            with Image.open(path) as image:
+                if image.format not in {"PNG", "JPEG", "WEBP"}:
+                    raise ValueError("参考图支持 PNG、JPEG、WebP；其它格式请先转换")
+                image.verify()
+            if str(path) not in reference_paths:
+                reference_paths.append(str(path))
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
+        return _failed("BAD_PARAMS", f"参考图不可用: {exc}")
     try:
         count_n = max(1, min(int(count or 1), 4))
     except (TypeError, ValueError):
@@ -1780,6 +1818,7 @@ def tool_image_generate(
         "size": _normalize_agent_image_size(size),
         "quality": str(quality or "auto").strip() or "auto",
         "output_format": str(output_format or "png").strip() or "png",
+        "reference_image_paths": reference_paths,
     }
     if tier:
         params["model_key_tier"] = tier
@@ -1789,6 +1828,9 @@ def tool_image_generate(
     except Exception as exc:  # noqa: BLE001
         return _failed("MISSING_CONFIG", f"AI 生图未配置: {exc}")
     try:
+        selected_tier, _ = ai_image_service.select_model_key({"model_key": model_text, "params": params}, settings)
+        if selected_tier in {"2k", "4k"}:
+            params["model_key_tier"] = selected_tier
         job = _agent_image_job(settings, {**params, "model": model_text})
         job_uid = job["job_uid"]
         result = ai_image_service.generate_images_sync(
@@ -1798,14 +1840,25 @@ def tool_image_generate(
             poll_timeout_seconds=900,
         )
     except ai_image_service.MissingModelKeyError as exc:
-        return _failed("MISSING_CONFIG", str(exc))
+        failure = _failed("MISSING_CONFIG", str(exc))
+        failure["error"].update(config_id=exc.config_id, configured_tiers=exc.configured_tiers)
+        return failure
     except Exception as exc:  # noqa: BLE001
         return _failed("GENERATION_FAILED", f"生图失败: {exc}")
     if not result.get("ok"):
         detail = "; ".join(result.get("failures") or []) or result.get("error") or "生成失败"
         return _failed("GENERATION_FAILED", detail)
     paths = [item.get("path") for item in result.get("assets") or [] if item.get("path")]
-    _broadcast_media_artifacts(paths, "image")
+    artifact_ids = _broadcast_media_artifacts(paths, "image")
+    delivered = bool(paths) and len(artifact_ids) == len(paths)
+    delivery = {
+        "status": "submitted_to_conversation" if delivered else "not_submitted",
+        "artifact_ids": artifact_ids,
+        "requires_file_return": not delivered,
+        "message": ("Harness 已将图片提交到当前会话展示，图片交付由 Harness 自动完成；"
+                    "请直接向用户总结结果，不要再调用 dsh_im_return_file、复制文件或排查回传路径。"
+                    if delivered else "图片已生成，但未全部提交到会话展示；请使用返回路径交付，不要重新生图。"),
+    }
     return _ok({
         "assets": result.get("assets"),
         "paths": paths,
@@ -1814,10 +1867,12 @@ def tool_image_generate(
         "size": params["size"],
         "quality": params["quality"],
         "output_format": params["output_format"],
-        "key_tier": tier or "auto",
+        "key_tier": selected_tier,
         "model": model_text,
-        "message": f"已生成 {len(paths)} 张图片,保存于 {result.get('output_dir')}",
-    }, evidence={"artifact_ids": []})
+        "reference_image_paths": reference_paths,
+        "delivery": delivery,
+        "message": f"已生成 {len(paths)} 张图片。{delivery['message']}",
+    }, evidence={"artifact_ids": artifact_ids})
 
 
 def tool_image_assets(limit: int = 20) -> dict:
@@ -1872,16 +1927,24 @@ def tool_video_generate(prompt: str, first_frame_image: str = "", duration: str 
         return _failed("GENERATION_FAILED", waited.get("error") or f"生视频失败({waited.get('status')})")
     video_path = waited.get("video_path")
     poster_path = waited.get("poster_path")
-    if video_path:
-        _broadcast_media_artifacts([video_path], "video")
+    if not video_path:
+        return _failed("GENERATION_FAILED", "视频任务返回成功但没有视频产物路径")
+    artifact_ids = _broadcast_media_artifacts([video_path], "video")
+    delivered = bool(artifact_ids)
     if poster_path and poster_path != video_path:
         _broadcast_media_artifacts([poster_path], "image")
+    delivery = {
+        "status": "submitted_to_conversation" if delivered else "not_submitted",
+        "artifact_ids": artifact_ids,
+        "requires_file_return": not delivered,
+    }
     return _ok({
         "job_id": job_id,
         "video_path": video_path,
         "poster_path": poster_path,
+        "delivery": delivery,
         "message": f"已生成视频: {video_path}",
-    }, evidence={"artifact_ids": []})
+    }, evidence={"artifact_ids": artifact_ids})
 
 
 def tool_video_assets(limit: int = 20) -> dict:
@@ -2803,7 +2866,7 @@ def create_agent_mcp_server() -> MCPServer:
     mcp.add_tool(tool_fs_exec, name="fs_exec", description="执行本机命令(用户已授权全局访问;经审批卡授权,审计保留)")
 
     mcp.add_tool(tool_image_generate, name="image_generate",
-                 description="调用抓虾 AI 生图:按提示词生成图片(1-4 张),等待完成后下载到本地产物目录,返回文件路径")
+                 description="调用抓虾 AI 生图/参考图改图:生成图片(1-4 张)。reference_image_paths 接收聊天图片提供的 Normalized copy 只读本地路径（支持无扩展名），reference_attachment_ids 接收当前会话的抓虾附件 id（不是原生 sha256 标识）；合计最多10张PNG/JPEG/WebP、每张20MB。按路径列表再附件id列表的顺序输入参考图。纯文生图省略两项。未指定 key_tier 时自动选择已配置且支持尺寸的 Key，显式档位不会切换。Harness 自动将产物提交到当前会话展示；delivery.requires_file_return=false 时直接总结，不要重复调用 dsh_im_return_file 或复制文件。配置错误会返回各档位配置状态，无需读取配置文件")
     mcp.add_tool(tool_image_assets, name="image_assets",
                  description="列出智能体生成过的生图产物(本地文件路径)")
     mcp.add_tool(tool_video_generate, name="video_generate",

@@ -127,6 +127,12 @@ def file_to_data_url(path: str, *, max_bytes: int = 20 * 1024 * 1024) -> str:
     if size > max_bytes:
         raise OneXMImageError(f"Reference image exceeds 1XM 20MB limit: {path}")
     mime = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+    if mime == "application/octet-stream":
+        # DSH's normalized chat attachments are content-addressed files without
+        # extensions; their actual image type must travel to the provider.
+        from PIL import Image
+        with Image.open(file_path) as image:
+            mime = Image.MIME.get(image.format, mime)
     if mime not in {"image/png", "image/jpeg", "image/webp"}:
         if file_path.suffix.lower() in {".jpg", ".jpeg"}:
             mime = "image/jpeg"

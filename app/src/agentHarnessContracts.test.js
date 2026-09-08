@@ -1089,7 +1089,7 @@ test('agent persona introduces itself as Crawshrimp agent', () => {
   assert.match(preset, /如何开始使用抓虾智能体/)
   assert.match(runtimeCordisSource, /当用户明确问[\s\S]*首句明确回答[\s\S]*我是抓虾智能体/)
   assert.match(runtimeCordisSource, /普通寒暄[\s\S]*不要主动输出长篇介绍[\s\S]*简短回答/)
-  assert.match(runtimeCordisSource, /其它明确任务直接处理[\s\S]*不重复粘贴整段说明/)
+  assert.match(runtimeCordisSource, /其它明确任务直接处理[\s\S]*不重复粘贴介绍/)
   assert.match(runtimeCordisSource, /普通寒暄[\s\S]*你好[\s\S]*需要我帮你处理什么/)
   assert.doesNotMatch(runtimeCordisSource, /首句必须明确回答/)
   assert.doesNotMatch(runtimeCordisSource, /你是抓虾桌面应用中的操作智能体/)

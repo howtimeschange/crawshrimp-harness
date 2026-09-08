@@ -777,6 +777,65 @@ function patchDshImUserVisibleBrand(root) {
   return { files, changed }
 }
 
+// These sections are injected before the product persona in both Web and IM.
+// Keep package ids and model/provider names intact; only replace identity copy.
+export function patchHarnessPromptBrand(root) {
+  const sections = [
+    ['dsh-system-prompt', 'You are an AI agent powered by DeepSeek Harness.', 'You are an AI agent powered by 抓虾 Harness.'],
+  ]
+  const files = []
+  for (const [packageName, upstream, product] of sections) {
+    const entry = requireFile(root, `node_modules/@deepseek-ai/${packageName}/lib/index.js`)
+    const source = readFileSync(entry, 'utf8')
+    if (!source.includes(upstream) && !source.includes(product)) {
+      throw new Error(`Harness system prompt brand anchor changed: ${packageName}`)
+    }
+    const next = source.replaceAll(upstream, product)
+    if (next !== source) writeFileSync(entry, next, 'utf8')
+    files.push(entry)
+  }
+  return { files }
+}
+
+export function patchHarnessSurfaceSource(source, kind) {
+  const marker = `crawshrimp-session-surface-${kind}-v1`
+  if (source.includes(marker)) return source
+  const pattern = kind === 'web'
+    ? /function webSurfacePrompt\(webUrl\) \{[\s\S]*?\n\}/
+    : /function addHarnessSourceSection\(ctx, sourceRoot\) \{[\s\S]*?\n\}/
+  const original = source.match(pattern)?.[0]
+  if (!original) throw new Error(`Harness ${kind} prompt function anchor changed`)
+  const replacement = kind === 'web'
+    ? 'function webSurfacePrompt(webUrl) {\n'
+      + `\t/* ${marker} */\n`
+      + '\treturn `当前会话界面是抓虾 Harness Web GUI，地址为 ${webUrl}。用户未指定其它目标时，“这个界面/应用”指此界面。此地址不提供隐含的 DOM、路由或截图上下文；需要查看页面时使用当前可用的抓虾浏览器工具。`;\n}'
+    : 'function addHarnessSourceSection(ctx, sourceRoot) {\n'
+      + `\t/* ${marker}: internal integration paths are not business-session context. */\n`
+      + '\treturn void 0;\n}'
+  return source.replace(original, replacement)
+}
+
+export function patchHarnessFileDeliverySource(source) {
+  const upstream = 'When the user asks to receive a file or generated image, call ${OUTBOUND_ARTIFACT_TOOL} with its path. Existing files can be sent directly; do not recreate or rename a file solely for delivery.'
+  const product = '文件交付：先检查生成工具返回的 delivery；requires_file_return=false 时已提交到当前会话，不要重复回传。仅当仍需交付且当前工具目录包含 ${OUTBOUND_ARTIFACT_TOOL} 时，才用它回传真实文件路径。工具未提供时不要调用，提供路径并说明限制。现有文件直接交付，不为交付而重新生成或改名。工具成功仅证明其返回的注册/提交状态，不代表 Web 已展示或 IM 已送达。'
+  if (source.includes(product)) return source
+  return replaceRequired(source, upstream, product, 'conditional file delivery prompt')
+}
+
+function patchHarnessSessionPrompts(root) {
+  for (const [pkg, kind] of [['dsh-app-boot', 'source'], ['dsh-web-app', 'web']]) {
+    const entry = requireFile(root, `node_modules/@deepseek-ai/${pkg}/lib/index.js`)
+    const source = readFileSync(entry, 'utf8')
+    const next = patchHarnessSurfaceSource(source, kind)
+    if (next !== source) writeFileSync(entry, next, 'utf8')
+  }
+  // Upstream installs this section together with the registered file tool.
+  const entry = requireFile(root, `${DSH_IM_RUNTIME_ROOT}/src/channels/shared/semantic/artifact.mjs`)
+  const source = readFileSync(entry, 'utf8')
+  const next = patchHarnessFileDeliverySource(source)
+  if (next !== source) writeFileSync(entry, next, 'utf8')
+}
+
 function replaceRequired(source, expected, replacement, label) {
   if (!source.includes(expected)) {
     throw new Error(`dsh-im 4.11 product patch anchor changed: ${label}`)
@@ -1629,7 +1688,8 @@ function permissionPresetsFor(ctx) {
 
 function buildPatchedDshImBundle(root) {
   const bundle = join(root, DSH_IM_RUNTIME_ROOT, 'lib/index.js')
-  if (readFileSync(bundle, 'utf8').includes(CRAWSHRIMP_DSH_IM_BUILT_OVERLAY_MARKER)) return bundle
+  const built = readFileSync(bundle, 'utf8')
+  if (built.includes(CRAWSHRIMP_DSH_IM_BUILT_OVERLAY_MARKER) && built.includes('requires_file_return=false')) return bundle
   const buildScript = fileURLToPath(new URL('./build-patched-dsh-im.mjs', import.meta.url))
   const result = spawnSync(process.execPath, [buildScript, root], {
     encoding: 'utf8',
@@ -2081,6 +2141,8 @@ export function patchRuntimeDependencies(runtimeRoot) {
   // Brand after every source overlay so a clean install and an already-patched
   // development runtime produce the same user-visible source and Host bundle.
   const dshImBrand = patchDshImUserVisibleBrand(root)
+  const harnessPromptBrand = patchHarnessPromptBrand(root)
+  patchHarnessSessionPrompts(root)
   const dshImBuiltEntry = buildPatchedDshImBundle(root)
   const dshWebApprovalAllowAll = patchDshWebApprovalAllowAll(root)
   const nativeWebTools = patchNativeWebToolRegistration(root)
@@ -2125,6 +2187,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
     nativeWebTools,
     workspaceAccessProbe,
     dshImBrandFiles: dshImBrand.files,
+    harnessPromptBrandFiles: harnessPromptBrand.files,
     dshImBrandChangedFiles: dshImBrand.changed,
     dshImNaturalModelControls,
     dshImApprovalControls,

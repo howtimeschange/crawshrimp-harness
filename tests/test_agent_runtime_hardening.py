@@ -3091,3 +3091,75 @@ def test_deepseek_text_default_high_preserves_explicit_effort(tmp_path, model, e
         saved = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert saved["agent-default-model"]["reasoningEffort"] == (effort or "high")
         assert "reasoning" not in saved["llm-pi-ai"]["providers"]["crawshrimp-deepseek-official"]
+
+
+@pytest.mark.parametrize("tier,expected", [("", "4k"), ("4k", "4k"), ("2k", None)])
+@pytest.mark.parametrize("delivery_mode", ["connected", "no_emitter", "missing_file"])
+def test_image_config_selection_and_conversation_delivery(tmp_path, monkeypatch, tier, expected, delivery_mode):
+    monkeypatch.setattr("core.runtime_paths.data_root", lambda: tmp_path)
+    data_sink.init_db()
+    settings = {"ai.1xm.gpt_image_4k_key": "secret-test-4k"}
+    monkeypatch.setattr("core.api_server._resolve_one_xm_settings", lambda: settings)
+    monkeypatch.setattr(mcp_gateway.ctx, "active_run", {"run_id": "image", "session_id": "session"})
+    events = []
+    monkeypatch.setattr(mcp_gateway.ctx, "emit_event", None if delivery_mode == "no_emitter" else lambda event, payload: events.append((event, payload)))
+    output = tmp_path / "image.png"
+    if delivery_mode != "missing_file":
+        output.write_bytes(b"image fixture")
+    calls = []
+
+    def generate(job_uid, prompts, **kwargs):
+        calls.append(job_uid)
+        assert data_sink.get_ai_image_job(job_uid)["params"]["model_key_tier"] == expected
+        return {"ok": True, "assets": [{"path": str(output)}], "output_dir": str(tmp_path)}
+
+    monkeypatch.setattr("core.ai_image_service.generate_images_sync", generate)
+    result = mcp_gateway.tool_image_generate("winter jacket", size="1024x1024", key_tier=tier)
+    assert "secret-test-4k" not in json.dumps(result)
+    if expected is None:
+        assert not result["ok"]
+        assert result["error"]["code"] == "MISSING_CONFIG"
+        assert result["error"]["configured_tiers"] == {"2k": False, "4k": True}
+        assert "2K 未配置、4K 已配置" in result["error"]["message"]
+        assert not calls
+        assert not events
+        return
+    assert result["ok"]
+    assert len(calls) == 1
+    assert result["data"]["key_tier"] == expected
+    delivery = result["data"]["delivery"]
+    if delivery_mode == "connected":
+        assert delivery["status"] == "submitted_to_conversation"
+        assert delivery["requires_file_return"] is False
+        assert "不要再调用 dsh_im_return_file" in result["data"]["message"]
+        assert events[0][0] == "artifact.created"
+        assert result["evidence"]["artifact_ids"] == [events[0][1]["artifact_id"]]
+    else:
+        assert delivery["status"] == "not_submitted"
+        assert delivery["requires_file_return"] is True
+        assert not events
+
+
+@pytest.mark.parametrize("mode", ["delivered", "not_delivered", "missing_path"])
+def test_video_reports_actual_conversation_delivery(monkeypatch, mode):
+    monkeypatch.setattr(mcp_gateway.ctx, "active_run", {"run_id": "video", "session_id": "session"})
+    monkeypatch.setattr("core.ai_video_generation_service.create_job_trusted", lambda payload: {"data": {"job": {"id": "video-1"}}})
+    monkeypatch.setattr("core.ai_video_generation_service.wait_video_job", lambda *args, **kwargs: {
+        "ok": True, "video_path": None if mode == "missing_path" else "/workspace/video.mp4",
+    })
+    broadcasts = []
+    def broadcast(paths, kind):
+        broadcasts.append((paths, kind))
+        return ["artifact-video"] if mode == "delivered" else []
+    monkeypatch.setattr(mcp_gateway, "_broadcast_media_artifacts", broadcast)
+    result = mcp_gateway.tool_video_generate("商品展示")
+    if mode == "missing_path":
+        assert result["ok"] is False
+        assert not broadcasts
+        return
+    assert result["ok"] is True
+    delivery = result["data"]["delivery"]
+    assert delivery["requires_file_return"] is (mode != "delivered")
+    assert delivery["status"] == ("submitted_to_conversation" if mode == "delivered" else "not_submitted")
+    assert result["evidence"]["artifact_ids"] == delivery["artifact_ids"]
+    assert len(broadcasts) == 1

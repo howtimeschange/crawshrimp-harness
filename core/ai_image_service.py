@@ -51,9 +51,10 @@ _WORKBENCH_POLL_EXECUTOR = ThreadPoolExecutor(max_workers=100, thread_name_prefi
 
 
 class MissingModelKeyError(ValueError):
-    def __init__(self, message: str, *, config_id: str):
+    def __init__(self, message: str, *, config_id: str, configured_tiers: dict | None = None):
         super().__init__(message)
         self.config_id = config_id
+        self.configured_tiers = configured_tiers or {}
 
 
 class DownloadOutputsError(RuntimeError):
@@ -182,14 +183,29 @@ def select_model_key(job_or_params: Mapping[str, Any], settings: Mapping[str, An
                 config_id=GEMINI_PRO_CONFIG_ID,
             )
         return GEMINI_PRO_CONFIG_ID, key
-    explicit = _compact(job_or_params.get("model_key_tier") or params.get("model_key_tier") or params.get("key_tier")).lower()
-    tier = explicit if explicit in {"2k", "4k"} else _size_tier(_compact(job_or_params.get("size") or params.get("size")))
+    explicit = _compact(job_or_params.get("model_key_tier") or job_or_params.get("key_tier") or params.get("model_key_tier") or params.get("key_tier")).lower()
+    preferred = _size_tier(_compact(job_or_params.get("size") or params.get("size")))
+    keys = {
+        "2k": _settings_value(settings, GPT_2K_CONFIG_ID, "2k"),
+        "4k": _settings_value(settings, GPT_4K_CONFIG_ID, "4k"),
+    }
+    tier = explicit if explicit in keys else preferred
+    # A 4K credential also supports smaller outputs. Never silently downgrade
+    # a large output to a 2K credential, or override an explicit selection.
+    if explicit not in keys and tier == "2k" and not keys[tier] and keys["4k"]:
+        tier = "4k"
     config_id = GPT_4K_CONFIG_ID if tier == "4k" else GPT_2K_CONFIG_ID
-    key = _settings_value(settings, config_id, tier)
+    key = keys[tier]
     if not key:
+        configured = {name: bool(value) for name, value in keys.items()}
+        state = "、".join(f"{name.upper()} {'已配置' if value else '未配置'}" for name, value in configured.items())
+        guidance = ("显式指定的档位已保留；如需使用其他档位，请修改 key_tier。"
+                    if explicit in keys else "请在设置中配置符合当前尺寸的 Key。")
         raise MissingModelKeyError(
-            f"设置菜单未配置 1XM 图片模型 API Key: {config_id} (1XM GPT Image {tier.upper()} Key)",
+            f"设置菜单未配置 1XM 图片模型 API Key: {config_id} (1XM GPT Image {tier.upper()} Key)。"
+            f"当前 {state}。{guidance}无需查找本机配置文件或读取密钥。",
             config_id=config_id,
+            configured_tiers=configured,
         )
     return tier, key
 
