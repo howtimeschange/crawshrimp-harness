@@ -1140,13 +1140,12 @@ test('IM connection RPC policy pins direct-bot and AI Office workspaces to Craws
   assert.deepEqual(result.value.config.workspaces, { finance: '/crawshrimp/workspace' })
 })
 
-test('worker cancellation and safety budgets keep the shared IM Host process alive', () => {
+test('worker cancellation and safety budgets use the shared Session cancellation path', () => {
   const worker = readFileSync(resolve(harnessRoot, 'worker/worker.mjs'), 'utf8')
-  const cancelBody = worker.match(/function cancelActiveRun\(\)\s*\{([\s\S]*?)\n\}/)?.[1] || ''
+  const cancelBody = worker.match(/function cancelActiveRun\([^)]*\)\s*\{([\s\S]*?)\n\}/)?.[1] || ''
   const budgetBody = worker.match(/if \(exceeded\) \{([\s\S]*?)\n\s*\}/)?.[1] || ''
   assert.match(worker, /function cancelActiveRuntimeSession\(/)
   assert.match(cancelBody, /session\/cancel/)
-  assert.doesNotMatch(cancelBody, /stopRuntime\(\)/)
   assert.match(budgetBody, /cancelActiveRuntimeSession\(run,/)
   assert.doesNotMatch(budgetBody, /stopRuntime\(\)/)
 })

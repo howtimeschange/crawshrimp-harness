@@ -224,8 +224,33 @@ def _reserve_free_port(start_port: int, max_steps: int = 8):
 def _process_is_alive(pid: int) -> bool:
     if pid <= 1:
         return False
+    if os.name == "nt":
+        # Signal 0 is CTRL_C_EVENT on Windows, not a liveness probe. Only a
+        # signaled handle or ERROR_INVALID_PARAMETER proves a PID is gone;
+        # access denied/query failures must preserve the possible owner.
+        import ctypes
+        from ctypes import wintypes
+        try:
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            kernel.WaitForSingleObject.restype = wintypes.DWORD
+            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel.CloseHandle.restype = wintypes.BOOL
+            handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE only
+            if not handle:
+                return ctypes.get_last_error() != 87
+            try:
+                return kernel.WaitForSingleObject(handle, 0) != 0
+            finally:
+                kernel.CloseHandle(handle)
+        except (OSError, AttributeError):
+            return True
     try:
         os.kill(pid, 0)
+        return True
+    except PermissionError:
         return True
     except OSError:
         return False
@@ -846,6 +871,7 @@ class AgentService:
         self.runtime_error = ""
         self.runtime_error_code = ""
         self.crash_budget: list[float] = []
+        self._runtime_disabled = False
         self.web_port = 0
         # rc.1 Web Host issues an authenticated, one-time iframe launch URL.
         # It is never logged, persisted, or shown in settings; it exists only
@@ -2182,17 +2208,33 @@ class AgentService:
     async def _run_one(self, item: dict) -> None:
         run_id, session_id, turn_id = item["run_id"], item["session_id"], item["turn_id"]
         run = db.get_run(run_id)
-        self._clear_inherited_automation_wait(run_id)
         if not run or run["status"] in RUN_FINAL_STATUSES:
+            self._clear_inherited_automation_wait(run_id)
             return
+        runtime_session_id = self._runtime_session_id(session_id)
+        if self._queued_turn_is_blocked(runtime_session_id, item):
+            await self.queue.put(item)
+            await asyncio.sleep(0.2)
+            return
+
+        # CDP work yields to native-Web projections and inherited deadlines.
+        # Recheck both after it completes, before replacing any run context.
+        grant = await asyncio.to_thread(self._grant_for_run, item)
+        run = db.get_run(run_id)
+        if not run or run["status"] in RUN_FINAL_STATUSES:
+            self._clear_inherited_automation_wait(run_id)
+            return
+        if self._queued_turn_is_blocked(runtime_session_id, item):
+            await self.queue.put(item)
+            await asyncio.sleep(0.2)
+            return
+        self._clear_inherited_automation_wait(run_id)
         self.active_run = run
         db.update_run(run_id, status="starting", started_at=_now_iso())
         db.update_turn(turn_id, status="running")
         await self.broadcast(session_id, 0, "run.started", {"run_id": run_id, "turn_id": turn_id})
 
-        # 同步 HTTP(CDP bridge)不得阻塞事件循环 → to_thread
-        grant = await asyncio.to_thread(self._grant_for_run, item)
-        runtime_session_ids = {self._runtime_session_id(session_id)}
+        runtime_session_ids = {runtime_session_id}
         run_context = dict(db.get_run(run_id) or {})
         run_context["automation_policy"] = copy.deepcopy(item.get("automation_policy")) if isinstance(item.get("automation_policy"), dict) else None
         run_context["automation_run_uid"] = str(item.get("automation_run_uid") or "").strip()
@@ -2235,11 +2277,7 @@ class AgentService:
                 # The worker may still be processing the turn after its RPC
                 # response times out. Cancel it before publishing a durable
                 # failure so no timed-out Automation keeps operating unseen.
-                try:
-                    await self.worker.request("worker.cancel_active", {"runId": run_id}, timeout=15)
-                except Exception:  # noqa: BLE001
-                    pass
-                await self._cancel_automation_task_instances(item.get("automation_run_uid") or "")
+                await self._stop_timed_out_automation(run_id, item.get("automation_run_uid") or "")
                 raise AutomationRunTimeoutError(
                     f"Automation execution exceeded its {int(worker_timeout)}-second timeout"
                 ) from exc
@@ -2279,11 +2317,7 @@ class AgentService:
                 except asyncio.TimeoutError as exc:
                     if not str(item.get("automation_run_uid") or "").strip():
                         raise
-                    try:
-                        await self.worker.request("worker.cancel_active", {"runId": run_id}, timeout=15)
-                    except Exception:  # noqa: BLE001
-                        pass
-                    await self._cancel_automation_task_instances(item.get("automation_run_uid") or "")
+                    await self._stop_timed_out_automation(run_id, item.get("automation_run_uid") or "")
                     raise AutomationRunTimeoutError(
                         f"Automation execution exceeded its {int(worker_timeout)}-second timeout"
                     ) from exc
@@ -2443,9 +2477,35 @@ class AgentService:
         return db.create_grant(grant_id, item["run_id"], None, str(tab.get("id")),
                                toolset, _iso_after(3600))
 
+    async def _stop_timed_out_automation(self, run_id: str, automation_run_uid: str) -> None:
+        stopped = False
+        if self.worker is not None:
+            try:
+                result = await self.worker.request("worker.cancel_active", {"runId": run_id}, timeout=15)
+                stopped = isinstance(result, dict) and bool(result.get("ok")) and bool(result.get("canceled"))
+            except Exception:  # noqa: BLE001
+                pass
+            if not stopped:
+                await self._stop_worker()
+        await self._cancel_automation_task_instances(automation_run_uid)
+
     # ---------- runtime generation ----------
 
+    def _queued_turn_is_blocked(self, runtime_session_id: str, item: dict) -> bool:
+        if runtime_session_id in self.active_runs_by_runtime or runtime_session_id in self.shadow_runs:
+            return True
+        # Changing the generation stops the shared Host, including other
+        # native sessions. Defer that change until all native turns finish.
+        generation_ready = (
+            self.worker is not None and self.runtime_state == "ready"
+            and self.generation_model == item.get("model_id")
+        )
+        return not generation_ready and bool(self.active_runs_by_runtime or self.shadow_runs)
+
     async def _ensure_generation(self, item: dict) -> bool:
+        if self._runtime_disabled or self.runtime_state == "disabled_until_manual_restart":
+            self.runtime_state = "disabled_until_manual_restart"
+            return False
         if (self.worker is not None and self.runtime_state == "ready"
                 and self.generation_model == item.get("model_id")):
             return True
@@ -2454,6 +2514,8 @@ class AgentService:
     async def start_generation(self, provider_id: Optional[str] = None,
                                model_id: Optional[str] = None) -> bool:
         async with self._runtime_mutation_lock:
+            if self._runtime_disabled or self.runtime_state == "disabled_until_manual_restart":
+                return False
             return await self._start_generation_unlocked(provider_id, model_id)
 
     async def _start_generation_unlocked(self, provider_id: Optional[str] = None,
@@ -2612,6 +2674,15 @@ class AgentService:
         """Project an unexpected stdio worker exit into the public runtime state."""
         if not unexpected or self.worker is not worker:
             return
+        proc = getattr(worker, "proc", None)
+        if proc is not None and proc.returncode is None:
+            # A broken channel is not proof of process death. Keep ownership
+            # and block replacement generations until cleanup can succeed.
+            self._runtime_disabled = True
+            self.runtime_state = "disabled_until_manual_restart"
+            self.runtime_error_code = "WORKER_STOP_FAILED"
+            self.runtime_error = str(message or "worker 清理失败")[:300]
+            return
         await self._interrupt_shadow_runs(
             "WORKER_EXITED", str(message or "worker 已退出")[:300],
         )
@@ -2629,25 +2700,30 @@ class AgentService:
         self.crash_budget.append(now)
         print(f"[agent] runtime 异常: {message}", flush=True)
         if len(self.crash_budget) >= 3:
+            self._runtime_disabled = True
             self.runtime_state = "disabled_until_manual_restart"
             print("[agent] 连续崩溃超过预算,runtime 进入 disabled_until_manual_restart", flush=True)
 
     async def _stop_worker(self) -> None:
         if self.worker is not None:
-            try:
-                await self.worker.stop()
-            except Exception:  # noqa: BLE001
-                pass
+            # Retain ownership if termination fails; otherwise a new worker
+            # could launch while the old generation is still executing.
+            await self.worker.stop()
             self.worker = None
         await self._interrupt_shadow_runs("RUNTIME_STOPPED", "runtime stopped")
         self._web_launch_url = ""
         self._web_origin = ""
-        self.runtime_state = "stopped"
+        self.runtime_state = "disabled_until_manual_restart" if self._runtime_disabled else "stopped"
 
     async def restart_runtime(self) -> dict:
         if self.active_run is not None or self.active_runs_by_runtime:
             return {"ok": False, "error": "ACTIVE_RUN", "message": "存在 active run,无法重启"}
-        ok = await self.start_generation()
+        async with self._runtime_mutation_lock:
+            if self.active_run is not None or self.active_runs_by_runtime:
+                return {"ok": False, "error": "ACTIVE_RUN", "message": "存在 active run,无法重启"}
+            self._runtime_disabled = False
+            self.crash_budget.clear()
+            ok = await self._start_generation_unlocked()
         return {"ok": ok, "state": self.runtime_state, "error": self.runtime_error}
 
     async def observe_native_web_session(self, runtime_session_id: str,
@@ -2715,7 +2791,7 @@ class AgentService:
         deepseek_key_configured = deepseek_api_key_configured(cfg)
         glm_key_configured = glm_api_key_configured(cfg)
         any_key_configured = any_llm_api_key_configured(cfg)
-        display_state = self.runtime_state
+        display_state = "disabled_until_manual_restart" if self._runtime_disabled else self.runtime_state
         display_error = self.runtime_error
         return {
             "enabled": _os.environ.get("CRAWSHRIMP_AGENT_ENABLED", "1") not in ("0", "false", "no"),
@@ -3230,6 +3306,11 @@ class AgentService:
             return {"ok": True, "status": run["status"], "idempotent": True}
         if self.active_run and self.active_run["run_id"] == run_id and self.worker:
             result = await self.worker.request("worker.cancel_active", {"runId": run_id}, timeout=15)
+            current = db.get_run(run_id) or {}
+            if current.get("status") in RUN_FINAL_STATUSES:
+                return {"ok": True, "status": current["status"]}
+            if not isinstance(result, dict) or not result.get("ok") or not result.get("canceled"):
+                return {"ok": False, "error": "CANCEL_FAILED", "detail": result}
             await self._finalize_assistant_stream(run_id, mark_complete=True)
             db.update_run(run_id, status="canceled", finished_at=_now_iso())
             db.update_turn(run.get("turn_id") or "", status="canceled", completed_at=_now_iso())

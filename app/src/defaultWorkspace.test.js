@@ -19,6 +19,8 @@ function loadSlotsClient({ logs = [], search = '' } = {}) {
     },
   }
   const sandbox = {
+    MutationObserver: class { observe() {} disconnect() {} },
+    document: { body: {} },
     clearTimeout,
     console: {
       error: (...args) => logs.push(['error', ...args]),

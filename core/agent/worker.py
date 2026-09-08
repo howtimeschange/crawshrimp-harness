@@ -9,6 +9,8 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Optional
 
@@ -93,6 +95,7 @@ class AgentWorker:
         self.stderr_tail: str = ""
         self._stop_requested = False
         self._exit_reported = False
+        self._channel_error: Optional[str] = None
 
     async def start(self) -> None:
         node_executable = resolve_node_executable()
@@ -109,6 +112,7 @@ class AgentWorker:
 
         self._stop_requested = False
         self._exit_reported = False
+        self._channel_error = None
         self.proc = await asyncio.create_subprocess_exec(
             node_executable, worker_entry,
             stdin=asyncio.subprocess.PIPE,
@@ -122,6 +126,7 @@ class AgentWorker:
 
     async def _read_loop(self) -> None:
         assert self.proc and self.proc.stdout
+        proc = self.proc
         stderr_task = asyncio.create_task(self._drain_stderr())
         exit_message = "worker 已退出"
         try:
@@ -149,18 +154,50 @@ class AgentWorker:
             exit_message = f"worker 读取失败: {exc}"
             self._fail_pending(exit_message)
         finally:
-            stderr_task.cancel()
-            return_code = getattr(self.proc, "returncode", None)
-            wait = getattr(self.proc, "wait", None)
-            if return_code is None and callable(wait):
-                try:
-                    return_code = await wait()
-                except Exception:  # noqa: BLE001
-                    pass
-            if return_code is not None:
-                exit_message = f"{exit_message} (exit code={return_code})"
+            self._channel_error = exit_message
             self._fail_pending(f"{exit_message},未返回请求结果")
-            await self._report_exit(exit_message, unexpected=not self._stop_requested)
+            try:
+                await self._terminate_process(proc)
+            except Exception as exc:  # noqa: BLE001
+                exit_message += f"; worker 清理失败: {exc}"
+            finally:
+                stderr_task.cancel()
+                await asyncio.gather(stderr_task, return_exceptions=True)
+                return_code = getattr(proc, "returncode", None)
+                if return_code is not None:
+                    exit_message += f" (exit code={return_code})"
+                await self._report_exit(exit_message, unexpected=not self._stop_requested)
+
+    @staticmethod
+    async def _terminate_process(proc) -> None:
+        if getattr(proc, "returncode", None) is not None:
+            return
+        wait = getattr(proc, "wait", None)
+        if not callable(wait):
+            return
+        if sys.platform == "win32":
+            # TerminateProcess does not run Node's SIGTERM handler. Kill the
+            # owned tree while its root is still alive, including the DSH Host.
+            result = await asyncio.to_thread(
+                subprocess.run, ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            if result.returncode and getattr(proc, "returncode", None) is None:
+                raise WorkerProtocolError("无法终止 Windows Worker 进程树")
+            await asyncio.wait_for(wait(), timeout=3)
+            return
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            await asyncio.wait_for(wait(), timeout=3)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            await asyncio.wait_for(wait(), timeout=3)
 
     async def _report_exit(self, message: str, *, unexpected: bool) -> None:
         if self._exit_reported:
@@ -195,6 +232,8 @@ class AgentWorker:
             raise
 
     async def request(self, method: str, params: Optional[dict] = None, timeout: float = 30.0) -> Any:
+        if self._channel_error:
+            raise WorkerProtocolError(self._channel_error)
         if (self.proc is None or self.proc.stdin is None
                 or getattr(self.proc, "returncode", None) is not None):
             raise WorkerProtocolError("worker 未启动")
@@ -204,10 +243,12 @@ class AgentWorker:
         self._pending[msg_id] = fut
         payload = {"jsonrpc": "2.0", "id": msg_id, "method": method,
                    "params": {"protocol_version": 1, **(params or {})}}
-        self.proc.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
-        await self.proc.stdin.drain()
+        async def exchange():
+            self.proc.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+            await self.proc.stdin.drain()
+            return await fut
         try:
-            return await asyncio.wait_for(fut, timeout=timeout)
+            return await asyncio.wait_for(exchange(), timeout=timeout)
         finally:
             if self._pending.get(msg_id) is fut:
                 self._pending.pop(msg_id, None)
@@ -220,17 +261,19 @@ class AgentWorker:
     async def stop(self) -> None:
         if self.proc is None:
             return
+        proc = self.proc
         self._stop_requested = True
         try:
             await asyncio.wait_for(self.request("worker.shutdown", {}, timeout=8), timeout=8)
         except Exception:  # noqa: BLE001
             pass
         try:
-            await asyncio.wait_for(self.proc.wait(), timeout=5)
+            await asyncio.wait_for(proc.wait(), timeout=5)
         except asyncio.TimeoutError:
-            self.proc.kill()
-            await self.proc.wait()
+            await self._terminate_process(proc)
         if self._reader_task:
-            self._reader_task.cancel()
+            if self._reader_task is not asyncio.current_task():
+                self._reader_task.cancel()
+                await asyncio.gather(self._reader_task, return_exceptions=True)
         self._fail_pending("worker 已停止")
         self.proc = None

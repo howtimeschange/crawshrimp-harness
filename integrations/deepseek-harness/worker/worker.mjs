@@ -185,7 +185,7 @@ async function spawnRuntime({ cwd, webPort }) {
   })
   runtime.onExit((code, signal) => {
     console.error(`[worker] DSH Web runtime 退出 code=${code} signal=${signal}`)
-    const unexpected = state.runtime === runtime
+    const unexpected = state.runtime === runtime && !state.runtimeStopPromise
     const wasActive = state.activeRun
     if (state.runtime === runtime) state.runtime = null
     state.startedSessions.clear()
@@ -238,6 +238,13 @@ function attachRunEventHandlers(run) {
       if (seq > run.lastSeq) run.lastSeq = seq
       const type = event.type
       const name = String(event.data?.name || '')
+      if (type === 'turn/end') {
+        notifyHarness(run.runId, event)
+        run.resolveCancellation?.()
+        run.turnEndReason = event.data?.reason ?? null
+        settleRun(run)
+        return
+      }
       if (type === 'step/start') run.counters.steps += 1
       if (type === 'tool/call') {
         run.counters.toolCalls += 1
@@ -262,18 +269,15 @@ function attachRunEventHandlers(run) {
       }
       const exceeded = budgetName()
       if (exceeded) {
+        run.cancelTerminal = { status: 'failed', reason: { kind: 'error', error: { code: 'BUDGET_EXCEEDED', message: exceeded } } }
         notifyHarness(run.runId, event)
-        cancelActiveRuntimeSession(run, `BUDGET_EXCEEDED:${exceeded}`).finally(() => {
-          if (state.activeRun !== run) return
+        cancelActiveRuntimeSession(run, `BUDGET_EXCEEDED:${exceeded}`).then((result) => {
+          if (!result.ok || state.activeRun !== run) return
           finishRun({ status: 'failed', reason: { kind: 'error', error: { code: 'BUDGET_EXCEEDED', message: exceeded } }, messageId: run.messageId, lastSeq: run.lastSeq })
-        })
+        }).catch((error) => console.error(`[worker] Budget cancellation cleanup failed: ${error.message}`))
         return
       }
       notifyHarness(run.runId, event)
-      if (type === 'turn/end') {
-        run.turnEndReason = event.data?.reason ?? null
-        settleRun(run)
-      }
     },
     onError: (error) => {
       if (state.activeRun !== run) return
@@ -285,11 +289,9 @@ function attachRunEventHandlers(run) {
         messageId: run.messageId,
         lastSeq: run.lastSeq,
       })
-      if (code === 'NATIVE_WEB_TOOL_POLICY') {
-        cancelActiveRuntimeSession(run, code).finally(complete)
-      } else {
-        complete()
-      }
+      cancelActiveRuntimeSession(run, code).then((result) => {
+        if (result.ok && state.activeRun === run) complete()
+      }).catch((error) => console.error(`[worker] Session cleanup failed: ${error.message}`))
     },
   })
   return run.follow
@@ -297,7 +299,11 @@ function attachRunEventHandlers(run) {
 
 function settleRun(run) {
   const reason = run.turnEndReason
-  if (run.outputBudgetReached) {
+  if (run.cancelTerminal && !run.userCancelRequested) {
+    finishRun({ ...run.cancelTerminal, messageId: run.messageId, lastSeq: run.lastSeq })
+    return
+  }
+  if (run.outputBudgetReached && !run.userCancelRequested) {
     if (continueRunAfterOutputBudget(run)) return
     finishRun({
       status: 'interrupted',
@@ -322,12 +328,33 @@ function settleRun(run) {
 function cancelActiveRuntimeSession(run, reason) {
   const runtime = state.runtime
   if (!runtime || !run || state.activeRun !== run) return Promise.resolve({ ok: false, canceled: false })
-  if (run.cancelRequested) return run.cancelPromise || Promise.resolve({ ok: true, canceled: true })
+  if (run.cancelRequested) return run.cancelPromise
   run.cancelRequested = true
-  run.cancelPromise = runtime.cancel(run.sessionId).then((result) => ({ ok: true, canceled: true, result })).catch((error) => {
-    console.error(`[worker] run ${run.runId} Session 取消失败: ${error.message}`)
-    return { ok: false, canceled: false, error }
-  })
+  let resolveCancellation
+  const turnStopped = new Promise(resolve => { resolveCancellation = resolve })
+  run.resolveCancellation = resolveCancellation
+  let timer
+  run.cancelPromise = (async () => {
+    try {
+      const result = await runtime.cancel(run.sessionId)
+      const confirmed = await Promise.race([
+        turnStopped.then(() => true),
+        run.done.then(() => true),
+        new Promise(resolve => { timer = setTimeout(() => resolve(false), RUNTIME_KILL_GRACE_MS) }),
+      ])
+      if (!confirmed) throw new Error('Session did not stop after cancellation')
+      return { ok: true, canceled: true, result }
+    } catch (error) {
+      console.error(`[worker] run ${run.runId} Session 取消失败 (${reason}): ${error.message}`)
+      // Only a failed/expired cancellation stops the shared Host. Do not
+      // release a run whose native actions might still be executing.
+      if (state.runtime === runtime) await stopRuntime()
+      return { ok: false, canceled: false, error: { code: 'CANCEL_FAILED', message: error.message } }
+    } finally {
+      clearTimeout(timer)
+      if (run.resolveCancellation === resolveCancellation) run.resolveCancellation = null
+    }
+  })()
   return run.cancelPromise
 }
 
@@ -346,7 +373,7 @@ function cancelOutputBudgetRun(run, message) {
       messageId: run.messageId,
       lastSeq: run.lastSeq,
     })
-  })
+  }).catch((error) => console.error(`[worker] Output cancellation cleanup failed: ${error.message}`))
 }
 
 function continueRunAfterOutputBudget(run) {
@@ -487,13 +514,15 @@ async function startRun(params) {
     resolve: null,
     timer: setTimeout(() => {
       console.error(`[worker] run ${runId} 超过 ${RUN_ABSOLUTE_TIMEOUT_MS}ms 绝对上限,终止`)
-      cancelActiveRuntimeSession(run, 'RUN_TIMEOUT').finally(() => {
-        if (state.activeRun !== run) return
+      run.cancelTerminal = { status: 'failed', reason: { kind: 'error', error: { code: 'RUN_TIMEOUT' } } }
+      cancelActiveRuntimeSession(run, 'RUN_TIMEOUT').then((result) => {
+        if (!result.ok || state.activeRun !== run) return
         finishRun({ status: 'failed', reason: { kind: 'error', error: { code: 'RUN_TIMEOUT' } }, lastSeq: run.lastSeq })
-      })
+      }).catch((error) => console.error(`[worker] Timeout cancellation cleanup failed: ${error.message}`))
     }, RUN_ABSOLUTE_TIMEOUT_MS),
   }
   const done = new Promise((resolve) => { run.resolve = resolve })
+  run.done = done
   state.activeRun = run
   const automationPolicy = params.automationPolicy && typeof params.automationPolicy === 'object'
     ? params.automationPolicy
@@ -527,6 +556,7 @@ async function startRun(params) {
       })
       state.startedSessions.add(sessionId)
     }
+    if (state.activeRun !== run || run.cancelRequested) return { ok: true, summary: await done }
     if (automationPolicy) {
       // The bridge snapshots this policy in the authenticated DSH Web Host;
       // inherited Automations therefore never inherit a source Session's
@@ -534,6 +564,7 @@ async function startRun(params) {
       await state.runtime.setAutomationPolicy({ sessionId, runId, policy: automationPolicy })
       policyInstalled = true
     }
+    if (state.activeRun !== run || run.cancelRequested) return { ok: true, summary: await done }
     const provider = String(params.provider || state.provider || '')
     const model = String(params.model || state.model || '')
     if (!provider || !model) throw new Error('runtime model selection is missing provider or model')
@@ -542,8 +573,10 @@ async function startRun(params) {
       await state.runtime.selectModel({ sessionId, provider, model })
       state.selectedModels.set(sessionId, { provider, model })
     }
+    if (state.activeRun !== run || run.cancelRequested) return { ok: true, summary: await done }
     const follow = attachRunEventHandlers(run)
     await follow.ready
+    if (state.activeRun !== run || run.cancelRequested) return { ok: true, summary: await done }
     const requestId = `crawshrimp-run-${runId}`
     await state.runtime.prompt({
       sessionId,
@@ -574,47 +607,60 @@ async function startRun(params) {
   }
 }
 
-function cancelActiveRun() {
+async function cancelActiveRun(params = {}) {
   const run = state.activeRun
-  if (run) {
-    cancelActiveRuntimeSession(run, 'session/cancel:user').finally(() => {
-      if (state.activeRun !== run) return
-      finishRun({ status: 'canceled', reason: { kind: 'aborted', reason: { kind: 'user' } }, messageId: run.messageId, lastSeq: run.lastSeq })
-    })
+  if (!run || (params.runId && params.runId !== run.runId)) {
+    return { ok: false, canceled: false, error: { code: 'NOT_ACTIVE' } }
   }
-  return { ok: true, canceled: Boolean(run) }
+  run.userCancelRequested = true
+  run.outputBudgetReached = false
+  const result = await cancelActiveRuntimeSession(run, 'session/cancel:user')
+  if (!result.ok) return result
+  // session/cancel only acknowledges the request. The follow's terminal
+  // event is the proof that the run has actually stopped.
+  let timer
+  try {
+    const terminal = await Promise.race([
+      run.done,
+      new Promise(resolve => { timer = setTimeout(() => resolve(null), RUNTIME_KILL_GRACE_MS) }),
+    ])
+    if (!terminal) {
+      await stopRuntime()
+      return { ok: false, canceled: false, error: { code: 'CANCEL_TIMEOUT', message: 'Session did not stop after cancellation' } }
+    }
+    return { ok: true, canceled: terminal.status === 'canceled', status: terminal.status }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 async function stopRuntime() {
+  if (state.runtimeStopPromise) return await state.runtimeStopPromise
   const runtime = state.runtime
   if (!runtime) return { ok: true, stopped: false }
   notifyWorkerStatus('stopping')
-  state.runtime = null
-  state.startedSessions.clear()
-  state.selectedModels.clear()
-  closeNativeWebFollows({
-    kind: 'interrupted',
-    error: { code: 'RUNTIME_STOPPED', message: 'runtime stopped' },
-  })
-  if (state.activeRun) {
-    finishRun({
-      status: 'interrupted',
-      reason: { kind: 'interrupted', detail: 'runtime stopped' },
-      messageId: state.activeRun.messageId,
-      lastSeq: state.activeRun.lastSeq,
-    })
-  }
-  const killTimer = setTimeout(() => {
-    // DshWebRuntime.stop() sends SIGTERM first. The child is intentionally
-    // private to that client, so a forced second signal remains encapsulated.
-    console.error('[worker] DSH Web runtime did not stop before grace period')
-  }, RUNTIME_KILL_GRACE_MS)
-  try {
+  const run = state.activeRun
+  const stopping = (async () => {
     await runtime.stop()
+    if (state.runtime === runtime) state.runtime = null
+    state.startedSessions.clear()
+    state.selectedModels.clear()
+    closeNativeWebFollows({
+      kind: 'interrupted',
+      error: { code: 'RUNTIME_STOPPED', message: 'runtime stopped' },
+    })
+    if (run && state.activeRun === run) {
+      finishRun({ status: 'interrupted', reason: { kind: 'interrupted', detail: 'runtime stopped' },
+        messageId: run.messageId, lastSeq: run.lastSeq })
+    }
+    return { ok: true, stopped: true }
+  })()
+  state.runtimeStopPromise = stopping
+  try {
+    return await stopping
   } finally {
-    clearTimeout(killTimer)
+    if (state.runtimeStopPromise === stopping) state.runtimeStopPromise = null
   }
-  return { ok: true, stopped: true }
 }
 
 // ---------- worker 方法 ----------
@@ -635,7 +681,7 @@ async function handleRequest(method, params) {
       }
     }
     case 'worker.start_generation': {
-      if (state.runtime) await stopRuntime()
+      if (state.runtime || state.runtimeStopPromise) await stopRuntime()
       state.generation = params.generation || state.generation + 1
       state.provider = params.provider
       state.model = params.model
@@ -686,7 +732,7 @@ async function handleRequest(method, params) {
     case 'worker.run':
       return startRun(params)
     case 'worker.cancel_active':
-      return cancelActiveRun()
+      return await cancelActiveRun(params)
     case 'worker.observe_web_session':
       return await observeNativeWebSession(params.sessionId, {
         refresh: params.refresh === true,

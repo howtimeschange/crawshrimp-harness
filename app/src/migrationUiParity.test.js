@@ -9,6 +9,7 @@ const source = readFileSync(resolve(root, 'crawshrimp-slots/lib/client.js'), 'ut
 function element(tag) {
   return { tag, dataset: {}, children: [], listeners: {},
     appendChild(child) { this.children.push(child) },
+    querySelectorAll() { return [] },
     addEventListener(type, listener) { this.listeners[type] = listener },
   }
 }
@@ -18,10 +19,11 @@ for (const columnClass of ['EvIC1a_column', 'Md3f7G_column']) {
     const upstream = readFileSync(resolve(root, 'node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js'), 'utf8')
     assert.ok(upstream.includes('"column": "EvIC1a_column"'))
     const column = element('div')
-    const scroll = { scrollHeight: 900, scrollTop: 0 }
+    const scroll = { scrollHeight: 900, scrollTop: 0, clientHeight: 900 }
     const messages = []
     const timers = []
     const sandbox = {
+      MutationObserver: class { observe() {} disconnect() {} },
       document: {
         createElement: element,
         querySelector: (selector) => selector === `.${columnClass}` ? column : selector === '.wSkVaW_scrollBody' ? scroll : null,

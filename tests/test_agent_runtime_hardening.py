@@ -310,11 +310,11 @@ def test_runtime_crash_interrupts_shadow_runs_and_releases_all_context(tmp_path,
         assert db.get_turn(run["turn_id"])["status"] == "interrupted"
         assert db.get_session(run["session_id"])["status"] == "idle"
 
-        service.start_generation = AsyncMock(return_value=True)
+        service._start_generation_unlocked = AsyncMock(return_value=True)
         assert await service.restart_runtime() == {
             "ok": True, "state": "crashed", "error": "DSH runtime exited",
         }
-        service.start_generation.assert_awaited_once_with()
+        service._start_generation_unlocked.assert_awaited_once_with()
 
     asyncio.run(scenario())
 
@@ -1006,7 +1006,10 @@ def _run_item() -> dict:
     }
 
 
-def test_completed_run_broadcasts_artifacts():
+def test_completed_run_broadcasts_artifacts(monkeypatch, tmp_path):
+    agent_db = _init_temp_agent_db(monkeypatch, tmp_path)
+    data_sink.init_db()
+    agent_db.create_session("session-1", "runtime-session-1")
     async def scenario():
         service = AgentService()
         service.worker = SimpleNamespace(request=AsyncMock(return_value={
@@ -1031,7 +1034,10 @@ def test_completed_run_broadcasts_artifacts():
     asyncio.run(scenario())
 
 
-def test_run_failure_before_status_assignment_keeps_original_error():
+def test_run_failure_before_status_assignment_keeps_original_error(monkeypatch, tmp_path):
+    agent_db = _init_temp_agent_db(monkeypatch, tmp_path)
+    data_sink.init_db()
+    agent_db.create_session("session-1", "runtime-session-1")
     async def scenario():
         service = AgentService()
         service.worker = SimpleNamespace(request=AsyncMock(side_effect=RuntimeError("worker exploded")))
@@ -1055,7 +1061,7 @@ def test_run_failure_before_status_assignment_keeps_original_error():
 def test_automation_execution_timeout_cancels_the_worker_and_projects_a_timeout():
     async def scenario():
         service = AgentService()
-        service.worker = SimpleNamespace(request=AsyncMock(side_effect=[asyncio.TimeoutError(), {"ok": True}]))
+        service.worker = SimpleNamespace(request=AsyncMock(side_effect=[asyncio.TimeoutError(), {"ok": True, "canceled": True}]))
         service._ensure_generation = AsyncMock(return_value=True)
         service._grant_for_run = lambda _item: None
         service._runtime_session_id = lambda _session_id: "dsh-session-1"
@@ -1130,7 +1136,10 @@ def test_automation_timeout_stop_path_stops_linked_task_instances(monkeypatch, t
     assert controlled == [("task-instance-1", "stop")]
 
 
-def test_generation_model_configuration_error_does_not_consume_crash_budget():
+def test_generation_model_configuration_error_does_not_consume_crash_budget(monkeypatch, tmp_path):
+    agent_db = _init_temp_agent_db(monkeypatch, tmp_path)
+    data_sink.init_db()
+    agent_db.create_session("session-1", "runtime-session-1")
     async def scenario():
         service = AgentService()
         service._ensure_generation = AsyncMock(return_value=False)

@@ -26,7 +26,9 @@ for (const target of targets) {
   const result = spawnSync(process.execPath, [stageScript, '--target', target], {
     cwd: resolve(here, '../../..'),
     stdio: 'inherit',
-    shell: process.platform === 'win32',
+    // node.exe accepts an argument vector directly, including paths with
+    // spaces. Passing it through cmd.exe loses those argument boundaries.
+    shell: false,
   })
   if (result.error) {
     console.error(`[stage-runtime-targets] ${target} failed: ${result.error.message}`)

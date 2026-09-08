@@ -137,9 +137,33 @@ export function redactWebDiagnostic(value) {
   })
 }
 
-function childExit(child) {
-  if (child.exitCode !== null) return Promise.resolve()
-  return new Promise((resolveExit) => child.once('exit', resolveExit))
+function childHasExited(child) {
+  return child.exitCode != null || child.signalCode != null || !child.pid
+}
+
+function waitForChildExit(child, timeoutMs) {
+  if (childHasExited(child)) return Promise.resolve(true)
+  return new Promise((resolveExit) => {
+    const finish = (exited) => {
+      clearTimeout(timer)
+      child.removeListener('exit', onExit)
+      resolveExit(exited)
+    }
+    const onExit = () => finish(true)
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    child.once('exit', onExit)
+    if (childHasExited(child)) finish(true)
+  })
+}
+
+async function stopChild(child, graceMs = 3000) {
+  if (childHasExited(child)) return
+  child.kill('SIGTERM')
+  if (await waitForChildExit(child, graceMs)) return
+  child.kill('SIGKILL')
+  if (!await waitForChildExit(child, graceMs)) {
+    throw new Error('DSH Web process did not exit after forced shutdown')
+  }
 }
 
 function rpcFailure(method, body) {
@@ -231,35 +255,36 @@ export class DshWebRuntime {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let output = ''
-    const launchUrl = await new Promise((resolveReady, rejectReady) => {
-      let settled = false
-      const fail = (error) => {
-        if (settled) return
-        settled = true
-        clearTimeout(timer)
-        rejectReady(error)
-      }
-      const timer = setTimeout(() => {
-        fail(new Error('DSH Web startup timed out: ' + redactWebDiagnostic(output).slice(-4000)))
-      }, timeoutMs)
-      const append = (chunk) => {
-        output = (output + String(chunk)).slice(-20000)
-        const match = /dsh web: (http:\/\/[^\s]+)/u.exec(output)
-        if (!match || settled) return
-        settled = true
-        clearTimeout(timer)
-        resolveReady(match[1])
-      }
-      child.stdout.on('data', append)
-      child.stderr.on('data', append)
-      child.once('error', fail)
-      child.once('exit', (code, signal) => {
-        fail(new Error('DSH Web exited before ready: ' + String(code) + '/' + String(signal) + '\n' + redactWebDiagnostic(output).slice(-4000)))
-      })
-    })
-
+    const bootSignal = AbortSignal.timeout(timeoutMs)
     try {
-      const exchange = await fetch(launchUrl, { redirect: 'manual' })
+      const launchUrl = await new Promise((resolveReady, rejectReady) => {
+        let settled = false
+        const fail = (error) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          rejectReady(error)
+        }
+        const timer = setTimeout(() => {
+          fail(new Error('DSH Web startup timed out: ' + redactWebDiagnostic(output).slice(-4000)))
+        }, timeoutMs)
+        const append = (chunk) => {
+          output = (output + String(chunk)).slice(-20000)
+          const match = /dsh web: (http:\/\/[^\s]+)/u.exec(output)
+          if (!match || settled) return
+          settled = true
+          clearTimeout(timer)
+          resolveReady(match[1])
+        }
+        child.stdout.on('data', append)
+        child.stderr.on('data', append)
+        child.once('error', fail)
+        child.once('exit', (code, signal) => {
+          fail(new Error('DSH Web exited before ready: ' + String(code) + '/' + String(signal) + '\n' + redactWebDiagnostic(output).slice(-4000)))
+        })
+      })
+
+      const exchange = await fetch(launchUrl, { redirect: 'manual', signal: bootSignal })
       const cookie = exchange.headers.get('set-cookie')?.split(';', 1)[0]
       if (exchange.status !== 303 || !cookie) {
         throw new Error('DSH Web launch token did not exchange for a browser cookie')
@@ -274,8 +299,7 @@ export class DshWebRuntime {
       runtime.#output = output
       return runtime
     } catch (error) {
-      if (child.exitCode === null) child.kill('SIGTERM')
-      await childExit(child)
+      await stopChild(child)
       throw error
     }
   }
@@ -366,7 +390,7 @@ export class DshWebRuntime {
   }
 
   cancel(sessionId) {
-    return this.request('session/cancel', { request: { sessionId } })
+    return this.request('session/cancel', { request: { sessionId } }, AbortSignal.timeout(5000))
   }
 
   /**
@@ -532,15 +556,6 @@ export class DshWebRuntime {
   }
 
   async stop({ graceMs = 3000 } = {}) {
-    if (this.#child.exitCode !== null) return
-    this.#child.kill('SIGTERM')
-    const exited = await Promise.race([
-      childExit(this.#child).then(() => true),
-      new Promise((resolveStop) => setTimeout(() => resolveStop(false), graceMs)),
-    ])
-    if (!exited && this.#child.exitCode === null) {
-      this.#child.kill('SIGKILL')
-      await childExit(this.#child)
-    }
+    await stopChild(this.#child, graceMs)
   }
 }
