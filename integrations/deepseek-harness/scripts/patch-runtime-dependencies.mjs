@@ -1990,11 +1990,48 @@ function patchDeepSeekVisionAdmission(root, visionBridge) {
 }
 
 /**
- * The Web profile retains the upstream package for dependency-closure
- * compatibility, and an old/custom preset can still mount it. Disable the
- * package at its registration boundary so neither prompt guidance nor
- * web_search/web_fetch enter a Crawshrimp Session header.
+ * Keep the upstream clock payload/projection while refreshing once per input
+ * instead of once per model step. Applied to both source and staged runtimes.
  */
+export function patchTimeContextSource(source) {
+  const marker = 'crawshrimp-time-context-per-message-v1'
+  if (source.includes(marker)) return source
+  return replaceRequired(
+    source,
+    '\t\tconst now = Date.now();\n\t\tconst state = ctx.sessionProjections.stateOf(agent.session, "timeContext");',
+    `\t\t// ${marker}: refresh on input, never on tool-only continuation.
+\t\tconst state = ctx.sessionProjections.stateOf(agent.session, "timeContext");
+\t\tlet hasNewUserMessage = decision.messages.some((message) => message.source.kind === "user");
+\t\t// Read durable event order, not wall-clock timestamps or process-local state:
+\t\t// this also handles restored sessions and input entered before preparation.
+\t\tif (!hasNewUserMessage && state.lastTurnInjectionTime !== null) {
+\t\t\tfor (let seq = agent.session.seq - 1; seq >= 0; seq -= 1) {
+\t\t\t\tconst event = agent.session.eventAt(SessionSeq(seq));
+\t\t\t\tif (event?.type === "turn/start") break;
+\t\t\t\tif (event?.type !== "user/message") continue;
+\t\t\t\tif (event.data.source.kind === "plugin" && event.data.source.plugin === "time-context") break;
+\t\t\t\tif (event.data.source.kind === "user") {
+\t\t\t\t\thasNewUserMessage = true;
+\t\t\t\t\tbreak;
+\t\t\t\t}
+\t\t\t}
+\t\t}
+\t\t// Preserve one initial reading for scheduled/other noninteractive turns too.
+\t\tif (!hasNewUserMessage && (state.lastTurnInjectionTime !== null || decision.messages.length === 0)) return decision;
+\t\tconst now = Date.now();`,
+    'time-context pre-step clock sampling',
+  )
+}
+
+export function patchTimeContext(root) {
+  const entry = requireFile(root, 'node_modules/@deepseek-ai/dsh-time-context/lib/index.js')
+  const source = readFileSync(entry, 'utf8')
+  const patched = patchTimeContextSource(source)
+  if (patched !== source) writeFileSync(entry, patched, 'utf8')
+  return { entry, patched: patched !== source }
+}
+
+/** Disable native Web registration even when an old/custom preset mounts it. */
 function patchNativeWebToolRegistration(root) {
   const entry = requireFile(root, 'node_modules/@deepseek-ai/dsh-tool-web/lib/index.js')
   let source = readFileSync(entry, 'utf8')
@@ -2131,6 +2168,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const dshLlMPiAi = requireText(root, 'node_modules/@deepseek-ai/dsh-llm-pi-ai/package.json', '"0.1.2-rc.1"')
   const dshToolWeb = requireText(root, 'node_modules/@deepseek-ai/dsh-tool-web/package.json', '"0.1.2-rc.1"')
   const dshTimeContext = requireText(root, 'node_modules/@deepseek-ai/dsh-time-context/package.json', '"0.1.2-rc.1"')
+  const timeContext = patchTimeContext(root)
   const dshSchedule = requireText(root, 'node_modules/@deepseek-ai/dsh-schedule/package.json', '"0.1.2-rc.1"')
   const dshImManifest = requireText(root, 'node_modules/@xmanrui/dsh-im/package.json', '"4.11.0"')
   const dshImEntry = requireFile(root, 'node_modules/@xmanrui/dsh-im/lib/index.js')
@@ -2179,6 +2217,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
     dshLlMPiAi,
     dshToolWeb,
     dshTimeContext,
+    timeContext,
     dshSchedule,
     dshImManifest,
     dshImEntry,
