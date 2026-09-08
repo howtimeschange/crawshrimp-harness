@@ -7,8 +7,10 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from core import data_sink, runtime_paths
+from core import scheduler as sched_module
 from core.agent import db, mcp_gateway
 from core.agent.service import AgentService
+from core.automation_controller import AutomationController
 
 
 def _seed_agent_db(monkeypatch, tmp_path):
@@ -159,7 +161,7 @@ def test_automation_tool_registry_exposes_management_surface():
         "automation_list", "automation_get", "automation_create", "automation_update",
         "automation_current_time",
         "automation_pause", "automation_resume", "automation_archive", "automation_run_now",
-        "automation_runs", "automation_program_test", "automation_record_observation",
+        "automation_runs", "automation_wait_run", "automation_state_get", "automation_program_test", "automation_record_observation",
         "automation_record_verification",
     }
     assert expected.issubset(set(mcp_gateway.EXPECTED_TOOLS))
@@ -175,11 +177,17 @@ def test_automation_create_contract_guides_a_real_chinese_reminder_without_schem
     assert "今天/明天/几点" in description
     assert "automation_kind=\"scheduled\"" in description
     assert '"kind":"at"' in description
+    assert '"kind":"every"' in description
+    assert '"interval_seconds":3600' in description
+    assert "每小时同步" in description
+    assert "无需 Program" in description
     assert "Asia/Shanghai" in description
     assert "context_mode=\"isolated\"" in description
     assert "automation_record_verification" in description
     assert "fs_read、fs_list、fs_exec、browser_*、script_* 或 repo_*" in description
     assert "本地自动化验收提醒" in description
+    assert "automation_wait_run" in description
+    assert "last_snapshot" in description
 
 
 def test_automation_current_time_is_live_and_explicitly_zoned():
@@ -189,6 +197,31 @@ def test_automation_current_time_is_live_and_explicitly_zoned():
     assert result["data"]["timezone"] == "Asia/Shanghai"
     now = datetime.fromisoformat(result["data"]["now"])
     assert now.utcoffset() == ZoneInfo("Asia/Shanghai").utcoffset(now)
+
+
+def test_automation_wait_run_returns_an_already_completed_run(monkeypatch, tmp_path):
+    _seed_agent_db(monkeypatch, tmp_path)
+    controller = AutomationController(None, sched_module)
+    automation = controller.create({
+        "title": "已完成的周期同步",
+        "objective_prompt": "只回传完成摘要",
+        "automation_kind": "scheduled",
+        "context_mode": "isolated",
+        "schedule": {"kind": "every", "interval_seconds": 3600, "timezone": "Asia/Shanghai"},
+        "execution_policy": {"toolset": ["automation_record_verification"]},
+    })
+    run = data_sink.create_agent_automation_run(
+        automation["automation_uid"], "manual", "manual:completed", status="completed",
+    )
+    previous = mcp_gateway.ctx.automation_controller
+    mcp_gateway.set_automation_controller(controller)
+    try:
+        result = asyncio.run(mcp_gateway.tool_automation_wait_run(run["run_uid"], timeout_seconds=1))
+    finally:
+        mcp_gateway.set_automation_controller(previous)
+
+    assert result["ok"] is True
+    assert result["data"]["status"] == "completed"
 
 
 def test_automation_policy_uses_its_exact_toolset_and_explicit_risk_for_unattended_approval():

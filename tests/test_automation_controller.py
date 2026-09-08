@@ -182,6 +182,50 @@ def test_loop_rearms_only_after_verified_checkpoint(monkeypatch, tmp_path):
     assert data_sink.get_agent_automation(automation["automation_uid"])["next_run_at"]
 
 
+def test_explicit_initial_loop_run_counts_toward_the_max_cycle_limit(monkeypatch, tmp_path):
+    controller, automation = _controller_with_loop(monkeypatch, tmp_path)
+    automation = data_sink.update_agent_automation(
+        automation["automation_uid"],
+        loop_policy={"cycle_interval_seconds": 60, "max_cycles": 24, "failure_threshold": 3},
+    )
+
+    initial = _run(controller.run_now(
+        automation["automation_uid"],
+        request_uid="立即首跑",
+        count_toward_max_cycles=True,
+    ))
+
+    assert initial["cycle_seq"] == 1
+    assert data_sink.get_agent_automation(automation["automation_uid"])["cycle_seq"] == 1
+
+
+def test_direct_periodic_sync_persists_a_compact_snapshot_without_a_program(monkeypatch, tmp_path):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    controller = AutomationController(None, sched_module)
+    automation = controller.create({
+        "title": "BPM 每小时同步",
+        "objective_prompt": "汇总首页并回传摘要",
+        "automation_kind": "scheduled",
+        "context_mode": "isolated",
+        "schedule": {"kind": "every", "interval_seconds": 3600, "timezone": "Asia/Shanghai"},
+        "execution_policy": {"toolset": ["automation_record_verification"]},
+    })
+    run = data_sink.create_agent_automation_run(
+        automation["automation_uid"], "manual", "manual:first-sync", status="running",
+    )
+
+    completed = _run(controller.record_verification(run["run_uid"], {
+        "verified": True,
+        "user_message": "本轮同步完成",
+        "state": {"last_snapshot": {"todo_count": 16, "notice_ids": ["notice-1"]}},
+    }))
+
+    assert completed["status"] == "completed"
+    assert data_sink.get_agent_automation(automation["automation_uid"])["checkpoint"] == {
+        "last_snapshot": {"todo_count": 16, "notice_ids": ["notice-1"]},
+    }
+
+
 def test_restore_marks_overdue_schedule_missed_without_running_executor(monkeypatch, tmp_path):
     controller, automation = _controller_with_overdue_schedule(monkeypatch, tmp_path)
 

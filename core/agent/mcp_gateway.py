@@ -343,7 +343,12 @@ def automation_create_tool_description(now: Optional[datetime] = None) -> str:
 调用参数只有 values 对象。所有自动化至少填写：
 - title：用户可见标题；objective_prompt：到点后智能体要做什么；automation_kind：scheduled 或 loop；context_mode：isolated 或 inherited；execution_policy：本次运行允许的工具集和限制。
 - 一次性定时（例如“今晚 22:47 提醒我”）：automation_kind="scheduled"；schedule={{"kind":"at","value":"未来 ISO-8601 时间","timezone":"Asia/Shanghai"}}；context_mode="isolated"；enabled=true。此场景不需要 Program。
-- 周期性条件闭环：automation_kind="loop"；loop_policy 包含 cycle_interval_seconds/max_cycles/failure_threshold；必须携带受限 program。先用 automation_program_test 对代表性 facts/checkpoint 校验条件和 checkpoint，再把该工具返回的 program_test_proof 原样放进 values；没有这份短时证明不能保存或启用 Program。
+- 固定周期任务（例如“每小时同步”“每天汇总”）：automation_kind="scheduled"；schedule={{"kind":"every","interval_seconds":3600,"timezone":"Asia/Shanghai"}}（每天填 86400）。这是默认快路径，无需 Program、无需 automation_program_test；持续执行直到用户暂停。
+- 周期性条件闭环（例如“连续三次低库存才处理”）：才使用 automation_kind="loop"；loop_policy 包含 cycle_interval_seconds/max_cycles/failure_threshold；必须携带受限 program。先用 automation_program_test 对代表性 facts/checkpoint 校验条件和 checkpoint，再把该工具返回的 program_test_proof 原样放进 values；没有这份短时证明不能保存或启用 Program。
+
+对于固定周期同步：如用户给了已授权页面，最多先 browser_observe 一次以识别页面；只有同步对象确实不明确时才问一个合并式问题。默认将中文摘要通过 automation_record_verification 发回创建对话，不创建 archive.md、不读写历史文件、不调用 skill_list 或扫描源码。默认策略只授予完成目标必需的浏览器只读工具和 automation_record_verification；不要默认授予 fs_write 或 browser_act。若用户明确要求“新增对比”，才授予 automation_state_get：先读取小型 last_snapshot，再在 automation_record_verification 的 result.state 中写回新的 last_snapshot（最大 16 KiB）；不要读取或整体重写历史归档。若用户明确要求保存归档或展开页面，再单独申请所需权限；回执必须如实说明是否写入了文件。
+
+创建成功后立即向用户确认标题、周期、时区和最小权限；除非用户明确要求“立即运行”或“验收首轮”，不要调用 automation_run_now、不要等待。若用户要求首轮计入 loop 的 max_cycles，调用 automation_run_now 时传 count_toward_max_cycles=true；若用户明确要求等待验收，使用 automation_wait_run（最多 60 秒），不要用固定 sleep。
 
 若某项 MCP 工具在普通对话中原本需要确认，execution_policy 除 toolset 外还必须显式填写 allowed_risks（仅可为 read_only、local_write、external_write、destructive）。两者缺一不可：toolset 限定具体工具，allowed_risks 限定这次允许无人值守的风险类型。不要为普通提醒填写风险授权。
 
@@ -406,12 +411,20 @@ async def tool_automation_archive(automation_uid: str) -> dict:
         return _failed("AUTOMATION_NOT_FOUND", str(exc))
 
 
-async def tool_automation_run_now(automation_uid: str, request_uid: str = "") -> dict:
+async def tool_automation_run_now(
+    automation_uid: str,
+    request_uid: str = "",
+    count_toward_max_cycles: bool = False,
+) -> dict:
     controller, error = _automation_controller_or_error()
     if error:
         return error
     try:
-        return _ok(await controller.run_now(automation_uid, request_uid=request_uid))
+        return _ok(await controller.run_now(
+            automation_uid,
+            request_uid=request_uid,
+            count_toward_max_cycles=count_toward_max_cycles,
+        ))
     except ValueError as exc:
         return _failed("AUTOMATION_INVALID", str(exc))
 
@@ -424,6 +437,28 @@ def tool_automation_runs(automation_uid: str, limit: int = 50) -> dict:
         return _ok(controller.runs(automation_uid, limit=limit))
     except ValueError as exc:
         return _failed("AUTOMATION_NOT_FOUND", str(exc))
+
+
+async def tool_automation_wait_run(run_uid: str, timeout_seconds: int = 30) -> dict:
+    """Wait only when the user explicitly asks to verify an immediate run."""
+    controller, error = _automation_controller_or_error()
+    if error:
+        return error
+    try:
+        return _ok(await controller.wait_for_run(run_uid, timeout_seconds=timeout_seconds))
+    except ValueError as exc:
+        return _failed("AUTOMATION_INVALID", str(exc))
+
+
+def tool_automation_state_get() -> dict:
+    """Read the compact persisted state for the current Automation Run."""
+    controller, automation_run, error = _automation_run_guard()
+    if error:
+        return error
+    try:
+        return _ok(controller.state_for_run(automation_run["run_uid"]))
+    except ValueError as exc:
+        return _failed("AUTOMATION_INVALID", str(exc))
 
 
 def tool_automation_program_test(program: dict, facts: dict, checkpoint: dict | None = None) -> dict:
@@ -2643,7 +2678,7 @@ EXPECTED_TOOLS = [
     "automation_list", "automation_get", "automation_create", "automation_update",
     "automation_current_time",
     "automation_pause", "automation_resume", "automation_archive", "automation_run_now",
-    "automation_runs", "automation_program_test", "automation_record_observation",
+    "automation_runs", "automation_wait_run", "automation_state_get", "automation_program_test", "automation_record_observation",
     "automation_record_verification",
 ]
 
@@ -2793,8 +2828,10 @@ def create_agent_mcp_server() -> MCPServer:
     mcp.add_tool(tool_automation_pause, name="automation_pause", description="暂停一个 Automation 并取消未开始的唤醒")
     mcp.add_tool(tool_automation_resume, name="automation_resume", description="恢复一个暂停的 Automation")
     mcp.add_tool(tool_automation_archive, name="automation_archive", description="归档 Automation，保留运行历史")
-    mcp.add_tool(tool_automation_run_now, name="automation_run_now", description="立即运行一次 Automation")
+    mcp.add_tool(tool_automation_run_now, name="automation_run_now", description="仅在用户明确要求时立即运行一次 Automation；loop 的首轮若计入 max_cycles，传 count_toward_max_cycles=true")
     mcp.add_tool(tool_automation_runs, name="automation_runs", description="列出 Automation 的持久化运行记录与证据")
+    mcp.add_tool(tool_automation_wait_run, name="automation_wait_run", description="仅在用户明确要求验收首轮时，等待一个 Automation Run 完成；最长 60 秒，不创建新运行")
+    mcp.add_tool(tool_automation_state_get, name="automation_state_get", description="读取当前 Automation Run 的小型持久化状态；仅用于用户明确要求的增量对比")
     mcp.add_tool(tool_automation_program_test, name="automation_program_test", description="在纯 facts/checkpoint 上测试受限条件 Program")
     mcp.add_tool(tool_automation_record_observation, name="automation_record_observation", description="仅当前关联 Automation Agent Run 可提交 JSON facts")
     mcp.add_tool(

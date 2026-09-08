@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import inspect
+import json
 import logging
 import math
 import uuid
@@ -686,6 +687,35 @@ class AutomationController:
         self._automation_or_raise(automation_uid)
         return data_sink.list_agent_automation_runs(automation_uid, limit)
 
+    async def wait_for_run(self, run_uid: str, *, timeout_seconds: int = 30) -> dict:
+        """Wait briefly for one persisted run without creating another Agent Turn."""
+        timeout = _strict_integer(
+            timeout_seconds,
+            field_name="timeout_seconds",
+            minimum=1,
+            maximum=60,
+        )
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            run = data_sink.get_agent_automation_run(str(run_uid or "").strip())
+            if not run:
+                raise ValueError(f"Automation run not found: {run_uid}")
+            if str(run.get("status") or "") in TERMINAL_RUN_STATUSES:
+                return run
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return {**run, "wait_timed_out": True}
+            await asyncio.sleep(min(1.0, remaining))
+
+    def state_for_run(self, run_uid: str) -> dict:
+        """Return the compact persistent state available to the current run."""
+        run = data_sink.get_agent_automation_run(str(run_uid or "").strip())
+        if not run:
+            raise ValueError(f"Automation run not found: {run_uid}")
+        automation = self._automation_or_raise(str(run.get("automation_uid") or ""))
+        checkpoint = automation.get("checkpoint")
+        return dict(checkpoint) if isinstance(checkpoint, Mapping) else {}
+
     def reconcile_interrupted_agent_runs(self) -> int:
         """Release Automation Runs whose Agent turns were interrupted on boot.
 
@@ -1068,6 +1098,8 @@ class AutomationController:
         trigger_kind: str,
         trigger_uid: str,
         trigger_at: str,
+        *,
+        count_toward_max_cycles: bool = False,
     ) -> dict:
         uid = str(automation_uid or "").strip()
         automation = self._automation_or_raise(uid)
@@ -1095,7 +1127,7 @@ class AutomationController:
                     error_message="Another Automation run is active",
                     finished_at=_iso_now(),
                 )
-            if trigger_kind == "loop":
+            if trigger_kind == "loop" or count_toward_max_cycles:
                 next_sequence = int(automation.get("cycle_seq") or 0) + 1
                 data_sink.update_agent_automation(uid, cycle_seq=next_sequence)
                 run = data_sink.update_agent_automation_run(run["run_uid"], cycle_seq=next_sequence)
@@ -1107,10 +1139,13 @@ class AutomationController:
         *,
         request_uid: str = "",
         trigger_uid: str = "",
+        count_toward_max_cycles: bool = False,
     ) -> dict:
         automation = self._automation_or_raise(automation_uid)
         if int(automation.get("archived") or 0) == 1:
             raise ValueError("Automation is archived")
+        if count_toward_max_cycles and _kind(automation) != "loop":
+            raise ValueError("count_toward_max_cycles is only valid for loop Automations")
         request = str(trigger_uid or request_uid or "").strip() or uuid.uuid4().hex
         if not request.startswith("manual:"):
             request = f"manual:{request}"
@@ -1119,6 +1154,7 @@ class AutomationController:
             "manual",
             request,
             _iso_now(),
+            count_toward_max_cycles=count_toward_max_cycles,
         )
 
     async def _start_run(self, run: Mapping[str, Any]) -> dict:
@@ -1625,10 +1661,43 @@ class AutomationController:
                 "Verification must contain the boolean field verified=true",
             )
         automation = self._automation_or_raise(str(run.get("automation_uid") or ""))
+        execution_automation = self._definition_for_run(automation, run)
+        state_value = result.get("state")
+        if state_value is not None:
+            if _kind(execution_automation) == "loop":
+                return self.mark_needs_review(
+                    run_uid,
+                    "STATE_NOT_SUPPORTED_FOR_LOOP",
+                    "Loop Automations must use their Program checkpoint instead of result.state",
+                )
+            if not isinstance(state_value, Mapping):
+                return self.mark_needs_review(
+                    run_uid,
+                    "STATE_INVALID",
+                    "Verification result.state must be a JSON object",
+                )
+            try:
+                state_size = len(json.dumps(state_value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+            except (TypeError, ValueError):
+                return self.mark_needs_review(
+                    run_uid,
+                    "STATE_INVALID",
+                    "Verification result.state must be JSON-serializable",
+                )
+            if state_size > 16 * 1024:
+                return self.mark_needs_review(
+                    run_uid,
+                    "STATE_TOO_LARGE",
+                    "Verification result.state must be at most 16 KiB",
+                )
         self._record_result_resource_links(run_uid, result)
         summary = run.get("result_summary") if isinstance(run.get("result_summary"), Mapping) else {}
         summary = {**summary, "verification": copy.deepcopy(dict(result))}
-        candidate = run.get("checkpoint_after") if isinstance(run.get("checkpoint_after"), Mapping) else {}
+        candidate = (
+            dict(state_value)
+            if isinstance(state_value, Mapping)
+            else run.get("checkpoint_after") if isinstance(run.get("checkpoint_after"), Mapping) else {}
+        )
         data_sink.update_agent_automation_run(
             run_uid,
             status="completed",
@@ -1644,7 +1713,6 @@ class AutomationController:
             # old schedule must not reset lifecycle state, re-arm work, or
             # commit a checkpoint into a replacement definition.
             return data_sink.get_agent_automation_run(run_uid)
-        execution_automation = self._definition_for_run(automation, run)
         if (
             _kind(execution_automation) == "loop"
             and self._run_schedule_is_current(automation, run)
@@ -1691,7 +1759,9 @@ class AutomationController:
                 "last_error": "",
                 "loop_policy": {**policy, "failure_count": 0},
             }
-            if self._program_for_run(automation, run) and self._run_program_is_current(automation, run):
+            if isinstance(state_value, Mapping) or (
+                self._program_for_run(automation, run) and self._run_program_is_current(automation, run)
+            ):
                 updates["checkpoint"] = dict(candidate)
             if (
                 self._run_schedule_is_current(automation, run)
