@@ -434,6 +434,10 @@ window.__ModuleLoader__.load({
       '@keyframes cs-running-status-shimmer { to { background-position: 0 0; } }',
       '@media (prefers-reduced-motion: reduce) { [data-cs-running-status="1"]::before { background-position: 0 0; background-size: 100% 100%; animation: none; } }',
       // 5) 新会话空状态 hero:去 DeepSeek 鱼 logo 与文案,替换为抓虾
+      // rc.1 移除了 HeroGlow；保留旧版椭圆、8% 蓝灰色和 50px 模糊参数。
+      // 装饰层随新会话 composer 挂载，不接收点击；旧版已有光晕时不重复叠加。
+      '.wSkVaW_composerHero { position: relative; }',
+      '.wSkVaW_composerHero:not(:has(> .wSkVaW_heroGlow))::before { content: ""; position: absolute; z-index: -1; pointer-events: none; width: 135.438%; aspect-ratio: 1051 / 468; bottom: 92px; left: 50%; transform: translate(-50%, 50%); background: url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 1051 468%27 fill=%27none%27%3E%3Cdefs%3E%3Cfilter id=%27glow%27 x=%270%27 y=%270%27 width=%271051%27 height=%27468%27 filterUnits=%27userSpaceOnUse%27 color-interpolation-filters=%27sRGB%27%3E%3CfeGaussianBlur stdDeviation=%2750%27/%3E%3C/filter%3E%3C/defs%3E%3Cellipse cx=%27525.5%27 cy=%27234%27 rx=%27425.5%27 ry=%27134%27 fill=%27%236187D8%27 fill-opacity=%270.08%27 filter=%27url(%23glow)%27/%3E%3C/svg%3E") center / contain no-repeat; }',
       'svg[viewBox="0 0 23.16 17.04"] { display: none !important; }',
       '.pXSMma_headlineText { display: inline-flex !important; align-items: baseline; justify-content: center; gap: 0; font-size: 0 !important; line-height: 1.3; white-space: nowrap; }',
       '.pXSMma_headlineText::before { content: "抓虾智能体"; font-size: 24px; font-weight: 750; color: var(--dsw-alias-label-primary); }',
