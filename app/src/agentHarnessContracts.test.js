@@ -907,7 +907,7 @@ test('DSH attachment bridge sends regular files to Crawshrimp and images into DS
   assert.match(slots, /\[role="tooltip"\]\[data-cs-suppressed-tooltip="1"\]/)
   assert.match(slots, /function suppressNativeCommandTooltips\(\)/)
   assert.match(slots, /function installNativeCommandTooltipSuppressor\(\)/)
-  assert.match(slots, /String\(tooltip\.textContent \|\| ''\)\.trim\(\) !== COMMAND_BUTTON_LABEL/)
+  assert.match(slots, /label !== COMMAND_BUTTON_LABEL && label !== '指令'/)
   assert.match(slots, /target\.closest\('\.uV2eYG_add\[data-cs-upload-button="1"\], \.uV2eYG_add\.cs-cmd-at-btn'\)/)
   assert.match(slots, /at\.dataset\.csCommandButton = ['"]1['"]/)
   assert.match(slots, /setComposerButtonTooltip\(at,\s*COMMAND_BUTTON_LABEL,\s*COMMAND_BUTTON_LABEL\)/)

@@ -1301,7 +1301,9 @@ window.__ModuleLoader__.load({
 
     function suppressNativeCommandTooltips() {
       for (const tooltip of document.querySelectorAll('[role="tooltip"]')) {
-        if (String(tooltip.textContent || '').trim() !== COMMAND_BUTTON_LABEL) continue
+        // DSH now calls the native command entry「指令」; older runtimes used「命令」.
+        const label = String(tooltip.textContent || '').trim()
+        if (label !== COMMAND_BUTTON_LABEL && label !== '指令') continue
         if (tooltip.dataset.csSuppressedTooltip !== '1') tooltip.dataset.csSuppressedTooltip = '1'
         if (tooltip.getAttribute('aria-hidden') !== 'true') tooltip.setAttribute('aria-hidden', 'true')
       }
