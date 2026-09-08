@@ -1,6 +1,6 @@
 import { Miniflare } from 'miniflare'
 
-export type D1MigrationTestDatabase = Pick<D1Database, 'exec' | 'prepare'> & {
+export type D1MigrationTestDatabase = Pick<D1Database, 'exec' | 'prepare' | 'batch'> & {
   dispose: () => Promise<void>
 }
 
@@ -21,6 +21,7 @@ export async function createD1MigrationTestDatabase(): Promise<D1MigrationTestDa
   return {
     exec: db.exec.bind(db),
     prepare: db.prepare.bind(db),
+    batch: db.batch.bind(db),
     dispose: () => miniflare.dispose(),
   }
 }

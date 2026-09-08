@@ -740,10 +740,14 @@ async function updateJobWithLease(request: Request, env: Env, status: DispatchSt
   if (activeJob?.cancel_requested && status !== 'cancelled') {
     return json({ error: 'job cancellation has been requested' }, { status: 409 })
   }
-  if (status === 'succeeded') {
-    if (activeJob?.job_type === 'submit_tmall_material_test') {
-      return completeSubmitJobWithLease(env, machine, activeJob, leaseId, body, result, eventType)
+  if (['succeeded', 'retryable_failed', 'terminal_failed', 'blocked_needs_login', 'cancelled'].includes(status)) {
+    const job = activeJob ?? await jobForLease(env, jobUid, leaseId, machine.machine_id)
+    if (!job) return forbidden('Stale lease')
+    const replay = !activeJob
+    if (replay && (job.status !== status || canonicalJson(fromJsonObject(job.result_json)) !== canonicalJson(result))) {
+      return forbidden('Stale lease or conflicting completion result')
     }
+    return finishJobWithLease(env, machine, job, leaseId, status, result, eventType, message, replay)
   }
   const allowedStatuses = status === 'cancelled'
     ? ['leased', 'running', 'uploading_results', 'cancel_requested']
@@ -761,17 +765,7 @@ async function updateJobWithLease(request: Request, env: Env, status: DispatchSt
     .bind(status, toJson(result), nowIso(), jobUid, leaseId, machine.machine_id, ...allowedStatuses, nowIso())
     .run()
   if (Number(update.meta.changes ?? 0) === 0) return forbidden('Stale lease')
-  if (['succeeded', 'retryable_failed', 'terminal_failed', 'blocked_needs_login', 'cancelled'].includes(status)) {
-    const nextHealth = status === 'blocked_needs_login' ? 'needs_login' : 'online_idle'
-    await env.DB.prepare('UPDATE task_machines SET current_job_id = NULL, health = ?, updated_at = ? WHERE machine_id = ?')
-      .bind(nextHealth, nowIso(), machine.machine_id)
-      .run()
-  } else {
-    await touchMachineRuntime(env, machine.machine_id, 'online_busy', jobUid)
-  }
-  if (activeJob?.job_type === 'generate_ai_image') {
-    await updateGenerationRequestStatus(env, jobUid, status)
-  }
+  await touchMachineRuntime(env, machine.machine_id, 'online_busy', jobUid)
   await recordJobEvent(env, jobUid, machine.machine_id, leaseId, eventType, message, { status, result })
   const nextJob = await jobForLease(env, jobUid, leaseId, machine.machine_id)
   return json({ ok: true, status, cancel_requested: Boolean(nextJob?.cancel_requested) })
@@ -824,94 +818,103 @@ async function jobForLease(env: Env, jobUid: string, leaseId: string, machineId:
     .first<DispatchJobRow>()
 }
 
-async function completeSubmitJobWithLease(
-  env: Env,
-  machine: MachineRow,
-  job: DispatchJobRow,
-  leaseId: string,
-  body: Record<string, unknown>,
-  result: Record<string, unknown>,
-  eventType: string,
-): Promise<Response> {
-  const stagedAt = nowIso()
-  const staged = await env.DB.prepare(
-    `UPDATE dispatch_jobs
-     SET status = ?, result_json = ?, updated_at = ?
-     WHERE job_uid = ?
-       AND lease_id = ?
-       AND assigned_machine_id = ?
-       AND status IN ('leased', 'running', 'uploading_results')
-       AND lease_expires_at > ?`,
-  )
-    .bind('uploading_results', toJson(result), stagedAt, job.job_uid, leaseId, machine.machine_id, stagedAt)
-    .run()
-  if (Number(staged.meta.changes ?? 0) === 0) return forbidden('Stale lease')
-
-  await persistSubmitCompletion(env, { ...job, status: 'uploading_results', result_json: toJson(result), updated_at: stagedAt }, result)
-
-  const finishedStatus: DispatchStatus = 'succeeded'
-  const finishedAt = nowIso()
-  const finished = await env.DB.prepare(
-    `UPDATE dispatch_jobs
-     SET status = ?, result_json = ?, updated_at = ?
-     WHERE job_uid = ?
-       AND lease_id = ?
-       AND assigned_machine_id = ?
-       AND status = 'uploading_results'
-       AND lease_expires_at > ?`,
-  )
-    .bind(finishedStatus, toJson(result), finishedAt, job.job_uid, leaseId, machine.machine_id, finishedAt)
-    .run()
-  if (Number(finished.meta.changes ?? 0) === 0) return forbidden('Stale lease')
-
-  await env.DB.prepare('UPDATE task_machines SET current_job_id = NULL, health = ?, updated_at = ? WHERE machine_id = ?')
-    .bind('online_idle', nowIso(), machine.machine_id)
-    .run()
-  await recordJobEvent(env, job.job_uid, machine.machine_id, leaseId, eventType, redactSensitiveText(body.message), { status: finishedStatus, result })
-  return json({ ok: true, status: finishedStatus })
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(',')}}`
+  }
+  return JSON.stringify(value)
 }
 
-async function persistSubmitCompletion(env: Env, job: DispatchJobRow, result: Record<string, unknown>): Promise<void> {
+type GuardedStatement = (sql: string, params: unknown[]) => D1PreparedStatement
+
+async function finishJobWithLease(
+  env: Env, machine: MachineRow, job: DispatchJobRow, leaseId: string,
+  status: DispatchStatus, result: Record<string, unknown>, eventType: string,
+  message: string, replay: boolean,
+): Promise<Response> {
+  const now = nowIso()
+  const allowedStatuses = status === 'cancelled'
+    ? ['leased', 'running', 'uploading_results', 'cancel_requested']
+    : ['leased', 'running', 'uploading_results']
+  // All projections are guarded by the same lease, and run BEFORE the final
+  // state transition inside one D1 transaction. A concurrent cancellation or
+  // lease replacement therefore makes the entire batch a no-op.
+  const condition = replay
+    ? 'status = ? AND result_json = ?'
+    : `status IN (${allowedStatuses.map(() => '?').join(', ')}) AND ${status === 'cancelled' ? '1=1' : 'cancel_requested != 1'} AND lease_expires_at > ?`
+  const guardParams = [job.job_uid, leaseId, machine.machine_id,
+    ...(replay ? [status, job.result_json] : [...allowedStatuses, now])]
+  const guard = `EXISTS (SELECT 1 FROM dispatch_jobs WHERE job_uid = ? AND lease_id = ? AND assigned_machine_id = ? AND ${condition})`
+  const guarded: GuardedStatement = (sql, params) => env.DB.prepare(`${sql} AND ${guard}`).bind(...params, ...guardParams)
+  const statements: D1PreparedStatement[] = []
+  if (job.job_type === 'generate_ai_image') {
+    statements.push(guarded('UPDATE ai_generation_requests SET status = ?, updated_at = ? WHERE dispatch_job_uid = ?',
+      [status === 'succeeded' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'failed', now, job.job_uid]))
+  }
+  if (job.job_type === 'submit_tmall_material_test' && status === 'succeeded' && !replay) {
+    statements.push(...await submitCompletionStatements(env, job, result, now, guarded))
+  }
+  // A delayed receipt must never clear a newer job's machine reservation.
+  const reservation = replay ? 'current_job_id = ?' : "(current_job_id = ? OR current_job_id IS NULL OR current_job_id = '')"
+  statements.push(guarded(`UPDATE task_machines SET current_job_id = NULL, health = ?, updated_at = ?
+    WHERE machine_id = ? AND ${reservation}`,
+    [status === 'blocked_needs_login' ? 'needs_login' : 'online_idle', now, machine.machine_id, job.job_uid]))
+  statements.push(guarded(`INSERT INTO dispatch_job_events (job_uid, machine_id, lease_id, event_type, message, payload_json, created_at)
+    SELECT ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (
+      SELECT 1 FROM dispatch_job_events WHERE job_uid = ? AND lease_id = ? AND event_type = ?
+    )`, [job.job_uid, machine.machine_id, leaseId, eventType, message, toJson({ status, result }), now, job.job_uid, leaseId, eventType]))
+  // Replay repairs historical partially-written receipts, but never changes
+  // the recorded result or requires the already-finished lease to be live.
+  statements.push(env.DB.prepare(`UPDATE dispatch_jobs SET status = ?, result_json = ?, updated_at = ?
+    WHERE job_uid = ? AND lease_id = ? AND assigned_machine_id = ? AND ${condition}`)
+    .bind(status, replay ? job.result_json : toJson(result), replay ? job.updated_at : now, ...guardParams))
+  const results = await env.DB.batch(statements)
+  if (Number(results[results.length - 1].meta.changes ?? 0) === 0) {
+    // Another identical completion may have won after our initial read.
+    // A conflicting payload or a replaced lease is still rejected.
+    const latest = !replay ? await jobForLease(env, job.job_uid, leaseId, machine.machine_id) : null
+    if (latest?.status === status && canonicalJson(fromJsonObject(latest.result_json)) === canonicalJson(result)) {
+      return finishJobWithLease(env, machine, latest, leaseId, status, result, eventType, message, true)
+    }
+    return forbidden('Stale lease')
+  }
+  return json({ ok: true, status, replayed: replay })
+}
+
+async function submitCompletionStatements(
+  env: Env, job: DispatchJobRow, result: Record<string, unknown>, now: string, guarded: GuardedStatement,
+): Promise<D1PreparedStatement[]> {
   const payload = objectValue(fromJsonObject(job.payload_json))
   const submitPlan = objectValue(payload.submit_plan)
   const planBatchUid = stringValue(submitPlan.batch_uid) || job.batch_uid
-  if (!planBatchUid || planBatchUid !== job.batch_uid) return
+  if (!planBatchUid || planBatchUid !== job.batch_uid) return []
   const planAssets = Array.isArray(submitPlan.assets) ? submitPlan.assets.map(objectValue).filter((asset) => Object.keys(asset).length > 0) : []
   const submittedAiAssets = planAssets
     .filter((asset) => stringValue(asset.kind) === 'ai')
-    .map((asset) => ({
-      assetUid: stringValue(asset.asset_uid),
-      styleId: Number(asset.style_id),
-    }))
+    .map((asset) => ({ assetUid: stringValue(asset.asset_uid), styleId: Number(asset.style_id) }))
     .filter((asset) => asset.assetUid && Number.isFinite(asset.styleId) && asset.styleId > 0)
-  if (submittedAiAssets.length === 0) return
+  if (submittedAiAssets.length === 0) return []
   const approvedAssets = await currentApprovedAiAssets(env, job.batch_uid)
-  if (!matchesPlannedAiAssets(submittedAiAssets, approvedAssets)) return
-
-  const now = nowIso()
-  await env.DB.prepare("UPDATE ai_image_batches SET status = 'submitted', updated_at = ? WHERE batch_uid = ?")
-    .bind(now, job.batch_uid)
-    .run()
-
-  const assetPlaceholders = approvedAssets.map(() => '?').join(', ')
-  await env.DB.prepare(`UPDATE ai_image_assets SET status = 'submitted', updated_at = ? WHERE batch_uid = ? AND kind = 'ai' AND status = 'approved' AND asset_uid IN (${assetPlaceholders})`)
-    .bind(now, job.batch_uid, ...approvedAssets.map((asset) => asset.assetUid))
-    .run()
-
+  if (!matchesPlannedAiAssets(submittedAiAssets, approvedAssets)) return []
+  const ids = approvedAssets.map((asset) => asset.assetUid)
+  const idsJson = toJson(ids)
+  // Recheck approval membership inside the transaction, not just in the read
+  // above. Update assets LAST so every projection sees the same approved set.
+  const approvalGuard = ` AND (SELECT COUNT(*) FROM ai_image_assets WHERE batch_uid = ? AND kind = 'ai' AND status = 'approved') = ?
+    AND (SELECT COUNT(*) FROM ai_image_assets WHERE batch_uid = ? AND kind = 'ai' AND status = 'approved' AND asset_uid IN (SELECT value FROM json_each(?))) = ?`
+  const approvalParams = [job.batch_uid, ids.length, job.batch_uid, idsJson, ids.length]
+  const statements = [guarded("UPDATE ai_image_batches SET status = 'submitted', updated_at = ? WHERE batch_uid = ?" + approvalGuard,
+    [now, job.batch_uid, ...approvalParams])]
   const byStyle = new Map<number, string[]>()
-  for (const asset of approvedAssets) {
-    byStyle.set(asset.styleId, [...(byStyle.get(asset.styleId) || []), asset.assetUid])
-  }
+  for (const asset of approvedAssets) byStyle.set(asset.styleId, [...(byStyle.get(asset.styleId) || []), asset.assetUid])
   for (const [styleId, submittedAssetUids] of byStyle.entries()) {
-    await env.DB.prepare("UPDATE ai_image_styles SET status = 'submitted', submit_summary_json = ? WHERE batch_uid = ? AND id = ?")
-      .bind(toJson({
-        job_uid: job.job_uid,
-        submitted_at: now,
-        submitted_asset_uids: submittedAssetUids,
-        result,
-      }), job.batch_uid, styleId)
-      .run()
+    statements.push(guarded("UPDATE ai_image_styles SET status = 'submitted', submit_summary_json = ? WHERE batch_uid = ? AND id = ?" + approvalGuard,
+      [toJson({ job_uid: job.job_uid, submitted_at: now, submitted_asset_uids: submittedAssetUids, result }), job.batch_uid, styleId, ...approvalParams]))
   }
+  statements.push(guarded(`UPDATE ai_image_assets SET status = 'submitted', updated_at = ? WHERE batch_uid = ? AND kind = 'ai' AND status = 'approved' AND asset_uid IN (SELECT value FROM json_each(?))` + approvalGuard,
+    [now, job.batch_uid, idsJson, ...approvalParams]))
+  return statements
 }
 
 function matchesPlannedAiAssets(planned: Array<{ assetUid: string }>, approved: Array<{ assetUid: string }>): boolean {

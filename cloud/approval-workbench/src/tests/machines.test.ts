@@ -631,7 +631,8 @@ class FakeD1Statement {
     if (normalized.startsWith("update ai_image_assets set status = 'submitted'")) {
       const now = String(this.params[0])
       const batchUid = String(this.params[1])
-      const assetUids = new Set(this.params.slice(2).map(String))
+      const assetUids = new Set(normalized.includes('json_each')
+        ? parseStringArray(this.params[2]) : this.params.slice(2).map(String))
       let changes = 0
       for (const asset of this.state.assets) {
         if (asset.batch_uid === batchUid && asset.kind === 'ai' && assetUids.has(asset.asset_uid)) {
@@ -665,6 +666,18 @@ class FakeD1Database {
 
   prepare(sql: string): FakeD1Statement {
     return new FakeD1Statement(this.state, sql)
+  }
+
+  async batch(statements: FakeD1Statement[]): Promise<D1Result[]> {
+    const before = structuredClone(this.state)
+    try {
+      const results = []
+      for (const statement of statements) results.push(await statement.run())
+      return results
+    } catch (error) {
+      Object.assign(this.state, before)
+      throw error
+    }
   }
 }
 
@@ -1867,7 +1880,8 @@ describe('machine routes', () => {
     expect(response.status).toBe(200)
     expect(state.jobs[0].status).toBe('succeeded')
     expect(state.batches[0].status).toBe('submitted')
-    expect(state.batchSubmittedWhileJobStatus).toBe('uploading_results')
+    // Projections and the final job transition now commit in one D1 batch.
+    expect(state.batchSubmittedWhileJobStatus).toBe('leased')
     expect(state.assets.map((asset) => [asset.asset_uid, asset.status])).toEqual([
       ['source-1', 'uploaded'],
       ['ai-approved-1', 'submitted'],

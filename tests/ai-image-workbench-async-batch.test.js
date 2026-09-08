@@ -82,9 +82,9 @@ test('new remote result URLs are cached without waiting for image load', () => {
   assert.match(workbench, /resultCachePending\.has\(url\)/)
 })
 
-test('loading cards show contextual artwork and rotating Crawshrimp copy', () => {
+test('loading cards show the image generation loader and rotating Crawshrimp copy', () => {
   assert.match(workbench, /resolveLoadingPreviewContext/)
-  assert.match(workbench, /class="aiw-loading-source"/)
+  assert.match(workbench, /<ImageGenerationLoader[\s\S]*?:images="loadingEffectImages\(\)"[\s\S]*?mode="loading"/)
   assert.match(workbench, /class="aiw-loading-default-art"/)
   assert.match(workbench, /loadingMessage\(item\)/)
   assert.match(workbench, /loadingMessageTimer = setInterval/)

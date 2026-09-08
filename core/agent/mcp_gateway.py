@@ -354,6 +354,8 @@ def automation_create_tool_description(now: Optional[datetime] = None) -> str:
 
 无副作用的本地确认任务应明确限制 execution_policy：toolset 仅为 ["automation_record_verification"]，allowed_risks 为空，并将 allow_browser、allow_filesystem、allow_network、allow_external_messages、allow_script_publish 全部设为 false。不要为这类任务增加网页、文件、外部消息、外部服务或脚本发布。
 
+权限开关必须是布尔值，显式 false 优先于工具列表；矛盾策略会被拒绝。命令执行、脚本/任务执行、仓库安装更新及委托其他自动化无法保证这些限制，不可与显式 false 同时授权。不要为了保存成功擅自放宽限制，应移除冲突工具或让用户明确修改授权。
+
 示例：用户说“今天 22:47 给我做一次本地验收提醒，到时只确认已完成，不访问网页或文件”，应创建标题“本地自动化验收提醒”的 isolated 一次性 scheduled Automation，使用 Asia/Shanghai 的未来 at 时间和上述无副作用策略。创建成功后只用返回结果向用户确认标题、运行时间、时区和安全限制。"""
 
 
@@ -2696,7 +2698,9 @@ def _automation_tool_allowed(tool_name: str) -> bool:
     if not isinstance(policy, Mapping):
         return True
     allowed_tools = _automation_policy_values(policy, "toolset")
-    if tool_name in allowed_tools:
+    from core.automation_policy import automation_policy_error
+    policy_error = automation_policy_error(policy, toolset=allowed_tools)
+    if tool_name in allowed_tools and not policy_error:
         return True
     automation_run_uid = str(ctx.automation_run_uid or "").strip()
     controller = getattr(ctx, "automation_controller", None)
@@ -2705,7 +2709,7 @@ def _automation_tool_allowed(tool_name: str) -> bool:
             controller.mark_needs_review(
                 automation_run_uid,
                 "AUTOMATION_TOOL_DENIED",
-                f"Automation policy does not authorize MCP tool {tool_name}",
+                policy_error or f"Automation policy does not authorize MCP tool {tool_name}",
             )
         except Exception:
             # Never fall through after a projection failure: the safe default

@@ -22,6 +22,7 @@ from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from core import data_sink
+from core.automation_policy import automation_policy_error
 from core.automation_program import ProgramValidationError, evaluate_program, validate_program
 
 
@@ -435,6 +436,9 @@ class AutomationController:
                     + ", ".join(unknown_tools)
                 )
         source["execution_policy"]["toolset"] = allowed_tools
+        policy_error = automation_policy_error(source["execution_policy"])
+        if policy_error:
+            raise ValueError(policy_error)
         raw_risks = source["execution_policy"].get("allowed_risks")
         if raw_risks is not None:
             if not isinstance(raw_risks, (list, tuple, set)):
@@ -731,25 +735,21 @@ class AutomationController:
             logger.exception("Unable to load Agent DB for Automation recovery")
             return 0
         reconciled = 0
-        for automation in data_sink.list_agent_automations(include_archived=True, limit=500):
-            for run in data_sink.list_agent_automation_runs(str(automation.get("automation_uid") or ""), 500):
-                if str(run.get("status") or "") not in {"queued", "running"}:
-                    continue
-                agent_run_id = str(run.get("agent_run_id") or "").strip()
-                if not agent_run_id:
-                    continue
-                agent_run = agent_db.get_run(agent_run_id) or {}
-                if str(agent_run.get("status") or "") != "interrupted":
-                    continue
-                result = self.project_agent_run_terminal(
-                    str(run.get("run_uid") or ""),
-                    agent_run_id,
-                    "interrupted",
-                    error_code="AGENT_DISPATCH_INTERRUPTED",
-                    error_message="Agent run was interrupted while the backend restarted",
-                )
-                if result and str(result.get("status") or "") in TERMINAL_RUN_STATUSES:
-                    reconciled += 1
+        # Query unfinished runs directly: a history-page limit can hide an
+        # orphan behind hundreds of skipped triggers. Persisted retries have
+        # their own recovery path and must not be treated as crash orphans.
+        for run in data_sink.list_agent_automation_dispatch_runs():
+            agent_run_id = str(run.get("agent_run_id") or "").strip()
+            agent_run = (agent_db.get_run(agent_run_id) or {}) if agent_run_id else {}
+            if str(agent_run.get("status") or "") in {"queued", "running"}:
+                continue
+            result = self.mark_needs_review(
+                str(run.get("run_uid") or ""),
+                "AGENT_DISPATCH_INTERRUPTED",
+                "Agent dispatch did not survive backend restart; previous work requires review",
+            )
+            if result and str(result.get("status") or "") in TERMINAL_RUN_STATUSES:
+                reconciled += 1
         return reconciled
 
     def mark_inherited_wait_timeout(self, run_uid: str, agent_run_id: str, message: str) -> dict:
@@ -885,6 +885,15 @@ class AutomationController:
         # after a backend restart deterministic.
         self.scheduler.unregister_automation_retry(uid)
         self.scheduler.unregister_automation_schedule(uid)
+        policy_error = automation_policy_error(automation.get("execution_policy") or {})
+        if policy_error:
+            for run in data_sink.list_agent_automation_dispatch_runs(include_retries=True):
+                if run.get("automation_uid") == uid and run.get("status") == "retry_scheduled":
+                    self.mark_needs_review(run["run_uid"], "AUTOMATION_POLICY_CONFLICT", policy_error)
+            return data_sink.update_agent_automation(
+                uid, enabled=False, next_run_at="", retry_at="",
+                last_status="needs_review", last_error=policy_error,
+            )
         if not uid or int(automation.get("enabled") or 0) != 1 or int(automation.get("archived") or 0) == 1:
             return data_sink.get_agent_automation(uid) or automation
         if str(automation.get("retry_at") or "").strip():
@@ -932,6 +941,9 @@ class AutomationController:
         restored: list[dict] = []
         for automation in data_sink.list_agent_automations(enabled=True, include_archived=False):
             uid = str(automation.get("automation_uid") or "").strip()
+            if automation_policy_error(automation.get("execution_policy") or {}):
+                restored.append(self._refresh_at(automation, now=current))
+                continue
             try:
                 retry_at = str(automation.get("retry_at") or "").strip()
                 if retry_at:
@@ -1170,6 +1182,12 @@ class AutomationController:
             error_message="",
         )
         execution_automation = self._definition_for_run(automation, started)
+        policy_error = automation_policy_error(self._execution_policy_for_run(execution_automation, started))
+        if policy_error:
+            self.scheduler.unregister_automation_schedule(automation["automation_uid"])
+            self.scheduler.unregister_automation_retry(automation["automation_uid"])
+            data_sink.update_agent_automation(automation["automation_uid"], enabled=False, next_run_at="", retry_at="")
+            return self.mark_needs_review(run_uid, "AUTOMATION_POLICY_CONFLICT", policy_error)
         if _kind(execution_automation) == "loop":
             # The DateTrigger is single-use, but explicit cancellation also
             # needs to revoke a manually registered loop job.
@@ -1884,6 +1902,9 @@ class AutomationController:
 
     def resume(self, uid: str) -> dict:
         automation = self._automation_or_raise(uid)
+        policy_error = automation_policy_error(automation.get("execution_policy") or {})
+        if policy_error:
+            raise ValueError(policy_error)
         if int(automation.get("archived") or 0) == 1:
             return automation
         if _kind(automation) == "at":

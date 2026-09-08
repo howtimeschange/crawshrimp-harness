@@ -2833,6 +2833,21 @@ def update_agent_automation_run(run_uid: str, **fields) -> dict:
     return get_agent_automation_run(uid)
 
 
+def list_agent_automation_dispatch_runs(*, include_retries: bool = False) -> list[dict]:
+    """All unfinished dispatches, including old or archived definitions."""
+    statuses = ["claimed", "queued", "running"]
+    if include_retries:
+        statuses.append("retry_scheduled")
+    placeholders = ",".join("?" for _ in statuses)
+    with _get_conn() as conn:
+        rows = conn.execute(f"""
+            SELECT * FROM agent_automation_runs
+            WHERE status IN ({placeholders})
+            ORDER BY created_at
+        """, statuses).fetchall()
+    return [_agent_automation_run_detail(row) for row in rows]
+
+
 def list_agent_automation_runs(automation_uid: str, limit: int = 100) -> list[dict]:
     """List recent runs for one automation."""
     try:

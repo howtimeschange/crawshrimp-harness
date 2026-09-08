@@ -44,6 +44,7 @@ PUBLIC_STATUSES = frozenset({
 })
 EDITABLE_STATUSES = frozenset({"draft", "needs_config", "failed", "expired"})
 ACTIVE_STATUSES = frozenset({"queued", "running", "downloading"})
+TERMINAL_STATUSES = PUBLIC_STATUSES - ACTIVE_STATUSES - {"draft"}
 DELETE_BLOCKED_STATUSES = frozenset({"queued", "running", "downloading"})
 
 SEEDANCE_MODEL = "doubao-seedance-2-0-260128"
@@ -3609,7 +3610,7 @@ def wait_video_job(job_id: str, *, poll_timeout_seconds: float = 1800.0,
             return {"ok": False, "error": f"video job not found: {job_id}"}
         run = data_sink.get_ai_video_run(job.get("currentRunId") or "") or {}
         status = _compact(run.get("status") or job.get("status")).lower()
-        if status in {"completed", "failed", "canceled", "needs_config", "error"}:
+        if status in TERMINAL_STATUSES or status in {"canceled", "error"}:
             output = dict(run.get("output") or {}) if isinstance(run.get("output"), Mapping) else {}
             local_video_path = _compact(output.get("localVideoPath") or output.get("local_video_path"))
             local_poster_path = _compact(output.get("localPosterPath") or output.get("local_poster_path"))

@@ -26,6 +26,36 @@ class CloudApprovalError(RuntimeError):
 DEFAULT_USER_AGENT = "CrawshrimpCloudApproval/1.0"
 
 
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parsed = urllib.parse.urlsplit(url)
+    port = parsed.port if parsed.port is not None else {"https": 443, "http": 80}.get(parsed.scheme.lower())
+    return (parsed.scheme.lower(), (parsed.hostname or "").lower(),
+            port)
+
+
+class _CloudRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        source, target = _origin(req.full_url), _origin(newurl)
+        asset_download = bool(getattr(req, "_cloud_asset_download", False))
+        cross_origin = source != target
+        if (target[0] not in {"http", "https"}
+                or (source[0] == "https" and target[0] != "https")
+                or (cross_origin and not asset_download)):
+            # Fail before urllib can copy credentials or a request body to a
+            # different origin. Keep the error free of signed redirect URLs.
+            if fp is not None:
+                fp.close()
+            raise CloudApprovalError("Unsafe cloud redirect", status=403, payload={"code": "unsafe_redirect"})
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None:
+            redirected._cloud_asset_download = asset_download
+            if cross_origin:
+                for key in list(redirected.headers):
+                    if key.lower() in {"authorization", "proxy-authorization", "cookie"}:
+                        redirected.remove_header(key)
+        return redirected
+
+
 class CloudApprovalClient:
     def __init__(
         self,
@@ -74,6 +104,8 @@ class CloudApprovalClient:
             try:
                 response = self._open(request)
                 status, payload = self._response_status_payload(response)
+            except CloudApprovalError:
+                raise
             except urllib.error.HTTPError as exc:
                 status = int(exc.code or 0)
                 if self._should_retry_status(status) and attempt < max_attempts - 1:
@@ -83,7 +115,7 @@ class CloudApprovalClient:
             except Exception as exc:
                 self._notify_transport_error()
                 raise CloudApprovalError(f"cloud upload failed: {type(exc).__name__}") from None
-            if status < 400:
+            if 200 <= status < 300:
                 return payload
             if self._should_retry_status(status) and attempt < max_attempts - 1:
                 self._sleep(self._retry_delay(attempt))
@@ -110,12 +142,15 @@ class CloudApprovalClient:
         max_attempts = 3
         for attempt in range(max_attempts):
             request = urllib.request.Request(url, headers=headers, method="GET")
+            request._cloud_asset_download = True
             try:
                 response = self._open(request)
                 status = int(getattr(response, "status", 0) or response.getcode() or 0)
-                if status < 400:
+                if 200 <= status < 300:
                     target.write_bytes(response.read())
                     return target
+            except CloudApprovalError:
+                raise
             except urllib.error.HTTPError as exc:
                 status = int(exc.code or 0)
                 if self._should_retry_status(status) and attempt < max_attempts - 1:
@@ -138,6 +173,8 @@ class CloudApprovalClient:
             try:
                 response = self._open(request)
                 status, payload = self._response_status_payload(response)
+            except CloudApprovalError:
+                raise
             except urllib.error.HTTPError as exc:
                 status = int(exc.code or 0)
                 payload = self._json_from_bytes(exc.read())
@@ -146,7 +183,7 @@ class CloudApprovalClient:
                 raise CloudApprovalError(
                     f"cloud request failed: {type(exc).__name__}: {self._redact(str(exc), token)}"
                 ) from None
-            if status < 400:
+            if 200 <= status < 300:
                 return payload
             if self._should_retry_status(status):
                 if attempt < max_attempts - 1:
@@ -171,7 +208,7 @@ class CloudApprovalClient:
         return min(0.25 * (2 ** attempt), 2.0)
 
     def _open(self, request):
-        opener = self.transport or urllib.request.urlopen
+        opener = self.transport or urllib.request.build_opener(_CloudRedirectHandler()).open
         return opener(request, timeout=self.timeout)
 
     def _notify_transport_error(self) -> None:
