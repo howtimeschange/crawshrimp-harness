@@ -54,6 +54,15 @@ function cleanText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+// Normalize conversational wrappers without joining separate commands or
+// changing provider/model identifiers. Confirmation still uses its own parser.
+function normalizeControlText(value) {
+  const text = cleanText(value);
+  if (/[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]/u.test(text)) return '';
+  return text.replace(/^(?:请帮我|麻烦帮我|麻烦|帮我|帮忙|请)\\s*/u, '')
+    .replace(/[？?。！!，,；;：:]+$/gu, '').trim();
+}
+
 function compactModelName(value) {
   return cleanText(value).toLowerCase().replace(/[\\s_-]+/gu, '');
 }
@@ -117,7 +126,7 @@ function safeDirectModelAlias(command) {
 }
 
 export function parseNaturalModelCommand(text) {
-  const command = cleanText(text);
+  const command = normalizeControlText(text);
   if (!command || command.startsWith('/')) return null;
   if (NATURAL_MODEL_LIST_PHRASES.has(command)
     || /^(?:可以|能)?(?:查看|列出|显示|有什么|有哪些|全部)?(?:可用)?(?:大)?模型(?:吗|呢|列表)?[？?]?$/u.test(command)) {
@@ -374,24 +383,44 @@ export async function runNaturalModelCommand(text, harness, state, key, options 
   return runModelCommand('/model ' + resolution.selection.provider + '/' + resolution.selection.model, harness, state, key, options);
 }
 
+const PERMISSION_ALIASES = new Map([
+  ...['只读', '只读模式', '只读权限', '只读审批', 'read only', 'read-only']
+    .map((name) => [name, 'read-only']),
+  ...['工作区写入', '允许工作区写入', '允许写入工作区', '工作区写入权限',
+    '打开审批模式', '开启审批', '打开审批', '恢复审批', '需要审批', '逐次审批',
+    'ask', 'workspace write', 'workspace-write']
+    .map((name) => [name, 'workspace-write']),
+  ...['完全访问', '完整访问', '完全开放', '允许完全访问', '完全访问权限', '全权限',
+    '关闭审批', '关闭审批模式', '去掉审批', '去除审批', '取消审批', '关掉审批',
+    '取消审批模式', '不用审批', '不需要审批', '自动批准', '自动审批', '免审批',
+    'never', 'full access', 'full assess', 'full-access']
+    .map((name) => [name, 'danger-full-access']),
+]);
+const PERMISSION_QUERIES = new Set([
+  '当前什么权限', '当前权限', '查看权限', '查看审批权限', '现在是哪个权限模式',
+  '现在是什么审批模式', '当前审批模式', '当前审批策略', '现在审批策略',
+  '审批模式', '审批权限', '审批权限设置', '审批怎么设置', '修改审批权限',
+  '调整审批权限', '更改审批权限', '有哪些权限', '有哪些审批权限', '权限列表',
+]);
+
 export function parseNaturalPermissionCommand(text) {
-  const command = cleanText(text);
+  const command = normalizeControlText(text).toLocaleLowerCase('en-US');
   if (!command || command.startsWith('/')) return null;
-  if (/^(?:(?:修改|查看|查询|现在的)?(?:审批)?权限(?:是什么|如何|多少)?|(?:当前|现在|目前)(?:是|的)?什么审批模式|(?:当前|现在|目前)审批模式(?:是什么)?)[？?]?$/u.test(command)) {
+  if (PERMISSION_QUERIES.has(command)
+    || /^(?:(?:修改|查看|查询|现在的)?(?:审批)?权限(?:是什么|如何|多少)?|(?:当前|现在|目前)(?:是|的)?什么审批模式|(?:当前|现在|目前)审批模式(?:是什么)?)$/u.test(command)) {
     return { action: 'query' };
-  }
-  if (/^(?:审批)?权限(?:改成|切换到|设为)[\\s]*工作区写入$/u.test(command)
-    || /^(?:恢复|开启|打开)(?:审批|权限)(?:模式)?$/u.test(command)) {
-    return { action: 'select', preset: 'workspace-write' };
-  }
-  if (/^(?:去掉|关闭|取消)(?:审批|权限)(?:模式)?$/u.test(command)
-    || /^(?:完全访问|完全开放|允许完全访问)$/u.test(command)) {
-    return { action: 'request-full-access' };
   }
   if (/^(?:确认|确定)(?:切换到)?(?:完全访问|完全开放)$/u.test(command)) {
     return { action: 'confirm-full-access' };
   }
-  return null;
+  const match = /^(?:切换到|设置为|设为|改成|权限改成|权限切换到|权限设为|审批权限改成|审批权限切换到|审批权限设为|审批改成|设置审批为|审批设置为|把审批改成|把权限改成|开启|启用|打开)\\s*(.+)$/u.exec(command)
+    ?? /^允许\\s*(工作区写入|写入工作区)$/u.exec(command);
+  let preset = PERMISSION_ALIASES.get(command) ?? PERMISSION_ALIASES.get(match?.[1]?.trim());
+  if (!preset && /^(?:恢复|开启|打开)(?:审批|权限)(?:模式)?$/u.test(command)) preset = 'workspace-write';
+  if (!preset && /^(?:去掉|关闭|取消)(?:审批|权限)(?:模式)?$/u.test(command)) preset = 'danger-full-access';
+  // Every alias that elevates access must retain same-actor confirmation.
+  if (preset === 'danger-full-access') return { action: 'request-full-access' };
+  return preset ? { action: 'select', preset } : null;
 }
 
 export function isNaturalPermissionCommand(text) {

@@ -906,7 +906,7 @@ window.__ModuleLoader__.load({
       if (existing) return
       // 插入消息列表内(最后一条消息之后),像一条消息出现在信息流里;
       // 不能挂 scrollBody 末尾——那是输入框(composerSeat)之后,会挤压对话框。
-      const column = document.querySelector('.Md3f7G_column')
+      const column = document.querySelector('.EvIC1a_column') || document.querySelector('.Md3f7G_column')
       if (!column) {
         // 有限重试:最多 6 次,避免定时器无限累积
         const retries = Number(data.__retries || 0)
@@ -1799,7 +1799,7 @@ window.__ModuleLoader__.load({
           return
         }
         const region = target.closest('.hHd-Xa_regionArea')
-        if (region && !target.closest('.qDHVXG_sectionHeader')) {
+        if (region && !target.closest('.bhn1Oq_sectionHeader, .qDHVXG_sectionHeader')) {
           postToShell({ __crawshrimp: 'session-nav', kind: 'session' })
         }
       })

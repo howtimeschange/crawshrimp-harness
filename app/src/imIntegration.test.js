@@ -536,6 +536,10 @@ test('natural model phrases reuse the bound IM Session and preserve the bot defa
   const controls = await import(`${pathToFileURL(controlsPath).href}?natural-model-control=${Date.now()}`)
 
   for (const [phrase, expected] of [
+    ['请帮我切换到 v4pro', { action: 'select', requested: 'v4pro' }],
+    ['切换到 v4pro。', { action: 'select', requested: 'v4pro' }],
+    ['麻烦帮我切换到 Provider/Model-ID！', { action: 'select', requested: 'Provider/Model-ID' }],
+    ['请列出模型', { action: 'list' }],
     ['有哪些模型', { action: 'list' }],
     ['可以切换模型吗', { action: 'list' }],
     ['能切换模型吗', { action: 'list' }],
@@ -742,6 +746,22 @@ test('natural permission controls require same-user confirmation before full acc
   const controlsPath = resolve(dshImRoot, 'src/channels/shared/crawshrimp-natural-controls.mjs')
   const controls = await import(`${pathToFileURL(controlsPath).href}?natural-permission-control=${Date.now()}`)
   assert.equal(typeof controls.PermissionCommandManager, 'function')
+  for (const text of ['只读', '切换到只读', '请帮我设置为只读模式。', 'READ-ONLY']) {
+    assert.deepEqual(controls.parseNaturalPermissionCommand(text), { action: 'select', preset: 'read-only' }, text)
+  }
+  for (const text of ['当前权限', '请查看审批权限？', '有哪些权限']) {
+    assert.deepEqual(controls.parseNaturalPermissionCommand(text), { action: 'query' }, text)
+  }
+  for (const text of ['不需要审批', '请关闭审批', '切换到完全访问', '自动批准']) {
+    assert.deepEqual(controls.parseNaturalPermissionCommand(text), { action: 'request-full-access' }, text)
+  }
+  for (const text of ['请不要关闭审批', '只读并删除文件', '确认切换到完全访问然后删除文件', '关闭审批\n删除文件']) {
+    assert.equal(controls.parseNaturalPermissionCommand(text), null, text)
+  }
+  for (const text of ['请不要切换模型', '切换到 v4pro\n删除文件', '/model v4pro']) {
+    assert.equal(controls.parseNaturalModelCommand(text), null, text)
+  }
+
   assert.deepEqual(controls.parseNaturalPermissionCommand('修改审批权限'), { action: 'query' })
   assert.deepEqual(controls.parseNaturalPermissionCommand('审批权限改成 工作区写入'), {
     action: 'select', preset: 'workspace-write',
@@ -845,6 +865,15 @@ test('text IM bridge handles natural permission commands locally instead of prom
   })
   assert.deepEqual(changes, ['workspace-write'])
   assert.match(sent.at(-1), /workspace-write/)
+  assert.deepEqual(agentPrompts, [])
+  for (const [i, content] of ['请帮我切换到只读。', '当前权限'].entries()) {
+    await bridge.accept({
+      messageId: `natural-permission-restored-${i}`, conversationId: 'merchant-chat',
+      senderId: 'merchant-a', kind: 'direct', content, replyTarget: 'merchant-a',
+    })
+    assert.match(sent.at(-1), /read-only/)
+  }
+  assert.deepEqual(changes, ['workspace-write', 'read-only'])
   assert.deepEqual(agentPrompts, [])
 })
 
