@@ -572,13 +572,18 @@
               <article v-for="provider in llmProviders" :key="provider.id" class="llm-provider-row">
                 <div class="llm-provider-content">
                   <button
-                    :class="['llm-provider-logo', `brand-${provider.brand}`, { 'with-image': provider.logoImage }]"
+                    :class="['llm-provider-logo', `brand-${provider.brand}`, { 'with-image': provider.logoImage && !failedProviderLogos[provider.id] }]"
                     :title="provider.name"
                     :aria-label="`编辑 ${provider.name}`"
                     type="button"
                     @click="openLlmProviderModal(provider.id)"
                   >
-                    <img v-if="provider.logoImage" :src="provider.logoImage" alt="" />
+                    <img
+                      v-if="provider.logoImage && !failedProviderLogos[provider.id]"
+                      :src="provider.logoImage"
+                      alt=""
+                      @error="failedProviderLogos[provider.id] = true"
+                    />
                     <span v-else>{{ provider.logoText }}</span>
                   </button>
                   <div class="llm-provider-main">
@@ -1053,8 +1058,9 @@ import {
   normalizeLlmProtocol,
   parseLlmModelsText,
 } from '../utils/llmSettings.mjs'
-import deepseekLogoUrl from '../assets/llm-providers/deepseek-logo.png'
-import semirLogoUrl from '../assets/llm-providers/semir-logo.png'
+// Keep provider branding available even when a running renderer outlives a build's asset files.
+import deepseekLogoUrl from '../assets/llm-providers/deepseek-logo.png?inline'
+import semirLogoUrl from '../assets/llm-providers/semir-logo.png?inline'
 
 const OFFICIAL_RELEASE_URL = 'https://github.com/howtimeschange/crawshrimp-harness/releases/latest'
 
@@ -1401,6 +1407,7 @@ const cloudAddressHint = computed(() => {
 })
 const cloudAddressHintOk = computed(() => Boolean(cloudStatus.value?.service_reachable))
 const customLlmProviders = computed(() => normalizeCustomLlmProviders(cfg.value[LLM_CUSTOM_PROVIDERS_FIELD]))
+const failedProviderLogos = ref({})
 const llmProviders = computed(() => {
   const defaultModel = String(cfg.value['ai.llm.default_model'] || '').trim()
   const builtinRows = LLM_BUILTIN_PROVIDERS.map((provider) => {
