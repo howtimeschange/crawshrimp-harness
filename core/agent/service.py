@@ -661,6 +661,12 @@ def _sync_dsh_default_model_settings(
     )
     if runtime_is_multimodal:
         entry.pop("reasoningEffort", None)
+    elif provider_id == "crawshrimp-deepseek-official" and runtime_model_id in (
+        "deepseek-v4-flash", "deepseek-v4-pro",
+    ):
+        # Default new/unconfigured text-model sessions to High. Explicit user
+        # selections (including off/low) remain authoritative across restarts.
+        entry.setdefault("reasoningEffort", "high")
     settings["agent-default-model"] = entry
     settings["llm-pi-ai"] = _dsh_llm_pi_ai_settings(
         cfg if isinstance(cfg, dict) else {},

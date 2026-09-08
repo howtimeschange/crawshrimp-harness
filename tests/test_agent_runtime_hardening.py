@@ -2922,6 +2922,7 @@ def test_dsh_settings_sync_writes_runtime_provider_profiles_without_secrets(tmp_
     assert settings["agent-default-model"] == {
         "provider": "crawshrimp-deepseek-official",
         "model": "deepseek-v4-flash",
+        "reasoningEffort": "high",
     }
     assert "deepseek-v4-flash" in [item["id"] for item in providers["crawshrimp-deepseek-official"]["models"]]
     assert "glm-5.3-flash" in [item["id"] for item in providers["crawshrimp-glm-official"]["models"]]
@@ -3068,3 +3069,25 @@ def test_agent_start_generation_missing_all_model_keys_launches_config_gate_runt
     assert runtime_env["CRAWSHRIMP_LLM_CONFIG_PLACEHOLDER_KEY"] == "cs-config-required-placeholder"
     assert "CRAWSHRIMP_LLM_CONFIG_REQUIRED" not in os.environ
     assert service.crash_budget == []
+
+
+@pytest.mark.parametrize("model", ["deepseek-v4-flash", "deepseek-v4-pro"])
+@pytest.mark.parametrize("effort", [None, "off", "low", "high", "max"])
+def test_deepseek_text_default_high_preserves_explicit_effort(tmp_path, model, effort):
+    import yaml
+    from core.agent import service as service_mod
+
+    agent_dir = tmp_path / "agent"
+    path = agent_dir / "dsh-home" / "settings.yaml"
+    path.parent.mkdir(parents=True)
+    entry = {"provider": "crawshrimp-deepseek-official", "model": model}
+    if effort is not None:
+        entry["reasoningEffort"] = effort
+    path.write_text(yaml.safe_dump({"agent-default-model": entry}), encoding="utf-8")
+    for _ in range(2):
+        service_mod._sync_dsh_default_model_settings(
+            agent_dir, "crawshrimp-deepseek-official", model, {}, [],
+        )
+        saved = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert saved["agent-default-model"]["reasoningEffort"] == (effort or "high")
+        assert "reasoning" not in saved["llm-pi-ai"]["providers"]["crawshrimp-deepseek-official"]
