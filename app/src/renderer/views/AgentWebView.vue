@@ -1,12 +1,10 @@
 <template>
-  <div :class="['agent-web-view', { 'browser-docked': hasDockedBrowserWindows }]">
+  <div class="agent-web-view">
     <!-- 主体:iframe(DSH Web UI) + 可展开浏览器面板 -->
     <div
-      ref="webBodyEl"
-      :class="['web-body', { 'browser-dock-resizing': dockedBrowserResizing }]"
-      :style="dockedBrowserStyle"
+      class="web-body"
     >
-      <div class="web-frame-wrap">
+      <div class="web-frame-wrap" :style="{ marginRight: resourcesCompact ? '332px' : undefined }">
         <iframe
           v-if="webUrl"
           ref="frameEl"
@@ -23,7 +21,7 @@
               <span>模型待配置</span>
             </div>
             <nav class="fallback-nav-list">
-              <template v-for="item in props.navItems" :key="item.id">
+              <template v-for="item in props.navItems.filter(item => item.id !== 'settings')" :key="item.id">
                 <div
                   v-if="item.children?.length"
                   :class="['fallback-nav-group', { active: isFallbackNavGroupActive(item), open: isFallbackNavGroupExpanded(item) }]"
@@ -77,52 +75,8 @@
             </div>
           </section>
         </div>
-        <!--
-          固定浏览器打开时，右侧面板自己的标题栏已经提供关闭和“脱离为浮窗”。
-          不再把宿主按钮叠在变窄的 DSH 会话标题上，以免遮住提醒、Session 日志等原生控件。
-          新会话还没有浏览器上下文时也不展示一个不可用的开关；浏览器工具创建
-          标签后，仍由这个开关提供收起和重新打开能力。
-        -->
-        <button
-          v-if="!hasDockedBrowserWindows && canToggleBrowserWindows"
-          :class="['browser-toggle', { active: hasVisibleBrowserWindows }]"
-          type="button"
-          :title="browserToggleTitle"
-          :aria-pressed="hasVisibleBrowserWindows"
-          :disabled="!canToggleBrowserWindows"
-          aria-label="打开实时浏览器"
-          @click="toggleBrowserWindows"
-        >
-          <IconDeviceDesktop :size="18" :stroke-width="2.1" aria-hidden="true" />
-        </button>
       </div>
-      <div
-        v-show="hasDockedBrowserWindows"
-        class="web-browser-divider"
-        role="separator"
-        aria-label="调整实时浏览器宽度"
-        aria-orientation="vertical"
-        tabindex="0"
-        :aria-valuemin="dockedBrowserBounds.min"
-        :aria-valuemax="dockedBrowserBounds.max"
-        :aria-valuenow="dockedBrowserWidth"
-        @pointerdown.left.prevent="onDockedBrowserResizeStart"
-        @keydown="onDockedBrowserResizeKeydown"
-      >
-        <span aria-hidden="true"></span>
-      </div>
-      <div v-show="hasDockedBrowserWindows" class="web-browser-panel">
-        <AgentBrowserPanel
-          v-for="(win, idx) in visibleBrowserWindows"
-          :key="win.tabId"
-          :layout="browserLayout"
-          :tab-id="win.tabId"
-          :window-index="idx"
-          :minimize-signal="browserMinimizeCount"
-          @collapse="hideBrowserWindow(win.tabId)"
-          @layout-change="setBrowserLayout"
-        />
-      </div>
+      <SessionResources ref="resourcesPanel" @compact-change="resourcesCompact = $event" :session-id="activeRuntimeSessionId" :revision="props.resourceRevision" @download-log="postToFrame({ __crawshrimp: 'download-session-log', runtimeSessionId: activeRuntimeSessionId })" />
     </div>
     <Teleport to="body">
       <div v-if="inlineLlmModalOpen" class="inline-llm-modal-backdrop" @click.self="closeInlineLlmModal">
@@ -207,39 +161,26 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { IconDeviceDesktop, IconExternalLink, IconSettings } from '@tabler/icons-vue'
-import AgentBrowserPanel from '../components/agent/AgentBrowserPanel.vue'
+import { IconExternalLink, IconSettings } from '@tabler/icons-vue'
+import SessionResources from '../components/agent/SessionResources.vue'
 import { DEEPSEEK_PLATFORM_URL } from '../utils/llmSettings.mjs'
-import {
-  clampDockedBrowserWidth,
-  defaultDockedBrowserWidth,
-  dockedBrowserWidthBounds,
-} from '../utils/browserDockWidth.mjs'
+
 
 const props = defineProps({
   theme: { type: String, default: '' },        // effectiveTheme(light|dark)
   navItems: { type: Array, default: () => [] }, // 抓虾一级菜单(注入会话侧边栏底部)
   activeNav: { type: String, default: '' },     // 当前激活菜单 id
   appVersion: { type: String, default: '' },     // 抓虾桌面版本号,同步到 DSH 侧栏品牌区
-  browserAutoOpen: { type: Number, default: 0 }, // 智能体调用浏览器工具时递增,自动弹出实时浏览器窗口
-  browserTabs: { type: Object, default: () => ({ tabs: [], activeTabId: '' }) }, // 浏览器活动快照 → 多窗口跟随
+  resourceRevision: { type: Number, default: 0 },
 })
 
 const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav', 'runtime-session', 'repair-core', 'open-settings'])
 
+const resourcesPanel = ref(null)
+const resourcesCompact = ref(false)
 const webUrl = ref('')
 const error = ref('')
 const loading = ref(true)
-const browserOpen = ref(false)
-const browserMinimizeCount = ref(0)
-const browserWindows = ref([])
-const BROWSER_LAYOUT_STORAGE_KEY = 'crawshrimp.browserLayout.v2'
-const BROWSER_DOCK_WIDTH_STORAGE_KEY = 'crawshrimp.browserDockWidth.v1'
-const browserLayout = ref(loadBrowserLayoutPreference())
-const webBodyEl = ref(null)
-const browserDockContainerWidth = ref(0)
-const dockedBrowserWidth = ref(loadDockedBrowserWidthPreference())
-const dockedBrowserResizing = ref(false)
 const recoverAttempts = ref(0)
 const workspaceRoot = ref('')
 const runtimeGeneration = ref(0)
@@ -247,11 +188,8 @@ const frameEl = ref(null)
 const activeRuntimeSessionId = ref('')
 const lastRuntimeState = ref('')
 let pollTimer = null
-let tabPollTimer = null
 let warmStarted = false
 let recovering = false
-let browserDockResizeObserver = null
-let stopDockedBrowserResize = null
 let nativeWebFollowRetryTimer = null
 let nativeWebFollowSessionId = ''
 const nativeWebFollowOwner = `agent-webview:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`
@@ -269,22 +207,6 @@ const frameSrc = computed(() => {
 })
 const frameOrigin = computed(() => {
   try { return webUrl.value ? new URL(webUrl.value, window.location.href).origin : '' } catch { return '' }
-})
-const visibleBrowserWindows = computed(() => (
-  browserOpen.value ? browserWindows.value.filter((win) => win.visible !== false) : []
-))
-const hasVisibleBrowserWindows = computed(() => visibleBrowserWindows.value.length > 0)
-const hasDockedBrowserWindows = computed(() => browserLayout.value === 'docked' && hasVisibleBrowserWindows.value)
-const dockedBrowserBounds = computed(() => dockedBrowserWidthBounds(browserDockContainerWidth.value || window.innerWidth))
-const dockedBrowserStyle = computed(() => ({ '--browser-dock-width': `${dockedBrowserWidth.value}px` }))
-const sessionBrowserTabs = computed(() => tabsForActiveBrowserWindow(props.browserTabs))
-const canToggleBrowserWindows = computed(() => (
-  hasVisibleBrowserWindows.value || browserWindows.value.length > 0 || sessionBrowserTabs.value.length > 0
-))
-const browserToggleTitle = computed(() => {
-  if (hasVisibleBrowserWindows.value) return browserLayout.value === 'docked' ? '隐藏固定实时浏览器' : '隐藏浮动实时浏览器'
-  if (canToggleBrowserWindows.value) return '打开当前会话的实时浏览器'
-  return '当前会话暂无实时浏览器'
 })
 const isRuntimeNeedsConfiguration = computed(() => lastRuntimeState.value === 'needs_configuration')
 const isRuntimeDisabled = computed(() => lastRuntimeState.value === 'disabled_until_manual_restart')
@@ -325,116 +247,6 @@ function syncRuntimeModelConfiguration(result) {
     inlineLlmModalOpen.value = false
   }
   if (changed) pushRuntimeModelConfiguration()
-}
-
-function loadBrowserLayoutPreference() {
-  try {
-    const value = localStorage.getItem(BROWSER_LAYOUT_STORAGE_KEY)
-    return value === 'docked' ? 'docked' : 'floating'
-  } catch {
-    return 'floating'
-  }
-}
-
-function loadDockedBrowserWidthPreference() {
-  try {
-    const value = Number(localStorage.getItem(BROWSER_DOCK_WIDTH_STORAGE_KEY))
-    return Number.isFinite(value) && value > 0 ? value : 0
-  } catch {
-    return 0
-  }
-}
-
-function persistDockedBrowserWidth() {
-  try { localStorage.setItem(BROWSER_DOCK_WIDTH_STORAGE_KEY, String(Math.round(dockedBrowserWidth.value))) } catch { /* ignore */ }
-}
-
-function updateBrowserDockContainerWidth() {
-  const width = Math.round(Number(webBodyEl.value?.clientWidth || 0))
-  if (width > 0 && width !== browserDockContainerWidth.value) browserDockContainerWidth.value = width
-}
-
-function syncDockedBrowserWidth({ persist = false } = {}) {
-  updateBrowserDockContainerWidth()
-  const containerWidth = browserDockContainerWidth.value || window.innerWidth
-  const candidate = dockedBrowserWidth.value > 0
-    ? dockedBrowserWidth.value
-    : defaultDockedBrowserWidth(containerWidth)
-  const normalized = clampDockedBrowserWidth(candidate, containerWidth)
-  if (normalized !== dockedBrowserWidth.value) dockedBrowserWidth.value = normalized
-  if (persist) persistDockedBrowserWidth()
-}
-
-function setDockedBrowserWidth(value, { persist = true } = {}) {
-  updateBrowserDockContainerWidth()
-  const containerWidth = browserDockContainerWidth.value || window.innerWidth
-  dockedBrowserWidth.value = clampDockedBrowserWidth(value, containerWidth)
-  if (persist) persistDockedBrowserWidth()
-}
-
-function onDockedBrowserResizeStart(event) {
-  if (!hasDockedBrowserWindows.value || event.button !== 0) return
-  stopDockedBrowserResize?.({ persist: true })
-  updateBrowserDockContainerWidth()
-  const startWidth = dockedBrowserWidth.value || defaultDockedBrowserWidth(browserDockContainerWidth.value || window.innerWidth)
-  const pointerTarget = event.currentTarget
-  const pointerId = event.pointerId
-  let latestX = event.clientX
-  let frameId = 0
-  let done = false
-  dockedBrowserResizing.value = true
-  try { pointerTarget?.setPointerCapture?.(pointerId) } catch { /* ignore */ }
-  const apply = () => {
-    frameId = 0
-    setDockedBrowserWidth(startWidth + (event.clientX - latestX), { persist: false })
-  }
-  const onMove = (moveEvent) => {
-    latestX = moveEvent.clientX
-    if (!frameId) frameId = window.requestAnimationFrame(apply)
-  }
-  const onFinish = ({ persist = true } = {}) => {
-    if (done) return
-    done = true
-    if (frameId) {
-      window.cancelAnimationFrame(frameId)
-      frameId = 0
-    }
-    setDockedBrowserWidth(startWidth + (event.clientX - latestX), { persist })
-    dockedBrowserResizing.value = false
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onFinish)
-    window.removeEventListener('pointercancel', onFinish)
-    window.removeEventListener('blur', onFinish)
-    try {
-      if (pointerTarget?.hasPointerCapture?.(pointerId)) pointerTarget.releasePointerCapture(pointerId)
-    } catch { /* ignore */ }
-    stopDockedBrowserResize = null
-  }
-  stopDockedBrowserResize = onFinish
-  window.addEventListener('pointermove', onMove, { passive: true })
-  window.addEventListener('pointerup', onFinish, { once: true })
-  window.addEventListener('pointercancel', onFinish, { once: true })
-  window.addEventListener('blur', onFinish, { once: true })
-}
-
-function onDockedBrowserResizeKeydown(event) {
-  if (!hasDockedBrowserWindows.value) return
-  const bounds = dockedBrowserBounds.value
-  let next = dockedBrowserWidth.value
-  if (event.key === 'ArrowLeft') next += 40
-  else if (event.key === 'ArrowRight') next -= 40
-  else if (event.key === 'Home') next = bounds.min
-  else if (event.key === 'End') next = bounds.max
-  else return
-  event.preventDefault()
-  setDockedBrowserWidth(next)
-}
-
-function setBrowserLayout(layout) {
-  const next = layout === 'floating' ? 'floating' : 'docked'
-  browserLayout.value = next
-  try { localStorage.setItem(BROWSER_LAYOUT_STORAGE_KEY, next) } catch { /* ignore */ }
-  if (browserWindows.value.some((win) => win.visible !== false)) browserOpen.value = true
 }
 
 function postToFrame(message) {
@@ -570,7 +382,6 @@ async function retryLoad() {
 
 function selectFallbackNav(item) {
   if (!item?.id) return
-  if (browserOpen.value) browserMinimizeCount.value += 1
   emit('nav-select', item.id)
 }
 
@@ -734,11 +545,13 @@ function onWindowMessage(event) {
   if (data.__crawshrimp === 'nav-click') {
     if (Number(data.railWidth) > 0) emit('rail-metrics', { width: data.railWidth, collapsed: false })
     // 菜单切换时最小化实时浏览器窗口,避免浮动窗口盖住界面拦截点击
-    if (browserOpen.value) browserMinimizeCount.value += 1
     emit('nav-select', data.id)
   } else if (data.__crawshrimp === 'rail-metrics') {
     emit('rail-metrics', { width: data.width, collapsed: data.collapsed })
+  } else if (data.__crawshrimp === 'session-log-error') {
+    if (data.runtimeSessionId === activeRuntimeSessionId.value) resourcesPanel.value?.showError(data.message)
   } else if (data.__crawshrimp === 'session-nav') {
+    if (data.kind === 'new') resourcesPanel.value?.collapse()
     emit('session-nav', data.kind || 'session')
   } else if (data.__crawshrimp === 'active-runtime-session') {
     const previousRuntimeSessionId = activeRuntimeSessionId.value
@@ -926,12 +739,6 @@ async function handlePickAttachments(runtimeSessionId = '') {
 }
 
 onMounted(() => {
-  updateBrowserDockContainerWidth()
-  syncDockedBrowserWidth()
-  if (typeof ResizeObserver === 'function' && webBodyEl.value) {
-    browserDockResizeObserver = new ResizeObserver(() => syncDockedBrowserWidth())
-    browserDockResizeObserver.observe(webBodyEl.value)
-  }
   loadRuntime()
   window.addEventListener('message', onWindowMessage)
   // 持续读取受控 runtime 状态来恢复。rc.1 的 Web Host 对裸 HTTP 正确返回
@@ -977,29 +784,16 @@ onMounted(() => {
       runtimePollInFlight = false
     }
   }, 5000)
-  tabPollTimer = setInterval(async () => {
-    if (!browserWindows.value.length || typeof window.cs?.listAgentBrowserTabs !== 'function') return
-    try {
-      const snapshot = await window.cs.listAgentBrowserTabs()
-      if (!snapshot?.ok) return
-      const live = new Set((snapshot.tabs || []).map((tab) => String(tab.id || '')).filter(Boolean))
-      const closed = browserWindows.value.filter((win) => !live.has(String(win.tabId)))
-      for (const win of closed) await removeBrowserWindow(win.tabId)
-    } catch { /* 下一次快照重试 */ }
-  }, 2000)
+
 })
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
-  if (tabPollTimer) clearInterval(tabPollTimer)
   window.removeEventListener('message', onWindowMessage)
-  browserDockResizeObserver?.disconnect()
-  browserDockResizeObserver = null
   if (nativeWebFollowRetryTimer) clearTimeout(nativeWebFollowRetryTimer)
   nativeWebFollowRetryTimer = null
   void unobserveNativeWebSession(nativeWebFollowSessionId || activeRuntimeSessionId.value)
   nativeWebFollowSessionId = ''
-  stopDockedBrowserResize?.({ persist: true })
 })
 
 watch(() => props.theme, (t) => {
@@ -1018,103 +812,6 @@ watch(showFallbackNav, (visible) => {
   if (visible) emit('rail-metrics', { width: 280, collapsed: false })
 }, { immediate: true })
 
-// 智能体调用浏览器工具(浏览器操作画面)时自动弹出实时浏览器窗口
-watch(() => props.browserAutoOpen, (count) => {
-  if (Number(count) > 0) {
-    void showBrowserWindows()
-  }
-})
-
-function tabsForActiveBrowserWindow(payload) {
-  const tabs = Array.isArray(payload?.tabs) ? payload.tabs.filter((tab) => tab?.id) : []
-  const activeTabId = String(payload?.activeTabId || payload?.active_tab_id || '')
-  if (activeTabId) {
-    const active = tabs.find((tab) => String(tab.id) === activeTabId)
-    if (active) return [active]
-    return []
-  }
-  return tabs.length ? [tabs[0]] : []
-}
-
-function syncBrowserTabs(payload, { forceVisible = false } = {}) {
-  if (!payload || !Array.isArray(payload.tabs)) return
-  const tabs = tabsForActiveBrowserWindow(payload)
-  if (!tabs.length) {
-    for (const win of browserWindows.value) void removeBrowserWindow(win.tabId)
-    browserOpen.value = false
-    return
-  }
-  const next = []
-  for (const tab of tabs) {
-    if (!tab || !tab.id) continue
-    const existing = browserWindows.value.find((w) => w.tabId === String(tab.id))
-    if (existing) {
-      existing.url = tab.url || existing.url
-      existing.title = tab.title || existing.title
-      if (forceVisible) existing.visible = true
-      next.push(existing)
-    } else {
-      next.push({ tabId: String(tab.id), url: tab.url || '', title: tab.title || '', visible: true })
-    }
-  }
-  browserWindows.value = next
-  if (forceVisible && next.some((win) => win.visible !== false)) browserOpen.value = true
-  // 活跃 tab 的窗口置顶(排在数组尾部渲染在上层)
-  const active = String(payload.activeTabId || payload.active_tab_id || tabs[tabs.length - 1]?.id || '')
-  if (active) {
-    const idx = browserWindows.value.findIndex((w) => w.tabId === active)
-    if (idx >= 0) {
-      const [win] = browserWindows.value.splice(idx, 1)
-      browserWindows.value.push(win)
-    }
-  }
-}
-
-// 多窗口实时浏览器:按会话/页面(tab)绑定,一个页面一个窗口
-watch(() => props.browserTabs, (payload) => {
-  syncBrowserTabs(payload, { forceVisible: true })
-}, { deep: true })
-
-function showBrowserWindows() {
-  if (sessionBrowserTabs.value.length) {
-    syncBrowserTabs(props.browserTabs, { forceVisible: true })
-    return
-  }
-  if (browserWindows.value.length) {
-    for (const win of browserWindows.value) win.visible = true
-    browserOpen.value = true
-    return
-  }
-  browserOpen.value = false
-}
-
-function hideBrowserWindow(tabId) {
-  const target = browserWindows.value.find((w) => w.tabId === String(tabId))
-  if (target) target.visible = false
-  if (!browserWindows.value.some((win) => win.visible !== false)) browserOpen.value = false
-}
-
-function toggleBrowserWindows() {
-  if (hasVisibleBrowserWindows.value) {
-    browserOpen.value = false
-  } else {
-    void showBrowserWindows()
-  }
-}
-
-async function removeBrowserWindow(tabId) {
-  browserWindows.value = browserWindows.value.filter((w) => w.tabId !== String(tabId))
-  if (typeof window.cs?.stopAgentBrowserStream === 'function') {
-    await window.cs.stopAgentBrowserStream(String(tabId))
-    if (typeof window.cs?.getAgentBrowserStreamState === 'function') {
-      const state = await window.cs.getAgentBrowserStreamState()
-      if ((state?.streams || []).some((stream) => String(stream.targetId) === String(tabId))) {
-        console.warn('[agent] 浏览器流关闭后仍存在:', tabId)
-      }
-    }
-  }
-  if (!browserWindows.value.some((win) => win.visible !== false)) browserOpen.value = false
-}
 
 </script>
 
@@ -1135,57 +832,11 @@ async function removeBrowserWindow(tabId) {
   display: flex;
 }
 
-.web-body.browser-dock-resizing {
-  cursor: col-resize;
-  user-select: none;
-}
-
 .web-frame-wrap {
   flex: 1;
   min-width: 0;
   position: relative;
   background: var(--bg);
-  /* DSH owns the right side of its header for Session actions (for example,
-     the Session log download). Keep this host-level control outside it. */
-  --dsh-session-header-utilities-reserve: 168px;
-}
-
-.browser-toggle {
-  position: absolute;
-  top: 10px;
-  right: var(--dsh-session-header-utilities-reserve, 168px);
-  z-index: 10;
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--border-strong);
-  background: color-mix(in srgb, var(--bg2) 92%, transparent);
-  border-radius: 8px;
-  cursor: pointer;
-  color: var(--text2);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.82;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
-  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease, background 120ms ease;
-}
-.browser-toggle:hover,
-.browser-toggle.active {
-  opacity: 1;
-  color: var(--orange);
-  border-color: color-mix(in srgb, var(--orange) 64%, var(--border-strong));
-  background: var(--soft-fill-hover);
-}
-.browser-toggle:disabled {
-  cursor: default;
-  opacity: 0.45;
-  color: var(--text3);
-  border-color: var(--border);
-  background: var(--bg2);
-  box-shadow: none;
-}
-.browser-toggle svg {
-  display: block;
 }
 
 .web-frame {
@@ -1197,53 +848,6 @@ async function removeBrowserWindow(tabId) {
   background: var(--bg);
 }
 
-.web-browser-panel {
-  width: var(--browser-dock-width, min(920px, max(420px, 48vw), 66%));
-  flex: 0 0 var(--browser-dock-width, min(920px, max(420px, 48vw), 66%));
-  border-left: 1px solid var(--border);
-  background: var(--bg);
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.web-browser-divider {
-  position: relative;
-  z-index: 11;
-  flex: 0 0 12px;
-  width: 12px;
-  margin-right: -1px;
-  cursor: col-resize;
-  touch-action: none;
-  outline: none;
-}
-
-.web-browser-divider::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 5px;
-  width: 2px;
-  border-radius: 2px;
-  background: transparent;
-  transition: background 120ms ease, box-shadow 120ms ease;
-}
-
-.web-browser-divider:hover::before,
-.web-browser-divider:focus-visible::before,
-.browser-dock-resizing .web-browser-divider::before {
-  background: var(--orange);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--orange) 62%, transparent);
-}
-
-.web-browser-divider:focus-visible {
-  background: color-mix(in srgb, var(--orange) 12%, transparent);
-}
-
-.browser-docked .web-frame-wrap {
-  min-width: 0;
-}
-
 .web-placeholder-shell {
   position: absolute;
   inset: 0;
@@ -1253,6 +857,7 @@ async function removeBrowserWindow(tabId) {
 }
 
 .fallback-nav {
+  padding-bottom:44px;
   width: 280px;
   flex: 0 0 280px;
   min-height: 0;

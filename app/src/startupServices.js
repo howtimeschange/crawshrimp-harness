@@ -4,9 +4,9 @@ function messageFromError(error) {
   return error?.message || String(error)
 }
 
-async function startDesktopServices({ startBackend, startChrome, log = () => {} }) {
+async function startDesktopServices({ startBackend, startChrome, autoLaunchChrome = false, log = () => {} }) {
   if (typeof startBackend !== 'function') throw new TypeError('startBackend is required')
-  if (typeof startChrome !== 'function') throw new TypeError('startChrome is required')
+  if (autoLaunchChrome && typeof startChrome !== 'function') throw new TypeError('startChrome is required')
 
   const apiPromise = Promise.resolve()
     .then(() => startBackend())
@@ -16,7 +16,7 @@ async function startDesktopServices({ startBackend, startChrome, log = () => {} 
       return { ok: false, error }
     })
 
-  const chromePromise = Promise.resolve()
+  const chromePromise = !autoLaunchChrome ? Promise.resolve({ ok: false, deferred: true }) : Promise.resolve()
     .then(() => startChrome())
     .then((result) => ({ ok: Boolean(result?.ok), ...(result || {}) }))
     .catch((error) => {

@@ -11,7 +11,7 @@ import time
 from typing import Optional
 from urllib.request import build_opener, ProxyHandler, Request
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,36 @@ class CDPBridge:
         except ConnectionError:
             return False
 
+    def ensure_available(self) -> None:
+        """Start the desktop-owned browser only for an explicit browser operation."""
+        launch_url = str(os.environ.get("CRAWSHRIMP_BROWSER_LAUNCH_URL") or "")
+        token = str(os.environ.get("CRAWSHRIMP_BROWSER_LAUNCH_TOKEN") or "")
+        # Standalone/remote CDP configurations keep their existing behavior.
+        if not launch_url or not token:
+            return
+        if self.is_available(timeout=0.2):
+            return
+        target = urlparse(launch_url)
+        cdp = urlparse(self.cdp_url)
+        if target.scheme != "http" or target.hostname != "127.0.0.1" or target.path != "/ensure" or cdp.hostname not in ("127.0.0.1", "localhost"):
+            raise ConnectionError("浏览器按需启动通道必须使用本机地址")
+        request = Request(launch_url, data=b"", method="POST", headers={"X-Crawshrimp-Browser-Token": token})
+        try:
+            with cdp_urlopen(request, timeout=40) as response:
+                result = json.loads(response.read())
+        except HTTPError as exc:
+            try:
+                message = json.loads(exc.read()).get("message")
+            except (ValueError, AttributeError):
+                message = None
+            raise ConnectionError(message or "浏览器按需启动失败，请在设置中检查浏览器连接") from None
+        except (OSError, ValueError) as exc:
+            raise ConnectionError("无法启动浏览器，请确认桌面客户端正在运行") from exc
+        if not result.get("ok") or not self.is_available(timeout=0.5):
+            raise ConnectionError(result.get("message") or "浏览器启动后连接尚未就绪")
+
     def new_tab(self, url: str) -> dict:
+        self.ensure_available()
         encoded = quote(url, safe='')
         req = Request(f"{self.cdp_url}/json/new?{encoded}", method="PUT")
         tab = self._request_json(req, timeout=8, action="新建标签页")

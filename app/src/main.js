@@ -19,6 +19,7 @@ const { createBackendController } = require('./backendController')
 const { createLifecycleController } = require('./lifecycleController')
 const { stopManagedChrome: stopManagedChromeFromState } = require('./managedChrome')
 const { startDesktopServices } = require('./startupServices')
+const { createBrowserLaunchBridge } = require('./browserLaunchBridge')
 const { waitForServiceReadiness } = require('./serviceReadiness')
 const { normalizeAgentApiRequest } = require('./agentApiBridge')
 const {
@@ -1273,6 +1274,7 @@ function spawnBackendProcess() {
       CRAWSHRIMP_PORT: String(apiPort),
       CRAWSHRIMP_CDP_PORT: String(CDP_PORT),
       CRAWSHRIMP_CDP_URL: loopbackCdpUrl(CDP_PORT),
+      ...browserLaunchBridge.environment(),
       CRAWSHRIMP_DATA: resolvedCrawshrimpDataDir,
       CRAWSHRIMP_ALLOW_DATA_FALLBACK: '1',
       CRAWSHRIMP_API_TOKEN: apiToken,
@@ -1574,6 +1576,7 @@ async function performLaunchChrome(customPath = '') {
 }
 
 const launchChrome = createSingleFlightRecovery(performLaunchChrome)
+const browserLaunchBridge = createBrowserLaunchBridge({ launchChrome })
 
 // ── HTTP helper (call FastAPI) ─────────────────────────────────────────────────
 
@@ -2431,6 +2434,7 @@ const restartBackend = createSingleFlightRecovery(async () => {
 })
 
 async function startBackend() {
+  await browserLaunchBridge.start()
   await prepareBackendEndpoint()
   await backendController.ensureReady()
 }

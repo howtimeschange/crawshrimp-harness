@@ -8,59 +8,19 @@
       'titlebar-macos': isMacTitlebar,
     }"
   >
-    <!-- 标题栏 -->
-    <div class="titlebar">
-      <div class="status-bar">
-        <span class="dot" :class="status.api ? 'on' : 'off'">
-          <i></i>核心
-        </span>
-        <span class="dot" :class="status.chrome ? 'on' : 'off'">
-          <i></i>Chrome
-        </span>
-        <!-- 自动更新:主界面常驻入口(原侧边栏更新 footer 的顶栏形态) -->
-        <button
-          v-if="titlebarUpdate.action"
-          class="titlebar-update-btn"
-          :class="`tone-${titlebarUpdate.tone}`"
-          type="button"
-          :title="titlebarUpdate.title"
-          :disabled="updateActionBusy"
-          @click="onTitlebarUpdateAction"
-        >
-          <UpdateProgressRing
-            v-if="titlebarUpdate.tone === 'downloading'"
-            compact
-            :percent="titlebarUpdate.percent || 0"
-            :aria-label="titlebarUpdate.title"
-          />
-          <span v-else aria-hidden="true">{{ titlebarUpdate.icon }}</span>
-          <span>{{ titlebarUpdate.versionLabel }} · {{ titlebarUpdate.label }}</span>
-        </button>
-        <div
-          v-else-if="titlebarUpdate.tone === 'downloading'"
-          class="titlebar-update-btn titlebar-update-status"
-          :class="`tone-${titlebarUpdate.tone}`"
-          :title="titlebarUpdate.title"
-          role="status"
-          aria-live="polite"
-          aria-busy="true"
-        >
-          <UpdateProgressRing
-            compact
-            :percent="titlebarUpdate.percent || 0"
-            :aria-label="titlebarUpdate.title"
-          />
-          <span>{{ titlebarUpdate.versionLabel }} · {{ titlebarUpdate.label }}</span>
-        </div>
-        <span
-          v-else-if="showTitlebarVersionBadge"
-          class="titlebar-version-badge"
-          :title="titlebarUpdate.title"
-        >
-          {{ titlebarUpdate.versionLabel }}
-        </span>
-      </div>
-    </div>
+    <!-- macOS keeps a native traffic-light/drag strip; Windows uses its OS titlebar. -->
+    <div v-if="isMacTitlebar" class="titlebar" aria-hidden="true"></div>
+    <DesktopStatusFooter
+      class="shell-status-footer"
+      :style="{ width: `${activeScript ? 168 : railWidth}px` }"
+      :status="status"
+      :presentation="desktopUpdate"
+      :collapsed="!activeScript && railWidth < 100"
+      :busy="updateActionBusy"
+      @settings="openSettingsPanel('appearance-theme')"
+      @services="openSettingsPanel('connection-overview')"
+      @update="onDesktopUpdateAction"
+    />
 
     <!-- 侧边栏:仅脚本详情显示二级菜单(主菜单在智能体会话侧边栏内) -->
     <aside v-if="activeScript" class="sidebar">
@@ -110,14 +70,6 @@
           </button>
         </div>
       </div>
-      <SidebarUpdateFooter
-        :update-status="updateStatus"
-        :collapsed="effectiveSidebarCollapsed"
-        :busy="updateActionBusy"
-        @download="downloadUpdate"
-        @install="installUpdate"
-        @retry="retryUpdateCheck"
-      />
     </aside>
 
     <!-- 主内容区:智能体会话常驻全幅;脚本详情为独立二级页面(隐藏会话界面) -->
@@ -128,8 +80,7 @@
           :nav-items="filteredNavItems"
           :active-nav="currentView"
           :app-version="agentAppVersionLabel"
-          :browser-auto-open="browserAutoOpenCount"
-          :browser-tabs="browserTabs"
+          :resource-revision="resourceRevision"
           @nav-select="onAgentNavSelect"
           @rail-metrics="onRailMetrics"
           @session-nav="onSessionNav"
@@ -227,14 +178,13 @@
       <AgentProductLayer
         :active-runtime-session-id="activeRuntimeSessionId"
         @open-task-instance="openTaskInstanceFromAgent"
-        @browser-auto-open="browserAutoOpenCount += 1"
-        @browser-open-tabs="onBrowserOpenTabs"
+        @resources-changed="resourceRevision += 1"
       />
     </main>
     <!-- 更新日志弹窗:更新前查看版本内容并确认「去更新」 -->
     <UpdateChangelogModal
       :open="changelogOpen"
-      :version="titlebarUpdate.latestVersion"
+      :version="desktopUpdate.latestVersion"
       :busy="updateActionBusy"
       @close="changelogOpen = false"
       @update="onChangelogUpdate"
@@ -258,8 +208,7 @@ import SettingsPage from './views/SettingsPage.vue'
 import AgentWebView from './views/AgentWebView.vue'
 import AgentProductLayer from './components/agent/AgentProductLayer.vue'
 import UpdateChangelogModal from './components/UpdateChangelogModal.vue'
-import SidebarUpdateFooter from './components/SidebarUpdateFooter.vue'
-import UpdateProgressRing from './components/UpdateProgressRing.vue'
+import DesktopStatusFooter from './components/DesktopStatusFooter.vue'
 import { buildScriptGroups } from './utils/scriptGroups'
 import { buildTaskOverviewProgress, isTaskLiveActive, resolveTaskProgressConfig } from './utils/taskProgress'
 import { readSidebarCollapsed, writeSidebarCollapsed } from './utils/sidebarState.js'
@@ -405,28 +354,10 @@ function onRailMetrics(metrics) {
   const w = Number(metrics.width) || 0
   if (w > 40 && w < 800) railWidth.value = w
 }
-// 智能体调用浏览器工具时递增 → AgentWebView 自动弹出实时浏览器窗口
-const browserAutoOpenCount = ref(0)
-// 浏览器活动快照(tabs + 活跃 tab)→ 多窗口实时浏览器按会话/页面跟随
-const browserTabs = ref({ tabs: [], activeTabId: '' })
+const resourceRevision = ref(0)
 const activeRuntimeSessionId = ref('')
 function onRuntimeSession(runtimeSessionId) {
   activeRuntimeSessionId.value = String(runtimeSessionId || '')
-  browserTabs.value = { tabs: [], activeTabId: '' }
-}
-function tabsForActiveBrowserWindow(payload) {
-  const tabs = Array.isArray(payload?.tabs) ? payload.tabs.filter((tab) => tab?.id) : []
-  const activeTabId = String(payload?.activeTabId || payload?.active_tab_id || '')
-  if (activeTabId) {
-    const active = tabs.find((tab) => String(tab.id) === activeTabId)
-    if (active) return { tabs: [active], activeTabId }
-    return { tabs: [], activeTabId }
-  }
-  const first = tabs[0]
-  return { tabs: first ? [first] : [], activeTabId: first ? String(first.id) : activeTabId }
-}
-function onBrowserOpenTabs(payload) {
-  browserTabs.value = tabsForActiveBrowserWindow(payload)
 }
 // 脚本详情:独立二级页面(隐藏会话界面,内容区从 0 开始)
 const embedLeft = computed(() => (activeScript.value ? 0 : railWidth.value))
@@ -584,8 +515,8 @@ async function downloadUpdate() {
   if (result?.status) updateStatus.value = result
 }
 
-// 顶栏更新按钮:状态展示与动作分发(与侧边栏更新 footer 同源)
-const titlebarUpdate = computed(() => {
+// 左下角更新入口保留既有更新日志、下载与安装流程。
+const desktopUpdate = computed(() => {
   const presentation = buildSidebarUpdatePresentation(updateStatus.value, false)
   const tone = presentation.tone
   const icon = { available: '⬇', downloading: '↓', waiting: '…', ready: '↻',
@@ -598,15 +529,9 @@ const agentAppVersionLabel = computed(() => {
   return version ? `v${version}` : ''
 })
 
-const showTitlebarVersionBadge = computed(() =>
-  import.meta.env.DEV
-  && !titlebarUpdate.value.action
-  && titlebarUpdate.value.tone !== 'downloading'
-)
-
-function onTitlebarUpdateAction() {
+function onDesktopUpdateAction() {
   if (updateActionBusy.value) return
-  const action = titlebarUpdate.value.action
+  const action = desktopUpdate.value.action
   if (action === 'download') {
     // 更新前先展示更新日志,由用户确认「去更新」
     changelogOpen.value = true
@@ -614,6 +539,7 @@ function onTitlebarUpdateAction() {
   }
   if (action === 'install') installUpdate()
   else if (action === 'retry') retryUpdateCheck()
+  else openSettingsPanel('application-update')
 }
 
 const changelogOpen = ref(false)
@@ -787,9 +713,12 @@ input, select, textarea { font-family: inherit; }
 .layout {
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-rows: 40px 1fr;
+  grid-template-rows: minmax(0, 1fr);
   height: 100vh;
 }
+
+.layout.titlebar-macos { grid-template-rows: 32px minmax(0, 1fr); }
+.shell-status-footer { position:absolute;left:0;bottom:0;z-index:30; }
 
 /* 脚本详情:左侧显示二级菜单栏 */
 .layout.has-script-sidebar {
@@ -899,59 +828,13 @@ input, select, textarea { font-family: inherit; }
 .titlebar-macos.sidebar-collapsed .brand {
   margin-left: -32px;
 }
-.status-bar { margin-left: auto; display: flex; gap: 16px; -webkit-app-region: no-drag; align-items: center; }
-
-.titlebar-update-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg3);
-  color: var(--text2);
-  font-size: 12px;
-  padding: 3px 10px;
-  cursor: pointer;
-  line-height: 1.5;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-.titlebar-update-btn:hover { background: var(--soft-fill-hover); color: var(--text); }
-.titlebar-update-btn:disabled { opacity: 0.6; cursor: default; }
-.titlebar-update-btn.tone-available { border-color: var(--orange-dim); color: var(--orange-text); }
-.titlebar-update-btn.tone-downloading {
-  border-color: transparent;
-  background: transparent;
-  color: var(--orange-text);
-  padding: 0 2px;
-}
-.titlebar-update-btn.tone-downloading:hover {
-  background: transparent;
-  color: var(--orange-text);
-}
-.titlebar-update-btn.tone-ready, .titlebar-update-btn.tone-installing { color: var(--green); }
-.titlebar-update-btn.tone-error { color: var(--red); }
-.titlebar-update-status { cursor: default; }
-.titlebar-version-badge {
-  display: inline-flex;
-  align-items: center;
-  color: var(--text3);
-  font-size: 12px;
-  line-height: 1.5;
-  padding: 3px 2px;
-}
-.dot { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text3); }
-.dot i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--text3); }
-.dot.on i { background: var(--green); box-shadow: 0 0 6px var(--green); }
-.dot.off i { background: var(--red); }
-.dot.on { color: var(--text2); }
-
 /* 侧边栏 */
 .sidebar {
   background: var(--bg2);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  padding: 10px 0;
+  padding: 10px 0 44px;
   min-height: 0;
   overflow: hidden;
 }
@@ -1139,8 +1022,12 @@ nav {
 @media (max-width: 760px) {
   .layout.layout-ai-image {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 40px minmax(0, 1fr) 56px;
+    grid-template-rows: minmax(0, 1fr) 56px;
   }
+
+  .layout.layout-ai-image.titlebar-macos { grid-template-rows:32px minmax(0, 1fr) 56px; }
+  .layout-ai-image.titlebar-macos .content { grid-row:2; }
+  .layout-ai-image.titlebar-macos .sidebar { grid-row:3; }
 
   .layout-ai-image .titlebar {
     grid-column: 1;
@@ -1150,12 +1037,12 @@ nav {
 
   .layout-ai-image .content {
     grid-column: 1;
-    grid-row: 2;
+    grid-row: 1;
   }
 
   .layout-ai-image .sidebar {
     grid-column: 1;
-    grid-row: 3;
+    grid-row: 2;
     flex-direction: row;
     padding: 0;
     overflow-x: auto;

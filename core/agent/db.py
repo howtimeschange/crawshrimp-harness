@@ -1033,3 +1033,17 @@ def delete_all_agent_data() -> None:
             conn.commit()
         finally:
             conn.close()
+
+
+def list_session_resource_events(runtime_session_id: str) -> list[dict]:
+    """Read durable resource metadata for one runtime session, in event order."""
+    with _lock:
+        conn = _conn()
+        try:
+            return _fetch(conn, """
+                SELECT e.* FROM agent_events e JOIN agent_sessions s ON s.session_id=e.session_id
+                WHERE s.runtime_session_id=? AND e.event_type IN
+                ('artifact.created', 'browser.activity', 'browser.page.closed') ORDER BY e.seq
+            """, (runtime_session_id,))
+        finally:
+            conn.close()

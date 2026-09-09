@@ -102,6 +102,8 @@ async def open_browser_session(
         raise ValueError(f"Probe target entry URL is empty for {adapter_id}/{task_id}")
 
     bridge = get_bridge()
+    if hasattr(bridge, "ensure_available"):
+        await asyncio.to_thread(bridge.ensure_available)
     selected_mode = str(mode or "current").strip().lower() or "current"
     configured_match_prefixes = list(tab_match_prefixes_override or task.tab_match_prefixes or adapter.tab_match_prefixes or [])
     preferred_prefixes = configured_match_prefixes or [target_entry_url]

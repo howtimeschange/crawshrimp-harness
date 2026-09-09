@@ -99,8 +99,8 @@
               <p class="panel-kicker">连接</p>
               <h3>服务状态</h3>
             </div>
-            <span :class="['badge', props.status?.api && props.status?.chrome ? 'on' : 'neutral']">
-              {{ props.status?.api && props.status?.chrome ? '可运行' : '待检查' }}
+            <span :class="['badge', props.status?.api ? 'on' : 'neutral']">
+              {{ props.status?.api ? '核心就绪' : '待检查' }}
             </span>
           </div>
 
@@ -119,8 +119,8 @@
                 <span>Chrome CDP (端口 {{ props.status?.cdpPort || 9222 }})</span>
                 <strong>浏览器连接</strong>
               </div>
-              <span :class="['badge', props.status?.chrome ? 'on' : 'off']">
-                {{ props.status?.chrome ? '已连接' : '未连接' }}
+              <span :class="['badge', props.status?.chrome ? 'on' : 'neutral']">
+                {{ props.status?.chrome ? '已连接' : '按需启动' }}
               </span>
             </article>
           </div>
@@ -132,7 +132,7 @@
               <p v-if="props.status?.apiDiagnostic?.lastError" class="inline-msg err">
                 核心服务：{{ props.status.apiDiagnostic.lastError }}
               </p>
-              <p v-if="!props.status?.chrome && props.status?.chromeDiagnostic?.message" class="inline-msg err">
+              <p v-if="!props.status?.chrome && ['occupied-non-cdp', 'invalid-cdp'].includes(props.status?.chromeDiagnostic?.kind)" class="inline-msg err">
                 Chrome：{{ props.status.chromeDiagnostic.message }}
               </p>
               <p v-if="props.status?.dataDirRecovery?.recovered" class="inline-msg ok">
@@ -143,14 +143,14 @@
                   {{ backendRepairing ? '修复中...' : '修复核心服务' }}
                 </button>
                 <button class="btn-orange" :disabled="launching" @click="doLaunchChrome">
-                  {{ launching ? '修复中...' : '修复 Chrome 连接' }}
+                  {{ launching ? '正在连接...' : props.status?.chrome ? '检查浏览器连接' : '启动浏览器' }}
                 </button>
                 <button class="btn-ghost" @click="openDiagnosticLog">打开诊断日志</button>
               </div>
             </div>
             <div class="side-note">
               <strong>连接策略</strong>
-              <p>核心服务会重新检查数据目录和端口。Chrome 修复只会关闭身份确认属于抓虾的专用实例，不会结束未知进程。</p>
+              <p>浏览器会在智能体打开网页或执行浏览器任务时自动启动，也可以在这里手动启动。核心服务和纯对话不依赖浏览器。</p><p>连接修复只处理身份确认属于抓虾的专用浏览器实例。</p>
               <p v-if="props.status?.dataDir">当前数据目录：{{ props.status.dataDir }}</p>
             </div>
           </div>

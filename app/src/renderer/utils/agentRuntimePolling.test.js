@@ -5,7 +5,7 @@ import vm from 'node:vm'
 
 const source = readFileSync(new URL('../views/AgentWebView.vue', import.meta.url), 'utf8')
 const start = source.indexOf('  let runtimePollInFlight = false')
-const end = source.indexOf('  tabPollTimer =', start)
+const end = source.indexOf('\n})', start)
 
 function pollingHarness(url) {
   let poll

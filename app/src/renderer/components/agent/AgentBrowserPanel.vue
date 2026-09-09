@@ -8,6 +8,7 @@
       aria-label="实时浏览器窗口"
     >
       <div
+        v-if="!compact"
         class="browser-window-head"
         @pointerdown.left="onDragStart"
         @dblclick="!isDocked && toggleMaximize()"
@@ -60,8 +61,8 @@
         <button
           class="win-btn win-btn-close"
           type="button"
-          title="关闭浏览器窗口"
-          aria-label="关闭浏览器窗口"
+          title="收起浏览器画面"
+          aria-label="收起浏览器画面"
           @pointerdown.stop
           @click="$emit('collapse')"
         >
@@ -89,7 +90,7 @@
             </template>
           </div>
         </div>
-        <div class="browser-window-foot">
+        <div v-if="!compact" class="browser-window-foot">
           <span class="url" :title="frameUrl">{{ frameUrl || '—' }}</span>
           <span v-if="frame" class="frame-meta">{{ frame.width }}×{{ frame.height }}</span>
           <button class="refresh-btn" type="button" title="刷新画面" aria-label="刷新画面" @click="restart">
@@ -130,6 +131,8 @@ const props = defineProps({
   windowIndex: { type: Number, default: 0 },
   // floating: 自由浮窗; docked: 固定在会话右侧
   layout: { type: String, default: 'floating' },
+  compact: { type: Boolean, default: false },
+  dockActionLabel: { type: String, default: '脱离为浮窗' },
 })
 
 const emit = defineEmits(['collapse', 'layout-change'])
@@ -143,7 +146,7 @@ const maximized = ref(false)
 const dragging = ref(false)
 const resizing = ref(false)
 const isDocked = computed(() => props.layout === 'docked')
-const layoutActionLabel = computed(() => (isDocked.value ? '脱离为浮窗' : '固定到右侧'))
+const layoutActionLabel = computed(() => (isDocked.value ? props.dockActionLabel : '固定到右侧'))
 
 watch(() => props.minimizeSignal, (count) => {
   if (isDocked.value) return
@@ -153,6 +156,8 @@ watch(() => props.minimizeSignal, (count) => {
     savePrefs()
   }
 })
+
+defineExpose({ focusWindow() { minimized.value = false; savePrefs() } })
 
 const MIN_W = 360
 const MIN_H = 260

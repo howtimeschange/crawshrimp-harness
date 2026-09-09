@@ -1845,10 +1845,21 @@ window.__ModuleLoader__.load({
     }
 
     function installShellMessageBridge(ctx) {
+      // The shell owns the resource entry; retain the native export controller/dialog.
+      const resourceStyle = document.createElement?.('style')
+      if (resourceStyle && window.parent !== window) {
+        resourceStyle.textContent = 'button[class*="sessionLogButton"] { display: none !important; } .hHd-Xa_root { padding-bottom: 44px !important; box-sizing: border-box; } [data-crawshrimp-nav-bottom] { display: none !important; }'
+        document.head.appendChild(resourceStyle)
+      }
       const onMessage = (event) => {
         const expectedOrigin = shellOrigin()
         if (event.source !== window.parent || (expectedOrigin !== '*' && event.origin !== expectedOrigin)) return
         const data = event && event.data
+        if (data && data.__crawshrimp === 'download-session-log' && String(data.runtimeSessionId || '') === String(currentRuntimeSessionId || '')) {
+          const button = document.querySelector('button[class*="sessionLogButton"]')
+          if (button && !button.disabled) button.click()
+          else if (!button) postToShell({ __crawshrimp: 'session-log-error', runtimeSessionId: data.runtimeSessionId, message: '日志导出尚未就绪，请稍后重试。' })
+        }
         if (data && data.__crawshrimp === 'theme') applyShellTheme(ctx, data.theme)
         if (data && data.__crawshrimp === 'nav') renderNav(data.items, data.active)
         if (data && data.__crawshrimp === 'app-version') publishCrawshrimpAppVersion(data.version)
@@ -1870,7 +1881,7 @@ window.__ModuleLoader__.load({
       }
       window.addEventListener('message', onMessage)
       postToShell({ __crawshrimp: 'workspace-ready' })
-      return () => window.removeEventListener('message', onMessage)
+      return () => { window.removeEventListener('message', onMessage); resourceStyle?.remove() }
     }
 
     function publishCurrentSession(ctx) {

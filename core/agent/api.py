@@ -1205,3 +1205,56 @@ def build_agent_mcp_asgi(token_provider, context_acquirer=None,
             return await call_next(request)
 
     return McpBearerAuth(inner)
+
+
+@router.get("/session-resources")
+def session_resources(runtime_session_id: str) -> dict:
+    artifacts, tabs = {}, {}
+    active = ""
+    for row in db.list_session_resource_events(runtime_session_id):
+        data = json.loads(row["payload_json"])
+        if row["event_type"] == "artifact.created":
+            key = data.get("path") or data.get("artifact_id")
+            if key:
+                artifacts.pop(key, None)
+                artifacts[key] = {**data, "updated_at": row["created_at"]}
+        elif row["event_type"] == "browser.page.closed":
+            tabs.pop(data.get("tab_id"), None)
+        else:
+            for tab in data.get("tabs") or []:
+                if tab.get("id"):
+                    tabs[tab["id"]] = tab
+            active = data.get("active_tab_id") or active
+    return {"artifacts": list(reversed(list(artifacts.values()))),
+            "tabs": list(tabs.values()), "activeTabId": active}
+
+
+class SessionPageRequest(BaseModel):
+    runtime_session_id: str
+
+
+@router.post("/session-resources/pages")
+async def create_session_page(req: SessionPageRequest) -> dict:
+    session = db.get_session_by_runtime(req.runtime_session_id)
+    if not session:
+        if not req.runtime_session_id.strip():
+            raise HTTPException(400, "请先选择会话")
+        session = db.create_session(str(uuid.uuid4()), req.runtime_session_id)
+    from core.cdp_bridge import get_bridge
+    tab = await asyncio.to_thread(get_bridge().new_tab, "about:blank")
+    page = {key: str(tab.get(key) or "") for key in ("id", "url", "title")}
+    await get_agent_service().broadcast(session["session_id"], 0, "browser.activity",
+                                        {"tabs": [page], "active_tab_id": page["id"]})
+    return page
+
+
+@router.delete("/session-resources/pages/{tab_id}")
+async def close_session_page(tab_id: str, runtime_session_id: str) -> dict:
+    resources = session_resources(runtime_session_id)
+    if not any(tab["id"] == tab_id for tab in resources["tabs"]):
+        raise HTTPException(404, "该页面不属于当前会话")
+    from core.cdp_bridge import get_bridge
+    await asyncio.to_thread(get_bridge().close_tab, tab_id)
+    session = db.get_session_by_runtime(runtime_session_id)
+    await get_agent_service().broadcast(session["session_id"], 0, "browser.page.closed", {"tab_id": tab_id})
+    return {"ok": True}

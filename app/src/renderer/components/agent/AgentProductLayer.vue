@@ -58,11 +58,11 @@ const props = defineProps({
   activeRuntimeSessionId: { type: String, default: '' },
 })
 
-const emit = defineEmits(['open-task-instance', 'browser-auto-open', 'browser-open-tabs'])
+const emit = defineEmits(['open-task-instance', 'browser-auto-open', 'browser-open-tabs', 'resources-changed'])
 
 const cards = ref([])
 const visibleCards = computed(() => cards.value.filter((card) =>
-  card.global || (props.activeRuntimeSessionId && card.runtimeSessionId === props.activeRuntimeSessionId)
+  card.kind !== 'artifact' && (card.global || (props.activeRuntimeSessionId && card.runtimeSessionId === props.activeRuntimeSessionId))
 ).slice(-4))
 let stopEvents = null
 let taskPollTimer = null
@@ -197,6 +197,7 @@ async function revealArtifact(card) {
 }
 
 function handleEvent(eventType, data) {
+  if (['artifact.created', 'browser.activity', 'browser.page.closed'].includes(eventType)) emit('resources-changed')
   const runtimeSessionId = String(data?.runtime_session_id || '')
   const isActive = Boolean(runtimeSessionId) && runtimeSessionId === props.activeRuntimeSessionId
   if (eventType === 'tool.approval_required') {
