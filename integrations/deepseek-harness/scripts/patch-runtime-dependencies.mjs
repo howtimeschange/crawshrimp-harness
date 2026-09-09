@@ -15,6 +15,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { patchConfiguredModelCatalog } from './configured-model-catalog.mjs'
 import { patchCurrencyMath } from './currency-math.mjs'
+import { patchCompactChat } from './compact-chat.mjs'
 import { patchReasoningRecovery } from './reasoning-recovery.mjs'
 
 export const RUNTIME_GUARD_MARKER = 'crawshrimp-dsh-im-411-product-patch-v1'
@@ -2195,6 +2196,7 @@ async function probeWorkspaceDirectoryAccess(directory) {
  */
 export function patchRuntimeDependencies(runtimeRoot) {
   const root = resolve(runtimeRoot)
+  patchCompactChat(root)
   const dshManifest = requireText(root, 'node_modules/@deepseek-ai/dsh/package.json', '"0.1.2-rc.1"')
   const dshBin = requireFile(root, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
   // Cordis resolves Web Host plugins from the product runtime root.  Keep the

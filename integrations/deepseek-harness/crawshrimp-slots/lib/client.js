@@ -383,6 +383,16 @@ window.__ModuleLoader__.load({
 
     // 去品牌 + 抓虾化样式
     const BRAND_CSS = [
+      '.wSkVaW_header { padding-top: 6px; padding-bottom: 6px; }',
+      '.cs-tool-group { min-width: 0; }',
+      '.cs-tool-group-latest { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }',
+      '.cs-tool-group-latest > [data-chat-flow-key] { flex: 1; min-width: 0; }',
+      '.cs-tool-group:has(.cs-tool-group-latest > [hidden]) { display: none; }',
+      '.cs-tool-group-toggle { flex: none; border: 0; border-radius: 6px; background: transparent; color: var(--dsw-alias-label-tertiary); font: inherit; font-size: 12px; min-width: 36px; min-height: 26px; cursor: pointer; }',
+      '.cs-tool-group-toggle:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }',
+      '.cs-tool-group-toggle:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }',
+      '.cs-tool-group-history:not([hidden]) { max-height: 280px; overflow-y: auto; overscroll-behavior: contain; margin-top: 4px; padding-left: 10px; border-left: 1px solid var(--dsw-alias-border-l3); }',
+      '.cs-tool-group-history > [data-chat-flow-key] + [data-chat-flow-key] { margin-top: 4px; }',
       // Hide internal context disclosures in both live and replayed chat.
       // Only presentation changes: durable context and model input stay intact.
       '[data-chat-flow-kind="context"], [data-chat-flow-kind="system-prompt"] { display: none !important; }',
