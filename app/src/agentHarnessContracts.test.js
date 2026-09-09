@@ -809,7 +809,7 @@ test('browser windows are isolated per target and remove closed tabs', () => {
   assert.match(resources, /role="separator"/)
   assert.match(resources, /session-resources\?runtime_session_id/)
   assert.match(resources, /token !== generation \|\| id !== props.sessionId/)
-  assert.match(resources, /下载 Session 日志/)
+  assert.match(resources, /aria-label="导出会话日志"/)
   assert.match(productLayer, /tool\.approval_resolved/)
   assert.match(productLayer, /run\.interrupted/)
   assert.match(productLayer, /reconcilePendingApprovals/)

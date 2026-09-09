@@ -1216,8 +1216,9 @@ def session_resources(runtime_session_id: str) -> dict:
         if row["event_type"] == "artifact.created":
             key = data.get("path") or data.get("artifact_id")
             if key:
-                artifacts.pop(key, None)
-                artifacts[key] = {**data, "updated_at": row["created_at"]}
+                previous = artifacts.pop(key, None)
+                created_at = previous["created_at"] if previous else row["created_at"]
+                artifacts[key] = {**data, "created_at": created_at, "updated_at": row["created_at"]}
         elif row["event_type"] == "browser.page.closed":
             tabs.pop(data.get("tab_id"), None)
         else:

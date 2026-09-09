@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
+import { formatArtifactAge, sortArtifactsByUpdated, isOfficeDocument } from './renderer/utils/artifactTime.js'
 
 const source = readFileSync(new URL('./renderer/components/agent/SessionResources.vue', import.meta.url), 'utf8')
 const script = source.split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm, '')
@@ -10,6 +11,7 @@ function harness({ sessionId = 'a', storage = new Map() } = {}) {
   const pointerEvents = new Map()
   const props = { sessionId, conversationPhase: 'active' }
   const context = {
+    formatArtifactAge, sortArtifactsByUpdated, isOfficeDocument,
     document: { getElementById: () => null },
     nextTick: fn => Promise.resolve().then(fn),
     defineProps: () => props, defineEmits: () => {}, defineExpose: () => {},

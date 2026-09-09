@@ -1,10 +1,10 @@
 <template>
   <div class="office-preview">
     <div class="office-controls">
-      <button :disabled="page <= 1" @click="page--" aria-label="上一页">上一页</button>
-      <span>{{ page }} / {{ pages.length }} 页</span>
-      <button :disabled="page >= pages.length" @click="page++" aria-label="下一页">下一页</button>
-      <button v-if="office.pdf" @click="openPdf">打开 PDF</button>
+      <button class="page-button" type="button" :disabled="page <= 1" @click="page--" aria-label="上一页">上一页</button>
+      <span class="page-count" aria-live="polite">{{ page }} / {{ pages.length }} 页</span>
+      <button class="page-button" type="button" :disabled="page >= pages.length" @click="page++" aria-label="下一页">下一页</button>
+      <button v-if="documentPath" class="open-document" type="button" @click="openDocument">打开 {{ documentType }}</button>
     </div>
     <p class="office-status" role="status">{{ status }}</p>
     <p v-if="error" role="alert">{{ error }}</p>
@@ -16,7 +16,9 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
-const props = defineProps({ office: { type: Object, required: true } })
+const props = defineProps({ office: { type: Object, required: true }, path: { type: String, default: '' } })
+const documentPath = computed(() => props.path || props.office.document || '')
+const documentType = computed(() => ({ docx: 'Word', pptx: 'PPT', xlsx: 'Excel' })[documentPath.value.split('.').pop().toLowerCase()] || '原件')
 const pages = computed(() => props.office.pages || [])
 const page = ref(1), url = ref(''), error = ref(''), loading = ref(false)
 let generation = 0
@@ -40,14 +42,18 @@ watch([page, () => pages.value], async () => {
   } catch (e) { if (token === generation) error.value = `预览失败：${e.message}` }
   finally { if (token === generation) loading.value = false }
 }, { immediate: true })
-async function openPdf() {
-  try { const result = await window.cs.openFile(props.office.pdf); if (result?.ok === false) throw new Error(result.error) }
+async function openDocument() {
+  try { const result = await window.cs.openFile(documentPath.value); if (result?.ok === false) throw new Error(result.error) }
   catch (e) { error.value = `打开失败：${e.message}` }
 }
 </script>
 
 <style scoped>
-.office-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;position:sticky;top:0;background:var(--bg2);padding:8px;border-radius:6px}
-.office-status{font-size:12px;color:var(--text-secondary);line-height:1.6}
-img{display:block;max-width:100%;height:auto;margin:12px auto;box-shadow:0 1px 8px #0002}
+.office-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;position:sticky;top:0;z-index:1;background:var(--bg2);padding:8px;border:1px solid var(--border);border-radius:10px}
+button{appearance:none;display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:5px 10px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--text2);font-family:inherit;font-size:12px;font-weight:500;line-height:1.4;cursor:pointer;transition:background 120ms,color 120ms}
+button:hover:not(:disabled){background:var(--bg);color:var(--text)}button:focus-visible{outline:2px solid var(--orange,#ff6b2b);outline-offset:2px}button:disabled{opacity:.35;cursor:default}
+.page-button{border-color:var(--border)}.page-count{min-width:64px;text-align:center;color:var(--text3);font-size:12px;font-variant-numeric:tabular-nums}
+.open-document{margin-left:auto;color:var(--orange,#ff6b2b);background:color-mix(in srgb,var(--orange,#ff6b2b) 9%,transparent)}.open-document:hover:not(:disabled){background:color-mix(in srgb,var(--orange,#ff6b2b) 16%,transparent);color:var(--orange,#ff6b2b)}
+.office-status{font-size:12px;color:var(--text3);line-height:1.6;margin:10px 2px}img{display:block;max-width:100%;height:auto;margin:12px auto;box-shadow:0 1px 8px #0002}
+@media(prefers-reduced-motion:reduce){button{transition:none}}
 </style>

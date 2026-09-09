@@ -1859,8 +1859,27 @@ window.__ModuleLoader__.load({
       }
     }
 
+    const sessionLogDownloads = new Set()
+    async function downloadSessionLog(sessionId) {
+      if (!sessionId || sessionLogDownloads.has(sessionId)) return
+      sessionLogDownloads.add(sessionId)
+      try {
+        const url = new URL('/api/session.export', window.location.origin)
+        url.searchParams.set('sessionId', sessionId)
+        url.searchParams.set('includeDescendants', 'true')
+        const response = await fetch(url, { method: 'HEAD' })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const anchor = document.createElement('a')
+        anchor.href = url.toString()
+        anchor.download = `dsh-session-${String(sessionId).replace(/[^A-Za-z0-9_-]/g, '_')}.zip`
+        anchor.click()
+      } catch (error) {
+        postToShell({ __crawshrimp: 'session-log-error', runtimeSessionId: sessionId, message: `会话日志导出失败：${error.message}` })
+      } finally { sessionLogDownloads.delete(sessionId) }
+    }
+
     function installShellMessageBridge(ctx) {
-      // The shell owns the resource entry; retain the native export controller/dialog.
+      // The shell exports through the same host endpoint without a success modal.
       const resourceStyle = document.createElement?.('style')
       if (resourceStyle && window.parent !== window) {
         resourceStyle.textContent = 'button[class*="sessionLogButton"] { display: none !important; } .hHd-Xa_root { padding-bottom: 44px !important; box-sizing: border-box; } [data-crawshrimp-nav-bottom] { display: none !important; }'
@@ -1871,9 +1890,7 @@ window.__ModuleLoader__.load({
         if (event.source !== window.parent || (expectedOrigin !== '*' && event.origin !== expectedOrigin)) return
         const data = event && event.data
         if (data && data.__crawshrimp === 'download-session-log' && String(data.runtimeSessionId || '') === String(currentRuntimeSessionId || '')) {
-          const button = document.querySelector('button[class*="sessionLogButton"]')
-          if (button && !button.disabled) button.click()
-          else if (!button) postToShell({ __crawshrimp: 'session-log-error', runtimeSessionId: data.runtimeSessionId, message: '日志导出尚未就绪，请稍后重试。' })
+          void downloadSessionLog(String(data.runtimeSessionId || ''))
         }
         if (data && data.__crawshrimp === 'theme') applyShellTheme(ctx, data.theme)
         if (data && data.__crawshrimp === 'nav') renderNav(data.items, data.active)

@@ -42,3 +42,16 @@ def test_cannot_close_other_session_page(resource_db):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(api.close_session_page('private', 'runtime-a'))
     assert exc.value.status_code == 404
+
+
+def test_artifact_creation_time_survives_later_preview_updates(monkeypatch):
+    import json
+    payload = {'path': '/report.docx', 'filename': 'report.docx'}
+    monkeypatch.setattr(db, 'list_session_resource_events', lambda _: [
+        {'event_type': 'artifact.created', 'created_at': '2026-09-01T01:00:00Z', 'payload_json': json.dumps(payload)},
+        {'event_type': 'artifact.created', 'created_at': '2026-09-09T01:00:00Z', 'payload_json': json.dumps({**payload, 'office': {'visual': 'passed'}})},
+    ])
+    item = api.session_resources('a')['artifacts'][0]
+    assert item['created_at'] == '2026-09-01T01:00:00Z'
+    assert item['updated_at'] == '2026-09-09T01:00:00Z'
+    assert item['office'] == {'visual': 'passed'}

@@ -1,4 +1,5 @@
 <template>
+  <button v-if="!opened || !selection" class="session-export-button export-log" type="button" :disabled="!sessionId" aria-label="导出会话日志" data-tooltip="导出会话日志" @click="error = ''; $emit('download-log')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg></button>
   <button v-if="!opened || !selection" class="session-panel-toggle" type="button" :title="opened ? '收起会话资源' : '展开会话资源'" :aria-label="opened ? '收起会话资源' : '展开会话资源'" :aria-expanded="opened" @click="togglePanel">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M15 4v16" /></svg>
     <small v-if="unseen" class="unseen-count">{{ unseen }}</small>
@@ -10,6 +11,7 @@
       <button v-if="selection" @click="back">← 资源 <small v-if="unseen">{{ unseen }}</small></button><strong v-else>会话资源</strong>
       <span class="spacer"></span>
       <button v-if="!selection" ref="searchButton" class="search-toggle" :aria-expanded="searching" aria-label="搜索会话资源" title="搜索会话资源" @click="toggleSearch"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg></button>
+      <button v-if="selection" class="export-log" type="button" :disabled="!sessionId" aria-label="导出会话日志" data-tooltip="导出会话日志" @click="error = ''; $emit('download-log')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg></button>
       <button v-if="selection" :title="maximized ? '还原' : '最大化'" @click="maximized = !maximized">⛶</button>
       <button title="收起会话面板" aria-label="收起会话面板" @click="opened = false">›</button>
     </header>
@@ -32,7 +34,7 @@
     <template v-else-if="selection?.kind === 'artifact'">
       <div class="resource-toolbar"><strong :title="selection.path">{{ selection.filename }}</strong><button @click="fileAction('openFile', selection)">系统打开</button><button @click="fileAction('revealFile', selection)">定位</button></div>
       <div class="resource-preview">
-        <OfficePreview v-if="selection.office" :office="selection.office" />
+        <OfficePreview v-if="isOfficeDocument(selection)" :office="selection.office" :path="selection.path" />
         <p v-else-if="previewLoading" class="empty">正在加载…</p>
         <img v-else-if="previewKind === 'image'" :src="previewUrl" :alt="selection.filename" @error="error = '文件无法加载，可能已移动或删除'" />
         <video v-else-if="previewKind === 'video'" :src="previewUrl" controls />
@@ -49,20 +51,19 @@
           <div v-if="pagesExpanded || query" class="section-items page-items" aria-label="浏览器页面列表" tabindex="0"><p v-if="!filteredTabs.length" class="empty">{{ query ? '没有匹配的页面' : '当前会话暂无浏览器页面' }}</p>
             <div v-for="tab in filteredTabs" :key="tab.id" class="resource-row">
               <button class="resource-main" :title="`${tab.title || tab.url}\n${tab.url}`" @click="openBrowser(tab.id)"><span class="type-icon">◎</span><span class="resource-name">{{ tab.title || tab.url || '新页面' }}</span><small v-if="tab.closed" class="closed-label">已关闭</small><i v-if="tab.id === activeTabId && !tab.closed" title="最近执行的页面" class="activity-dot"></i></button>
-              <details class="row-menu"><summary aria-label="页面操作">⋯</summary><div><button @click="copy(tab.url)">复制链接</button><button v-if="!tab.closed" @click="closePage(tab)">关闭页面</button></div></details>
+              <ResourceMenu label="页面操作"><button @click="copy(tab.url)">复制链接</button><button v-if="!tab.closed" @click="closePage(tab)">关闭页面</button></ResourceMenu>
             </div>
           </div>
         </section>
         <section><div class="section-heading"><button :aria-expanded="filesExpanded || !!query" @click="filesExpanded = !filesExpanded">{{ filesExpanded || query ? '▾' : '▸' }} 产物 <small>{{ query ? `${filteredArtifacts.length} / ${artifacts.length}` : artifacts.length }}</small></button></div>
           <div v-if="filesExpanded || query" class="section-items file-items" aria-label="产物列表" tabindex="0"><p v-if="!filteredArtifacts.length" class="empty">{{ loading ? '正在加载资源…' : query ? '没有匹配的产物' : '生成的文件会显示在这里' }}</p>
             <div v-for="item in filteredArtifacts" :key="item.path || item.artifact_id" class="resource-row">
-              <button class="resource-main" :title="`${item.filename}\n${size(item.size)} · ${item.path}`" @click="openArtifact(item)"><span class="type-icon">{{ extension(item.filename) }}</span><span class="resource-name">{{ item.filename }}</span></button>
-              <details class="row-menu"><summary aria-label="文件操作">⋯</summary><div><button @click="fileAction('openFile', item)">系统打开</button><button @click="fileAction('revealFile', item)">在文件夹中定位</button><button @click="copy(item.path)">复制路径</button></div></details>
+              <button class="resource-main" :title="`${item.filename}\n${size(item.size)} · ${item.path}`" @click="openArtifact(item)"><span class="type-icon">{{ extension(item.filename) }}</span><span class="resource-name">{{ item.filename }}</span><small v-if="artifactAge(item)" class="artifact-age">{{ artifactAge(item) }}</small></button>
+              <ResourceMenu label="文件操作"><button @click="fileAction('openFile', item)">系统打开</button><button @click="fileAction('revealFile', item)">在文件夹中定位</button><button @click="copy(item.path)">复制路径</button></ResourceMenu>
             </div>
           </div>
         </section>
       </div>
-      <footer><button :disabled="!sessionId" @click="error = ''; $emit('download-log')">↓ 下载 Session 日志</button></footer>
     </template>
     </div>
     <div v-if="!selection && miniTab" class="browser-mini" aria-label="主浏览器实时画面">
@@ -76,6 +77,8 @@
 
 <script setup>
 import OfficePreview from './OfficePreview.vue'
+import ResourceMenu from './ResourceMenu.vue'
+import { formatArtifactAge, sortArtifactsByUpdated, isOfficeDocument } from '../../utils/artifactTime.js'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import AgentBrowserPanel from './AgentBrowserPanel.vue'
 const props = defineProps({ sessionId: { type: String, default: '' }, conversationPhase: { type: String, default: 'hero' }, revision: Number })
@@ -86,6 +89,8 @@ let previousViewportWidth = window.innerWidth, previousViewportHeight = window.i
 const opened = ref(false), selection = ref(null), maximized = ref(false), width = ref(700)
 const searching = ref(false), searchInput = ref(null), searchButton = ref(null)
 const query = ref(''), pagesExpanded = ref(true), filesExpanded = ref(true)
+const now = ref(Date.now())
+const artifactAge = item => formatArtifactAge(item.updated_at || item.created_at, now.value)
 const artifacts = ref([]), tabs = ref([]), activeTabId = ref('')
 const unseen = ref(0), error = ref(''), loading = ref(false), busy = ref(false)
 const previewUrl = ref(''), previewKind = ref(''), previewText = ref(''), previewLoading = ref(false)
@@ -108,7 +113,7 @@ defineExpose({ showError: message => { error.value = message; opened.value = tru
 const selectedTab = computed(() => tabs.value.find(t => t.id === selection.value?.id))
 const miniTab = computed(() => tabs.value.find(t => t.id === activeTabId.value && !t.closed) || tabs.value.find(t => !t.closed))
 const filteredTabs = computed(() => tabs.value.filter(t => `${t.title} ${t.url}`.toLowerCase().includes(query.value.toLowerCase())))
-const filteredArtifacts = computed(() => artifacts.value.filter(t => `${t.filename} ${t.path}`.toLowerCase().includes(query.value.toLowerCase())))
+const filteredArtifacts = computed(() => sortArtifactsByUpdated(artifacts.value).filter(t => `${t.filename} ${t.path}`.toLowerCase().includes(query.value.toLowerCase())))
 const extension = name => String(name || '').split('.').pop().slice(0, 4).toUpperCase()
 const size = value => Number(value) > 1048576 ? `${(value / 1048576).toFixed(1)} MB` : `${Math.max(0, Number(value) || 0) / 1024 < 1 ? '<1' : (value / 1024).toFixed(1)} KB`
 function onViewportResize() {
@@ -240,8 +245,9 @@ function syncSessionPanel() {
 watch([() => props.sessionId, () => props.conversationPhase], syncSessionPanel, { immediate: true })
 watch([opened, selection, width], () => saveState(props.sessionId))
 watch(() => props.revision, () => { clearTimeout(timer); timer = setTimeout(refresh, 150) })
+const ageTimer = setInterval(() => { now.value = Date.now() }, 30000)
 const polling = setInterval(refresh, 5000)
-onUnmounted(() => { browserTransition++; window.removeEventListener('resize', onViewportResize); generation++; previewGeneration++; clearInterval(polling); clearTimeout(timer); stopResize?.() })
+onUnmounted(() => { browserTransition++; window.removeEventListener('resize', onViewportResize); generation++; previewGeneration++; clearInterval(polling); clearInterval(ageTimer); clearTimeout(timer); stopResize?.() })
 </script>
 
 <style scoped>
@@ -252,7 +258,7 @@ onUnmounted(() => { browserTransition++; window.removeEventListener('resize', on
 .resource-card{display:contents}.compact .resource-card{display:flex;flex-direction:column;min-height:0;flex:0 1 auto;border:1px solid var(--border);border-radius:14px;background:var(--bg2);box-shadow:0 4px 18px #0000000a;overflow:hidden}
 .viewing header{height:38px;padding:0 10px}.viewing .browser-tabs{padding-top:4px}.viewing .browser-tab>[role=tab]{padding-top:8px;padding-bottom:8px}
 .session-resources.maximized{position:absolute;inset:0 0 0 auto;width:calc(100% - 280px);max-width:100%;z-index:19}
-.compact header{height:42px;border-bottom:0}.compact .resource-search{padding-top:0}.compact .resource-search input{background:var(--bg);font-size:12px}.compact .resource-list{flex:0 1 auto;min-height:0;max-height:calc(100vh - 330px)}.compact footer{padding:8px 12px}.compact .resource-row{min-height:30px}.compact .resource-main{padding:5px 4px;gap:7px}.compact .type-icon{width:25px}.compact .resource-name{line-height:20px}.closed-label{flex:none;font-size:10px}
+.compact header{height:42px;border-bottom:0}.compact .resource-search{padding-top:0}.compact .resource-search input{background:var(--bg);font-size:12px}.compact .resource-list{flex:0 1 auto;min-height:0;max-height:calc(100vh - 330px)}.compact .resource-row{min-height:30px}.compact .resource-main{padding:5px 4px;gap:7px}.compact .type-icon{width:25px}.compact .resource-name{line-height:20px}.closed-label{flex:none;font-size:10px}
 .browser-mini{position:relative;align-self:flex-end;width:230px;max-width:100%;flex:0 0 144px;height:144px;margin:0;border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--bg)}
 .browser-mini :deep(.agent-browser-window){height:119px}.mini-expand{position:absolute;inset:0 0 24px;z-index:2;border-radius:0;display:flex;align-items:center;justify-content:center}.mini-expand span{opacity:0;background:var(--bg2);padding:7px 10px;border-radius:8px;box-shadow:0 2px 8px #0002}.mini-expand:hover{background:#00000012}.mini-expand:hover span,.mini-expand:focus-visible span{opacity:1}.mini-caption{position:absolute;bottom:0;left:0;right:0;height:24px;padding:0 8px;display:flex;align-items:center;gap:6px;background:var(--bg);font-size:11px}.mini-caption>span{flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .browser-tabs{scroll-padding-inline:8px 44px;display:flex;align-items:stretch;overflow-x:auto;flex-shrink:0;gap:3px;padding:8px 8px 0;background:var(--bg2);border-bottom:1px solid var(--border);scrollbar-width:thin}
@@ -263,8 +269,13 @@ button,select,input{font:inherit;color:inherit}button{background:none;border:0;c
 .search-toggle{display:flex;align-items:center;justify-content:center}.resource-search{padding:0 12px 6px;display:flex;gap:4px;align-items:center}.resource-search input{min-width:0}.resource-search input:focus-visible{outline:2px solid var(--accent,#ff6b2b);outline-offset:-1px}.resource-search input{box-sizing:border-box;width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:8px 10px;outline:none}
 .resource-list{display:flex;flex-direction:column;flex:1;overflow:hidden;padding:0 8px 6px}.resource-list section{display:flex;flex-direction:column;flex:0 1 auto;min-height:36px}.section-heading{flex-shrink:0}section+section{margin-top:6px}.section-items{flex:0 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-gutter:stable}.page-items{max-height:150px}.file-items{max-height:210px}.section-items:focus-visible{outline:1px solid var(--border);outline-offset:-1px}.section-heading{display:flex;justify-content:space-between;align-items:center;color:var(--text2);padding:4px 0}.section-heading small{margin-left:6px}
 .resource-row{display:flex;align-items:center;border-radius:7px;min-width:0;position:relative}.resource-row:hover{background:var(--bg2)}.resource-main{display:flex;align-items:center;text-align:left;gap:10px;flex:1;min-width:0;padding:10px 6px}.resource-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;line-height:1.5}.resource-name small{display:block;overflow:hidden;text-overflow:ellipsis}.type-icon{width:30px;flex-shrink:0;color:var(--text3);font-size:10px}.activity-dot{width:6px;height:6px;background:#73b894;border-radius:50%}
-.row-menu{position:relative}.row-menu summary{cursor:pointer;list-style:none;padding:5px;opacity:.4}.resource-row:hover summary,.row-menu[open] summary{opacity:1}.row-menu>div{position:absolute;right:0;top:26px;z-index:30;min-width:140px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:5px;box-shadow:0 8px 24px #0004}.resource-row:has(.row-menu[open]){padding-bottom:112px;align-items:flex-start}.row-menu button{display:block;width:100%;text-align:left}
-footer{border-top:1px solid var(--border);padding:12px;flex-shrink:0}footer button{width:100%;text-align:left;color:var(--text2)}.empty{margin:0;padding:8px 6px;color:var(--text3);font-size:12px;line-height:1.7}.resource-error{padding:8px 16px;color:#e18b74;font-size:12px;margin:0;overflow-wrap:anywhere}
+.empty{margin:0;padding:8px 6px;color:var(--text3);font-size:12px;line-height:1.7}.resource-error{padding:8px 16px;color:#e18b74;font-size:12px;margin:0;overflow-wrap:anywhere}
 .resource-toolbar{display:flex;gap:8px;align-items:center;padding:10px 14px;flex-shrink:0;border-bottom:1px solid var(--border)}.resource-toolbar strong{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.resource-toolbar select{width:100%;padding:8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px}.resource-preview{overflow:auto;flex:1;padding:18px;min-height:0}.resource-preview img,.resource-preview video{display:block;max-width:100%;height:auto;margin:auto}.resource-preview pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.7 monospace}.resource-resizer{position:absolute;left:-4px;top:0;touch-action:none;bottom:0;width:8px;cursor:col-resize;z-index:25}
 @media(max-width:1000px){.session-resources.viewing{position:absolute;right:0;top:0;bottom:0;max-width:calc(100% - 60px);z-index:15;box-shadow:-8px 0 30px #0003}.session-resources.maximized{width:calc(100% - 60px)}}
+.artifact-age{flex:none;font-size:10px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.session-export-button{position:absolute;right:54px;top:14px;z-index:20;width:32px;height:32px;color:var(--text2)}
+.export-log{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none}.session-export-button{position:absolute}
+.export-log::after{content:attr(data-tooltip);position:absolute;right:0;top:calc(100% + 7px);z-index:40;white-space:nowrap;padding:6px 8px;border-radius:6px;background:var(--tooltip-bg,#292932);color:#f7f7fa;font-size:11px;line-height:1.4;box-shadow:0 4px 14px #0002;opacity:0;pointer-events:none;transition:opacity 120ms}
+.export-log:hover::after,.export-log:focus-visible::after{opacity:1}
+.resource-toolbar button{border:1px solid var(--border);padding:5px 9px;color:var(--text2);font-size:12px}.resource-toolbar button:hover{background:var(--bg2);color:var(--text)}
 </style>
