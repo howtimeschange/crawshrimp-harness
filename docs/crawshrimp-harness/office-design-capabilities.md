@@ -38,4 +38,27 @@
 - 已逐页审查 38 页：三套 Word、Excel 三页、模板填充六页、26 种布局。检查中文、边界、遮挡、表格与图表可读性；业务数字为明确标注的虚构示例。
 - after-pack 的 smoke 新增六份设计样例的生成、重新打开和设计检查，原三件套渲染/中文字体/公式门禁继续保留。
 
-客户端与最终安装包的实际验收结果见本轮交付记录；macOS ARM 本机结果不能代替 Intel/Windows 原生实测。
+## main 客户端与安装包验收（2026-09-09）
+
+实现提交：`5828cc06d6f7743a0e43be1bcab785a88e1ca7f9`。使用原项目 main 开发客户端 `127.0.0.1:5173`，未启动旧分支开发客户端。会话 `cs-web-b576f3f00577` 自行调用新 API 生成文件并完成检查：
+
+| 文件 | 最终渲染作业 | 结果 |
+| --- | --- | --- |
+| Word 报告 | `268ec17c6c214a468fb051d0776e840a` | 基础、设计与视觉检查通过，2/2 页 |
+| PPT 汇报 | `ac388495907743a8ac50055c01c79af7` | 基础、设计与视觉检查通过，6/6 页 |
+| PPT 模板副本 | `77d87873478e446b9245b1578f6eaf02` | 仅改第 1 页标题，结构保真通过；视觉检查 6/6 页 |
+| Excel 三表报表 | `f4901de35cb64dfeb220052c5ce803fe` | 基础、设计与视觉检查通过，3/3 页 |
+
+实际点击 Word/PPT/Excel 产物预览与翻页，界面显示正确文件类型和检查覆盖。重新读取文件与页面 SHA，确认全部 17 页记录对应最终版本。Excel 核对 14 个公式、文本编号 `00123`/`00456`、销售额 5,130,000、利润 920,000、华东合计 2,740,000 与 IF 判断。原数据与公式语义保持，LibreOffice 仅去除了三处公式中不必要的工作表名引号。样例均明确标注为虚构数据。
+
+真机发现并修复了固定行高裁切中文说明的问题，加入按列宽估算及 LibreOffice 宽度转换余量；同时完善逐页串行读图规则，避免批量图片桥接只观察到末页。真实会话中的单位/合计示例和汇总列宽、文本对齐也经过修正后再检查。
+
+最后基于该 main 提交及固定子模块提交的干净源码快照完成 `stage-runtime.mjs --force`（含 Web profile 启动配置检查）、Vite 构建与 ARM DMG。打包门禁发现本机旧 Python 缓存缺少 Office 库；更新为与 main 锁文件一致的标准 Python 依赖缓存后，仅重跑失败的打包步骤。没有复制旧分支的应用代码。
+
+- 安装包：`app/dist/office-design-5828cc06d/crawshrimp-harness-v0.1.13-mac-arm64.dmg`，929,881,353 字节。
+- SHA-256：`6072d518b532dc1e447d43422a986e62944c33088e401578bb3b27b87d615e0f`。
+- after-pack 包内 Python 原生检查通过：Word/PPT/Excel 渲染 3/5/3 页，中文字体与公式检查通过；新增六份设计样例生成、重新打开和设计审计通过。
+- DMG 挂载后复制应用到新目录，卸载镜像，再使用复制出的包内 Python 重做原生检查，通过；运行前后 `codesign --verify --deep --strict` 均通过。
+- 这是本地 ad-hoc 签名测试包，未公证、未发布。Intel/Windows 依赖锁和缓存已备齐，仍未在对应原生环境运行验收。
+
+证据：`main-acceptance.json`、`main-final-ppt-page2.png`、`main-accepted-excel-page2.png`、`package-state.json`、`package-acceptance.json`、`installed-verification.log`、`installed-smoke/report.json`，均位于上述本地证据目录。
