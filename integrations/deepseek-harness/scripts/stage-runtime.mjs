@@ -17,6 +17,7 @@ import {
   stageTargetKey,
   targetInstallEnvironment,
 } from './stage-runtime-platform.mjs'
+import { buildImageGenerationEffect } from './build-image-generation-effect.mjs'
 import { patchRuntimeDependencies } from './patch-runtime-dependencies.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -89,6 +90,7 @@ const required = [
   'node_modules/@xmanrui/dsh-im/src/channels/shared/inbound-ttl.mjs',
   'node_modules/crawshrimp-product-bridge/lib/index.js',
   'node_modules/crawshrimp-slots/lib/client.js',
+  'node_modules/crawshrimp-slots/lib/image-generation-effect.js',
   'worker/worker.mjs',
   'worker/native-web-follow-manager.mjs',
   'worker/web-rpc-client.mjs',
@@ -226,6 +228,7 @@ function buildCliSkillRuntimes(cliDest) {
 }
 
 assertSkillSourcesPresent()
+await buildImageGenerationEffect()
 
 const hashInputs = [
   readFileSync(join(sourceRoot, 'package-lock.json')),

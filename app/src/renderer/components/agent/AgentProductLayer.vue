@@ -215,6 +215,11 @@ function handleEvent(eventType, data) {
   }
   if (['run.completed', 'run.failed', 'run.canceled', 'run.interrupted'].includes(eventType)) {
     void pollTaskStatuses()
+    for (const generation of imageGenerations.values()) {
+      if (generation.runtimeSessionId !== runtimeSessionId || generation.state !== 'loading') continue
+      generation.state = 'finished'
+      if (isActive) postToSession({ __crawshrimp: 'image-generation', ...generation })
+    }
   }
   switch (eventType) {
     case 'task.linked': {
@@ -227,7 +232,7 @@ function handleEvent(eventType, data) {
       break
     }
     case 'artifact.created': {
-      pushCard({
+      if (data?.media_kind !== 'image') pushCard({
         kind: 'artifact',
         artifactId: data?.artifact_id,
         filename: data?.filename || `artifact-${data?.artifact_id}`,
@@ -239,6 +244,15 @@ function handleEvent(eventType, data) {
       // 直接 postMessage 到智能体会话 iframe(不经 App/props 中转,链路最短最稳)。
       rememberArtifact(data, runtimeSessionId)
       if (isActive) pushArtifactToSession(data, runtimeSessionId)
+      break
+    }
+    case 'tool.completed': {
+      const key = `${data?.run_id}:${data?.dsh_call_id}`
+      const generation = imageGenerations.get(key)
+      if (generation) {
+        generation.state = 'finished'
+        if (isActive) postToSession({ __crawshrimp: 'image-generation', ...generation })
+      }
       break
     }
     case 'run.failed': {
@@ -266,6 +280,14 @@ function handleEvent(eventType, data) {
     case 'tool.requested': {
       // 浏览器类工具调用(browser_observe/act/navigate 等)→ 自动弹出实时浏览器
       const name = String(data?.tool_name || '')
+      if (name.endsWith('image_generate')) {
+        const generation = { ...data, runtimeSessionId, state: 'loading' }
+        const key = String(data.tool_call_id || '')
+        if (key) {
+          imageGenerations.set(key, generation)
+          if (isActive) postToSession({ __crawshrimp: 'image-generation', ...generation })
+        }
+      }
       if (isActive && name.startsWith('browser_')) emit('browser-auto-open')
       break
     }
@@ -278,6 +300,7 @@ let rebindTimer = null
 
 // ---- 会话内媒体直接显示:SSE 事件 → iframe(DSH 消息流)直接注入 ----
 const artifactsByRuntime = new Map()
+const imageGenerations = new Map()
 
 function rememberArtifact(data, runtimeSessionId) {
   if (!runtimeSessionId) return
@@ -305,7 +328,9 @@ async function pushArtifactToSession(data, runtimeSessionId) {
   ])
   const msg = {
     __crawshrimp: 'artifact-show',
+    runtimeSessionId,
     artifact: {
+      toolCallId: data?.tool_call_id || '',
       filename: data?.filename || '',
       path,
       size: data?.size || 0,
@@ -318,6 +343,7 @@ async function pushArtifactToSession(data, runtimeSessionId) {
     },
     ts: Date.now(),
   }
+  if (runtimeSessionId !== props.activeRuntimeSessionId) return
   // 稳定定位智能体会话 iframe(AgentWebView 根容器内)
   postToSession(msg)
 }
@@ -344,6 +370,9 @@ function onSessionMessage(event) {
     // iframe(会话界面)重载后请求重放:把最近的产物媒体消息重发一遍
     const requested = String(data.runtimeSessionId || props.activeRuntimeSessionId || '')
     if (requested !== props.activeRuntimeSessionId) return
+    for (const generation of imageGenerations.values()) {
+      if (generation.runtimeSessionId === requested) postToSession({ __crawshrimp: 'image-generation', ...generation })
+    }
     for (const artifact of artifactsByRuntime.get(requested) || []) {
       void pushArtifactToSession(artifact, requested)
     }

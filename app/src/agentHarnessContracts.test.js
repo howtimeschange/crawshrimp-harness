@@ -1191,7 +1191,7 @@ test('DSH Web profile registers Crawshrimp providers through a persistent offici
   assert.match(webClient, /dshBin, 'web', '--no-open', '--host', '127\.0\.0\.1'/)
   assert.match(defaultBlock, /provider:\s*!!js process\.env\.CRAWSHRIMP_AGENT_PROVIDER \?\? 'crawshrimp-deepseek-official'/)
   assert.match(defaultBlock, /model:\s*!!js process\.env\.CRAWSHRIMP_AGENT_MODEL \?\? 'deepseek-v4-flash'/)
-  assert.match(attachmentBlock, /maxImageDimension:\s*4096/)
+  assert.match(attachmentBlock, /maxImageDimension:\s*8192/)
   assert.match(attachmentBlock, /maxImageBytes:\s*16777216/)
   assert.match(piAiBlock, /crawshrimp-deepseek-official:/)
   assert.match(piAiBlock, /apiKeyEnv:\s*CRAWSHRIMP_DEEPSEEK_API_KEY/)

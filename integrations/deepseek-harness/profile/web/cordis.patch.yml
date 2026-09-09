@@ -166,7 +166,8 @@
 
 - id: attachment-local
   config:
-    maxImageDimension: 4096
+    # Accept high-resolution source photos; model request normalization is separate.
+    maxImageDimension: 8192
     maxImageBytes: 16777216
 
 - id: sandbox-policy

@@ -765,6 +765,12 @@ window.__ModuleLoader__.load({
 
     // ---- 产物媒体注入:会话消息流内直接显示图片(多图)/视频(可播放)/附件(可点击) ----
     const ARTIFACT_CSS = [
+      '.cs-generation-group { position: relative; flex: none; width: min(100%, 420px); margin: 12px 0; align-self: flex-start; }',
+      '.cs-generation-preview { position: relative; width: 100%; aspect-ratio: 1; overflow: hidden; border-radius: 12px; background: #000; border: 1px solid #39302b; }',
+      '.cs-generation-effect, .cs-generation-effect > *, .cs-generation-effect .aiw-image-generation-effect, .cs-generation-effect .aiw-image-generation-surface, .cs-generation-effect .aiw-image-generation-fallback { width: 100%; height: 100%; position: absolute; inset: 0; }',
+      '.cs-generation-caption { position: absolute; bottom: 16px; left: 16px; right: 16px; border: 1px solid #303038; border-radius: 12px; background: #101116e8; color: #eee; padding: 14px; font-size: 14px; font-weight: 600; }',
+      '.cs-generation-caption-text { display: inline-block; background: linear-gradient(90deg, #ddd 0%, #ddd 40%, #fff 50%, #ddd 60%, #ddd 100%); color: transparent; -webkit-text-fill-color: transparent; background-position: 100% 0; background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; animation: 1.8s linear infinite cs-running-status-shimmer; }',
+      '@media (prefers-reduced-motion: reduce) { .cs-generation-caption-text { animation: none; background: none; color: #eee; -webkit-text-fill-color: #eee; } }',
       '.cs-artifact-block { margin: 10px 0; border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-1); padding: 10px 12px; max-width: 560px; align-self: flex-start; }',
       '.cs-artifact-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }',
       '.cs-artifact-icon { width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex: none; background: var(--dsw-alias-state-business-tertiary); }',
@@ -816,6 +822,7 @@ window.__ModuleLoader__.load({
       const block = document.createElement('div')
       block.className = 'cs-artifact-block'
       block.dataset.artifactPath = String(artifact.path || '')
+      block.dataset.artifactCallId = String(artifact.toolCallId || '')
       const open = () => {
         if (artifact.path) postToShell({ __crawshrimp: 'open-file', path: artifact.path })
       }
@@ -900,7 +907,112 @@ window.__ModuleLoader__.load({
       return block
     }
 
+    const generationGroups = new Map()
+    let imageEffectPromise
+    function imageEffectReady() {
+      if (window.crawshrimpMountImageLoader) return Promise.resolve()
+      if (!imageEffectPromise) imageEffectPromise = new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = '/api/crawshrimp/image-generation-effect.js'
+        script.onload = resolve
+        script.onerror = reject
+        document.head.appendChild(script)
+      })
+      return imageEffectPromise
+    }
+
+    function messageColumn() {
+      return document.querySelector('[data-chat-flow]') || document.querySelector('.EvIC1a_column') || document.querySelector('.Md3f7G_column')
+    }
+
+    function placeGenerationGroup(entry) {
+      if (entry.sessionId && entry.sessionId !== activeRuntimeSessionId()) {
+        stopGenerationLoader(entry)
+        entry.block.remove()
+        return
+      }
+      const column = messageColumn()
+      if (!column) return
+      const rows = [...column.querySelectorAll('[data-chat-anchor-key]')]
+      let anchor = rows.find(row => row.dataset.chatAnchorKey === entry.anchorKey)
+      if (!anchor && !entry.anchorKey) {
+        anchor = rows.find(row => entry.callId && row.dataset.chatAnchorKey.includes(entry.callId))
+          || rows.filter(row => !row.hidden && (!entry.turn || row.dataset.chatTurn === String(entry.turn))).at(-1)
+        if (anchor) entry.anchorKey = anchor.dataset.chatAnchorKey
+      }
+      if (!anchor) return // History not mounted yet; observer retries without pinning to the bottom.
+      let preceding = anchor
+      for (const other of generationGroups.values()) {
+        if (other === entry) break
+        if (other.sessionId === entry.sessionId && other.anchorKey === entry.anchorKey && other.block.isConnected) preceding = other.block
+      }
+      if (preceding.nextSibling !== entry.block) preceding.after(entry.block)
+    }
+
+    function stopGenerationLoader(entry) {
+      if (entry.captionTimer) clearInterval(entry.captionTimer)
+      entry.captionTimer = null
+      entry.dispose?.()
+      entry.dispose = null
+      entry.preview?.remove()
+      entry.preview = null
+    }
+
+    function renderImageGeneration(data) {
+      const sessionId = String(data.runtimeSessionId || '')
+      if (sessionId && sessionId !== activeRuntimeSessionId()) return
+      const key = String(data.tool_call_id || '')
+      if (!key) return
+      injectArtifactCss()
+      let entry = generationGroups.get(key)
+      if (!entry) {
+        const block = document.createElement('section')
+        block.className = 'cs-generation-group'
+        block.dataset.generationId = key
+        block.setAttribute('aria-label', 'AI 生图任务')
+        entry = { block, sessionId, callId: String(data.dsh_call_id || ''), turn: data.turn, anchorKey: '', finished: false }
+        generationGroups.set(key, entry)
+      }
+      if (data.state !== 'loading') {
+        entry.finished = true
+        stopGenerationLoader(entry)
+      } else if (!entry.finished && !entry.preview) {
+        const preview = document.createElement('div')
+        preview.className = 'cs-generation-preview'
+        preview.setAttribute('role', 'status')
+        const host = document.createElement('div')
+        host.className = 'cs-generation-effect'
+        const label = document.createElement('div')
+        label.className = 'cs-generation-caption'
+        const caption = document.createElement('span')
+        caption.className = 'cs-generation-caption-text'
+        const messages = ['正在描摹画面', '正在铺陈光影', '正在勾勒细节', '让灵感慢慢成像']
+        let captionIndex = 0
+        caption.textContent = messages[captionIndex]
+        label.appendChild(caption)
+        entry.captionTimer = setInterval(() => {
+          captionIndex = (captionIndex + 1) % messages.length
+          caption.textContent = messages[captionIndex]
+        }, 6000)
+        preview.append(host, label)
+        entry.block.appendChild(preview)
+        entry.preview = preview
+        imageEffectReady().then(() => {
+          if (entry.preview === preview && !entry.finished) entry.dispose = window.crawshrimpMountImageLoader(host)
+        }).catch(() => { label.textContent = '正在生成图片…' })
+      }
+      placeGenerationGroup(entry)
+    }
+
+    // React may insert subsequent messages before foreign DOM nodes. Keep each
+    // task next to its stable message anchor, never in the composer or tail slot.
+    const generationObserver = new MutationObserver(() => {
+      for (const entry of generationGroups.values()) placeGenerationGroup(entry)
+    })
+    generationObserver.observe(document.body, { childList: true, subtree: true })
+
     function renderArtifactShow(data) {
+      if (data.runtimeSessionId && data.runtimeSessionId !== activeRuntimeSessionId()) return
       const artifact = data && data.artifact
       if (!artifact || !artifact.path) return
       injectArtifactCss()
@@ -910,7 +1022,7 @@ window.__ModuleLoader__.load({
       if (existing) return
       // 插入消息列表内(最后一条消息之后),像一条消息出现在信息流里;
       // 不能挂 scrollBody 末尾——那是输入框(composerSeat)之后,会挤压对话框。
-      const column = document.querySelector('.EvIC1a_column') || document.querySelector('.Md3f7G_column')
+      const column = messageColumn()
       if (!column) {
         // 有限重试:最多 6 次,避免定时器无限累积
         const retries = Number(data.__retries || 0)
@@ -920,10 +1032,21 @@ window.__ModuleLoader__.load({
         return
       }
       const block = makeArtifactBlock(artifact, data.urls || {})
-      column.appendChild(block)
+      const generation = generationGroups.get(String(artifact.toolCallId || ''))
+      if (generation) {
+        stopGenerationLoader(generation)
+        generation.finished = true
+        generation.block.appendChild(block)
+        placeGenerationGroup(generation)
+      } else {
+        const rows = column.querySelectorAll('[data-chat-anchor-key]')
+        const anchor = rows[rows.length - 1]
+        if (anchor) anchor.after(block)
+        else column.appendChild(block)
+      }
       // 滚动到底,让新「消息」立即可见
       const scrollEl = document.querySelector('.wSkVaW_scrollBody')
-      if (scrollEl) {
+      if (scrollEl && scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 160) {
         try {
           scrollEl.scrollTop = scrollEl.scrollHeight
         } catch (error) {
@@ -1732,6 +1855,7 @@ window.__ModuleLoader__.load({
         if (data && data.__crawshrimp === 'workspace') ensureDefaultWorkspace(ctx, data.root)
         if (data && data.__crawshrimp === 'runtime-model-configuration') updateRuntimeModelConfiguration(data)
         if (data && data.__crawshrimp === 'workspace-directory-picked') handleWorkspaceDirectoryPicked(data)
+        if (data && data.__crawshrimp === 'image-generation') renderImageGeneration(data)
         if (data && data.__crawshrimp === 'artifact-show') renderArtifactShow(data)
         if (data && data.__crawshrimp === 'native-image-attachment') {
           installNativeImageDraft(ctx, data)
@@ -1756,6 +1880,8 @@ window.__ModuleLoader__.load({
         if (!current || current === lastPublishedRuntimeSessionId) return
         currentRuntimeSessionId = current
         lastPublishedRuntimeSessionId = current
+        for (const entry of generationGroups.values()) placeGenerationGroup(entry)
+        postToShell({ __crawshrimp: 'artifact-replay', runtimeSessionId: current })
         flushAttachmentHints(current)
         postToShell({ __crawshrimp: 'active-runtime-session', runtimeSessionId: current })
       } catch (error) {

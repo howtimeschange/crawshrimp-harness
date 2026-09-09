@@ -3183,3 +3183,80 @@ def test_video_reports_actual_conversation_delivery(monkeypatch, mode):
     assert delivery["status"] == ("submitted_to_conversation" if mode == "delivered" else "not_submitted")
     assert result["evidence"]["artifact_ids"] == delivery["artifact_ids"]
     assert len(broadcasts) == 1
+
+
+def test_sync_image_tool_keeps_health_responsive_and_preserves_lease(monkeypatch):
+    """Exercise the registered wrapper while a provider blocks until released."""
+    import httpx2 as httpx
+    from fastapi import FastAPI
+
+    async def scenario():
+        app = FastAPI()
+        provider_started = threading.Event()
+        provider_release = threading.Event()
+        captured = {}
+
+        def provider():
+            captured['run'] = mcp_gateway.ctx.active_run
+            captured['call'] = mcp_gateway.ctx.current_tool_call_id
+            provider_started.set()
+            assert provider_release.wait(2), 'event loop blocked while provider was running'
+            return {'ok': True}
+
+        guarded = mcp_gateway._automation_tool_wrapper('image_generate', provider)
+
+        @app.get('/health')
+        async def health():
+            return {'status': 'ok'}
+
+        @app.post('/generate')
+        async def generate():
+            token = mcp_gateway.bind_tool_context({
+                'active_run': {'run_id': 'responsive-image-run'},
+                'current_tool_call_id': 'responsive-image-run:call-1',
+            })
+            try:
+                return await guarded()
+            finally:
+                mcp_gateway.reset_tool_context(token)
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+            pending = asyncio.create_task(client.post('/generate'))
+            try:
+                assert await asyncio.to_thread(provider_started.wait, 1)
+                response = await asyncio.wait_for(client.get('/health'), timeout=0.5)
+                assert response.json() == {'status': 'ok'}
+                assert not pending.done()
+            finally:
+                provider_release.set()
+                result = await pending
+            assert result.json() == {'ok': True}
+            assert captured == {'run': {'run_id': 'responsive-image-run'}, 'call': 'responsive-image-run:call-1'}
+
+    asyncio.run(scenario())
+
+
+def test_web_file_return_requires_valid_lease_and_emits_image(tmp_path, monkeypatch):
+    image = tmp_path / 'existing.png'
+    image.write_bytes(b'existing image')
+    events = []
+    monkeypatch.setattr(mcp_gateway.ctx, 'emit_event', lambda name, payload: events.append((name, payload)))
+
+    def bind(lease):
+        if lease != 'valid':
+            raise LookupError('unknown lease')
+        return mcp_gateway.bind_tool_context({'active_run': {'run_id': 'send-run'}, 'current_tool_call_id': 'send-run:send-call'})
+
+    app = build_agent_mcp_asgi(lambda: 'test-token', context_binder=bind, context_resetter=mcp_gateway.reset_tool_context)
+    with TestClient(app) as client:
+        payload = {'lease_id': 'valid', 'path': str(image)}
+        assert client.post('/context/return-file', json=payload).status_code == 401
+        headers = {'Authorization': 'Bearer test-token'}
+        assert client.post('/context/return-file', json={**payload, 'lease_id': 'invalid'}, headers=headers).status_code == 409
+        assert not events
+        result = client.post('/context/return-file', json=payload, headers=headers)
+        assert result.status_code == 200
+        assert result.json()['artifact_ids'] == [events[0][1]['artifact_id']]
+        assert events[0][0] == 'artifact.created'
+        assert events[0][1]['media_kind'] == 'image'
+        assert events[0][1]['tool_call_id'] == 'send-run:send-call'

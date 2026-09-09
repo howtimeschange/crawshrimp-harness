@@ -1991,6 +1991,48 @@ function patchDeepSeekVisionAdmission(root, visionBridge) {
   return { entry, patched: true }
 }
 
+// Local read_image has a separate capability gate before attaching file bytes.
+// Keep the actual filesystem, media validation and attachment handling upstream.
+function patchDshImArtifactSessionEvents(root) {
+  const entry = requireFile(root, 'node_modules/@xmanrui/dsh-im/src/channels/shared/semantic/artifact.mjs')
+  let source = readFileSync(entry, 'utf8')
+  if (source.includes('crawshrimp-artifact-session-events-v1')) return
+  source = replaceRequired(source,
+    '  const events = agent?.session?.events;',
+    '  // crawshrimp-artifact-session-events-v1: rc.1 exposes durable events through snapshotEvents().\n  const session = agent?.session;\n  const events = typeof session?.snapshotEvents === "function" ? session.snapshotEvents() : session?.events;',
+    'IM artifact Session events compatibility')
+  source = source.replace('for IM delivery.', 'for delivery in the current conversation.')
+  writeFileSync(entry, source, 'utf8')
+}
+
+export function patchDeepSeekReadImageSource(source) {
+  const marker = 'crawshrimp-deepseek-read-image-vision-v1'
+  if (source.includes(marker)) return source
+  return replaceRequired(
+    source,
+    '\tif (active.inputModalities === void 0 || !active.inputModalities.includes("image")) throw new Error(`cannot read "${requestedPath}" as an image: model "${model}" does not declare image input; switch to an image-capable model to read images`);',
+    `\t/* ${marker}: the installed Pi-AI bridge converts these image tool results through Vision. */
+\tif (active.inputModalities?.includes("image")) return;
+\tif (provider === "crawshrimp-deepseek-official" && (model === "deepseek-v4-flash" || model === "deepseek-v4-pro")) {
+\t\tconst vision = await llm.resolveModelInfo(provider, "deepseek-v4-flash-vision-exp", exec.signal);
+\t\tif (vision.inputModalities?.includes("image")) return;
+\t}
+\tthrow new Error(\`cannot read "\${requestedPath}" as an image: model "\${model}" does not declare image input; switch to an image-capable model to read images\`);`,
+    'DeepSeek local read_image Vision admission',
+  )
+}
+
+function patchDeepSeekReadImage(root, visionBridge) {
+  if (!visionBridge || !readFileSync(visionBridge.entry, 'utf8').includes(CRAWSHRIMP_DEEPSEEK_VISION_BRIDGE_MARKER)) {
+    throw new Error('DeepSeek read_image admission requires the installed Pi-AI bridge')
+  }
+  const entry = requireFile(root, 'node_modules/@deepseek-ai/dsh-tool-fs/lib/index.js')
+  const source = readFileSync(entry, 'utf8')
+  const patched = patchDeepSeekReadImageSource(source)
+  if (patched !== source) writeFileSync(entry, patched, 'utf8')
+  return { entry, patched: patched !== source }
+}
+
 /**
  * Keep the upstream clock payload/projection while refreshing once per input
  * instead of once per model step. Applied to both source and staged runtimes.
@@ -2183,6 +2225,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const dshImBrand = patchDshImUserVisibleBrand(root)
   const harnessPromptBrand = patchHarnessPromptBrand(root)
   patchHarnessSessionPrompts(root)
+  patchDshImArtifactSessionEvents(root)
   const dshImBuiltEntry = buildPatchedDshImBundle(root)
   const dshWebApprovalAllowAll = patchDshWebApprovalAllowAll(root)
   const nativeWebTools = patchNativeWebToolRegistration(root)
@@ -2191,6 +2234,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const currencyMath = patchCurrencyMath(root)
   const configuredModelCatalog = patchConfiguredModelCatalog(root)
   const deepseekVisionAdmission = patchDeepSeekVisionAdmission(root, deepseekVisionBridge)
+  const deepseekReadImage = patchDeepSeekReadImage(root, deepseekVisionBridge)
   const profilePackages = assertEffectiveProfileRootClosure(root)
   const standardPreset = assertStandardPresetRootClosure(root)
   const inboundTtl = requireText(
@@ -2240,6 +2284,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
     configuredModelCatalog,
     currencyMath,
     deepseekVisionAdmission,
+    deepseekReadImage,
     profilePackages,
     standardPresetPackages: standardPreset.packages,
     crawshrimpPreset: standardPreset.crawshrimpPath,

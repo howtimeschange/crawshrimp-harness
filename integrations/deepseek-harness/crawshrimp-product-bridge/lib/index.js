@@ -5,7 +5,7 @@
 // FastAPI 侧经 HTTP 调用本插件的 /api/crawshrimp/approval/request。
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { timingSafeEqual } from 'node:crypto'
-import { realpath } from 'node:fs/promises'
+import { realpath, readFile } from 'node:fs/promises'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 
@@ -936,12 +936,30 @@ export function apply(ctx) {
     const toolName = String(exec?.name || '')
     if (toolName === DSH_IM_RETURN_FILE) {
       const requestedPath = String(exec.arguments?.path || '')
-      if (!await isImArtifactPathAllowed(workspaceRoot, requestedPath)) {
+      const sessionWorkspace = String(exec.agent?.session?.header?.cwd || workspaceRoot)
+      if (!await isImArtifactPathAllowed(sessionWorkspace, requestedPath)) {
         const error = new Error('IM returned files must stay inside the active Crawshrimp workspace.')
         error.code = 'IM_ARTIFACT_OUTSIDE_WORKSPACE'
         throw error
       }
-      return next()
+      const result = await next()
+      if (result?.isError) return result
+      // IM channels own provider delivery. Desktop Web uses Harness's artifact
+      // stream; registering only in the IM queue does not display a Web image.
+      const runtimeSessionId = String(exec.agent?.id || '')
+      if (!sessionRegistry.has(runtimeSessionId)) {
+        const lease = await postMcpContext('acquire', { runtime_session_id: runtimeSessionId, call_id: String(exec.callId || '') })
+        try {
+          await postMcpContext('return-file', { lease_id: lease.lease_id, path: resolve(sessionWorkspace, requestedPath) })
+        } finally {
+          try {
+            await postMcpContext('release', { lease_id: lease.lease_id })
+          } catch (error) {
+            ctx.logger?.error?.(`Crawshrimp file delivery context release failed: ${String(error?.message || error)}`)
+          }
+        }
+      }
+      return result
     }
     if (!toolName.startsWith(MCP_TOOL_PREFIX)) return next()
     const runtimeSessionId = String(exec.agent?.id || '')
@@ -973,6 +991,17 @@ export function apply(ctx) {
           : setAutomationNativePolicy(body?.sessionId, body?.runId, body?.policy)
         res.writeHead(result.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
         res.end(JSON.stringify(result.ok ? { ok: true } : { ok: false, error: result.error }))
+        return
+      }
+      if (url.pathname === '/api/crawshrimp/image-generation-effect.js' && req.method === 'GET') {
+        try {
+          const script = await readFile(new URL('../../crawshrimp-slots/lib/image-generation-effect.js', import.meta.url))
+          res.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-cache' })
+          res.end(script)
+        } catch {
+          res.writeHead(404)
+          res.end('Image loading effect unavailable')
+        }
         return
       }
       if (url.pathname === '/api/crawshrimp/model-catalog' && req.method === 'GET') {

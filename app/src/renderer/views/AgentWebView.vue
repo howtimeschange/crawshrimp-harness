@@ -936,7 +936,10 @@ onMounted(() => {
   window.addEventListener('message', onWindowMessage)
   // 持续读取受控 runtime 状态来恢复。rc.1 的 Web Host 对裸 HTTP 正确返回
   // 401，因此不能以无 cookie 的 fetch 误判它离线。
+  let runtimePollInFlight = false
   pollTimer = setInterval(async () => {
+    if (runtimePollInFlight) return
+    runtimePollInFlight = true
     try {
       const st = await window.cs.agentApi('GET', '/agent/runtime')
       const state = String(st?.state || '')
@@ -965,9 +968,13 @@ onMounted(() => {
       error.value = st?.error || '智能体运行时不可用'
       autoRecover()
     } catch {
-      webUrl.value = ''
+      // A failed status probe does not mean the independent DSH iframe died.
+      // Preserve the mounted conversation; the next successful poll reconciles it.
+      if (webUrl.value) return
       error.value = '无法连接本地服务'
       autoRecover()
+    } finally {
+      runtimePollInFlight = false
     }
   }, 5000)
   tabPollTimer = setInterval(async () => {

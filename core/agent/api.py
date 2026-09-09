@@ -1136,6 +1136,30 @@ def build_agent_mcp_asgi(token_provider, context_acquirer=None,
                     }, status_code=409)
                 except Exception as exc:  # noqa: BLE001
                     return JSONResponse({"detail": str(exc)}, status_code=500)
+            if path == "/context/return-file" and request.method == "POST":
+                # Private runtime bridge only, after DSH file validation. Bind
+                # the same authenticated lease used by MCP, never a global run.
+                if context_binder is None or context_resetter is None:
+                    return JSONResponse({"detail": "Context leasing unavailable"}, status_code=503)
+                token = None
+                try:
+                    body = await request.json()
+                    token = context_binder(str(body.get("lease_id") or ""))
+                    from core.agent import mcp_gateway
+                    from pathlib import Path
+                    import asyncio
+                    file_path = str(body.get("path") or "")
+                    suffix = Path(file_path).suffix.lower()
+                    kind = "image" if suffix in {".png", ".jpg", ".jpeg", ".webp", ".gif"} else "file"
+                    ids = await asyncio.to_thread(mcp_gateway._broadcast_media_artifacts, [file_path], kind)
+                    if not ids:
+                        return JSONResponse({"detail": "File could not be submitted to conversation"}, status_code=409)
+                    return JSONResponse({"ok": True, "artifact_ids": ids})
+                except (ValueError, LookupError):
+                    return JSONResponse({"detail": "Invalid file delivery context"}, status_code=409)
+                finally:
+                    if token is not None:
+                        context_resetter(token)
             if path == "/context/release" and request.method == "POST":
                 if context_releaser is None:
                     return JSONResponse({"detail": "Context leasing unavailable"}, status_code=503)

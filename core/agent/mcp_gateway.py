@@ -190,7 +190,7 @@ def _broadcast_media_artifacts(paths, media_kind: str) -> list[str]:
         except OSError:
             continue
         artifact_id = "media-" + _hashlib.sha256(
-            f"{_os.path.abspath(path)}\0{size}\0{stat.st_mtime_ns}".encode("utf-8")
+            f"{_os.path.abspath(path)}\0{size}\0{stat.st_mtime_ns}\0{ctx.current_tool_call_id}".encode("utf-8")
         ).hexdigest()[:24]
         ctx.emit_event("artifact.created", {
             "artifact_id": artifact_id,
@@ -200,6 +200,7 @@ def _broadcast_media_artifacts(paths, media_kind: str) -> list[str]:
             "size": size,
             "task_instance_uid": "",
             "media_kind": media_kind,
+            "tool_call_id": ctx.current_tool_call_id,
             "zip_images": [],
         })
         artifact_ids.append(artifact_id)
@@ -2860,7 +2861,12 @@ def _automation_tool_wrapper(tool_name: str, fn):
                 "AUTOMATION_TOOL_DENIED",
                 f"当前 Automation 未授权调用 {tool_name}",
             )
-        result = fn(*args, **kwargs)
+        # Synchronous provider polling must not block health checks, SSE, or
+        # other sessions. to_thread also preserves the request lease ContextVars.
+        if inspect.iscoroutinefunction(fn):
+            result = fn(*args, **kwargs)
+        else:
+            result = await asyncio.to_thread(fn, *args, **kwargs)
         if inspect.isawaitable(result):
             return await result
         return result

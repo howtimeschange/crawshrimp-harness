@@ -1,10 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import vm from 'node:vm'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
+const appRequire = createRequire(import.meta.url)
 
 function read(relPath) {
   return fs.readFileSync(path.join(ROOT, relPath), 'utf8')
@@ -75,6 +77,9 @@ test('preload falls back to local API when cloud prompt IPC handlers are missing
 
   const sandbox = {
     require: (specifier) => {
+      if (specifier === './apiConnection') {
+        return appRequire(path.join(ROOT, 'app/src/apiConnection.js'))
+      }
       assert.equal(specifier, 'electron')
       return {
         contextBridge: {
@@ -84,6 +89,13 @@ test('preload falls back to local API when cloud prompt IPC handlers are missing
         },
         ipcRenderer: {
           invoke: async (channel) => {
+            if (channel === 'get-status') {
+              return {
+                apiPort: 18765,
+                apiBase: 'http://127.0.0.1:18765',
+                apiToken: 'local-api-token',
+              }
+            }
             throw new Error(`Error invoking remote method '${channel}': Error: No handler registered for '${channel}'`)
           },
         },

@@ -49,3 +49,6 @@ build-staging/
 .crawshrimp-dev-web/
 .ds-e2e/
 .ai-e2e/
+
+# Built from the shared workbench React image effect during runtime staging.
+integrations/deepseek-harness/crawshrimp-slots/lib/image-generation-effect.js

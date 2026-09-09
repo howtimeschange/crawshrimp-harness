@@ -3144,6 +3144,8 @@ class AgentService:
             await self.broadcast(session_id, _seq(session_id), "tool.requested", {
                 "tool_call_id": call["tool_call_id"],
                 "tool_name": call["tool_name"],
+                "dsh_call_id": data.get("callId") or "",
+                "turn": data.get("turn"),
                 "arguments": safe_arguments,
             })
             return
