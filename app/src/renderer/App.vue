@@ -718,7 +718,10 @@ input, select, textarea { font-family: inherit; }
 }
 
 .layout.titlebar-macos { grid-template-rows: 32px minmax(0, 1fr); }
-.shell-status-footer { position:absolute;left:0;bottom:0;z-index:30; }
+/* Shell order: agent (1) < footer (10) < feature pages (20).
+   Fullscreen masks inside feature pages must cover the footer too; their
+   local z-index cannot escape the embed-overlay stacking context. */
+.shell-status-footer { position:absolute;left:0;bottom:0;z-index:10; }
 
 /* 脚本详情:左侧显示二级菜单栏 */
 .layout.has-script-sidebar {

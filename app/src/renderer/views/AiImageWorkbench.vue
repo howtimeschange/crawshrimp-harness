@@ -317,16 +317,8 @@
                       :images="loadingEffectImages()"
                       mode="loading"
                     />
-                    <div v-if="!loadingPreviewSrc(item)" class="aiw-loading-default-art" aria-hidden="true">
-                      <span class="aiw-loading-moon"></span>
-                      <span class="aiw-loading-sea sea-back"></span>
-                      <span class="aiw-loading-sea sea-front"></span>
-                      <span class="aiw-loading-shrimp">🦐</span>
-                      <small>CRAWSHRIMP STUDIO</small>
-                    </div>
-                    <span class="aiw-loading-sheen" aria-hidden="true"></span>
                     <div class="aiw-loading-copy">
-                      <span class="aiw-loading-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                      <VoyageLoader mode="image" compact />
                       <strong>{{ loadingMessage(item) }}</strong>
                       <small>{{ item.label }}</small>
                     </div>
@@ -939,6 +931,7 @@
 </template>
 
 <script setup>
+import VoyageLoader from '../components/agent/VoyageLoader.vue'
 import { computed, h, nextTick, onActivated, onBeforeUnmount, onMounted, reactive, ref, shallowReactive, watch } from 'vue'
 import {
   AI_IMAGE_FORMATS,
@@ -4708,20 +4701,18 @@ function localFileUrl(path) {
 
 .aiw-loading-copy {
   position: absolute;
-  right: 14px;
-  bottom: 14px;
-  left: 14px;
+  inset: 0;
   z-index: 3;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   align-items: center;
+  justify-content: center;
+  --text: #fff;
+  --text2: #c3cbd0;
   gap: 9px;
-  padding: 10px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
-  background: rgba(10, 12, 20, 0.62);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(14px);
+  padding: 16px;
+  text-align: center;
+  pointer-events: none;
 }
 
 .aiw-loading-copy strong {

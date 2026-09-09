@@ -64,9 +64,12 @@
             </nav>
           </aside>
           <section class="web-placeholder">
+            <VoyageLoader v-if="!runtimeNeedsAttention && !isRuntimeNeedsConfiguration && !isRuntimeDisabled" />
+            <template v-else>
             <div class="placeholder-icon">{{ placeholderIcon }}</div>
             <div class="placeholder-title">{{ placeholderTitle }}</div>
             <div class="placeholder-text">{{ placeholderText }}</div>
+            </template>
             <div class="placeholder-actions">
               <span :class="['recover-state', { muted: runtimeNeedsAttention }]">{{ placeholderStateText }}</span>
               <button v-if="runtimeNeedsAttention" class="placeholder-btn primary" type="button" @click="retryLoad">
@@ -162,6 +165,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { IconExternalLink, IconSettings } from '@tabler/icons-vue'
+import VoyageLoader from '../components/agent/VoyageLoader.vue'
 import SessionResources from '../components/agent/SessionResources.vue'
 import { DEEPSEEK_PLATFORM_URL } from '../utils/llmSettings.mjs'
 

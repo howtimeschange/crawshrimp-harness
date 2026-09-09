@@ -1,0 +1,8 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><title>抓虾 · 航行加载态</title><style>body{margin:0;background:#f7f7f8;font-family:system-ui;color:#24242b}main{display:flex;gap:36px;justify-content:center;align-items:center;min-height:100vh;flex-wrap:wrap}.panel{width:360px;height:360px;display:flex;align-items:center;justify-content:center;border:1px solid #e2e2e7;border-radius:16px;background:white}.aiw-loading-preview{position:relative;isolation:isolate;overflow:hidden;background:#000}.aiw-image-generation-host,.image-gen-root{position:absolute;inset:0;width:100%;height:100%}</style><main id="app"></main><script type="module">
+import {createApp,h} from 'vue';
+import Voyage from '/components/agent/VoyageLoader.vue';
+import Mosaic from '/components/ImageGenerationLoader.js';
+import source from '/views/AiImageWorkbench.vue?raw';
+const style=document.createElement('style');style.textContent=source.slice(source.indexOf('.aiw-loading-copy {'),source.indexOf('.aiw-loading-dots {'));document.head.append(style);
+createApp({render:()=>[h('section',{class:'panel'},h(Voyage)),h('section',{class:'panel aiw-loading-preview'},[h(Mosaic,{mode:'loading'}),h('div',{class:'aiw-loading-copy'},[h(Voyage,{mode:'image',compact:true}),h('strong','正在寻找灵感海域'),h('small','生成中 1')])])]}).mount('#app');
+</script></html>
