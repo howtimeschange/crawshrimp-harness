@@ -5,10 +5,10 @@ import vm from 'node:vm'
 
 const source = readFileSync(new URL('./renderer/components/agent/SessionResources.vue', import.meta.url), 'utf8')
 const script = source.split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm, '')
-function harness() {
+function harness({ sessionId = 'a', storage = new Map() } = {}) {
   const requests = []
   const pointerEvents = new Map()
-  const props = { sessionId: 'a' }
+  const props = { sessionId, conversationPhase: 'active' }
   const context = {
     document: { getElementById: () => null },
     nextTick: fn => Promise.resolve().then(fn),
@@ -16,15 +16,110 @@ function harness() {
     ref: value => ({ value }), computed: fn => ({ get value() { return fn() } }),
     watch: () => {}, onMounted: () => {}, onUnmounted: () => {},
     setInterval: () => 1, clearInterval() {}, setTimeout, clearTimeout,
-    localStorage: { getItem: () => null, setItem() {} },
+    localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     window: { innerWidth: 1600, innerHeight: 960, addEventListener: (name, fn) => pointerEvents.set(name, fn), removeEventListener: name => pointerEvents.delete(name), cs: {
       agentApi: () => new Promise(resolve => requests.push(resolve)),
       listAgentBrowserTabs: async () => ({ ok: true, tabs: [{ id: 'one' }, { id: 'two' }] }),
     } },
   }
-  vm.runInNewContext(script + '\nglobalThis.h = { refresh, opened, selection, artifacts, tabs, unseen, openBrowser, back, width, adjustWidth, miniTab, browserReady, resize, onViewportResize, togglePanel, compactOpen, searching, query, toggleSearch, closeSearch, searchInput, searchButton, filteredTabs, filteredArtifacts };', context)
-  return { ...context.h, props, requests, pointerEvents, viewport: context.window }
+  vm.runInNewContext(script + '\nglobalThis.h = { syncSessionPanel, refresh, opened, selection, artifacts, tabs, unseen, openBrowser, back, width, adjustWidth, miniTab, browserReady, resize, onViewportResize, togglePanel, compactOpen, searching, query, toggleSearch, closeSearch, searchInput, searchButton, filteredTabs, filteredArtifacts };', context)
+  return { ...context.h, props, requests, pointerEvents, viewport: context.window, storage,
+    enterSession(id, _old, phase = id ? 'active' : 'hero') { props.sessionId = id; props.conversationPhase = phase; context.h.syncSessionPanel() },
+  }
 }
+
+test('new-chat page stays collapsed and the first actual session opens by default', () => {
+  const h = harness({ sessionId: '' })
+  h.enterSession('')
+  assert.equal(h.opened.value, false)
+  assert.equal(h.compactOpen.value, false)
+  h.enterSession('first', '')
+  assert.equal(h.opened.value, true)
+  assert.equal(h.compactOpen.value, true)
+})
+
+test('each session restores the user choice across navigation and component reload', () => {
+  const h = harness({ sessionId: '' })
+  h.enterSession('first', '')
+  h.togglePanel()
+  assert.equal(h.opened.value, false)
+  h.enterSession('second', 'first')
+  assert.equal(h.opened.value, true)
+  h.enterSession('', 'second')
+  assert.equal(h.opened.value, false)
+  h.enterSession('first', '')
+  assert.equal(h.opened.value, false)
+  h.enterSession('second', 'first')
+  assert.equal(h.opened.value, true)
+  const reloaded = harness({ storage: h.storage })
+  reloaded.enterSession('first')
+  assert.equal(reloaded.opened.value, false)
+  reloaded.enterSession('second')
+  assert.equal(reloaded.opened.value, true)
+})
+
+test('opening the blank page manually does not become the first session preference', () => {
+  const h = harness({ sessionId: '' })
+  h.enterSession('')
+  h.togglePanel()
+  h.enterSession('first', '')
+  assert.equal(h.opened.value, true)
+  assert.equal(h.storage.has('crawshrimp.sessionPanel.v2.'), false)
+  h.enterSession('', 'first')
+  assert.equal(h.opened.value, false)
+})
+
+test('a new session with an allocated ID stays closed until its first message activates it', () => {
+  const h = harness()
+  h.enterSession('allocated-blank', undefined, 'hero')
+  assert.equal(h.opened.value, false)
+  h.enterSession('allocated-blank', undefined, 'settling')
+  assert.equal(h.opened.value, false)
+  assert.equal(h.storage.has('crawshrimp.sessionPanel.v2.allocated-blank'), false)
+  h.enterSession('allocated-blank', undefined, 'active')
+  assert.equal(h.opened.value, true)
+  h.togglePanel()
+  h.enterSession('allocated-blank', undefined, 'active')
+  assert.equal(h.opened.value, false)
+})
+
+test('temporary hero/loading phases never overwrite the active session panel preference', () => {
+  const h = harness()
+  h.enterSession('existing')
+  assert.equal(h.opened.value, true)
+  h.enterSession('existing', undefined, 'hero')
+  assert.equal(h.opened.value, false)
+  h.enterSession('existing', undefined, 'settling')
+  h.enterSession('existing', undefined, 'active')
+  assert.equal(h.opened.value, true)
+  h.togglePanel()
+  h.enterSession('existing', undefined, 'hero')
+  h.enterSession('existing', undefined, 'active')
+  assert.equal(h.opened.value, false)
+})
+
+test('the iframe publishes hero-to-active changes even when the session ID stays the same', () => {
+  const bundle = readFileSync(new URL('../../integrations/deepseek-harness/crawshrimp-slots/lib/client.js', import.meta.url), 'utf8')
+  const method = bundle.slice(bundle.indexOf('    function publishCurrentSession(ctx) {'), bundle.indexOf('    function apply(ctx) {'))
+  const messages = []
+  let id = 'allocated-blank', phase = 'hero'
+  const publish = vm.runInNewContext(method + '; publishCurrentSession', {
+    lastPublishedRuntimeSessionId: '', lastPublishedConversationPhase: '', currentRuntimeSessionId: '',
+    persistedRuntimeSessionId: () => id,
+    document: { querySelector: () => ({ getAttribute: () => phase }) },
+    generationGroups: new Map(), flushAttachmentHints: () => {}, postToShell: message => messages.push(message),
+  })
+  const ctx = { sessions: { list: { getSnapshot: () => ({ current: id }) } } }
+  publish(ctx)
+  phase = 'active'; publish(ctx); publish(ctx)
+  let stateMessages = messages.filter(m => m.__crawshrimp === 'active-runtime-session')
+  assert.deepEqual(stateMessages.map(m => m.conversationPhase), ['hero', 'active'])
+  assert.equal(messages.filter(m => m.__crawshrimp === 'artifact-replay').length, 1)
+  id = ''; phase = 'hero'; publish(ctx)
+  stateMessages = messages.filter(m => m.__crawshrimp === 'active-runtime-session')
+  assert.equal(stateMessages.at(-1).runtimeSessionId, '')
+  assert.equal(stateMessages.at(-1).conversationPhase, 'hero')
+})
 test('late resource response from another session cannot overwrite the active session', async () => {
   const h = harness()
   const first = h.refresh()

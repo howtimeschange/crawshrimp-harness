@@ -16,6 +16,8 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { patchConfiguredModelCatalog } from './configured-model-catalog.mjs'
 import { patchCurrencyMath } from './currency-math.mjs'
+import { patchCompactChat } from './compact-chat.mjs'
+import { patchReasoningRecovery } from './reasoning-recovery.mjs'
 
 export const RUNTIME_GUARD_MARKER = 'crawshrimp-dsh-im-411-product-patch-v1'
 const DSH_IM_RUNTIME_ROOT = 'node_modules/@xmanrui/dsh-im'
@@ -2195,6 +2197,7 @@ async function probeWorkspaceDirectoryAccess(directory) {
  */
 export function patchRuntimeDependencies(runtimeRoot) {
   const root = resolve(runtimeRoot)
+  patchCompactChat(root)
   const dshManifest = requireText(root, 'node_modules/@deepseek-ai/dsh/package.json', '"0.1.2-rc.1"')
   const dshBin = requireFile(root, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
   // Cordis resolves Web Host plugins from the product runtime root.  Keep the
@@ -2214,6 +2217,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const dshToolWeb = requireText(root, 'node_modules/@deepseek-ai/dsh-tool-web/package.json', '"0.1.2-rc.1"')
   const dshTimeContext = requireText(root, 'node_modules/@deepseek-ai/dsh-time-context/package.json', '"0.1.2-rc.1"')
   const timeContext = patchTimeContext(root)
+  const reasoningRecovery = patchReasoningRecovery(root)
   const dshSchedule = requireText(root, 'node_modules/@deepseek-ai/dsh-schedule/package.json', '"0.1.2-rc.1"')
   const dshImManifest = requireText(root, 'node_modules/@xmanrui/dsh-im/package.json', '"4.11.0"')
   const dshImEntry = requireFile(root, 'node_modules/@xmanrui/dsh-im/lib/index.js')
@@ -2268,6 +2272,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
     dshToolWeb,
     dshTimeContext,
     timeContext,
+    reasoningRecovery,
     dshSchedule,
     dshImManifest,
     dshImEntry,

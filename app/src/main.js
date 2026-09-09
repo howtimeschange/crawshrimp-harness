@@ -2889,9 +2889,9 @@ secureHandle('agent:pick-attachments', async () => {
     title: '选择图片或附件',
     properties: ['openFile', 'multiSelections'],
     filters: [
+      { name: '所有文件', extensions: ['*'] },
       { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
       { name: '数据与文本文件', extensions: ['csv', 'xlsx', 'json', 'txt', 'md', 'pdf'] },
-      { name: '所有文件', extensions: ['*'] },
     ],
   })
   if (result.canceled) return { ok: true, files: [] }

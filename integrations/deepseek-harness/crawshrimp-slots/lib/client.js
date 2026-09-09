@@ -37,6 +37,7 @@ window.__ModuleLoader__.load({
 
     let currentRuntimeSessionId = ''
     let lastPublishedRuntimeSessionId = ''
+    let lastPublishedConversationPhase = ''
     let shellRequiresLlmConfig = false
     let crawshrimpContext = null
     const pendingAttachmentHintsBySession = new Map()
@@ -382,6 +383,22 @@ window.__ModuleLoader__.load({
 
     // 去品牌 + 抓虾化样式
     const BRAND_CSS = [
+      '.wSkVaW_header { padding-top: 6px; padding-bottom: 6px; }',
+      '.cs-tool-group { min-width: 0; }',
+      '.cs-tool-group-latest { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }',
+      '.cs-tool-group-latest > [data-chat-flow-key] { flex: 1; min-width: 0; }',
+      '.cs-tool-group:has(.cs-tool-group-latest > [hidden]) { display: none; }',
+      '.cs-tool-group-toggle { flex: none; border: 0; border-radius: 6px; background: transparent; color: var(--dsw-alias-label-tertiary); font: inherit; font-size: 12px; min-width: 36px; min-height: 26px; cursor: pointer; }',
+      '.cs-tool-group-toggle:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }',
+      '.cs-tool-group-toggle:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }',
+      '.cs-tool-group-history:not([hidden]) { max-height: 280px; overflow-y: auto; overscroll-behavior: contain; margin-top: 4px; padding-left: 10px; border-left: 1px solid var(--dsw-alias-border-l3); }',
+      '.cs-tool-group-history > [data-chat-flow-key] + [data-chat-flow-key] { margin-top: 4px; }',
+      // Hide internal context disclosures in both live and replayed chat.
+      // Only presentation changes: durable context and model input stay intact.
+      '[data-chat-flow-kind="context"], [data-chat-flow-kind="system-prompt"] { display: none !important; }',
+      // Hide the conversation scrollbar while preserving wheel/trackpad scrolling.
+      '.wSkVaW_scrollBody { scrollbar-width: none; scrollbar-gutter: auto; }',
+      '.wSkVaW_scrollBody::-webkit-scrollbar { display: none; width: 0; height: 0; }',
       // 1) 抓虾 brand slots:左上角只保留抓虾 logo +「抓虾智能体」
       'svg[viewBox="0 0 182 24"] { display: none !important; }',
       '.cs-brand-mark {',
@@ -1157,19 +1174,7 @@ window.__ModuleLoader__.load({
       return false
     }
 
-    function installNativeImageFiles(ctx, files) {
-      const images = Array.from(files || []).filter(isImageFile)
-      // `true` means that this handler has actually claimed at least one
-      // image. Text-only paste and ordinary clipboard content must keep
-      // flowing to DSH's native composer listener.
-      if (!images.length) return false
-      return images.every((file) => installNativeImageDraft(ctx, {
-        runtimeSessionId: activeRuntimeSessionId(),
-        name: file.name,
-        mime: file.type,
-        bytes: file,
-      }))
-    }
+    const forwardedImageEvents = new WeakSet()
 
     function postAttachmentFiles(files) {
       for (const file of nonImageFiles(files)) {
@@ -1177,8 +1182,36 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function handlePasteAttachments(event) {
-      if (!inComposer(event.target)) return
+    function routeAttachmentFiles(event, files, ctx) {
+      if (forwardedImageEvents.has(event)) return false
+      const attachments = nonImageFiles(files)
+      const images = Array.from(files || []).filter(isImageFile)
+      const pendingImages = images.filter((file) => !installNativeImageDraft(ctx, {
+        runtimeSessionId: activeRuntimeSessionId(), name: file.name, mime: file.type, bytes: file,
+      }))
+      // Leave text and unclaimed image-only events to DSH. Ordinary files
+      // must never reach its image-only validator, even when no image was added.
+      if (!attachments.length && pendingImages.length === images.length) return false
+      event.preventDefault()
+      event.stopPropagation()
+      event.stopImmediatePropagation?.()
+      postAttachmentFiles(attachments)
+      if (pendingImages.length) {
+        // A mixed transfer can contain unsupported images or a failed draft.
+        // Forward only those images; never replay already installed drafts/files.
+        const transfer = new DataTransfer()
+        for (const file of pendingImages) transfer.items.add(file)
+        const forwarded = event.type === 'paste'
+          ? new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer })
+          : new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer })
+        forwardedImageEvents.add(forwarded)
+        event.target.dispatchEvent(forwarded)
+      }
+      return true
+    }
+
+    function handlePasteAttachments(event, ctx = crawshrimpContext) {
+      if (forwardedImageEvents.has(event) || !inComposer(event.target)) return
       const items = (event.clipboardData || {}).items || []
       const files = []
       for (const item of items) {
@@ -1186,37 +1219,14 @@ window.__ModuleLoader__.load({
         const file = item.getAsFile()
         if (file) files.push(file)
       }
-      const attachments = nonImageFiles(files)
-      const imagesInstalled = installNativeImageFiles(crawshrimpContext, files)
-      if (!attachments.length && !imagesInstalled) return
-      // If the native draft API is unavailable, let DSH's own paste listener
-      // retain its image behavior.  Regular files are still sent to the
-      // Crawshrimp attachment store without consuming that native event.
-      if (!imagesInstalled) {
-        if (attachments.length) postAttachmentFiles(attachments)
-        return
-      }
-      event.preventDefault()
-      event.stopPropagation()
-      event.stopImmediatePropagation?.()
-      if (attachments.length) postAttachmentFiles(attachments)
+      routeAttachmentFiles(event, files, ctx)
     }
 
-    function handleDropAttachments(event) {
+    function handleDropAttachments(event, ctx = crawshrimpContext) {
       const files = (event.dataTransfer || {}).files
-      if (!files || !files.length) return
-      const attachments = nonImageFiles(files)
-      const imagesInstalled = installNativeImageFiles(crawshrimpContext, files)
-      if (!attachments.length && !imagesInstalled) return
-      if (!imagesInstalled) {
-        if (attachments.length) postAttachmentFiles(attachments)
-        return
-      }
-      event.preventDefault()
-      event.stopPropagation()
-      event.stopImmediatePropagation?.()
+      if (!files || !files.length || forwardedImageEvents.has(event)) return
       try {
-        if (attachments.length) postAttachmentFiles(attachments)
+        routeAttachmentFiles(event, files, ctx)
       } finally {
         resetNativeDropOverlay()
       }
@@ -1888,13 +1898,18 @@ window.__ModuleLoader__.load({
       try {
         const snap = ctx.sessions?.list?.getSnapshot?.() || {}
         const current = String(persistedRuntimeSessionId() || snap.current || '')
-        if (!current || current === lastPublishedRuntimeSessionId) return
+        const phase = document.querySelector('.wSkVaW_root[data-phase]')?.getAttribute('data-phase') || 'settling'
+        if (current === lastPublishedRuntimeSessionId && phase === lastPublishedConversationPhase) return
+        const sessionChanged = current !== lastPublishedRuntimeSessionId
         currentRuntimeSessionId = current
         lastPublishedRuntimeSessionId = current
-        for (const entry of generationGroups.values()) placeGenerationGroup(entry)
-        postToShell({ __crawshrimp: 'artifact-replay', runtimeSessionId: current })
-        flushAttachmentHints(current)
-        postToShell({ __crawshrimp: 'active-runtime-session', runtimeSessionId: current })
+        lastPublishedConversationPhase = phase
+        if (sessionChanged && current) {
+          for (const entry of generationGroups.values()) placeGenerationGroup(entry)
+          postToShell({ __crawshrimp: 'artifact-replay', runtimeSessionId: current })
+          flushAttachmentHints(current)
+        }
+        postToShell({ __crawshrimp: 'active-runtime-session', runtimeSessionId: current, conversationPhase: phase })
       } catch (error) {
         // 会话列表尚未就绪，下一轮轮询重试。
       }
@@ -1948,6 +1963,8 @@ window.__ModuleLoader__.load({
       })
       // 侧边栏/输入区重渲染后兜底重插。属性/尺寸变化由 ResizeObserver + 周期兜底处理。
       const observer = new MutationObserver((mutations) => {
+        // The first message changes hero -> active without changing the session ID.
+        publishCurrentSession(ctx)
         const runningStatusChanged = Array.from(mutations || []).some((mutation) => {
           const target = mutation.target?.nodeType === 3 ? mutation.target.parentElement : mutation.target
           if (target?.closest?.('[role="status"]')) return true
@@ -1974,7 +1991,7 @@ window.__ModuleLoader__.load({
         installRailResizeObserver()
         scheduleRailMetricsPush()
       })
-      observer.observe(document.documentElement, { childList: true, subtree: true })
+      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-phase'] })
       setTimeout(() => {
         installRailResizeObserver()
         pushRailMetrics({ force: true })
@@ -1991,7 +2008,9 @@ window.__ModuleLoader__.load({
     // 可执行契约测试直接调用真实实现，避免退化为源码字符串匹配。
     exports.ensureDefaultWorkspace = ensureDefaultWorkspace
     exports.installShellMessageBridge = installShellMessageBridge
+    exports.publishCurrentSession = publishCurrentSession
     exports.requestLlmConfigFromComposer = requestLlmConfigFromComposer
+    exports.handleDropAttachments = handleDropAttachments
     exports.handlePasteAttachments = handlePasteAttachments
     exports.insertAttachmentHint = insertAttachmentHint
     // kernel 服务依赖声明:rc.1 的会话创建在 uiWorkspace，不在原始 workspaces controller。
