@@ -31,6 +31,8 @@ description: 为 PPT 演示文稿、Word 报告与 Excel 汇报页选择设计�
 
 ## 按格式落实
 
+需要生成或诊断文件时，读取 `office-design-taste/references/native-api.md`：包含可直接通过 office_run 调用的 Word 预设/检查、26 种 PPT 原生版式/模板跟随和 Excel 范围样式 API。PPT 规划融合 ppt-master 的受众、逐页结论、证据和讲稿流程，来源见 UPSTREAM.md。
+
 - PPT：读取 `office-design-taste/references/ppt-layout.md`，再用 `office-ppt` 生成可编辑幻灯片。
 - Word：读取 `office-design-taste/references/word-layout.md`，再用 `office-word` 生成具有语义样式的文档。
 - Excel：沿用 `office-excel` 的公式、数据、打印与重算规则。日期/金额/百分比用数值格式，数字右对齐；输入、计算和汇总区用清楚的标签及克制的底色区分。不要在原始数据表中为装饰合并单元格，样式调整不能改变公式或统计口径。
@@ -40,6 +42,8 @@ description: 为 PPT 演示文稿、Word 报告与 Excel 汇报页选择设计�
 ## 用实际页面完成检查
 
 先 `office_validate` 重新打开原件并核对业务内容，再 `office_render`；按 `office-common/README.md` 逐页 `office_preview_read`，通过 `office_review_record` 记录实际观察。
+
+业务内容检查包括同一指标跨页的期间、范围、单位与数值一致，合计来自同一份明细，趋势标题能由图表支持。不同统计口径必须明确标注；自动结构检查不会替代这些核对。
 
 检查阅读顺序、主次是否清楚、内容是否过密，以及文字截断、重叠、低对比、中文缺字、图表标注、表格跨页和页眉页脚。先修溢出与可读性，再调整装饰。PPT 以整页投屏尺度检查，Word 兼顾完整页面和正文可读性。代码中的尺寸正确不代表实际渲染正确。
 

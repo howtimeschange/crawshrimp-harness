@@ -60,7 +60,7 @@ const REQUIRED_SKILL_SOURCE_FILES = [
   [sourceRoot, 'skills/crawshrimp-adapter-skill/SKILL.md'],
   [sourceRoot, 'skills/crawshrimp-probe-skill/SKILL.md'],
   [sourceRoot, 'skills/suanming/SKILL.md'],
-  ...['SKILL.md', 'LICENSE', 'UPSTREAM.md', 'references/ppt-layout.md', 'references/word-layout.md']
+  ...['SKILL.md', 'LICENSE', 'LICENSE.ppt-master', 'UPSTREAM.md', 'references/ppt-layout.md', 'references/word-layout.md', 'references/native-api.md']
     .map(file => [sourceRoot, `skills/office-design-taste/${file}`]),
   [repoRoot, 'skills/cli/vipshop-hot-strategy-agent/src/vipshop_hot_strategy_agent/cli.py'],
   ...CLI_NODE_SKILL_RUNTIMES.map(({ directory }) => [repoRoot, `skills/cli/${directory}/package.json`]),
@@ -113,9 +113,11 @@ const required = [
   'skills/office-common/README.md',
   'skills/office-design-taste/SKILL.md',
   'skills/office-design-taste/LICENSE',
+  'skills/office-design-taste/LICENSE.ppt-master',
   'skills/office-design-taste/UPSTREAM.md',
   'skills/office-design-taste/references/ppt-layout.md',
   'skills/office-design-taste/references/word-layout.md',
+  'skills/office-design-taste/references/native-api.md',
   'skills/office-word/SKILL.md',
   'skills/office-word/templates/starter.docx',
   'skills/office-ppt/SKILL.md',

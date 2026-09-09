@@ -12,9 +12,11 @@ BUILTIN_GENERAL_SKILLS = {
     "office-design-taste": [
         "SKILL.md",
         "LICENSE",
+        "LICENSE.ppt-master",
         "UPSTREAM.md",
         "references/ppt-layout.md",
         "references/word-layout.md",
+        "references/native-api.md",
     ],
     "bilibili-video-transcript": [
         "SKILL.md",

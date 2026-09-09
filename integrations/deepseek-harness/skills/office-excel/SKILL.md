@@ -16,14 +16,21 @@ description: 创建、修改、检查Excel 工作簿，提供可编辑原件、P
 ## 开始生成
 
 1. 调用 office_runtime_info 核对内置环境。
-2. office_run 运行下面的起始脚本，再根据用户内容扩充。也可用 `office-excel/templates/starter.xlsx` 真实模板；模板绝对目录从 skill_read 返回的 root 解析，不猜路径。
+2. 读取 `office-design-taste/references/native-api.md`，按任务使用内置排版 API。以下仅是起点，交付前须替换示例内容。用户提供模板时优先沿用模板；PPT 使用 `inspect_template` / `follow_template`，不以新建版式覆盖公司母版。
 
 ```python
 import os
 from pathlib import Path
-from core.office.templates import excel_template
+from openpyxl import Workbook
+from core.office.excel_design import format_report
 output = Path(os.environ["CRAWSHRIMP_OFFICE_OUTPUT"])
-excel_template(output / "交付文件.xlsx", title="用户需要的标题")
+book = Workbook()
+ws = book.active
+ws.title = "数据"
+ws.append(["编号", "数值"])
+ws.append(["00123", 100])  # 示例；实际交付使用用户数据。
+format_report(ws, "A1:B2", columns={"A": "text", "B": "amount"}, roles={"B2:B2": "input"})
+book.save(output / "交付文件.xlsx")
 ```
 
 3. office_job 取得完成后的文件名；office_validate 读回内容和业务预期。

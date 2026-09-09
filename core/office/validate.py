@@ -17,14 +17,20 @@ def validate(path: Path, expected: dict | None = None) -> dict:
         texts = [p.text for p in doc.paragraphs]
         texts.extend(c.text for t in doc.tables for r in t.rows for c in r.cells)
         result.update(paragraphs=len(doc.paragraphs), tables=len(doc.tables))
+        from .word_audit import audit_word
+        result["design_audit"] = audit_word(path)
     elif path.suffix.lower() == ".pptx":
         from pptx import Presentation
         doc = Presentation(path)
         result["slides"] = len(doc.slides)
+        from .ppt_audit import audit_ppt
+        result["design_audit"] = audit_ppt(path)
         for index, slide in enumerate(doc.slides, 1):
             for shape in slide.shapes:
                 if shape.has_text_frame:
                     texts.append(shape.text)
+                if shape.has_table:
+                    texts.extend(cell.text for row in shape.table.rows for cell in row.cells)
                 if (shape.left < 0 or shape.top < 0 or
                     shape.left + shape.width > doc.slide_width + 100 or
                     shape.top + shape.height > doc.slide_height + 100):
@@ -34,6 +40,10 @@ def validate(path: Path, expected: dict | None = None) -> dict:
         formulas = openpyxl.load_workbook(path, data_only=False)
         cached = openpyxl.load_workbook(path, data_only=True)
         try:
+            from .excel_design import audit_report
+            audits = [audit_report(sheet) for sheet in formulas]
+            result["design_audit"] = {"status": "issues" if any(a["issues"] for a in audits) else "passed",
+                                      "sheets": audits, "visual": "not_run"}
             result["sheets"] = [{"name": s.title, "rows": s.max_row, "columns": s.max_column,
                                  "state": s.sheet_state, "print_area": str(s.print_area)} for s in formulas]
             result["formula_count"] = 0

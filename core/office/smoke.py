@@ -48,6 +48,17 @@ def check(output: Path) -> dict:
             if (result["validation"]["status"] != "passed" or len(result["pages"]) != wanted_pages
                     or not any("SourceHanSansSC" in font for font in result["fonts"])):
                 raise OfficeError("OFFICE_SMOKE_FAILED", f"{source.name}: content/pages/fonts mismatch")
+        # Exercise shipped design helpers and template fidelity with the copied Python.
+        # The rendered starter checks above remain an independent pagination/font gate.
+        from .design_samples import generate_samples
+        report["design_documents"] = []
+        for source in generate_samples(output / "design-sources"):
+            result = validate(source)
+            allowed = {"FORMULA_CACHE_MISSING"} if source.suffix == ".xlsx" else set()
+            if (any(i["code"] not in allowed for i in result["issues"])
+                    or result["design_audit"]["status"] != "passed"):
+                raise OfficeError("OFFICE_DESIGN_SMOKE_FAILED", json.dumps(result))
+            report["design_documents"].append({"name": source.name, "validation": result})
         report["ok"] = True
         return report
     finally:

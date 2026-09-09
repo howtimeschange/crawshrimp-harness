@@ -16,14 +16,17 @@ A4；标题层级、页边距、页眉页脚；长表格重复表头，标题避
 ## 开始生成
 
 1. 调用 office_runtime_info 核对内置环境。
-2. office_run 运行下面的起始脚本，再根据用户内容扩充。也可用 `office-word/templates/starter.docx` 真实模板；模板绝对目录从 skill_read 返回的 root 解析，不猜路径。
+2. 读取 `office-design-taste/references/native-api.md`，按任务使用内置排版 API。以下仅是起点，交付前须替换示例内容。用户提供模板时优先沿用模板；PPT 使用 `inspect_template` / `follow_template`，不以新建版式覆盖公司母版。
 
 ```python
 import os
 from pathlib import Path
-from core.office.templates import word_template
+from core.office.word_design import new_document, add_table
 output = Path(os.environ["CRAWSHRIMP_OFFICE_OUTPUT"])
-word_template(output / "交付文件.docx", title="用户需要的标题")
+doc = new_document("用户需要的标题", preset="report")
+doc.add_heading("一、核心结论", 1)
+doc.add_paragraph("根据用户资料填写正文。")
+doc.save(output / "交付文件.docx")
 ```
 
 3. office_job 取得完成后的文件名；office_validate 读回内容和业务预期。

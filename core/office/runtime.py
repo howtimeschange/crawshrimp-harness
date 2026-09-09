@@ -101,6 +101,14 @@ def inspect_runtime() -> dict:
         except Exception as exc:
             result["issues"].append(f"{distribution}: {type(exc).__name__}: {exc}")
     try:
+        from .word_design import presets
+        from .ppt_design import layout_catalog
+        result["design_capabilities"] = {"word_presets": presets(), "ppt_layouts": list(layout_catalog()),
+                                         "template_following": "inspect/map/fill/fidelity", "excel_report": True,
+                                         "instructions": "office-design-taste/references/native-api.md"}
+    except Exception as exc:
+        result["issues"].append(f"design helpers: {type(exc).__name__}: {exc}")
+    try:
         manifest = assets()
         result["assets"] = manifest
         # Native executable bytes change during application signing. The staging

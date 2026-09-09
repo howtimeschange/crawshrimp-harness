@@ -16,14 +16,19 @@ description: 创建、修改、检查PowerPoint 演示文稿，提供可编辑�
 ## 开始生成
 
 1. 调用 office_runtime_info 核对内置环境。
-2. office_run 运行下面的起始脚本，再根据用户内容扩充。也可用 `office-ppt/templates/starter.pptx` 真实模板；模板绝对目录从 skill_read 返回的 root 解析，不猜路径。
+2. 读取 `office-design-taste/references/native-api.md`，按任务使用内置排版 API。以下仅是起点，交付前须替换示例内容。用户提供模板时优先沿用模板；PPT 使用 `inspect_template` / `follow_template`，不以新建版式覆盖公司母版。
 
 ```python
 import os
 from pathlib import Path
-from core.office.templates import ppt_template
+from core.office.ppt_design import build_deck
 output = Path(os.environ["CRAWSHRIMP_OFFICE_OUTPUT"])
-ppt_template(output / "交付文件.pptx", title="用户需要的标题")
+plan = {"audience": "目标读者", "purpose": "沟通目的", "message": "全稿主结论", "slides": [
+    {"layout": "conclusion", "title": "本页结论", "takeaway": "读者应理解的要点",
+     "content": {"message": "核心结论", "evidence": "用户提供的证据", "action": "下一步行动"},
+     "notes": "基于资料填写讲稿。"}
+]  # 实际交付前替换全部示例文字，并按内容增加页面。
+build_deck(plan, output / "交付文件.pptx")
 ```
 
 3. office_job 取得完成后的文件名；office_validate 读回内容和业务预期。
