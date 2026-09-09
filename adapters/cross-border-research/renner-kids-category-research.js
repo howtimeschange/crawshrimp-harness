@@ -159,13 +159,21 @@
   function findProductList(payload) {
     const parsed = parseRennerPayload(payload)
     const candidates = []
+    // Results in mainContent belong to the category response. Recommendations
+    // and auxiliary/global lists must never win merely because they are larger.
+    const mainRoots = []
     walkObjects(parsed, obj => {
+      if (Array.isArray(obj.mainContent)) mainRoots.push(obj.mainContent)
+    })
+    walkObjects(mainRoots.length ? mainRoots : parsed, obj => {
       if (obj && Array.isArray(obj.records) && Object.prototype.hasOwnProperty.call(obj, 'totalNumRecs')) {
         candidates.push(obj)
       }
     })
-    candidates.sort((a, b) => Number(b.totalNumRecs || 0) - Number(a.totalNumRecs || 0))
-    return candidates[0] || null
+    const results = candidates.filter(item => /results?list/i.test(String(item['@type'] || item.type || '')))
+    const scoped = results.length ? results : candidates
+    if (scoped.length !== 1) throw new Error('Renner 品类商品列表缺失或口径不唯一，不能确认品类数量')
+    return scoped[0]
   }
 
   function extractCategoryRefinements(payload) {
@@ -343,8 +351,10 @@
       const maxPrice = firstPriceFromList(descList)
       rows.push({
         '品类': target.outputName,
-        'SKC 数量': totalRecords(ascList),
+        '商品结果数': totalRecords(ascList),
         '价格带': formatPriceBand(minPrice, maxPrice),
+        '统计口径': '源站品类商品列表 totalNumRecs；未按款色去重，不代表销量或库存',
+        '来源链接': target.apiUrl,
       })
       if (requestDelayMs > 0) await sleep(requestDelayMs)
     }
@@ -396,7 +406,7 @@
     const rows = await collectResearchRows(params)
     return complete(rows, {
       notify_title: `Renner 儿童鞋服类目调研 ${rows.length} 个品类`,
-      notify_body: `已汇总 ${rows.length} 个品类的 SKC 数量和价格带。`,
+      notify_body: `已汇总 ${rows.length} 个品类的商品结果数和价格带。`,
     })
   } catch (error) {
     return {

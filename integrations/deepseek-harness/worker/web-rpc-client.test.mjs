@@ -159,3 +159,24 @@ test('output continuation sends the runtime token and a text-only body to the pr
     },
   })
 })
+
+
+test('background model selection uses the default-preserving product route', async (t) => {
+  let received
+  const server = createServer((request, response) => {
+    const chunks = []
+    request.on('data', chunk => chunks.push(chunk))
+    request.on('end', () => {
+      received = { url: request.url, cookie: request.headers.cookie, body: JSON.parse(Buffer.concat(chunks)) }
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ ok: true, selected: { provider: 'fixture', model: 'model' } }))
+    })
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(async () => await new Promise(resolve => server.close(resolve)))
+  const child = new EventEmitter()
+  child.exitCode = 0
+  const runtime = new DshWebRuntime({ child, origin: `http://127.0.0.1:${server.address().port}`, cookie: 'dsh=fixture', launchUrl: '' })
+  await runtime.selectModel({ sessionId: 'background', provider: 'fixture', model: 'model', reasoningEffort: 'high' })
+  assert.deepEqual(received, { url: '/api/crawshrimp/session/select-model', cookie: 'dsh=fixture', body: { sessionId: 'background', provider: 'fixture', model: 'model', reasoningEffort: 'high' } })
+})

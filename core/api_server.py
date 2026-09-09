@@ -8460,7 +8460,10 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
             if mode != 'current':
                 wait_for_ready = getattr(runner, 'wait_for_document_ready', None)
                 if callable(wait_for_ready):
-                    ready = await wait_for_ready(timeout_seconds=8.0)
+                    # Only this explicitly local adapter intentionally runs on about:blank.
+                    readiness_options = ({"allow_blank": True} if (adapter_id, task_id) ==
+                        ("amazon-ops-assistant", "amazon_label_batch_process") else {})
+                    ready = await wait_for_ready(timeout_seconds=8.0, **readiness_options)
                     if ready.get('ready'):
                         log(f"新页面已就绪：{str(ready.get('href') or '')[:120]}")
                     else:
@@ -8471,7 +8474,7 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
                         recover_ready = getattr(runner, 'stop_loading_and_wait_for_document_ready', None)
                         if not callable(recover_ready):
                             raise RuntimeError("新页面未就绪，且当前运行器不支持安全的加载恢复")
-                        recovered = await recover_ready(timeout_seconds=4.0)
+                        recovered = await recover_ready(timeout_seconds=4.0, **readiness_options)
                         if not recovered.get('ready'):
                             raise RuntimeError(
                                 "新页面在停止加载后仍不可执行，已取消脚本注入："

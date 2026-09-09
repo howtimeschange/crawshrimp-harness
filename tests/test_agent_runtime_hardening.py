@@ -560,7 +560,7 @@ def test_browser_eval_reports_unresponsive_page_without_claiming_context_is_miss
     previous_grant = mcp_gateway.ctx.grant
     previous_emit = mcp_gateway.ctx.emit_event
     mcp_gateway.ctx.active_run = {"run_id": "run-page", "session_id": "session-page"}
-    mcp_gateway.ctx.grant = None
+    mcp_gateway.ctx.grant = {"tab_id": "tab-1"}
     mcp_gateway.ctx.emit_event = None
     monkeypatch.setattr("core.cdp_bridge.get_bridge", lambda: FakeBridge())
     monkeypatch.setattr(mcp_gateway, "CdpClient", FakeClient)
@@ -606,7 +606,7 @@ def test_browser_navigate_reports_unresponsive_page_without_claiming_context_is_
     previous_grant = mcp_gateway.ctx.grant
     previous_emit = mcp_gateway.ctx.emit_event
     mcp_gateway.ctx.active_run = {"run_id": "run-page", "session_id": "session-page"}
-    mcp_gateway.ctx.grant = None
+    mcp_gateway.ctx.grant = {"tab_id": "tab-1"}
     mcp_gateway.ctx.emit_event = None
     monkeypatch.setattr("core.cdp_bridge.get_bridge", lambda: FakeBridge())
     monkeypatch.setattr(mcp_gateway, "CdpClient", FakeClient)
@@ -642,7 +642,12 @@ def test_browser_tab_retries_transient_cdp_target_discovery(monkeypatch):
     monkeypatch.setattr("core.cdp_bridge.get_bridge", lambda: FakeBridge())
     monkeypatch.setattr(mcp_gateway.time, "sleep", lambda _seconds: None)
 
-    tab = mcp_gateway._browser_tab()
+    previous = mcp_gateway.ctx.grant
+    mcp_gateway.ctx.grant = {"tab_id": "tab-recovered"}
+    try:
+        tab = mcp_gateway._browser_tab()
+    finally:
+        mcp_gateway.ctx.grant = previous
 
     assert tab and tab["id"] == "tab-recovered"
     assert attempts == 3
@@ -687,7 +692,7 @@ def test_browser_navigate_retries_the_same_url_only_after_transient_transport_fa
     previous_grant = mcp_gateway.ctx.grant
     previous_emit = mcp_gateway.ctx.emit_event
     mcp_gateway.ctx.active_run = {"run_id": "run-retry", "session_id": "session-retry"}
-    mcp_gateway.ctx.grant = None
+    mcp_gateway.ctx.grant = {"tab_id": "tab-1"}
     mcp_gateway.ctx.emit_event = None
     monkeypatch.setattr("core.cdp_bridge.get_bridge", lambda: FakeBridge())
     monkeypatch.setattr(mcp_gateway, "CdpClient", FakeClient)
@@ -834,6 +839,7 @@ def test_agent_image_generate_passes_free_size_quality_and_4k_key_tier(tmp_path,
 
 
 def test_navigate_auto_executes_without_approval(monkeypatch):
+    monkeypatch.setattr(mcp_gateway, "_require_run", lambda: None)
     class Client:
         def __init__(self):
             self.navigated = []
@@ -856,7 +862,7 @@ def test_navigate_auto_executes_without_approval(monkeypatch):
 
         previous = (mcp_gateway.ctx.active_run, mcp_gateway.ctx.grant, mcp_gateway.ctx.request_approval)
         mcp_gateway.ctx.active_run = {"run_id": "run", "session_id": "session"}
-        mcp_gateway.ctx.grant = {"grant_id": "grant", "toolset_json": "[]"}
+        mcp_gateway.ctx.grant = {"tab_id": "tab-bound", "grant_id": "grant", "toolset_json": "[]"}
         mcp_gateway.ctx.request_approval = fail_approval
         monkeypatch.setattr(mcp_gateway, "_browser_client", lambda: (client, {"url": "https://from"}, None))
         monkeypatch.setattr(
@@ -1815,6 +1821,7 @@ def test_media_signature_is_path_entry_and_expiry_bound(monkeypatch):
 
 
 def test_browser_navigate_does_not_request_native_approval(monkeypatch):
+    monkeypatch.setattr(mcp_gateway, "_require_run", lambda: None)
     class FakeClient:
         def __init__(self):
             self.navigated = False
@@ -1831,6 +1838,8 @@ def test_browser_navigate_does_not_request_native_approval(monkeypatch):
     async def scenario():
         client = FakeClient()
         previous = mcp_gateway.ctx.request_approval
+        previous_grant = mcp_gateway.ctx.grant
+        mcp_gateway.ctx.grant = {"tab_id": "tab-bound"}
 
         async def fail_approval(*_args):
             raise AssertionError("browser_navigate should not request approval")
@@ -1844,6 +1853,7 @@ def test_browser_navigate_does_not_request_native_approval(monkeypatch):
             result = await mcp_gateway.tool_browser_navigate("https://after.example")
         finally:
             mcp_gateway.ctx.request_approval = previous
+            mcp_gateway.ctx.grant = previous_grant
         assert result["ok"] is True
         assert client.navigated is True
 
@@ -1926,6 +1936,7 @@ def test_browser_act_credential_fields_require_explicit_authorization(monkeypatc
 
 
 def test_browser_navigate_does_not_mutate_grant_toolset(monkeypatch):
+    monkeypatch.setattr(mcp_gateway, "_require_run", lambda: None)
     class FakeClient:
         def __init__(self):
             self.navigated = []
@@ -1948,7 +1959,7 @@ def test_browser_navigate_does_not_mutate_grant_toolset(monkeypatch):
             raise AssertionError("browser_navigate should not request approval")
 
         mcp_gateway.ctx.request_approval = fail_approval
-        mcp_gateway.ctx.grant = {
+        mcp_gateway.ctx.grant = {"tab_id": "tab-bound",
             "grant_id": "grant-nav",
             "toolset_json": "[]",
         }
@@ -2179,7 +2190,7 @@ def test_non_budget_interruption_completes_partial_assistant_message(monkeypatch
 
             events = [await asyncio.wait_for(queue.get(), timeout=1) for _ in range(3)]
             assert [event["event_type"] for event in events] == [
-                "assistant.delta", "assistant.completed", "run.failed",
+                "assistant.delta", "assistant.completed", "run.canceled",
             ]
             rows = db.list_messages(session_id)
             assert len(rows) == 1

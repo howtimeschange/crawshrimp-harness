@@ -148,7 +148,7 @@ test('renner helper defaults to shoes and apparel categories and supports explic
   assert.match(configured[0].apiUrl, /\/react\/c\/infantil\/vestido\/-\/N-9vhpfaZwxqas2/)
 })
 
-test('renner helper collects SKC count and price band from ascending and descending category APIs', async () => {
+test('renner helper collects category result count, scope and price band from ascending and descending category APIs', async () => {
   const helpers = await loadExports()
   const calls = []
   const fakeFetchPayload = async url => {
@@ -166,9 +166,20 @@ test('renner helper collects SKC count and price band from ascending and descend
     request_delay_ms: 0,
   }, fakeFetchPayload)
 
-  assert.deepEqual(plain(rows), [
-    { '品类': '裙子', 'SKC 数量': 200, '价格带': 'R$ 19,90 - R$ 199,90' },
-    { '品类': '裤子', 'SKC 数量': 324, '价格带': 'R$ 29,90 - R$ 259,90' },
+  assert.ok(rows.every(row => row['统计口径'].includes('未按款色去重') && row['来源链接']))
+  assert.deepEqual(plain(rows).map(({ 品类, 商品结果数, 价格带 }) => ({ 品类, 商品结果数, 价格带 })), [
+    { '品类': '裙子', '商品结果数': 200, '价格带': 'R$ 19,90 - R$ 199,90' },
+    { '品类': '裤子', '商品结果数': 324, '价格带': 'R$ 29,90 - R$ 259,90' },
   ])
   assert.equal(calls.length, 5)
+})
+
+
+test('category count ignores larger auxiliary recommendation lists and rejects ambiguous main results', async () => {
+  const helpers = await loadExports()
+  const payload = productPayload(229, 19.9)
+  payload.recommendations = { records: [], totalNumRecs: 8831 }
+  assert.equal(helpers.findProductList(payload).totalNumRecs, 229)
+  payload.contents[0].mainContent.push({ records: [], totalNumRecs: 8831 })
+  assert.throws(() => helpers.findProductList(payload), /口径不唯一/)
 })

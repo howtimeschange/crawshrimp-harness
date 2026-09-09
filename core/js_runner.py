@@ -3820,6 +3820,7 @@ class JSRunner:
         *,
         timeout_seconds: float = 8.0,
         poll_seconds: float = 0.25,
+        allow_blank: bool = False,
     ) -> dict:
         """Wait for a newly opened page to leave its loading document state.
 
@@ -3848,7 +3849,7 @@ class JSRunner:
                 snapshot = result.data[0] if isinstance(result.data[0], dict) else {}
                 last_state = str(snapshot.get("readyState") or "")
                 last_href = str(snapshot.get("href") or "")
-                if last_state in {"interactive", "complete"} and last_href and last_href != "about:blank":
+                if last_state in {"interactive", "complete"} and last_href and (allow_blank or last_href != "about:blank"):
                     return {"ready": True, "ready_state": last_state, "href": last_href}
             else:
                 last_error = str(result.error or "")
@@ -3868,6 +3869,7 @@ class JSRunner:
         *,
         timeout_seconds: float = 4.0,
         poll_seconds: float = 0.25,
+        allow_blank: bool = False,
     ) -> dict:
         """End a stalled top-level navigation, then require an executable document.
 
@@ -3889,6 +3891,7 @@ class JSRunner:
         ready = await self.wait_for_document_ready(
             timeout_seconds=timeout_seconds,
             poll_seconds=poll_seconds,
+            allow_blank=allow_blank,
         )
         ready["load_stopped"] = True
         return ready

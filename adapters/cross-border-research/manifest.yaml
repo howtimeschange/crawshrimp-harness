@@ -1,6 +1,6 @@
 id: cross-border-research
 name: 跨境调研
-version: 0.2.0
+version: 0.2.1
 author: codex
 description: "跨境站点类目调研工具，支持按站点品类汇总 SKC/SKU 宽度、价格带和促销线索"
 entry_url: https://www.lojasrenner.com.br/
@@ -12,7 +12,7 @@ tab_match_prefixes:
 tasks:
   - id: renner_kids_category_research
     name: Renner 儿童鞋服类目调研
-    description: 抓取巴西 Renner 儿童站点鞋服子类目，汇总品类、SKC 数量和价格带并导出 Excel
+    description: 抓取巴西 Renner 儿童站点鞋服子类目，汇总品类、源站商品结果数和价格带并导出 Excel（未按款色去重，不代表销量或库存）
     script: renner-kids-category-research.js
     entry_url: https://www.lojasrenner.com.br/c/infantil/-/N-10xdweq?s_icid=230228_MENU_INF_GERAL
     tab_match_prefixes:
@@ -57,8 +57,10 @@ tasks:
         filename: "跨境调研_Renner儿童鞋服类目_{timestamp}.xlsx"
         columns:
           - 品类
-          - SKC 数量
+          - 商品结果数
           - 价格带
+          - 统计口径
+          - 来源链接
   - id: zara_new_arrival_research
     name: Zara 美国/巴西上新与促销调研
     description: 抓取 Zara 美国站、巴西站的 New Arrivals 上新宽度、品类价格带，并汇总首页/导航主推上新主题与 Special Prices 促销折扣

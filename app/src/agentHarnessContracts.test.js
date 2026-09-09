@@ -513,7 +513,7 @@ test('Web RPC reasserts a product session model through the authenticated Sessio
   const requests = []
   global.fetch = async (url, options) => {
     requests.push({ url: String(url), body: JSON.parse(String(options.body)) })
-    return new Response(JSON.stringify({ result: { ok: true, value: { selected: { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash-vision-exp' } } } }), {
+    return new Response(JSON.stringify({ ok: true, selected: { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash-vision-exp' } }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     })
@@ -526,8 +526,8 @@ test('Web RPC reasserts a product session model through the authenticated Sessio
       model: 'deepseek-v4-flash-vision-exp',
     })
     assert.equal(requests.length, 1)
-    assert.equal(requests[0].url, 'http://127.0.0.1:19099/api/session/selectModel')
-    assert.deepEqual(requests[0].body.payload.args.request, {
+    assert.equal(requests[0].url, 'http://127.0.0.1:19099/api/crawshrimp/session/select-model')
+    assert.deepEqual(requests[0].body, {
       sessionId: 'dsh-test',
       provider: 'crawshrimp-deepseek-official',
       model: 'deepseek-v4-flash-vision-exp',

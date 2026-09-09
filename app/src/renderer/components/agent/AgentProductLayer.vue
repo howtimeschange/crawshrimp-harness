@@ -49,6 +49,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { sameArtifact } from './artifactIdentity.js'
 
 const OUTPUT_BUDGET_ERROR_CODE = 'OUTPUT_BUDGET_REACHED'
 const OUTPUT_BUDGET_NOTICE = '内容较长，已自动分段输出并达到单轮安全上限。当前内容已保留；如需更多内容，可缩小范围或发送“继续”。'
@@ -83,8 +84,13 @@ function taskStatusClass(card) {
 }
 
 // 任务卡实时刷新:每 5s 轮询任务实例状态(方案 §11 任务卡由前端独立跟进进度)
+let taskPollInFlight = false
 async function pollTaskStatuses() {
-  const taskCards = visibleCards.value.filter((c) => c.kind === 'task' && c.status === 'running')
+  if (taskPollInFlight) return
+  taskPollInFlight = true
+  try {
+  const taskCards = cards.value.filter((c) => c.runtimeSessionId === props.activeRuntimeSessionId &&
+    c.kind === 'task' && !['completed', 'failed', 'canceled'].includes(c.status))
   for (const card of taskCards) {
     try {
       const result = await window.cs.agentApi('GET', `/agent/task-instances/${card.taskInstanceUid}`)
@@ -95,7 +101,7 @@ async function pollTaskStatuses() {
       if (card.status === 'completed' && Array.isArray(result.artifacts) && result.artifacts.length) {
         for (const item of result.artifacts.slice(0, 3)) {
           const filename = item.label || item.filename || ''
-          if (filename && !cards.value.some((c) => c.kind === 'artifact' && c.runtimeSessionId === card.runtimeSessionId && c.filename === filename)) {
+          if (filename) {
             pushCard({
               kind: 'artifact',
               artifactId: item.id,
@@ -109,6 +115,7 @@ async function pollTaskStatuses() {
       }
     } catch { /* 后端暂时不可达,下轮重试 */ }
   }
+  } finally { taskPollInFlight = false }
 }
 
 async function reconcilePendingApprovals() {
@@ -140,8 +147,7 @@ function pushCard(card, runtimeSessionId = props.activeRuntimeSessionId, global 
     cards.value = cards.value.filter((c) => !(c.kind === 'task' && c.taskInstanceUid === dupKey && c.runtimeSessionId === card.runtimeSessionId))
   }
   if (card.kind === 'artifact') {
-    const artifactKey = String(card.artifactId || `${card.path}:${card.filename}`)
-    cards.value = cards.value.filter((c) => c.kind !== 'artifact' || c.runtimeSessionId !== card.runtimeSessionId || String(c.artifactId || `${c.path}:${c.filename}`) !== artifactKey)
+    cards.value = cards.value.filter((c) => c.kind !== 'artifact' || c.runtimeSessionId !== card.runtimeSessionId || !sameArtifact(c, card))
   }
   if (card.global && card.kind === 'approval') {
     cards.value = cards.value.filter((c) => !(c.global && c.kind === 'approval' &&
@@ -206,6 +212,9 @@ function handleEvent(eventType, data) {
   } else if (['run.completed', 'run.failed', 'run.canceled', 'run.interrupted'].includes(eventType)) {
     cards.value = cards.value.filter((card) => !(card.global && card.kind === 'approval' &&
       card.runtimeSessionId === runtimeSessionId))
+  }
+  if (['run.completed', 'run.failed', 'run.canceled', 'run.interrupted'].includes(eventType)) {
+    void pollTaskStatuses()
   }
   switch (eventType) {
     case 'task.linked': {
@@ -273,8 +282,7 @@ const artifactsByRuntime = new Map()
 function rememberArtifact(data, runtimeSessionId) {
   if (!runtimeSessionId) return
   const items = artifactsByRuntime.get(runtimeSessionId) || []
-  const key = String(data?.artifact_id || `${data?.path || ''}:${data?.filename || ''}`)
-  const next = items.filter((item) => String(item?.artifact_id || `${item?.path || ''}:${item?.filename || ''}`) !== key)
+  const next = items.filter((item) => !sameArtifact(item, data))
   next.push({ ...data })
   artifactsByRuntime.set(runtimeSessionId, next.slice(-12))
 }

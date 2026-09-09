@@ -17,7 +17,7 @@ import re
 import time
 import uuid
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -273,10 +273,28 @@ def tool_automation_get(automation_uid: str) -> dict:
         return _failed("AUTOMATION_NOT_FOUND", str(exc))
 
 
+def _retain_automation_policy_restrictions(payload: dict, *, creating: bool = False) -> Optional[dict]:
+    """A rejected proposal cannot be retried with its explicit denials removed."""
+    run = ctx.active_run
+    policy = payload.get("execution_policy", {} if creating else None)
+    if not run or not isinstance(policy, Mapping):
+        return None
+    floor = run.setdefault("_automation_policy_floor", {})
+    from core.automation_policy import DENIED_TOOLS
+    widened = [flag for flag in floor if policy.get(flag) is not False]
+    if widened:
+        return _failed("AUTOMATION_PERMISSION_ESCALATION", "不能在重试中撤销明确禁止的权限：" + ", ".join(sorted(widened)) + "。请缩小工具集；网页只读采集使用 browser_observe。")
+    floor.update({flag: False for flag in DENIED_TOOLS if policy.get(flag) is False})
+    return None
+
+
 def tool_automation_create(values: dict) -> dict:
     payload, error = _automation_json_object(values, field_name="values")
     if error:
         return error
+    restriction_error = _retain_automation_policy_restrictions(payload, creating=True)
+    if restriction_error:
+        return restriction_error
     # The model may suggest a source session in its JSON, but the actual
     # creating conversation is request context owned by AgentService.  Bind it
     # here so an isolated Automation can return its final receipt to the right
@@ -344,14 +362,14 @@ def automation_create_tool_description(now: Optional[datetime] = None) -> str:
 不要为了猜字段而调用 fs_read、fs_list、fs_exec、browser_*、script_* 或 repo_*，也不要读取/修改任何文件。本工具的合同已经完整给出。
 
 调用参数只有 values 对象。所有自动化至少填写：
-- title：用户可见标题；objective_prompt：到点后智能体要做什么；automation_kind：scheduled 或 loop；context_mode：isolated 或 inherited；execution_policy：本次运行允许的工具集和限制。
+- title：用户可见标题；objective_prompt：到点后智能体要做什么；automation_kind：scheduled 或 loop；context_mode：isolated 或 inherited；execution_policy：本次运行允许的工具集和限制。有明确条数、字段、交付要求时，用 execution_policy.verification_schema（JSON Schema）固化这些结果条件，例如 required=["verified","records","user_message"]、records 的 minItems/maxItems 及每条 required 字段。验证提交必须完整满足条件。
 - 一次性定时（例如“今晚 22:47 提醒我”）：automation_kind="scheduled"；schedule={{"kind":"at","value":"未来 ISO-8601 时间","timezone":"Asia/Shanghai"}}；context_mode="isolated"；enabled=true。此场景不需要 Program。
 - 固定周期任务（例如“每小时同步”“每天汇总”）：automation_kind="scheduled"；schedule={{"kind":"every","interval_seconds":3600,"timezone":"Asia/Shanghai"}}（每天填 86400）。这是默认快路径，无需 Program、无需 automation_program_test；持续执行直到用户暂停。
 - 周期性条件闭环（例如“连续三次低库存才处理”）：才使用 automation_kind="loop"；loop_policy 包含 cycle_interval_seconds/max_cycles/failure_threshold；必须携带受限 program。先用 automation_program_test 对代表性 facts/checkpoint 校验条件和 checkpoint，再把该工具返回的 program_test_proof 原样放进 values；没有这份短时证明不能保存或启用 Program。
 
-对于固定周期同步：如用户给了已授权页面，最多先 browser_observe 一次以识别页面；只有同步对象确实不明确时才问一个合并式问题。默认将中文摘要通过 automation_record_verification 发回创建对话，不创建 archive.md、不读写历史文件、不调用 skill_list 或扫描源码。默认策略只授予完成目标必需的浏览器只读工具和 automation_record_verification；不要默认授予 fs_write 或 browser_act。若用户明确要求“新增对比”，才授予 automation_state_get：先读取小型 last_snapshot，再在 automation_record_verification 的 result.state 中写回新的 last_snapshot（最大 16 KiB）；不要读取或整体重写历史归档。若用户明确要求保存归档或展开页面，再单独申请所需权限；回执必须如实说明是否写入了文件。
+对于固定周期同步：如用户给了已授权页面，最多先 browser_observe 一次以识别页面；只有同步对象确实不明确时才问一个合并式问题。默认将中文摘要通过 automation_record_verification 发回创建对话，不创建 archive.md、不读写历史文件、不调用 skill_list 或扫描源码。默认策略只授予 browser_observe 和 automation_record_verification；明确为 false 的权限在失败重试时也不得删除或改成 true，必须缩小工具集。不要默认授予 fs_write 或 browser_act。若用户明确要求“新增对比”，才授予 automation_state_get：先读取小型 last_snapshot，再在 automation_record_verification 的 result.state 中写回新的 last_snapshot（最大 16 KiB）；不要读取或整体重写历史归档。若用户明确要求保存归档或展开页面，再单独申请所需权限；回执必须如实说明是否写入了文件。
 
-创建成功后立即向用户确认标题、周期、时区和最小权限；除非用户明确要求“立即运行”或“验收首轮”，不要调用 automation_run_now、不要等待。若用户要求首轮计入 loop 的 max_cycles，调用 automation_run_now 时传 count_toward_max_cycles=true；若用户明确要求等待验收，使用 automation_wait_run（最多 60 秒），不要用固定 sleep。
+创建成功后立即向用户确认标题、周期、时区和最小权限；除非用户明确要求“立即运行”或“验收首轮”，不要调用 automation_run_now、不要等待。若用户要求首轮计入 loop 的 max_cycles，调用 automation_run_now 时传 count_toward_max_cycles=true；若用户明确要求等待验收，使用 automation_wait_run（最多 60 秒），不要用固定 sleep。等待自然周期时使用 automation_wait_next，传上次 run_uid 作为 after_run_uid；出现后再用 automation_wait_run。
 
 若某项 MCP 工具在普通对话中原本需要确认，execution_policy 除 toolset 外还必须显式填写 allowed_risks（仅可为 read_only、local_write、external_write、destructive）。两者缺一不可：toolset 限定具体工具，allowed_risks 限定这次允许无人值守的风险类型。不要为普通提醒填写风险授权。
 
@@ -366,6 +384,9 @@ def tool_automation_update(automation_uid: str, values: dict) -> dict:
     payload, error = _automation_json_object(values, field_name="values")
     if error:
         return error
+    restriction_error = _retain_automation_policy_restrictions(payload)
+    if restriction_error:
+        return restriction_error
     # The source conversation is bound by the creating request context. A
     # later model turn may change title, schedule, Program, and policy, but it
     # must never redirect a future receipt into another local conversation.
@@ -455,6 +476,18 @@ async def tool_automation_wait_run(run_uid: str, timeout_seconds: int = 30) -> d
         return _failed("AUTOMATION_INVALID", str(exc))
 
 
+async def tool_automation_wait_next(automation_uid: str, after_run_uid: str = "", after_created_at: str = "", timeout_seconds: int = 30) -> dict:
+    """Wait for a natural scheduled trigger; never creates or resumes work."""
+    controller, error = _automation_controller_or_error()
+    if error:
+        return error
+    try:
+        return _ok(await controller.wait_for_next_run(automation_uid, after_run_uid=after_run_uid, after_created_at=after_created_at,
+                                                      timeout_seconds=timeout_seconds))
+    except ValueError as exc:
+        return _failed("AUTOMATION_INVALID", str(exc))
+
+
 def tool_automation_state_get() -> dict:
     """Read the compact persisted state for the current Automation Run."""
     controller, automation_run, error = _automation_run_guard()
@@ -510,14 +543,19 @@ async def tool_automation_record_observation(facts: dict, evidence_refs: list | 
     return _ok(await controller.record_observation(automation_run["run_uid"], facts_value, list(evidence_refs or [])))
 
 
-async def tool_automation_record_verification(result: dict) -> dict:
+async def tool_automation_record_verification(result: dict, correction_reason: str = "") -> dict:
     result_value, error = _automation_json_object(result, field_name="result")
     if error:
         return error
     controller, automation_run, error = _automation_run_guard()
     if error:
         return error
-    return _ok(await controller.record_verification(automation_run["run_uid"], result_value))
+    try:
+        if correction_reason:
+            return _ok(await controller.record_verification(automation_run["run_uid"], result_value, correction_reason=correction_reason))
+        return _ok(await controller.record_verification(automation_run["run_uid"], result_value))
+    except ValueError as exc:
+        return _failed("AUTOMATION_VERIFICATION_INVALID", str(exc))
 
 
 # ---------- 任务目录 ----------
@@ -1060,6 +1098,7 @@ def tool_task_status(task_instance_uid: str) -> dict:
         "current_step": detail.get("current_step") or "",
         "progress": detail.get("progress") or None,
         "summary": _safe_task_summary(detail),
+        **({"error_message": _task_failure_message(detail)} if _task_failure_message(detail) else {}),
     }, status=str(detail.get("status") or "unknown"),
        evidence={"task_instance_uid": task_instance_uid, "artifact_ids": []})
 
@@ -2282,12 +2321,7 @@ def _browser_tab() -> Optional[dict]:
         if match:
             return match
         return None
-    # Interactive legacy turns may still use the current first page. An
-    # Automation is unattended and must have an explicit persisted binding;
-    # otherwise a browser tool can observe or mutate an unrelated tab.
-    if isinstance(ctx.automation_policy, Mapping):
-        return None
-    return pages[0]
+    return None
 
 
 def _signal_browser_activity(tab: Optional[dict]) -> None:
@@ -2319,7 +2353,7 @@ def _browser_client() -> tuple[Optional[CdpClient], Optional[dict], Optional[dic
             return None, None, _failed("CONTEXT_REQUIRED", "本任务绑定的浏览器页面已关闭，请重新选择页面后再运行")
         if isinstance(ctx.automation_policy, Mapping):
             return None, None, _failed("CONTEXT_REQUIRED", "自动化没有已授权的浏览器页面绑定")
-        return None, None, _failed("CONTEXT_REQUIRED", "9222 CDP 没有可用页面,请先启动 Chrome 并打开目标页面")
+        return None, None, _failed("CONTEXT_REQUIRED", "当前会话尚未绑定页面；先用 browser_navigate(url) 打开独立页面")
     _signal_browser_activity(tab)
     # URL 前缀是旧版抓虾二次权限层。现在 DSH 会话访问模式是唯一审批真值，
     # grant 只负责精确 tab 绑定；同一 tab 导航后 observe/eval/act 必须继续可用。
@@ -2505,18 +2539,44 @@ async def tool_browser_verify(expression: str) -> dict:
         return _failed("CONTEXT_REQUIRED", f"verify 失败: {exc}")
 
 
-async def tool_browser_navigate(url: str) -> dict:
-    client, tab, guard = _browser_client()
-    if guard:
-        return guard
-    # 访问权限已全面放开:任意 http(s) URL 可导航；导航本身不再触发额外审批。
+async def tool_browser_navigate(url: str, new_tab: bool = False) -> dict:
     target = str(url or "").strip()
     if not target.startswith(("http://", "https://")):
         return _rejected("rejected", "INVALID_PARAMETERS", "仅支持 http/https URL")
+    guard = _require_run()
+    if guard:
+        return guard
+    if new_tab or not (ctx.grant or {}).get("tab_id"):
+        if isinstance(ctx.automation_policy, Mapping):
+            return _failed("AUTOMATION_BROWSER_CONTEXT_REQUIRED", "自动化只能使用创建时绑定的页面")
+        from core.cdp_bridge import get_bridge
+        try:
+            # Never retry an uncertain tab creation or touch another session's tab.
+            tab = await get_bridge().new_tab_async(target)
+            tab_id = str(tab.get("id") or "")
+            if not tab_id:
+                return _failed("CONTEXT_REQUIRED", "新页面没有返回标签 ID")
+            run = ctx.active_run
+            grant = db.create_grant(f"grant-{uuid.uuid4().hex[:12]}", run["run_id"], None, tab_id,
+                                    ["observe", "eval", "verify", "capture_requests"],
+                                    (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
+            if ctx.grant is not None:
+                ctx.grant.update(grant)
+            else:
+                ctx.grant = grant
+            db.update_session(run["session_id"], browser_tab_id=tab_id)
+            _signal_browser_activity(tab)
+            return _ok({"navigated": True, "url": target, "tab_id": tab_id, "new_tab": True})
+        except Exception as exc:
+            return _browser_operation_failure("new_tab", exc)
+    client, tab, guard = _browser_client()
+    if guard:
+        return guard
     try:
         await _browser_navigate_with_retry(client, tab, target)
-        return _ok({"navigated": True, "url": target}, evidence={"task_instance_uid": None, "artifact_ids": []})
-    except Exception as exc:  # noqa: BLE001
+        return _ok({"navigated": True, "url": target, "tab_id": str(tab.get("id") or "")},
+                   evidence={"task_instance_uid": None, "artifact_ids": []})
+    except Exception as exc:
         return _browser_operation_failure("navigate", exc)
 
 
@@ -2718,13 +2778,23 @@ def _cap_json(value: Any, max_chars: int = 8000) -> Any:
     return value
 
 
+def _task_failure_message(detail: dict) -> str:
+    if str(detail.get("status") or "") not in {"failed", "error"}:
+        return ""
+    summary = detail.get("summary") if isinstance(detail.get("summary"), Mapping) else {}
+    error = detail.get("error") or summary.get("error")
+    if not error:
+        latest = (detail.get("runs") or [{}])[0]
+        error = latest.get("error") if isinstance(latest, Mapping) else None
+    return str(redact_value(str(error or "")))[:600]
+
+
 def _safe_task_summary(detail: dict) -> str:
-    pieces = []
-    for key in ("current_step", "status", "error"):
-        v = detail.get(key)
-        if v:
-            pieces.append(f"{key}={str(v)[:120]}")
-    return "; ".join(pieces)[:300]
+    pieces = [f"{key}={str(detail[key])[:120]}" for key in ("current_step", "status") if detail.get(key)]
+    error = _task_failure_message(detail)
+    if error:
+        pieces.append(f"error={error[:200]}")
+    return "; ".join(pieces)[:400]
 
 
 EXPECTED_TOOLS = [
@@ -2743,7 +2813,7 @@ EXPECTED_TOOLS = [
     "automation_list", "automation_get", "automation_create", "automation_update",
     "automation_current_time",
     "automation_pause", "automation_resume", "automation_archive", "automation_run_now",
-    "automation_runs", "automation_wait_run", "automation_state_get", "automation_program_test", "automation_record_observation",
+    "automation_runs", "automation_wait_run", "automation_wait_next", "automation_state_get", "automation_program_test", "automation_record_observation",
     "automation_record_verification",
 ]
 
@@ -2846,7 +2916,7 @@ def create_agent_mcp_server() -> MCPServer:
                  description="页面操作:click(selector 或 text)/type/scroll/wait;需本次运行授权。type 凭证字段默认阻断;仅当用户明确授权并给出内容时传 credential_authorized=true")
     mcp.add_tool(tool_browser_verify, name="browser_verify", description="断言页面 JS 表达式布尔结果")
     mcp.add_tool(tool_browser_navigate, name="browser_navigate",
-                 description="跳转任意 http(s) URL；不触发额外审批，仍绑定当前 run 的浏览器 tab")
+                 description="导航 http(s) URL；未绑定时自动创建本会话独立页面，new_tab=true 显式另开；后续轮次复用该会话精确绑定，页面关闭不回退其他会话。自动化只能使用创建时绑定页面")
     mcp.add_tool(tool_browser_capture_requests, name="browser_capture_requests",
                  description="短时捕获网络请求(URL/method/body 摘要,限量)")
     mcp.add_tool(tool_script_list, name="script_list", description="列出抓虾现有的全部脚本(与 tasks_search 同目录)")
@@ -2897,6 +2967,7 @@ def create_agent_mcp_server() -> MCPServer:
     mcp.add_tool(tool_automation_archive, name="automation_archive", description="归档 Automation，保留运行历史")
     mcp.add_tool(tool_automation_run_now, name="automation_run_now", description="仅在用户明确要求时立即运行一次 Automation；loop 的首轮若计入 max_cycles，传 count_toward_max_cycles=true")
     mcp.add_tool(tool_automation_runs, name="automation_runs", description="列出 Automation 的持久化运行记录与证据")
+    mcp.add_tool(tool_automation_wait_next, name="automation_wait_next", description="用户要求验收自然周期时，等待指定自动化的下一次 scheduled 运行出现；传上次 after_run_uid 作为游标，最长60秒；超时保留游标，不创建运行。出现后用 automation_wait_run 等待完成。源会话忙碌时回执会暂存，验收任务应先暂停计划并结束当前回复，空闲后自动送达；不要在源会话里轮询等待自己的回执。")
     mcp.add_tool(tool_automation_wait_run, name="automation_wait_run", description="仅在用户明确要求验收首轮时，等待一个 Automation Run 完成；最长 60 秒，不创建新运行")
     mcp.add_tool(tool_automation_state_get, name="automation_state_get", description="读取当前 Automation Run 的小型持久化状态；仅用于用户明确要求的增量对比")
     mcp.add_tool(tool_automation_program_test, name="automation_program_test", description="在纯 facts/checkpoint 上测试受限条件 Program")
@@ -2905,7 +2976,7 @@ def create_agent_mcp_server() -> MCPServer:
         tool_automation_record_verification,
         name="automation_record_verification",
         description=(
-            "仅当前关联 Automation Agent Run 可提交验证结果。result 必须有 verified=true；"
+            "仅当前关联 Automation Agent Run 可提交验证结果。result 必须完整满足创建时 verification_schema，全部条件验证后才能 verified=true；不完整时保留运行以便补齐。重复相同结果幂等；补正不同结果必须传 correction_reason，旧结果保留审计，不重新执行业务。"
             "若要回到创建对话的完成回执，使用 result.user_message 写用户应看到的最终文本"
             "（例如“本地自动化验收已完成”），不要写工具过程、JSON 或内部说明。"
         ),

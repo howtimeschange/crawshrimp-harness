@@ -1353,6 +1353,14 @@ class JSRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runner.calls[0]["phase"], "main")
         self.assertTrue(runner.calls[0]["allow_navigation_retry"])
 
+    async def test_local_task_can_explicitly_allow_blank_document(self):
+        runner = DocumentReadyRunner([("complete", "about:blank")])
+        result = await runner.wait_for_document_ready(timeout_seconds=0.1, allow_blank=True)
+        self.assertTrue(result["ready"])
+        runner = DocumentReadyRunner([("complete", "about:blank")])
+        result = await runner.wait_for_document_ready(timeout_seconds=0.1)
+        self.assertFalse(result["ready"])
+
     async def test_wait_for_document_ready_waits_for_non_blank_interactive_document(self):
         runner = DocumentReadyRunner([
             ("loading", "about:blank"),

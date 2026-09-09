@@ -102,3 +102,17 @@ def test_catalog_includes_all_tasks_and_excludes_destructive(monkeypatch, tmp_pa
     assert not any(t["hidden"] for t in catalog)
     # 森马云盘助手可见(用户诉求)
     assert any(t["adapter_id"] == "semir-cloud-drive" for t in catalog)
+
+
+def test_reasoning_blocks_are_not_projected_as_answer():
+    assert _extract_text({"chunk": {"type": "block-end", "block": {"type": "reasoning", "text": "private reasoning"}}}) == ""
+    assert _extract_text({"message": {"content": [
+        {"type": "reasoning", "text": "private reasoning"},
+        {"type": "text", "text": "final answer"},
+    ]}}) == "final answer"
+
+def test_user_stop_is_canceled_not_failed():
+    from core.agent.service import _turn_terminal_status
+    assert _turn_terminal_status("aborted") == "canceled"
+    assert _turn_terminal_status("interrupted") == "interrupted"
+    assert _turn_terminal_status("error") == "failed"

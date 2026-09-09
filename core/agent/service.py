@@ -1015,6 +1015,7 @@ class AgentService:
         run_id = str((run or {}).get("run_id") or "").strip()
         if not runtime_id or not run_id:
             raise ValueError("runtime_session_id/run_id 必填")
+        run.setdefault("_automation_policy_floor", {})
         self.active_runs_by_runtime[runtime_id] = dict(run)
         self._native_web_context_events.setdefault(runtime_id, asyncio.Event()).set()
         if grant:
@@ -1623,29 +1624,50 @@ class AgentService:
         self._assistant_streams.pop(str(run["run_id"]), None)
 
     @staticmethod
-    def _automation_receipt_text(automation: dict, agent_run_id: str) -> str:
-        """Use a structured verification message, never model/tool transcript text."""
-        for call in reversed(db.list_tool_calls_for_run(agent_run_id)):
-            if str(call.get("tool_name") or "") != "mcp__crawshrimp__automation_record_verification":
-                continue
-            if str(call.get("status") or "") != "succeeded":
-                continue
-            try:
-                arguments = json.loads(call.get("arguments_json") or "{}")
-            except (TypeError, ValueError):
-                continue
-            result = arguments.get("result") if isinstance(arguments, dict) else None
-            if not isinstance(result, dict):
-                continue
-            # ``user_message`` is the explicit durable contract.  ``message``
-            # remains supported for Automations created before this field was
-            # documented, but is still structured tool input rather than the
-            # DSH's concatenated assistant/tool transcript.
-            message = result.get("user_message") or result.get("message")
-            if isinstance(message, str) and message.strip():
-                return redact_text(message.strip())[:2000]
+    def _automation_receipt_text(automation: dict, agent_run_id: str, verification: Optional[dict] = None) -> str:
+        """Render the accepted durable result; rejected attempts are not evidence."""
+        result = verification
+        if result is None:  # Compatibility for pre-verification-snapshot runs.
+            for call in reversed(db.list_tool_calls_for_run(agent_run_id)):
+                if str(call.get("tool_name") or "") != "mcp__crawshrimp__automation_record_verification" or call.get("status") != "succeeded":
+                    continue
+                try:
+                    candidate = json.loads(call.get("arguments_json") or "{}").get("result")
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                if isinstance(candidate, dict) and candidate.get("verified") is True:
+                    result = candidate
+                    break
+        result = result if isinstance(result, dict) else {}
         title = str(automation.get("title") or "自动化").strip() or "自动化"
-        return f"自动化「{title}」已完成。"
+        message = result.get("user_message") or result.get("message")
+        message = message.strip() if isinstance(message, str) and message.strip() else f"自动化「{title}」已完成。"
+        records = result.get("records")
+        if isinstance(records, list) and records:
+            # Include the verified data even when the model wrote only a count
+            # in its summary. A receipt must be useful without reopening tools.
+            blocks = []
+            for index, record in enumerate(records, 1):
+                if isinstance(record, dict):
+                    fields = []
+                    labels = {"quote_text": "名言", "author": "作者", "source_url": "来源", "observed_at": "观察时间"}
+                    for key, value in record.items():
+                        text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+                        if key in {"source_url", "url"} and text.startswith(("http://", "https://")) and not any(char.isspace() or char in "<>" for char in text):
+                            # Delimit URLs explicitly: GFM otherwise consumes
+                            # the following Chinese separator/time into href.
+                            text = f"<{text}>"
+                        fields.append(f"{labels.get(key, key)}：{text}")
+                    blocks.append(f"{index}. " + "；".join(fields))
+                else:
+                    blocks.append(f"{index}. " + str(record))
+            message += "\n\n" + "\n\n".join(blocks)
+        text = redact_text(message)
+        if len(text) > 32000:
+            # Preserve full evidence in the run; never silently present a
+            # truncated record as the complete result.
+            return text[:31000] + "\n\n内容超出会话显示上限；完整验证结果保存在本次自动化运行详情中。"
+        return text
 
     @staticmethod
     def _is_persisted_automation_receipt_event(session_id: str, data: Mapping[str, Any]) -> bool:
@@ -1682,14 +1704,12 @@ class AgentService:
         *,
         status: str,
     ) -> None:
-        """Project a one-off Automation result into its creating conversation.
+        """Project a terminal scheduled Automation result into its creating conversation.
 
         Scheduled work normally runs in an isolated Agent session.  The
         Automation Controller remains the execution/audit owner, while this
-        product projection provides the user-facing completion receipt.  Keep
-        the first version deliberately narrow: only an ``at`` schedule can
-        create one receipt, so periodic loops and recurring schedules cannot
-        unexpectedly flood a conversation.
+        product projection provides one idempotent completion receipt per run,
+        including recurring schedules.
         """
         automation_run_uid = str(run.get("automation_run_uid") or "").strip()
         agent_run_id = str(run.get("run_id") or "").strip()
@@ -1715,10 +1735,7 @@ class AgentService:
         automation_kind = str(
             definition.get("automation_kind") or automation.get("automation_kind") or ""
         ).strip().lower()
-        if (
-            automation_kind != "scheduled"
-            or str(schedule.get("kind") or "").strip().lower() != "at"
-        ):
+        if automation_kind != "scheduled":
             return
         # A transient error may have scheduled a retry for this exact durable
         # run.  Sending an early failure reply would contradict that state.
@@ -1743,9 +1760,23 @@ class AgentService:
         if _get_message_by_id(receipt_id):
             data_sink.update_agent_automation_run(automation_run_uid, notification_status="delivered")
             return
+        # An idle source may release multiple pending receipts together. Keep
+        # their scheduled order instead of letting independent retry timers
+        # append a newer result first.
+        prior_pending = any(
+            str(previous.get("created_at") or "") < str(automation_run.get("created_at") or "")
+            and previous.get("notification_status") == "pending_source_receipt"
+            for previous in data_sink.list_agent_automation_runs(str(automation_run.get("automation_uid") or ""), 500)
+        )
+        if prior_pending:
+            data_sink.update_agent_automation_run(automation_run_uid, notification_status="pending_source_receipt")
+            self._schedule_automation_receipt_retry(automation_session_id,
+                {"run_id": agent_run_id, "automation_run_uid": automation_run_uid}, status=status)
+            return
         title = str(definition.get("title") or automation.get("title") or "自动化").strip() or "自动化"
         if status == "completed":
-            receipt_text = self._automation_receipt_text({**automation, **definition}, agent_run_id)
+            receipt_text = self._automation_receipt_text({**automation, **definition}, agent_run_id,
+                (automation_run.get("result_summary") or {}).get("verification"))
         else:
             # Do not expose provider/internal error details in the source chat.
             receipt_text = f"自动化「{title}」未能完成。请在自动化中心查看详情。"
@@ -1824,9 +1855,11 @@ class AgentService:
 
         self._automation_receipt_retry_tasks[key] = asyncio.create_task(_retry())
 
-    async def recover_automation_receipts(self) -> None:
-        """Requeue pending one-off receipts after backend or DSH restart."""
+    async def recover_automation_receipts(self, source_session_id: str = "", *, schedule_only: bool = False) -> None:
+        """Requeue pending scheduled receipts after backend or DSH restart."""
         for automation in data_sink.list_agent_automations(include_archived=True, limit=500):
+            if source_session_id and str(automation.get("source_session_id") or "") != source_session_id:
+                continue
             for run in data_sink.list_agent_automation_runs(str(automation.get("automation_uid") or ""), 500):
                 if str(run.get("notification_status") or "") != "pending_source_receipt":
                     continue
@@ -1838,16 +1871,19 @@ class AgentService:
                 automation_kind = str(
                     definition.get("automation_kind") or automation.get("automation_kind") or ""
                 ).lower()
-                if automation_kind != "scheduled" or str(schedule.get("kind") or "").lower() != "at":
+                if automation_kind != "scheduled":
                     continue
                 agent_run_id = str(run.get("agent_run_id") or "").strip()
                 if not agent_run_id:
                     continue
-                await self._publish_automation_source_receipt(
-                    "",
-                    {"run_id": agent_run_id, "automation_run_uid": run["run_uid"]},
-                    status=str(run.get("status") or "needs_review"),
-                )
+                receipt_run = {"run_id": agent_run_id, "automation_run_uid": run["run_uid"]}
+                if schedule_only:
+                    # Worker notifications run on its stdio reader. Never
+                    # await a Worker RPC response from inside that reader.
+                    self._schedule_automation_receipt_retry("", receipt_run, status=str(run.get("status") or "needs_review"))
+                else:
+                    await self._publish_automation_source_receipt("", receipt_run, status=str(run.get("status") or "needs_review"))
+
 
     async def _project_automation_receipt_to_runtime(
         self,
@@ -1855,7 +1891,7 @@ class AgentService:
         receipt_id: str,
         receipt_text: str,
     ) -> bool:
-        """Append a one-off receipt to the source DSH Web session when available.
+        """Append a scheduled receipt to the source DSH Web session when available.
 
         Harness SQLite/SSE is a product projection, while the embedded DSH Web
         client renders its own session event log. Post through the local,
@@ -2965,6 +3001,9 @@ class AgentService:
                 print(f"[agent] 影子会话创建失败: {exc}", flush=True)
                 return
 
+        if event_type == "model/selection" and data.get("provider") and data.get("model"):
+            db.update_session(session["session_id"], provider_id=str(data["provider"]), model_id=str(data["model"]))
+            return
         run = self.shadow_runs.get(runtime_session_id)
 
         if event_type == "turn/start" and run is None:
@@ -2973,17 +3012,20 @@ class AgentService:
             run_id = f"run-web-{uuid.uuid4().hex[:12]}"
             db.create_turn(turn_id, session_id, db.next_turn_ordinal(session_id) + 1, f"{run_id}:user")
             run = db.create_run(run_id, session_id, turn_id,
-                                self.generation_model_provider or resolve_provider_for_model(DEFAULT_MODEL),
-                                self.generation_model or DEFAULT_MODEL)
+                                str(session.get("provider_id") or ""), str(session.get("model_id") or ""))
             db.update_run(run_id, status="running", started_at=_now_iso())
             self.shadow_runs[runtime_session_id] = run
-            # DSH Web 原生会话没有显式「附加当前页面」开关；首次 turn 固定绑定
-            # 当时的 Chrome page，后续浏览器事件只公开这个 grant.tab_id。
+            # Keep this session's exact binding across turns. A new session
+            # acquires its own tab lazily through browser_navigate.
+            tab_id = str(session.get("browser_tab_id") or "")
             grant = await asyncio.to_thread(self._grant_for_run, {
                 "run_id": run_id,
-                "context_refs": [{"type": "browser_tab", "id": "current"}],
+                "context_refs": [{"type": "browser_tab", "id": tab_id}] if tab_id else [],
                 "grant_prefs": {},
             })
+            if not grant:
+                grant = db.create_grant(f"grant-{uuid.uuid4().hex[:12]}", run_id, None, None,
+                                        ["observe", "eval", "verify", "capture_requests"], _iso_after(3600))
             self.register_run_context(runtime_session_id, run, grant)
             db.update_session(session_id, status="running")
             await self.broadcast(session_id, 0, "run.started", {"run_id": run_id, "turn_id": turn_id})
@@ -3020,7 +3062,7 @@ class AgentService:
                 if isinstance(reason.get("error"), dict):
                     error_code = reason["error"].get("code")
                     error_message = reason["error"].get("message")
-                terminal_status = "interrupted" if kind == "interrupted" else "failed"
+                terminal_status = _turn_terminal_status(kind)
                 db.update_run(
                     run["run_id"],
                     status=terminal_status,
@@ -3039,6 +3081,10 @@ class AgentService:
             db.update_session(session_id, status="idle")
             self.shadow_runs.pop(runtime_session_id, None)
             self.unregister_run_context(runtime_session_id, run["run_id"])
+            # A long source turn may outlive bounded receipt retry timers. Its
+            # idle transition must requeue durable pending delivery.
+            if self.automation_controller is not None:
+                await self.recover_automation_receipts(source_session_id=session_id, schedule_only=True)
             return
 
         await self._project_event(session_id, run, event)
@@ -3052,10 +3098,20 @@ class AgentService:
         if dsh_seq:
             db.update_run(run_id, dsh_end_seq=max(int(run.get("dsh_end_seq") or 0), dsh_seq))
 
+        if event_type == "request/header":
+            config = (data.get("header") or {}).get("config") or {}
+            if config.get("provider") and config.get("model"):
+                fields = {"provider_id": str(config["provider"]), "model_id": str(config["model"])}
+                db.update_run(run_id, **fields)
+                db.update_session(session_id, **fields)
+            return
         if event_type in FILTERED_EVENT_TYPES:
             return
 
         if event_type == "assistant/chunk":
+            # block-end repeats the full block already delivered by text-delta.
+            if (data.get("chunk") or {}).get("type") != "text-delta":
+                return
             delta = _extract_text(data)
             if delta:
                 await self._project_assistant_delta(session_id, run, delta)
@@ -3064,6 +3120,11 @@ class AgentService:
         if event_type == "assistant/message":
             if self._is_persisted_automation_receipt_event(session_id, data):
                 return
+            # Native message provenance is the actual model used, including
+            # sessions which switched away from the generation default.
+            source = (data.get("message") or {}).get("source") or {}
+            if source.get("provider") and source.get("model"):
+                db.update_run(run_id, provider_id=str(source["provider"]), model_id=str(source["model"]))
             text = _extract_text(data)
             if text:
                 if data.get("interrupted"):
@@ -3114,7 +3175,7 @@ class AgentService:
             error_code = None
             if isinstance(reason.get("error"), dict):
                 error_code = reason["error"].get("code")
-            await self.broadcast(session_id, _seq(session_id), "run.failed", {
+            await self.broadcast(session_id, _seq(session_id), f"run.{_turn_terminal_status(kind)}", {
                 "run_id": run_id, "kind": kind, "error_code": error_code,
             })
             return
@@ -3332,19 +3393,23 @@ def _seq(session_id: str) -> int:
     return int((row or {}).get("last_event_seq") or 0)
 
 
+def _turn_terminal_status(kind: str) -> str:
+    return {"aborted": "canceled", "canceled": "canceled", "interrupted": "interrupted"}.get(kind, "failed")
+
+
 def _extract_text(data: dict) -> str:
     if isinstance(data, dict):
         chunk = data.get("chunk") if isinstance(data.get("chunk"), dict) else None
         if chunk:
             if chunk.get("type") == "text-delta":
                 return str(chunk.get("text") or "")
-            if chunk.get("type") == "block-end" and isinstance(chunk.get("block"), dict):
+            if chunk.get("type") == "block-end" and isinstance(chunk.get("block"), dict) and chunk["block"].get("type") == "text":
                 return str(chunk["block"].get("text") or "")
         if isinstance(data.get("text"), str):
             return data["text"]
         content = data.get("message", {}).get("content") if isinstance(data.get("message"), dict) else None
         if isinstance(content, list):
-            return "".join(str(b.get("text") or "") for b in content if isinstance(b, dict))
+            return "".join(str(b.get("text") or "") for b in content if isinstance(b, dict) and b.get("type") == "text")
     return ""
 
 

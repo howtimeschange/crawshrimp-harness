@@ -197,7 +197,7 @@ def _ensure_agent_columns(conn: sqlite3.Connection) -> None:
     """增量迁移:补齐历史表缺失列(与 data_sink._ensure_column 同模式)。"""
     migrations = {
         "agent_runs": [("created_at", "TEXT NOT NULL DEFAULT ''")],
-        "agent_sessions": [("model_id", "TEXT NOT NULL DEFAULT ''")],
+        "agent_sessions": [("model_id", "TEXT NOT NULL DEFAULT ''"), ("browser_tab_id", "TEXT NOT NULL DEFAULT ''"), ("provider_id", "TEXT NOT NULL DEFAULT ''")],
         "agent_execution_plans": [("task_instance_uid", "TEXT")],
         "agent_approvals": [
             ("session_id", "TEXT"),
@@ -327,7 +327,7 @@ def get_session(session_id: str) -> Optional[dict]:
 
 
 def update_session(session_id: str, **fields: Any) -> None:
-    allowed = {"title", "status", "continuation_available", "archived_at", "model_id"}
+    allowed = {"title", "status", "continuation_available", "archived_at", "model_id", "browser_tab_id", "provider_id"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
@@ -391,7 +391,7 @@ def create_run(run_id: str, session_id: str, turn_id: Optional[str], provider_id
 
 def update_run(run_id: str, **fields: Any) -> None:
     allowed = {"status", "runtime_generation", "dsh_message_id", "dsh_start_seq", "dsh_end_seq",
-               "error_code", "error_message", "started_at", "finished_at"}
+               "error_code", "error_message", "started_at", "finished_at", "provider_id", "model_id"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return

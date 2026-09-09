@@ -354,10 +354,20 @@ export class DshWebRuntime {
    * after a runtime restart (or a product-side model change), rather than
    * letting a persisted DSH Session silently reuse its prior model.
    */
-  selectModel({ sessionId, provider, model, reasoningEffort }) {
+  async selectModel({ sessionId, provider, model, reasoningEffort }) {
     const request = { sessionId, provider, model }
     if (reasoningEffort !== undefined) request.reasoningEffort = reasoningEffort
-    return this.request('session/selectModel', { request })
+    const response = await fetch(this.#origin + '/api/crawshrimp/session/select-model', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: this.#cookie },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(30000),
+    })
+    const result = await response.json()
+    if (!response.ok || !result?.ok) {
+      throw Object.assign(new Error(result?.error?.message || 'Session model selection failed'), { code: result?.error?.code })
+    }
+    return result
   }
 
   prompt({ sessionId, content, mode = 'queue', requestId = 'crawshrimp-' + randomUUID() }) {

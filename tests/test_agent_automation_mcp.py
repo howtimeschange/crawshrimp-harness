@@ -1,6 +1,7 @@
 """Agent/MCP contracts for durable Agent Automations."""
 from __future__ import annotations
 
+import pytest
 import asyncio
 import json
 from datetime import datetime
@@ -434,7 +435,12 @@ def test_automation_update_cannot_redirect_the_source_conversation(monkeypatch, 
     assert result["error"]["code"] == "AUTOMATION_SOURCE_SESSION_IMMUTABLE"
 
 
-def test_one_off_automation_completion_returns_a_redacted_receipt_to_source_session(monkeypatch, tmp_path):
+@pytest.mark.parametrize("schedule", [
+    {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+    {"kind": "every", "interval_seconds": 60, "timezone": "Asia/Shanghai"},
+    {"kind": "cron", "expression": "0 * * * *", "timezone": "Asia/Shanghai"},
+])
+def test_scheduled_automation_completion_returns_one_receipt_per_run(monkeypatch, tmp_path, schedule):
     async def scenario():
         _seed_agent_db(monkeypatch, tmp_path)
         db.create_session("source-session", "dsh-source", "创建自动化")
@@ -446,7 +452,7 @@ def test_one_off_automation_completion_returns_a_redacted_receipt_to_source_sess
             "context_mode": "isolated",
             "source_session_id": "source-session",
             "source_runtime_session_id": "dsh-source",
-            "schedule": {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+            "schedule": schedule,
             "loop_policy": {},
             "execution_policy": {"toolset": ["automation_record_verification"]},
         })

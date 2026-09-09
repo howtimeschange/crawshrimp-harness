@@ -13,6 +13,8 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from '
 import { spawnSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { patchConfiguredModelCatalog } from './configured-model-catalog.mjs'
+import { patchCurrencyMath } from './currency-math.mjs'
 
 export const RUNTIME_GUARD_MARKER = 'crawshrimp-dsh-im-411-product-patch-v1'
 const DSH_IM_RUNTIME_ROOT = 'node_modules/@xmanrui/dsh-im'
@@ -2186,6 +2188,8 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const nativeWebTools = patchNativeWebToolRegistration(root)
   const workspaceAccessProbe = patchWorkspaceAccessProbe(root)
   const deepseekVisionBridge = patchPiAiDeepSeekVisionBridge(root)
+  const currencyMath = patchCurrencyMath(root)
+  const configuredModelCatalog = patchConfiguredModelCatalog(root)
   const deepseekVisionAdmission = patchDeepSeekVisionAdmission(root, deepseekVisionBridge)
   const profilePackages = assertEffectiveProfileRootClosure(root)
   const standardPreset = assertStandardPresetRootClosure(root)
@@ -2233,6 +2237,8 @@ export function patchRuntimeDependencies(runtimeRoot) {
     dshImNativeChannelControls,
     dshImSessionPermission,
     deepseekVisionBridge,
+    configuredModelCatalog,
+    currencyMath,
     deepseekVisionAdmission,
     profilePackages,
     standardPresetPackages: standardPreset.packages,

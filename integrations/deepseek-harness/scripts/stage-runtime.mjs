@@ -237,6 +237,8 @@ const hashInputs = [
   hashTree(profileSource),
   readFileSync(fileURLToPath(import.meta.url)),
   readFileSync(join(here, 'patch-runtime-dependencies.mjs')),
+  readFileSync(join(here, 'configured-model-catalog.mjs')),
+  readFileSync(join(here, 'currency-math.mjs')),
   readFileSync(join(here, 'build-patched-dsh-im.mjs')),
   targetId,
 ].join('|')

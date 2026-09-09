@@ -409,6 +409,12 @@ class AutomationController:
         if not isinstance(execution_policy, Mapping):
             raise ValueError("execution_policy must be an object")
         source["execution_policy"] = dict(execution_policy)
+        if "verification_schema" in execution_policy:
+            from jsonschema import Draft202012Validator, SchemaError
+            try:
+                Draft202012Validator.check_schema(execution_policy["verification_schema"])
+            except SchemaError as exc:
+                raise ValueError("execution_policy.verification_schema is invalid") from exc
         for field, minimum, maximum in (
             ("timeout_seconds", 1, 2 * 60 * 60),
             ("max_retries", 0, 20),
@@ -709,6 +715,34 @@ class AutomationController:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 return {**run, "wait_timed_out": True}
+            await asyncio.sleep(min(1.0, remaining))
+
+    async def wait_for_next_run(self, automation_uid: str, *, after_run_uid: str = "", after_created_at: str = "", timeout_seconds: int = 30) -> dict:
+        """Observe scheduled runs after a durable cursor without running work."""
+        self._automation_or_raise(automation_uid)
+        timeout = _strict_integer(timeout_seconds, field_name="timeout_seconds", minimum=1, maximum=60)
+        cursor = data_sink.get_agent_automation_run(after_run_uid) if after_run_uid else None
+        if after_run_uid and (not cursor or cursor.get("automation_uid") != automation_uid):
+            raise ValueError("after_run_uid must belong to this Automation")
+        # Without a cursor, wait from now; return the same boundary on timeout.
+        boundary = str(cursor.get("created_at") or "") if cursor else (after_created_at or datetime.now().isoformat())
+        try:
+            datetime.fromisoformat(boundary)
+        except ValueError as exc:
+            raise ValueError("after_created_at must be an ISO timestamp") from exc
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            runs = data_sink.list_agent_automation_runs(automation_uid, 500)
+            candidates = [run for run in runs if run.get("trigger_kind") == "scheduled"
+                          and str(run.get("created_at") or "") > boundary]
+            if candidates:
+                run = min(candidates, key=lambda item: str(item.get("created_at") or ""))
+                return {"run": run, "after_run_uid": run["run_uid"], "after_created_at": run["created_at"], "wait_timed_out": False}
+            remaining = deadline - asyncio.get_running_loop().time()
+            automation = self._automation_or_raise(automation_uid)
+            if remaining <= 0 or not automation.get("enabled"):
+                return {"run": None, "after_run_uid": after_run_uid, "after_created_at": boundary, "wait_timed_out": remaining <= 0,
+                        "automation_status": automation.get("status"), "next_run_at": automation.get("next_run_at")}
             await asyncio.sleep(min(1.0, remaining))
 
     def state_for_run(self, run_uid: str) -> dict:
@@ -1666,20 +1700,42 @@ class AutomationController:
                 run_uid, "ACTION_EXECUTION_FAILED", str(exc), retryable=True
             )
 
-    async def record_verification(self, run_uid: str, result: Mapping[str, Any]) -> dict:
+    async def record_verification(self, run_uid: str, result: Mapping[str, Any], *, correction_reason: str = "") -> dict:
         run = data_sink.get_agent_automation_run(run_uid)
         if not run:
             raise ValueError(f"Automation run not found: {run_uid}")
-        if str(run.get("status") or "") in TERMINAL_RUN_STATUSES:
-            return run
-        if not isinstance(result, Mapping) or result.get("verified") is not True:
-            return self.mark_needs_review(
-                run_uid,
-                "VERIFICATION_FAILED",
-                "Verification must contain the boolean field verified=true",
-            )
         automation = self._automation_or_raise(str(run.get("automation_uid") or ""))
         execution_automation = self._definition_for_run(automation, run)
+        summary = dict(run.get("result_summary") or {})
+        previous = summary.get("verification")
+        terminal = str(run.get("status") or "") in TERMINAL_RUN_STATUSES
+        if terminal and previous == result:
+            return run
+        if terminal and (run.get("status") != "completed" or not correction_reason.strip()):
+            raise ValueError("Run is terminal; a changed verification requires correction_reason on a completed run")
+        if not isinstance(result, Mapping) or result.get("verified") is not True:
+            if terminal:
+                raise ValueError("A correction cannot replace a completed result with unverified evidence")
+            return self.mark_needs_review(run_uid, "VERIFICATION_FAILED", "Verification must contain the boolean field verified=true")
+        schema = (execution_automation.get("execution_policy") or {}).get("verification_schema")
+        if schema is not None:
+            from jsonschema import Draft202012Validator
+            errors = sorted(Draft202012Validator(schema).iter_errors(result), key=lambda e: str(list(e.path)))
+            if errors:
+                attempts = list(summary.get("verification_rejections") or [])[-19:]
+                attempts.append({"at": _iso_now(), "errors": [str(e.message)[:500] for e in errors[:10]]})
+                data_sink.update_agent_automation_run(run_uid, result_summary={**summary, "verification_rejections": attempts})
+                raise ValueError("Verification incomplete: " + "; ".join(str(e.message)[:200] for e in errors[:3]))
+        if terminal:
+            if run.get("notification_status") == "delivered":
+                raise ValueError("Receipt already delivered; cannot silently revise delivered evidence")
+            if result.get("state") != (previous or {}).get("state"):
+                raise ValueError("Evidence correction cannot change the committed state")
+            revisions = list(summary.get("verification_revisions") or [])
+            revisions.append({"at": _iso_now(), "reason": correction_reason.strip(), "previous": copy.deepcopy(previous)})
+            self._record_result_resource_links(run_uid, result)
+            return data_sink.update_agent_automation_run(run_uid, result_summary={**summary,
+                "verification": copy.deepcopy(dict(result)), "verification_revisions": revisions})
         state_value = result.get("state")
         if state_value is not None:
             if _kind(execution_automation) == "loop":
