@@ -6,12 +6,27 @@ const path = require('node:path')
 
 const {
   copyDirSync,
+  copyOfficeRuntime,
   requireDeepseekHarnessBundle,
   deepseekHarnessStageKey,
   requireNativeRuntimePackages,
   requirePythonBundle,
   requirePythonScriptsBundle,
 } = require('./after-pack')
+
+test('Office native links survive removing their staging directory', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'office-relocation-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const source = path.join(root, 'source'), destination = path.join(root, 'installed')
+  fs.mkdirSync(source)
+  fs.writeFileSync(path.join(source, 'lib.dylib'), 'native-library-fixture')
+  try { fs.symlinkSync('lib.dylib', path.join(source, 'alias.jnilib')) }
+  catch (error) { t.skip(`symlinks unavailable: ${error.code}`); return }
+  copyOfficeRuntime(source, destination)
+  fs.rmSync(source, { recursive: true })
+  assert.equal(fs.readlinkSync(path.join(destination, 'alias.jnilib')), 'lib.dylib')
+  assert.equal(fs.readFileSync(path.join(destination, 'alias.jnilib'), 'utf8'), 'native-library-fixture')
+})
 
 test('copyDirSync materializes directory symlinks instead of shipping or dropping them', (t) => {
   assert.equal(typeof copyDirSync, 'function', 'after-pack copy helper must be testable')

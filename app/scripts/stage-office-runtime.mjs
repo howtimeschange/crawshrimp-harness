@@ -32,7 +32,7 @@ async function download(entry, filename) {
   return path
 }
 const previous = existsSync(join(root, 'runtime.json')) ? JSON.parse(readFileSync(join(root, 'runtime.json'))) : null
-if (previous?.fingerprint === fingerprint && [previous.executable, ...previous.fonts,
+if (previous?.stagingVersion === 2 && previous?.fingerprint === fingerprint && [previous.executable, ...previous.fonts,
   ...manifest.fonts.map(font => ({ path: join(source.fontDirectory, font.filename), sha256: font.sha256 }))]
   .every(item => existsSync(join(root, item.path)) && sha(readFileSync(join(root, item.path))) === item.sha256)) {
   console.log(`[office] ${target} assets verified, unchanged`)
@@ -51,7 +51,7 @@ try {
     const mount = mounts.find(item => item['mount-point'])?.['mount-point']
     if (!mount) throw new Error('LibreOffice image has no mount point')
     try {
-      cpSync(join(mount, 'LibreOffice.app'), join(temporary, 'libreoffice/LibreOffice.app'), { recursive: true, dereference: false })
+      cpSync(join(mount, 'LibreOffice.app'), join(temporary, 'libreoffice/LibreOffice.app'), { recursive: true, dereference: false, verbatimSymlinks: true })
     } finally { run('hdiutil', ['detach', mount]) }
   } else {
     const extracted = join(temporary, 'msi')
@@ -80,7 +80,7 @@ try {
   }
   cpSync(join(repo, 'runtime-locks/licenses'), join(temporary, 'licenses'), { recursive: true })
   const executable = { path: source.executable, sha256: sha(readFileSync(join(temporary, source.executable))) }
-  writeFileSync(join(temporary, 'runtime.json'), JSON.stringify({ schemaVersion: 1, target, fingerprint,
+  writeFileSync(join(temporary, 'runtime.json'), JSON.stringify({ schemaVersion: 1, stagingVersion: 2, target, fingerprint,
     libreofficeVersion: manifest.libreofficeVersion, fontFamily: manifest.fontFamily,
     executable, fonts, source: { url: source.url, sha256: source.sha256 } }, null, 2) + '\n')
   if (existsSync(root)) rmSync(root, { recursive: true })

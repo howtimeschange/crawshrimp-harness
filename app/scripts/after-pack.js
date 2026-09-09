@@ -288,7 +288,7 @@ async function afterPack(context) {
   const officeManifestPath = path.join(officeSource, 'runtime.json')
   if (!fs.existsSync(officeManifestPath)) throw new Error(`[after-pack] Office runtime missing: ${officeManifestPath}`)
   const officeManifest = JSON.parse(fs.readFileSync(officeManifestPath, 'utf8'))
-  if (officeManifest.target !== srcKey) throw new Error('[after-pack] Office runtime target mismatch')
+  if (officeManifest.target !== srcKey || officeManifest.stagingVersion !== 2) throw new Error('[after-pack] Office runtime target/staging version mismatch; restage resources')
   const hash = value => require('crypto').createHash('sha256').update(value).digest('hex')
   const lockPath = path.join(scriptDir, '..', 'runtime-locks', 'office-assets.json')
   if (officeManifest.fingerprint !== hash(fs.readFileSync(lockPath))) throw new Error('[after-pack] Office asset lock changed; restage resources')
@@ -335,13 +335,19 @@ async function afterPack(context) {
   })
   console.log('[after-pack] deepseek-harness bundled')
 
-  fs.cpSync(officeSource, path.join(resourcesPath, 'office'), { recursive: true })
+  copyOfficeRuntime(officeSource, path.join(resourcesPath, 'office'))
   const destPython = path.join(resourcesPath, 'python')
   console.log(`[after-pack] Copying Python ${srcKey} → ${destPython}`)
   fs.mkdirSync(destPython, { recursive: true })
   copyDirSync(srcPython, destPython)
   console.log(`[after-pack] Python bundled (${srcKey})`)
   runOfficeSmoke(resourcesPath, path.join(appOutDir, `office-smoke-${srcKey}-${Date.now()}`), srcKey)
+}
+
+function copyOfficeRuntime(source, destination) {
+  // Node's default cpSync resolves relative symlinks against the source tree.
+  // Native app links must remain relative when the DMG is detached or app moved.
+  fs.cpSync(source, destination, { recursive: true, verbatimSymlinks: true })
 }
 
 function runOfficeSmoke(resourcesPath, output, srcKey) {
@@ -409,6 +415,7 @@ function copyDirSync(src, dest, ancestorSources = new Set()) {
 
 exports.default = afterPack
 exports.runOfficeSmoke = runOfficeSmoke
+exports.copyOfficeRuntime = copyOfficeRuntime
 exports.copyDirSync = copyDirSync
 exports.requirePythonBundle = requirePythonBundle
 exports.requirePythonScriptsBundle = requirePythonScriptsBundle
