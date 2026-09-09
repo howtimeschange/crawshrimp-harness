@@ -145,7 +145,7 @@ function workerFixture({ stop = async () => {}, cancel = async () => ({ accepted
   vm.runInContext(source, context)
   vm.runInContext("state.runtime = runtime; state.provider = 'p'; state.model = 'm'", context)
   return { context, runtime, events: () => events,
-    start: () => context.startRun({ runId: 'r', sessionId: 's', text: 'fixture', budget: { maxToolCalls: 1 } }),
+    start: (params = {}) => context.startRun({ runId: 'r', sessionId: 's', text: 'fixture', budget: { maxToolCalls: 1 }, ...params }),
     state: () => vm.runInContext('state', context),
     stopCalls: () => stopCalls, cancelCalls: () => cancelCalls,
   }
@@ -204,3 +204,49 @@ for (const step of ['createSession', 'selectModel', 'follow']) {
     assert.equal(prompts, 0)
   })
 }
+
+
+test('lost prompt receipt keeps policy and supervision until host exit', async () => {
+  let finishStop, policy = false, clears = 0, prompts = 0
+  const f = workerFixture({ stop: () => new Promise(resolve => { finishStop = resolve }) })
+  f.runtime.setAutomationPolicy = async () => { policy = true }
+  f.runtime.clearAutomationPolicy = async () => { clears++; policy = false }
+  f.runtime.prompt = async () => { prompts++; throw Error('response lost after acceptance') }
+  const pending = f.start({ automationPolicy: { toolset: [] } })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(policy, true)
+  assert.equal(clears, 0)
+  assert.ok(f.state().activeRun)
+  assert.ok(f.state().runtime)
+  finishStop()
+  const result = await pending
+  assert.equal(result.summary.reason.error.code, 'PROMPT_RESULT_UNKNOWN')
+  assert.equal(f.state().runtime, null)
+  assert.equal(f.state().activeRun, null)
+  assert.equal(prompts, 1)
+  assert.equal(clears, 0)
+})
+
+test('failed host reaping never removes the policy or releases the run', async t => {
+  const f = workerFixture({ stop: async () => { throw Error('reap failed') } })
+  t.after(() => clearTimeout(f.state().activeRun?.timer))
+  let clears = 0
+  f.runtime.setAutomationPolicy = async () => {}
+  f.runtime.clearAutomationPolicy = async () => { clears++ }
+  f.runtime.prompt = async () => { throw Error('response lost') }
+  await assert.rejects(f.start({ automationPolicy: { toolset: [] } }), /reap failed/)
+  assert.equal(clears, 0)
+  assert.ok(f.state().activeRun)
+  assert.equal(f.state().runtime, f.runtime)
+})
+
+test('authentic completion wins over a late failed prompt response', async () => {
+  const f = workerFixture()
+  f.runtime.prompt = async () => {
+    f.events().onEvent({ type: 'turn/end', data: { reason: { kind: 'completed' } }, seq: 1 })
+    throw Error('response lost')
+  }
+  const result = await f.start()
+  assert.equal(result.summary.status, 'completed')
+  assert.equal(f.stopCalls(), 0)
+})

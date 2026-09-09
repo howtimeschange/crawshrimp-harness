@@ -23,7 +23,7 @@ from core.atomic_file import atomic_write_text, remove_path_with_retry
 from core.agent import db
 from core.agent import mcp_gateway
 from core.agent.redaction import REDACTED, redact_text as _redact_secret_text, redact_value
-from core.agent.cordis_config import AGENT_PERSONA, resolve_provider_for_model, model_capabilities
+from core.agent.cordis_config import AGENT_PERSONA, resolve_provider_for_model, resolve_session_model_selection, model_capabilities
 from core.llm_gateway import (
     BUILTIN_LLM_PROVIDERS,
     DEFAULT_MODEL,
@@ -526,6 +526,14 @@ def _resolve_configured_generation_model(
     model_id: Optional[str],
 ) -> tuple[str, str]:
     requested_model = str(model_id or "").strip()
+    if provider_id and requested_model:
+        try:
+            return resolve_session_model_selection(provider_id, requested_model, cfg)
+        except ValueError as exc:
+            # Preserve startup's existing fallback for an entirely unkeyed
+            # default, but never route the same model via a different provider.
+            if model_has_configured_key(requested_model, cfg):
+                raise AgentModelConfigurationError(str(exc)) from exc
     if not requested_model or not model_capabilities(requested_model).get("supports_tools"):
         requested_model = select_default_model(cfg)
     if model_has_configured_key(requested_model, cfg):
@@ -1972,6 +1980,8 @@ class AgentService:
         session = db.get_session(session_id)
         if not session:
             raise ValueError(f"会话不存在: {session_id}")
+        # Validate a persisted provider/model pair before writing a partial turn.
+        model_id, provider_id = self._resolve_model(session_id)
         turn_id = f"turn-{uuid.uuid4().hex[:12]}"
         run_id = f"run-{uuid.uuid4().hex[:12]}"
         message_id = f"msg-{uuid.uuid4().hex[:12]}"
@@ -2001,7 +2011,6 @@ class AgentService:
 
         db.create_message(message_id, session_id, turn_id, run_id, "user", "text", {"text": text})
         turn = db.create_turn(turn_id, session_id, ordinal, message_id)
-        model_id, provider_id = self._resolve_model(session_id)
         run = db.create_run(run_id, session_id, turn_id, provider_id, model_id)
         db.update_turn(turn_id, active_run_id=run_id)
         db.update_session(session_id, status="running")
@@ -2192,6 +2201,11 @@ class AgentService:
         model_id = select_default_model(cfg)
         if session_id:
             session = db.get_session(session_id)
+            if session and session.get("provider_id") and session.get("model_id"):
+                try:
+                    return resolve_session_model_selection(session["provider_id"], session["model_id"], cfg)
+                except ValueError as exc:
+                    raise AgentModelConfigurationError(str(exc)) from exc
             if session and session.get("model_id") and model_has_configured_key(session["model_id"], cfg):
                 model_id = session["model_id"]
         if not model_capabilities(model_id).get("supports_tools"):

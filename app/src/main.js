@@ -2888,11 +2888,9 @@ secureHandle('agent:pick-attachments', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: '选择图片或附件',
     properties: ['openFile', 'multiSelections'],
-    filters: [
-      { name: '所有文件', extensions: ['*'] },
-      { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
-      { name: '数据与文本文件', extensions: ['csv', 'xlsx', 'json', 'txt', 'md', 'pdf'] },
-    ],
+    // Attachments include documents and images. Keep the native panel
+    // unrestricted and classify files after selection instead.
+    filters: [],
   })
   if (result.canceled) return { ok: true, files: [] }
   const files = result.filePaths.map((p) => {

@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from core.llm_gateway import (
+    BUILTIN_LLM_PROVIDERS,
     DEEPSEEK_OFFICIAL_MODELS,
     DOMESTIC_OPENAI_MODELS,
     GLM_OFFICIAL_MODELS,
@@ -16,6 +17,7 @@ from core.llm_gateway import (
     builtin_provider_has_configured_key,
     custom_provider_for_configured_model,
     custom_llm_providers,
+    official_real_model,
 )
 
 # 模型能力登记(服务端共享能力表,方案 §12.2)
@@ -127,6 +129,29 @@ def agent_capable_model_ids() -> list[str]:
             ):
                 custom.append(model_id)
     return ordered + extras + custom
+
+
+def resolve_session_model_selection(provider_id: str, model_id: str, config: dict) -> tuple[str, str]:
+    """Resolve a native selection without crossing provider boundaries."""
+    for provider in BUILTIN_LLM_PROVIDERS:
+        if provider["id"] != provider_id:
+            continue
+        product_id = next((mid for mid in provider["models"]
+                           if model_id in {mid, official_real_model(mid)}), None)
+        if (product_id and model_capabilities(product_id).get("supports_tools")
+                and builtin_provider_has_configured_key(product_id, config)):
+            return product_id, provider_id
+        break
+    else:
+        for provider in custom_llm_providers(config):
+            if provider["id"] != provider_id:
+                continue
+            model = next((m for m in provider.get("models", []) if m["id"] == model_id), None)
+            if (model and model.get("supports_tools", True)
+                    and provider.get("api_key") and provider.get("base_url")):
+                return model_id, provider_id
+            break
+    raise ValueError(f"会话选择的模型 {model_id}({provider_id}) 不可用；请检查该供应商配置或重新选择模型")
 
 
 def resolve_provider_for_model(model_id: str, config: Optional[dict] = None) -> str:

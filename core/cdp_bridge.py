@@ -185,8 +185,18 @@ class CDPBridge:
             raise ConnectionError(message or "浏览器按需启动失败，请在设置中检查浏览器连接") from None
         except (OSError, ValueError) as exc:
             raise ConnectionError("无法启动浏览器，请确认桌面客户端正在运行") from exc
-        if not result.get("ok") or not self.is_available(timeout=0.5):
+        if not result.get("ok"):
             raise ConnectionError(result.get("message") or "浏览器启动后连接尚未就绪")
+        # Process creation / an open TCP port is not CDP readiness. Require
+        # consecutive valid /json responses before scripts may select a tab.
+        deadline = time.monotonic() + 10
+        consecutive = 0
+        while time.monotonic() < deadline:
+            consecutive = consecutive + 1 if self.is_available(timeout=0.5) else 0
+            if consecutive >= 2:
+                return
+            time.sleep(0.25)
+        raise ConnectionError("浏览器已唤起，但 CDP 连接未稳定就绪；本次脚本尚未执行，请重试")
 
     def new_tab(self, url: str) -> dict:
         self.ensure_available()

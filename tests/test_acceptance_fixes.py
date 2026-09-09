@@ -202,3 +202,46 @@ def test_failed_task_exposes_persisted_error_without_scanning_logs():
     assert mcp_gateway._task_failure_message(detail) == 'ERR_HTTP2_PROTOCOL_ERROR'
     assert 'ERR_HTTP2_PROTOCOL_ERROR' in mcp_gateway._safe_task_summary(detail)
     assert mcp_gateway._task_failure_message({**detail, 'status': 'completed'}) == ''
+
+
+@pytest.mark.parametrize('provider,native,product', [
+    ('crawshrimp-deepseek-official', 'deepseek-v4-flash', 'deepseek-official-v4-flash'),
+    ('crawshrimp-deepseek-official', 'deepseek-v4-pro', 'deepseek-official-v4-pro'),
+    ('crawshrimp-glm-official', 'glm-5.2', 'glm-official-5.2'),
+    ('crawshrimp-domestic-openai', 'deepseek-v4-flash', 'deepseek-v4-flash'),
+    ('private-provider', 'deepseek-v4-flash', 'deepseek-v4-flash'),
+])
+def test_inherited_automation_preserves_native_provider(product_db, monkeypatch, provider, native, product):
+    from core.agent.service import _resolve_configured_generation_model
+    cfg = {'ai': {'llm': {
+        'deepseek_api_key': 'fixture-official', 'domestic_api_key': 'fixture-gateway', 'glm_api_key': 'fixture-glm',
+        'custom_providers': [{'id': 'private-provider', 'api_key': 'fixture-custom',
+                              'base_url': 'https://private.example.test/v1', 'models': ['deepseek-v4-flash']}],
+    }}}
+    monkeypatch.setattr('core.agent.service.load_config', lambda: cfg)
+    service = AgentService()
+    db.create_session('source', 'native-source')
+    async def scenario():
+        await service._project_shadow_event('native-source', {'type': 'model/selection', 'data': {'provider': provider, 'model': native}})
+        receipt = await service.submit_automation_turn(
+            {'automation_uid': 'fixture', 'context_mode': 'inherited', 'source_session_id': 'source'},
+            {'run_uid': 'fixture-run'}, 'fixture', ['automation_record_verification'])
+        service._clear_inherited_automation_wait(receipt['run_id'])
+        queued = service.queue.get_nowait()
+        assert (queued['model_id'], queued['provider_id']) == (product, provider)
+        assert _resolve_configured_generation_model(cfg, provider, queued['model_id']) == (product, provider)
+        assert db.get_run(receipt['run_id'])['provider_id'] == provider
+    asyncio.run(scenario())
+
+
+def test_unavailable_native_provider_does_not_borrow_other_key(product_db, monkeypatch):
+    from core.agent.service import AgentModelConfigurationError
+    monkeypatch.delenv('CRAWSHRIMP_DEEPSEEK_API_KEY', raising=False)
+    monkeypatch.setattr('core.agent.service.load_config', lambda: {'ai': {'llm': {'domestic_api_key': 'fixture-gateway'}}})
+    db.create_session('source', 'native-source')
+    db.update_session('source', provider_id='crawshrimp-deepseek-official', model_id='deepseek-v4-flash')
+    service = AgentService()
+    with pytest.raises(AgentModelConfigurationError, match='crawshrimp-deepseek-official'):
+        asyncio.run(service.submit_turn('source', 'fixture'))
+    assert db.list_messages('source') == []
+    assert service.queue.empty()

@@ -8288,6 +8288,14 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
 
         is_shopee_marketing_adapter = target_entry_url.startswith('https://seller.shopee.cn/portal/marketing')
 
+        if not is_browserless_task:
+            # A cold desktop has no CDP listener yet. Start it before even
+            # reading the baseline tabs used by current/new-page selection.
+            ensure_browser = getattr(get_bridge(), 'ensure_available', None)
+            if ensure_browser is not None:
+                log("检查浏览器 CDP 连接；未启动时自动唤起并等待就绪…")
+                await asyncio.to_thread(ensure_browser)
+
         tab = None
         current_mode_preferred_prefixes: list[str] = []
         new_mode_baseline_tab_ids: set[str] = set()

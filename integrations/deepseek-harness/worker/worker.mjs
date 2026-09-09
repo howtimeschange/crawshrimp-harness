@@ -528,6 +528,8 @@ async function startRun(params) {
     ? params.automationPolicy
     : null
   let policyInstalled = false
+  let promptSubmitted = false
+  let preservePolicy = false
 
   try {
     const contentBlocks = []
@@ -578,6 +580,7 @@ async function startRun(params) {
     await follow.ready
     if (state.activeRun !== run || run.cancelRequested) return { ok: true, summary: await done }
     const requestId = `crawshrimp-run-${runId}`
+    promptSubmitted = true
     await state.runtime.prompt({
       sessionId,
       content: contentBlocks,
@@ -589,11 +592,23 @@ async function startRun(params) {
     return { ok: true, summary }
   } catch (error) {
     console.error(`[worker] run ${runId} prompt 失败: ${error.message}`)
+    if (promptSubmitted) {
+      // The HTTP response can fail after the Host accepted/queued the prompt.
+      // Keep the run, follow, budget and policy until the owned Host is reaped;
+      // cancelling only its current turn cannot prove a queued prompt stopped.
+      if (state.activeRun !== run) return { ok: true, summary: await done }
+      preservePolicy = true
+      await stopRuntime()
+      const failure = { code: 'PROMPT_RESULT_UNKNOWN', message: 'Prompt receipt was lost; runtime stopped without replaying the request' }
+      return { ok: false, error: failure, summary: {
+        status: 'failed', reason: { kind: 'error', error: failure }, runId, sessionId,
+      } }
+    }
     const code = typeof error?.code === 'string' ? error.code : 'PROMPT_FAILED'
-    finishRun({ status: 'failed', reason: { kind: 'error', error: { code, message: error.message } } })
+    if (state.activeRun === run) finishRun({ status: 'failed', reason: { kind: 'error', error: { code, message: error.message } } })
     return { ok: false, error: { code, message: error.message } }
   } finally {
-    if (policyInstalled && state.runtime) {
+    if (policyInstalled && state.runtime && !preservePolicy) {
       try {
         await state.runtime.clearAutomationPolicy({ sessionId, runId })
       } catch (error) {

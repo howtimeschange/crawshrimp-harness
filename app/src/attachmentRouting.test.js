@@ -117,7 +117,7 @@ test('document drop works outside the composer while paste elsewhere stays untou
   assert.equal(f.messages.length, 1)
 })
 
-test('attachment picker defaults to all files and returns selected documents and images', async () => {
+test('attachment picker has no type filter and returns selected documents and images', async () => {
   const source = readFileSync(resolve(__dirname, 'main.js'), 'utf8')
   const code = source.slice(source.indexOf("secureHandle('agent:pick-attachments'"), source.indexOf("secureHandle('agent:save-clipboard-image'"))
   let handler, options
@@ -128,8 +128,7 @@ test('attachment picker defaults to all files and returns selected documents and
     path: { basename, extname }, fs: { statSync: () => ({ size: 12 }) },
   })
   const result = await handler()
-  assert.equal(options.filters[0].name, '所有文件')
-  assert.deepEqual(Array.from(options.filters[0].extensions), ['*'])
+  assert.deepEqual(Array.from(options.filters), [])
   assert.deepEqual(Array.from(options.properties), ['openFile', 'multiSelections'])
   assert.equal(result.ok, true)
   assert.deepEqual(Array.from(result.files, f => f.path), paths)
