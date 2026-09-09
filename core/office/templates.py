@@ -115,7 +115,9 @@ def acceptance_samples(output: Path) -> list[Path]:
     import pandas as pd
     data = pd.DataFrame({"月份": ["六月", "七月", "八月"], "销售额": [100, 120, 150]})
     fig, ax = plt.subplots(figsize=(7, 3))
-    ax.bar(data["月份"], data["销售额"], color="#236f85")
+    bars = ax.bar(data["月份"], data["销售额"], color="#236f85")
+    ax.bar_label(bars, padding=3)
+    ax.set_ylim(0, 180)
     ax.set_title("销售趋势（示例数据）")
     fig.tight_layout()
     image = output / "chart.png"

@@ -903,11 +903,15 @@ test('DSH attachment bridge sends regular files to Crawshrimp and images into DS
   assert.match(worker, /MODEL_IMAGE_MEDIA_TYPES\.has\(mediaType\)/)
 })
 
-test('the Crawshrimp attachment picker visibly offers native DSH image formats alongside regular files', () => {
+test('the Crawshrimp attachment picker accepts images and documents without a native file filter', () => {
   const main = readFileSync(resolve(appRoot, 'src/main.js'), 'utf8')
 
   assert.match(main, /title:\s*['"]选择图片或附件['"]/)
-  assert.match(main, /name:\s*['"]图片['"],\s*extensions:\s*\['png', 'jpg', 'jpeg', 'gif', 'webp'\]/)
+  const picker = main.slice(main.indexOf("secureHandle('agent:pick-attachments'"), main.indexOf("secureHandle('agent:pick-attachments'") + 1800)
+  assert.match(picker, /filters:\s*\[\]/)
+  for (const extension of ['png', 'jpg', 'jpeg', 'gif', 'webp', 'xlsx', 'pdf']) {
+    assert.ok(picker.includes(`'.${extension}':`), `${extension} remains classified after selection`)
+  }
 })
 
 test('native Web sessions obtain a per-session shadow follow without a latest-run fallback', () => {

@@ -40,3 +40,38 @@ test('Office build resources are pinned for each supported target', () => {
   }
   assert.equal(manifest.fonts.length, 4)
 })
+
+test('adapter declares paired image capability before text projection only when configured', async () => {
+  const { patchOfficeBridgeTransportSource } = await import('../../integrations/deepseek-harness/scripts/office-vision.mjs')
+  const original = 'inputModalities: [...resolvedModel.input],\n...crawshrimpVisionOptions(options),'
+  const source = patchOfficeBridgeTransportSource(original)
+  const helpers = source.slice(source.indexOf('// crawshrimp-office-bridge-transport-v2'))
+  const capable = new Function('crawshrimpDeepSeekTextModelCanUseVisionBridge', 'CRAWSHRIMP_DEEPSEEK_VISION_MODEL', helpers + '\nreturn crawshrimpOfficeInputModalities;')(
+    (p, m) => p === 'official' && m === 'text', 'vision')
+  const snapshot = { models: { getModel: () => ({ input: ['text', 'image'] }) } }
+  const config = { resolveAttachments: () => ({}) }
+  assert.deepEqual(capable(['text'], 'official', 'text', snapshot, config), ['text', 'image'])
+  assert.deepEqual(capable(['text'], 'other', 'text', snapshot, config), ['text'])
+  assert.deepEqual(capable(['text'], 'official', 'text', snapshot, {}), ['text'])
+  assert.deepEqual(capable(['text'], 'official', 'text', { models: { getModel: () => undefined } }, config), ['text'])
+  assert.equal(patchOfficeBridgeTransportSource(source), source)
+  assert.throws(() => patchOfficeBridgeTransportSource('changed'), /anchor changed/)
+})
+
+test('nested tool pixels reach vision as a user image without mutating durable history', async () => {
+  const { patchOfficeBridgeTransportSource } = await import('../../integrations/deepseek-harness/scripts/office-vision.mjs')
+  const source = patchOfficeBridgeTransportSource('inputModalities: [...resolvedModel.input],\n...crawshrimpVisionOptions(options),')
+  const helpers = source.slice(source.indexOf('// crawshrimp-office-bridge-transport-v2'))
+  const convert = new Function('crawshrimpLatestImageUserMessageIndex', helpers + '\nreturn crawshrimpOfficeVisionOptions;')(messages => messages.length - 1)
+  const pixels = Object.freeze({ type: 'image', attachment: { attachmentId: 'sha256:page2' } })
+  const options = { messages: [{ role: 'user', content: [{ type: 'text', text: 'check layout' }] },
+    Object.freeze({ id: 'tool1', role: 'user', content: [{ type: 'tool-result', content: [{ type: 'text', text: 'page 2' }, pixels] }] })] }
+  const result = convert(options)
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].role, 'user')
+  assert.equal(result.messages[0].content[1], pixels)
+  assert.equal(result.messages[0].content[0].text, 'page 2')
+  assert.equal(options.messages[1].content[0].type, 'tool-result')
+  const user = { messages: [{ role: 'user', content: [pixels] }] }
+  assert.equal(convert(user).messages[0].content[0], pixels)
+})
