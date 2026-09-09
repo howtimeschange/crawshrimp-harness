@@ -20,7 +20,7 @@ def test_explicit_python_never_falls_back(monkeypatch, tmp_path):
     with pytest.raises(OfficeError, match="Python"):
         python_executable()
     monkeypatch.setenv("CRAWSHRIMP_PYTHON_EXECUTABLE", sys.executable)
-    assert python_executable() == Path(sys.executable).resolve()
+    assert python_executable() == Path(sys.executable).absolute()
     monkeypatch.setenv("CRAWSHRIMP_RESOURCES_ROOT", str(tmp_path))
     with pytest.raises(OfficeError, match="不属于"):
         python_executable()
@@ -182,3 +182,17 @@ def test_timeout_stops_descendant_processes(tmp_path):
     before = heartbeat.read_text()
     time.sleep(.3)
     assert heartbeat.read_text() == before
+
+
+@pytest.mark.skipif(os.name == "nt", reason="macOS development venv symlink regression")
+def test_configured_venv_keeps_its_installed_packages(tmp_path, monkeypatch):
+    import subprocess
+    target = tmp_path / "dev venv"
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", "--symlinks", str(target)], check=True)
+    executable = target / "bin/python3"
+    site = next((target / "lib").glob("python*/site-packages"))
+    (site / "office_venv_marker.py").write_text("VALUE = 'venv-package-visible'\n")
+    monkeypatch.setenv("CRAWSHRIMP_PYTHON_EXECUTABLE", str(executable))
+    monkeypatch.delenv("CRAWSHRIMP_RESOURCES_ROOT", raising=False)
+    result = execute([str(python_executable()), "-c", "import office_venv_marker; print(office_venv_marker.VALUE)"], tmp_path / "job")
+    assert "venv-package-visible" in result["stdout"]

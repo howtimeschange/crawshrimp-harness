@@ -35,9 +35,11 @@ def python_executable() -> Path:
     raw = os.environ.get("CRAWSHRIMP_PYTHON_EXECUTABLE", "")
     if not raw or not Path(raw).is_absolute() or not Path(raw).is_file():
         raise OfficeError("OFFICE_RUNTIME_INCOMPLETE", "内置 Python 路径缺失，请修复应用运行环境。")
-    path = Path(raw).resolve()
+    # Preserve the configured venv executable path: resolving its symlink before
+    # spawning bypasses pyvenv.cfg and silently selects the base interpreter.
+    path = Path(raw).absolute()
     resources = os.environ.get("CRAWSHRIMP_RESOURCES_ROOT")
-    if resources and not path.is_relative_to((Path(resources) / "python").resolve()):
+    if resources and not path.resolve().is_relative_to((Path(resources) / "python").resolve()):
         raise OfficeError("OFFICE_RUNTIME_MISMATCH", "发布环境的 Python 不属于当前应用。")
     return path
 
