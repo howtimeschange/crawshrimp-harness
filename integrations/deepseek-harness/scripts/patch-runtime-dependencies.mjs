@@ -15,6 +15,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { patchConfiguredModelCatalog } from './configured-model-catalog.mjs'
 import { patchCurrencyMath } from './currency-math.mjs'
+import { patchReasoningRecovery } from './reasoning-recovery.mjs'
 
 export const RUNTIME_GUARD_MARKER = 'crawshrimp-dsh-im-411-product-patch-v1'
 const DSH_IM_RUNTIME_ROOT = 'node_modules/@xmanrui/dsh-im'
@@ -2213,6 +2214,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const dshToolWeb = requireText(root, 'node_modules/@deepseek-ai/dsh-tool-web/package.json', '"0.1.2-rc.1"')
   const dshTimeContext = requireText(root, 'node_modules/@deepseek-ai/dsh-time-context/package.json', '"0.1.2-rc.1"')
   const timeContext = patchTimeContext(root)
+  const reasoningRecovery = patchReasoningRecovery(root)
   const dshSchedule = requireText(root, 'node_modules/@deepseek-ai/dsh-schedule/package.json', '"0.1.2-rc.1"')
   const dshImManifest = requireText(root, 'node_modules/@xmanrui/dsh-im/package.json', '"4.11.0"')
   const dshImEntry = requireFile(root, 'node_modules/@xmanrui/dsh-im/lib/index.js')
@@ -2266,6 +2268,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
     dshToolWeb,
     dshTimeContext,
     timeContext,
+    reasoningRecovery,
     dshSchedule,
     dshImManifest,
     dshImEntry,

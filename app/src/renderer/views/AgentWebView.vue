@@ -76,7 +76,7 @@
           </section>
         </div>
       </div>
-      <SessionResources ref="resourcesPanel" @compact-change="resourcesCompact = $event" :session-id="activeRuntimeSessionId" :revision="props.resourceRevision" @download-log="postToFrame({ __crawshrimp: 'download-session-log', runtimeSessionId: activeRuntimeSessionId })" />
+      <SessionResources ref="resourcesPanel" @compact-change="resourcesCompact = $event" :session-id="activeRuntimeSessionId" :conversation-phase="activeConversationPhase" :revision="props.resourceRevision" @download-log="postToFrame({ __crawshrimp: 'download-session-log', runtimeSessionId: activeRuntimeSessionId })" />
     </div>
     <Teleport to="body">
       <div v-if="inlineLlmModalOpen" class="inline-llm-modal-backdrop" @click.self="closeInlineLlmModal">
@@ -186,6 +186,7 @@ const workspaceRoot = ref('')
 const runtimeGeneration = ref(0)
 const frameEl = ref(null)
 const activeRuntimeSessionId = ref('')
+const activeConversationPhase = ref('hero')
 const lastRuntimeState = ref('')
 let pollTimer = null
 let warmStarted = false
@@ -551,11 +552,12 @@ function onWindowMessage(event) {
   } else if (data.__crawshrimp === 'session-log-error') {
     if (data.runtimeSessionId === activeRuntimeSessionId.value) resourcesPanel.value?.showError(data.message)
   } else if (data.__crawshrimp === 'session-nav') {
-    if (data.kind === 'new') resourcesPanel.value?.collapse()
+    if (data.kind === 'new') activeConversationPhase.value = 'hero'
     emit('session-nav', data.kind || 'session')
   } else if (data.__crawshrimp === 'active-runtime-session') {
     const previousRuntimeSessionId = activeRuntimeSessionId.value
     activeRuntimeSessionId.value = String(data.runtimeSessionId || '')
+    activeConversationPhase.value = ['hero', 'active', 'settling'].includes(data.conversationPhase) ? data.conversationPhase : 'settling'
     emit('runtime-session', activeRuntimeSessionId.value)
     if (previousRuntimeSessionId && previousRuntimeSessionId !== activeRuntimeSessionId.value) {
       void unobserveNativeWebSession(previousRuntimeSessionId)
@@ -564,7 +566,7 @@ function onWindowMessage(event) {
       if (nativeWebFollowRetryTimer) clearTimeout(nativeWebFollowRetryTimer)
       nativeWebFollowRetryTimer = null
       nativeWebFollowSessionId = ''
-    } else {
+    } else if (previousRuntimeSessionId !== activeRuntimeSessionId.value) {
       void observeNativeWebSession(activeRuntimeSessionId.value)
     }
   } else if (data.__crawshrimp === 'open-file') {

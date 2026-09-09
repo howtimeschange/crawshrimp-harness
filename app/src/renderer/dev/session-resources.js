@@ -32,9 +32,14 @@ style.textContent = `:root{font:14px/1.6 -apple-system,BlinkMacSystemFont,sans-s
 document.head.append(style)
 createApp({ setup() {
   const compact = ref(false), revision = ref(0), count = ref(true)
+  const demoSession = `layout-phase-${Date.now()}`, phase = ref('hero')
   return () => h('div', {class:'demo'}, [
+    h('div', { style: { position: 'absolute', left: '240px', top: '60px', zIndex: 30 } }, [
+      h('button', { onClick: () => { phase.value = 'hero' } }, '新会话空白页（已有 ID）'),
+      h('button', { onClick: () => { phase.value = 'active' } }, '进入对话（同一 ID）'),
+    ]),
     h('aside', {class:'rail'}, [h('strong', '抓虾智能体'),h('p','会话资源布局演示'),h('span',{class:'badge'},count.value ? '24 个页面 · 120 个产物' : '1 个页面 · 3 个产物'),h('button',{onClick:()=>{ count.value = !count.value; tabs.splice(0, tabs.length, ...allTabs.slice(0, count.value ? 24 : 1)); artifacts.splice(0, artifacts.length, ...allArtifacts.slice(0, count.value ? 120 : 3)); revision.value++ }},'切换少量 / 大量数据'),h('p','所有数据均为模拟；点击资源可预览。搜索支持文件名、路径、页面标题和网址。')]),
     h('main',{class:'chat',style:{marginRight:compact.value?'332px':undefined}},[h('header','跨境品类调研'),h('article',{class:'transcript'},[h('h1','已整理页面与调研产物'),h('p','页面与产物分别在卡片内滚动，分组标题、搜索入口及日志下载保持可见。长文件名保持一行，悬停可查看完整名称和路径。'),h('p','浏览器画面位于卡片下方。点击小窗进入半屏，多个页面通过横向标签切换，左侧边界仍可拖动调整宽度。'),h('p','试试搜索「120」「page-24」或「csv」，再按 Esc 恢复全部列表。')]),h('div',{class:'composer'},'继续输入消息…')]),
-    h(SessionResources,{sessionId:'layout-demo-v1',revision:revision.value,onCompactChange:v=>compact.value=v,onDownloadLog:()=>alert('演示模式：不导出真实会话日志')})
+    h(SessionResources,{sessionId:demoSession,conversationPhase:phase.value,revision:revision.value,onCompactChange:v=>compact.value=v,onDownloadLog:()=>alert('演示模式：不导出真实会话日志')})
   ])
 } }).mount('#app')

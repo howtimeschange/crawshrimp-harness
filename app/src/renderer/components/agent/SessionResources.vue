@@ -76,7 +76,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import AgentBrowserPanel from './AgentBrowserPanel.vue'
-const props = defineProps({ sessionId: { type: String, default: '' }, revision: Number })
+const props = defineProps({ sessionId: { type: String, default: '' }, conversationPhase: { type: String, default: 'hero' }, revision: Number })
 const emit = defineEmits(['download-log', 'compact-change'])
 const isSmallViewport = () => window.innerWidth < 1180 || window.innerHeight < 620
 const smallViewport = ref(isSmallViewport())
@@ -99,7 +99,8 @@ let generation = 0, previewGeneration = 0, timer, stopResize
 const states = new Map()
 let loadedOnce = false
 const stateKey = id => `crawshrimp.sessionPanel.v2.${id}`
-function saveState(id) { if (!id) return; const state = { opened: opened.value, selection: selection.value, width: width.value }; states.set(id, state); try { localStorage.setItem(stateKey(id), JSON.stringify(state)) } catch {} }
+let panelSessionId = '', panelConversationPhase = 'hero'
+function saveState(id) { if (!id || id !== panelSessionId || panelConversationPhase !== 'active') return; const state = { opened: opened.value, selection: selection.value, width: width.value }; states.set(id, state); try { localStorage.setItem(stateKey(id), JSON.stringify(state)) } catch {} }
 function readState(id) { try { return states.get(id) || JSON.parse(localStorage.getItem(stateKey(id)) || 'null') } catch { return null } }
 defineExpose({ showError: message => { error.value = message; opened.value = true }, collapse: () => { opened.value = false } })
 const selectedTab = computed(() => tabs.value.find(t => t.id === selection.value?.id))
@@ -215,14 +216,22 @@ function resize(event) {
   window.addEventListener('blur', finish, { once: true })
 }
 
-watch(() => props.sessionId, (id, old) => {
-  if (old) saveState(old)
+function syncSessionPanel() {
+  const id = props.sessionId, phase = props.conversationPhase
+  if (id === panelSessionId && phase === panelConversationPhase) return
+  saveState(panelSessionId)
+  panelSessionId = id; panelConversationPhase = phase
   loadedOnce = false
   generation++; previewGeneration++; artifacts.value = []; tabs.value = []; query.value = ''; searching.value = false; error.value = ''; unseen.value = 0; maximized.value = false
-  const state = readState(id); opened.value = !smallViewport.value && (state?.opened ?? false); selection.value = state?.selection || null; width.value = Math.max(320, Math.min(900, window.innerWidth * .7, state?.width || window.innerWidth * .45))
-  if (selection.value?.kind === 'artifact') { void openArtifact(selection.value); opened.value = !smallViewport.value && (state?.opened ?? false) }
+  const state = id ? readState(id) : null
+  // DSH assigns IDs to blank sessions too. Only the rendered active phase
+  // opens the card; blank/loading transitions must not overwrite user choices.
+  const shouldOpen = Boolean(id) && phase === 'active' && !smallViewport.value && (state?.opened ?? true)
+  opened.value = shouldOpen; selection.value = state?.selection || null; width.value = Math.max(320, Math.min(900, window.innerWidth * .7, state?.width || window.innerWidth * .45))
+  if (selection.value?.kind === 'artifact') { void openArtifact(selection.value); opened.value = shouldOpen }
   void refresh()
-}, { immediate: true })
+}
+watch([() => props.sessionId, () => props.conversationPhase], syncSessionPanel, { immediate: true })
 watch([opened, selection, width], () => saveState(props.sessionId))
 watch(() => props.revision, () => { clearTimeout(timer); timer = setTimeout(refresh, 150) })
 const polling = setInterval(refresh, 5000)

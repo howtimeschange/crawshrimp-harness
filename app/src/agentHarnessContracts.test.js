@@ -889,8 +889,7 @@ test('DSH attachment bridge sends regular files to Crawshrimp and images into DS
   assert.match(slots, /function mutationsTouchShellMountPoints\(mutations\)/)
   assert.match(slots, /if \(!mutationsTouchShellMountPoints\(mutations\)\) return/)
   assert.match(slots, /scheduleComposerButtonMount\(\)[\s\S]*?installRailResizeObserver\(\)[\s\S]*?scheduleRailMetricsPush\(\)/)
-  assert.match(slots, /observer\.observe\(document\.documentElement,\s*\{\s*childList:\s*true,\s*subtree:\s*true\s*\}\)/)
-  assert.doesNotMatch(slots, /observer\.observe\(document\.documentElement,\s*\{[^\}]*attributes:\s*true/)
+  assert.match(slots, /observer\.observe\(document\.documentElement,\s*\{[^}]*attributeFilter:\s*\['data-phase'\]/)
   assert.doesNotMatch(slots, /attributeFilter:\s*\[['"]class['"],\s*['"]style['"]\]/)
   assert.match(webView, /function isImageLikeFile\(file\)/)
   assert.match(webView, /function pushNativeImageDraft\(file, runtimeSessionId/)
@@ -975,7 +974,7 @@ test('Crawshrimp running-status branding follows the semantic live region rather
 
 test('DSH attachment bridge resets and retitles the native file-drop overlay', () => {
   const slots = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/crawshrimp-slots/lib/client.js'), 'utf8')
-  const dropHandler = slots.split('function handleDropAttachments(event)', 2)[1]?.split('\n    const DROP_TITLE_ZH', 1)[0] || ''
+  const dropHandler = slots.split('function handleDropAttachments(event, ctx = crawshrimpContext)', 2)[1]?.split('\n    const DROP_TITLE_ZH', 1)[0] || ''
 
   assert.match(slots, /function hasFileTransfer\(event\)/)
   assert.doesNotMatch(dropHandler, /inComposer\(event\.target\)/)
@@ -985,7 +984,7 @@ test('DSH attachment bridge resets and retitles the native file-drop overlay', (
   assert.match(slots, /window\.dispatchEvent\(event\)/)
   assert.match(slots, /function installNativeDropOverlayFixups\(\)/)
   assert.match(slots, /document\.addEventListener\(['"]drop['"],\s*\(event\) => \{[\s\S]*?hasFileTransfer\(event\)[\s\S]*?resetNativeDropOverlay\(\)[\s\S]*?\},\s*true\)/)
-  assert.match(slots, /try \{[\s\S]*?postAttachmentFiles\(attachments\)[\s\S]*?\} finally \{[\s\S]*?resetNativeDropOverlay\(\)[\s\S]*?\}/)
+  assert.match(slots, /try \{[\s\S]*?routeAttachmentFiles\(event, files, ctx\)[\s\S]*?\} finally \{[\s\S]*?resetNativeDropOverlay\(\)[\s\S]*?\}/)
   assert.match(slots, /const DROP_TITLE_ZH = ['"]图片\/文件拖动到此处即可添加['"]/)
   assert.match(slots, /const DROP_TITLE_EN = ['"]Drag images or files here to add them['"]/)
   assert.match(slots, /const FILE_LIMIT_ZH = ['"]文件最大 200MB['"]/)

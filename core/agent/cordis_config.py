@@ -33,9 +33,9 @@ MODEL_CAPABILITIES: dict[str, dict[str, Any]] = {
     "deepseek-v4-flash": {"context_window": 128000, "max_output_tokens": 8192, "supports_tools": True},
     "deepseek-v4-pro": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
     # DeepSeek 原生接入(官方 API,产品内 ID 加 official 前缀与网关模型区分)
-    "deepseek-official-v4-flash": {"context_window": 128000, "max_output_tokens": 8192, "supports_tools": True},
-    "deepseek-official-v4-pro": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
-    "deepseek-official-v4-flash-vision-exp": {"context_window": 128000, "max_output_tokens": 8192, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "deepseek-official-v4-flash": {"context_window": 128000, "max_output_tokens": 32768, "supports_tools": True},
+    "deepseek-official-v4-pro": {"context_window": 128000, "max_output_tokens": 32768, "supports_tools": True},
+    "deepseek-official-v4-flash-vision-exp": {"context_window": 128000, "max_output_tokens": 32768, "supports_tools": True, "input_modalities": ["text", "image"]},
     "glm-official-5.3-flash": {"context_window": 128000, "max_output_tokens": 8192, "supports_tools": True, "input_modalities": ["text", "image"]},
     "glm-official-5.3": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
     "glm-official-5.2": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
