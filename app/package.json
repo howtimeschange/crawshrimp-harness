@@ -7,7 +7,7 @@
   "crawshrimpUpdateFeedUrl": "",
   "main": "src/main.js",
   "scripts": {
-    "dev": "node ../integrations/deepseek-harness/scripts/stage-runtime.mjs --skip-boot-check && concurrently \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "dev": "node scripts/stage-office-runtime.mjs && node ../integrations/deepseek-harness/scripts/stage-runtime.mjs --skip-boot-check && concurrently \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "build": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime-targets.mjs && node scripts/run-electron-builder.js --publish=never",
     "build:mac": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime-targets.mjs darwin-arm64 darwin-x64 && node scripts/run-electron-builder.js --mac --publish=never",
     "build:mac:ci": "vite build && node ../integrations/deepseek-harness/scripts/stage-runtime-targets.mjs darwin-arm64 darwin-x64 && node scripts/run-electron-builder.js --mac --publish=never",
@@ -16,7 +16,8 @@
     "pretest": "node ../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs",
     "vite:build": "vite build",
     "test": "node --test src/*.test.js src/renderer/utils/*.test.js scripts/*.test.js",
-    "test:update-artifacts": "node --test scripts/validate-update-artifacts.test.js"
+    "test:update-artifacts": "node --test scripts/validate-update-artifacts.test.js",
+    "stage:office": "node scripts/stage-office-runtime.mjs"
   },
   "dependencies": {
     "@tabler/icons-vue": "^3.45.0",

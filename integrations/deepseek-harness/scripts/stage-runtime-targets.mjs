@@ -22,6 +22,12 @@ if (!targets.length) {
 }
 
 for (const target of targets) {
+  const officeTarget = target.replace('darwin-', 'mac-').replace('win32-', 'win-')
+  const office = spawnSync(process.execPath, [resolve(here, '../../../app/scripts/stage-office-runtime.mjs'), officeTarget], {
+    cwd: resolve(here, '../../..'), stdio: 'inherit', shell: false,
+  })
+  if (office.status !== 0) throw new Error(`Office resources failed for ${target}: ${office.error || office.status}`)
+
   console.log(`[stage-runtime-targets] staging ${target}`)
   const result = spawnSync(process.execPath, [stageScript, '--target', target], {
     cwd: resolve(here, '../../..'),

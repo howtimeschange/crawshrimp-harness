@@ -22,6 +22,10 @@ const REQUIRED_BACKEND_IMPORTS = [
   'websockets',
   'yaml',
   'apscheduler',
+  'docx',
+  'pptx',
+  'pandas',
+  'matplotlib',
   'openpyxl',
   'xlrd',
   'pydantic',
@@ -277,6 +281,26 @@ async function afterPack(context) {
   const scriptDir = path.dirname(__dirname)  // app/
   const srcPython = path.join(scriptDir, 'python-dist', srcKey)
   requirePythonBundle(srcPython, srcKey)
+  const pythonLock = fs.readFileSync(path.join(scriptDir, '..', 'runtime-locks/python', `${srcKey}-py312.txt`))
+  const installedLock = path.join(srcPython, '.crawshrimp-python.lock')
+  if (!fs.existsSync(installedLock) || !pythonLock.equals(fs.readFileSync(installedLock))) throw new Error('[after-pack] Python bundle lock mismatch; rebuild bundled Python')
+  const officeSource = path.join(scriptDir, '..', 'build-staging', 'office', srcKey)
+  const officeManifestPath = path.join(officeSource, 'runtime.json')
+  if (!fs.existsSync(officeManifestPath)) throw new Error(`[after-pack] Office runtime missing: ${officeManifestPath}`)
+  const officeManifest = JSON.parse(fs.readFileSync(officeManifestPath, 'utf8'))
+  if (officeManifest.target !== srcKey) throw new Error('[after-pack] Office runtime target mismatch')
+  const hash = value => require('crypto').createHash('sha256').update(value).digest('hex')
+  const lockPath = path.join(scriptDir, '..', 'runtime-locks', 'office-assets.json')
+  if (officeManifest.fingerprint !== hash(fs.readFileSync(lockPath))) throw new Error('[after-pack] Office asset lock changed; restage resources')
+  const assetLock = JSON.parse(fs.readFileSync(lockPath, 'utf8'))
+  for (const entry of [officeManifest.executable, ...officeManifest.fonts]) {
+    const itemPath = path.resolve(officeSource, entry.path)
+    if (!itemPath.startsWith(path.resolve(officeSource) + path.sep) || !fs.existsSync(itemPath) || hash(fs.readFileSync(itemPath)) !== entry.sha256) throw new Error(`[after-pack] Office resource verification failed: ${entry.path}`)
+  }
+  for (const font of assetLock.fonts) {
+    const bundledFont = path.join(officeSource, assetLock.targets[srcKey].fontDirectory, font.filename)
+    if (!fs.existsSync(bundledFont) || hash(fs.readFileSync(bundledFont)) !== font.sha256) throw new Error(`[after-pack] LibreOffice font copy missing or changed: ${font.filename}`)
+  }
 
   let resourcesPath
   if (electronPlatformName === 'darwin') {
@@ -311,11 +335,28 @@ async function afterPack(context) {
   })
   console.log('[after-pack] deepseek-harness bundled')
 
+  fs.cpSync(officeSource, path.join(resourcesPath, 'office'), { recursive: true })
   const destPython = path.join(resourcesPath, 'python')
   console.log(`[after-pack] Copying Python ${srcKey} → ${destPython}`)
   fs.mkdirSync(destPython, { recursive: true })
   copyDirSync(srcPython, destPython)
   console.log(`[after-pack] Python bundled (${srcKey})`)
+  runOfficeSmoke(resourcesPath, path.join(appOutDir, `office-smoke-${srcKey}-${Date.now()}`), srcKey)
+}
+
+function runOfficeSmoke(resourcesPath, output, srcKey) {
+  const { spawnSync } = require('child_process')
+  const python = getPythonExecutable(path.join(resourcesPath, 'python'), srcKey)
+  const cli = path.join(resourcesPath, 'python-scripts/core/office/cli.py')
+  const env = { ...process.env, CRAWSHRIMP_PYTHON_EXECUTABLE: python,
+    CRAWSHRIMP_RESOURCES_ROOT: resourcesPath, CRAWSHRIMP_OFFICE_ROOT: path.join(resourcesPath, 'office'),
+    PYTHONNOUSERSITE: '1', PYTHONUTF8: '1', MPLBACKEND: 'Agg', MPLCONFIGDIR: path.join(output, 'mpl-cache') }
+  for (const name of ['PYTHONHOME', 'PYTHONPATH', 'VIRTUAL_ENV', 'CRAWSHRIMP_OFFICE_CHILD']) delete env[name]
+  const result = spawnSync(python, [cli, 'smoke', output], { env, encoding: 'utf8', timeout: 300000, maxBuffer: 2 * 1024 * 1024 })
+  if (result.status !== 0) throw new Error(`[after-pack] Native Office smoke failed for ${srcKey}. Run packaging on a compatible host. ${result.error || result.stderr || result.stdout}`)
+  const report = JSON.parse(fs.readFileSync(path.join(output, 'report.json'), 'utf8'))
+  if (!report.ok || report.runtime.target !== srcKey) throw new Error('[after-pack] Office smoke did not validate the packaged target')
+  console.log(`[after-pack] Office generation/reopen/render verified: ${output}`)
 }
 
 function isPrunedPnpmVirtualStoreLink(source) {
@@ -367,6 +408,7 @@ function copyDirSync(src, dest, ancestorSources = new Set()) {
 }
 
 exports.default = afterPack
+exports.runOfficeSmoke = runOfficeSmoke
 exports.copyDirSync = copyDirSync
 exports.requirePythonBundle = requirePythonBundle
 exports.requirePythonScriptsBundle = requirePythonScriptsBundle

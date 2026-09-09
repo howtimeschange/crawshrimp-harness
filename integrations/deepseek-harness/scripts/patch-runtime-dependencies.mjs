@@ -9,6 +9,7 @@
  * changes only verified product copy and bridge source, including the shipped
  * client module that serves that copy; every change is anchored and idempotent.
  */
+import { patchOfficeVision } from './office-vision.mjs'
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
@@ -2235,6 +2236,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const configuredModelCatalog = patchConfiguredModelCatalog(root)
   const deepseekVisionAdmission = patchDeepSeekVisionAdmission(root, deepseekVisionBridge)
   const deepseekReadImage = patchDeepSeekReadImage(root, deepseekVisionBridge)
+  patchOfficeVision(root, deepseekVisionBridge)
   const profilePackages = assertEffectiveProfileRootClosure(root)
   const standardPreset = assertStandardPresetRootClosure(root)
   const inboundTtl = requireText(

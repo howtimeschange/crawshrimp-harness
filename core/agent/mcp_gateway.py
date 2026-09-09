@@ -2807,6 +2807,8 @@ EXPECTED_TOOLS = [
     "script_publish", "script_test",
     "data_analyze", "data_export",
     "skill_list", "skill_read",
+    "office_runtime_info", "office_run", "office_render", "office_job", "office_validate",
+    "office_preview_read", "office_review_record",
     "attachment_read",
     "fs_read", "fs_list", "fs_write", "fs_exec",
     "image_generate", "image_assets", "video_generate", "video_assets",
@@ -2987,6 +2989,10 @@ def create_agent_mcp_server() -> MCPServer:
             "（例如“本地自动化验收已完成”），不要写工具过程、JSON 或内部说明。"
         ),
     )
+
+    from core.agent.office_tools import TOOLS as office_tools
+    for tool in office_tools:
+        mcp.add_tool(tool, name=tool.__name__, description=tool.__doc__ or tool.__name__)
 
     # 注册表快照断言(方案 §6.2):模型可见工具集合必须与清单完全一致
     actual = set(_registered)

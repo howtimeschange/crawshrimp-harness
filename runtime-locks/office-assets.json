@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "pythonVersion": "3.12.13",
+  "libreofficeVersion": "26.2.6",
+  "targets": {
+    "mac-arm64": {
+      "url": "https://download.documentfoundation.org/libreoffice/stable/26.2.6/mac/aarch64/LibreOffice_26.2.6_MacOS_aarch64.dmg",
+      "sha256": "94bb3248df074c225490a8a6d1d9dc87c7d6783dbb7a8e9f0d0c3d94348552af",
+      "executable": "libreoffice/LibreOffice.app/Contents/MacOS/soffice",
+      "fontDirectory": "libreoffice/LibreOffice.app/Contents/Resources/fonts/truetype"
+    },
+    "mac-x64": {
+      "url": "https://download.documentfoundation.org/libreoffice/stable/26.2.6/mac/x86_64/LibreOffice_26.2.6_MacOS_x86-64.dmg",
+      "sha256": "135b8a95b8133396d54bf8e726dbc0066145efa0d785963fc3d4592acbfcfe5b",
+      "executable": "libreoffice/LibreOffice.app/Contents/MacOS/soffice",
+      "fontDirectory": "libreoffice/LibreOffice.app/Contents/Resources/fonts/truetype"
+    },
+    "win-x64": {
+      "url": "https://download.documentfoundation.org/libreoffice/stable/26.2.6/win/x86_64/LibreOffice_26.2.6_Win_x86-64.msi",
+      "sha256": "f9877032fd908beb9c0ddf06df4af5c2e85f419c42e14876c4cce5aae5fb2660",
+      "executable": "libreoffice/program/soffice.exe",
+      "fontDirectory": "libreoffice/share/fonts/truetype"
+    }
+  },
+  "fonts": [
+    {
+      "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/2.005R/OTF/SimplifiedChinese/SourceHanSansSC-Regular.otf",
+      "sha256": "f1d8611151880c6c336aabeac4640ef434fa13cbfbf1ffe82d0a71b2a5637256",
+      "filename": "SourceHanSansSC-Regular.otf",
+      "version": "2.005R"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/2.005R/OTF/SimplifiedChinese/SourceHanSansSC-Bold.otf",
+      "sha256": "df2b90f5bcc6d01dfc964cec5f6d535d6b6aebd26ed7fd79a9c1b3f2112fcb6b",
+      "filename": "SourceHanSansSC-Bold.otf",
+      "version": "2.005R"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-serif/2.003R/OTF/SimplifiedChinese/SourceHanSerifSC-Regular.otf",
+      "sha256": "78aa7a328fd974df2d688c8a9fd74a33d8334dfa84ab24d9d11efb2ffc464117",
+      "filename": "SourceHanSerifSC-Regular.otf",
+      "version": "2.003R"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-serif/2.003R/OTF/SimplifiedChinese/SourceHanSerifSC-Bold.otf",
+      "sha256": "706b8c0de2deff6cbc0c87e2cdedfd33a78b7ffd76cebb4549012f197ba611fe",
+      "filename": "SourceHanSerifSC-Bold.otf",
+      "version": "2.003R"
+    }
+  ],
+  "fontFamily": "Source Han Sans SC"
+}

@@ -12,6 +12,8 @@ ROOT_DIR="$(cd "${APP_DIR}/.." && pwd)"
 OUT_DIR="${APP_DIR}/python-dist"
 REQUIREMENTS_FILE="${ROOT_DIR}/core/requirements.txt"
 WINDOWS_REQUIREMENTS_FILE="${ROOT_DIR}/core/requirements-win.txt"
+LOCK_ROOT="${ROOT_DIR}/runtime-locks/python"
+WHEELHOUSE_ROOT="${WHEELHOUSE_ROOT:-${ROOT_DIR}/build-staging/python-wheels}"
 PY_MAJOR="${PY_VERSION%%.*}"
 PY_MINOR_REST="${PY_VERSION#*.}"
 PY_MINOR="${PY_MINOR_REST%%.*}"
@@ -111,6 +113,10 @@ target_site_packages() {
   esac
 }
 
+requirements_lock() {
+  echo "${LOCK_ROOT}/$1-py312.txt"
+}
+
 has_core_requirements() {
   local key="$1"
   local dest="$2"
@@ -121,6 +127,10 @@ has_core_requirements() {
     [ -d "${site_packages}/websockets" ] &&
     [ -d "${site_packages}/yaml" ] &&
     [ -d "${site_packages}/apscheduler" ] &&
+    [ -d "${site_packages}/docx" ] &&
+    [ -d "${site_packages}/pptx" ] &&
+    [ -d "${site_packages}/pandas" ] &&
+    [ -d "${site_packages}/matplotlib" ] &&
     [ -d "${site_packages}/openpyxl" ] &&
     [ -d "${site_packages}/xlrd" ] &&
     [ -d "${site_packages}/pydantic" ] &&
@@ -148,6 +158,9 @@ requirements_cache_matches() {
   local key="$1"
   local dest="$2"
 
+  [ -f "${dest}/.crawshrimp-python.lock" ] &&
+    cmp -s "$(requirements_lock "$key")" "${dest}/.crawshrimp-python.lock" || return 1
+
   [ -f "${dest}/.crawshrimp-requirements.txt" ] &&
     cmp -s "$REQUIREMENTS_FILE" "${dest}/.crawshrimp-requirements.txt" || return 1
 
@@ -161,6 +174,7 @@ record_requirements_cache() {
   local key="$1"
   local dest="$2"
 
+  cp "$(requirements_lock "$key")" "${dest}/.crawshrimp-python.lock"
   cp "$REQUIREMENTS_FILE" "${dest}/.crawshrimp-requirements.txt"
   if [ "$key" = "win-x64" ]; then
     cp "$WINDOWS_REQUIREMENTS_FILE" "${dest}/.crawshrimp-requirements-win.txt"
@@ -214,10 +228,10 @@ install_requirements_cross() {
   local host_py
   local pip_platform
   local site_packages
-  local requirements_args=(-r "$REQUIREMENTS_FILE")
+  local requirements_args=(-r "$(requirements_lock "$key")" --require-hashes --no-index --find-links "${WHEELHOUSE_ROOT}/${key}")
 
   if [ "$key" = "win-x64" ]; then
-    requirements_args+=(-r "$WINDOWS_REQUIREMENTS_FILE")
+    : # Windows dependencies are part of the complete target lock.
   fi
 
   host_py="$(host_python)" || {
@@ -249,7 +263,7 @@ install_requirements() {
   local key="$1"
   local dest="$2"
   local py_bin
-  local requirements_args=(-r "$REQUIREMENTS_FILE")
+  local requirements_args=(-r "$(requirements_lock "$key")" --require-hashes --no-index --find-links "${WHEELHOUSE_ROOT}/${key}")
 
   py_bin="$(target_python "$key" "$dest")" || {
     echo "[error] Unsupported Python target for deps: $key"
@@ -266,7 +280,7 @@ install_requirements() {
       echo "[error] Windows requirements not found: $WINDOWS_REQUIREMENTS_FILE"
       exit 1
     fi
-    requirements_args+=(-r "$WINDOWS_REQUIREMENTS_FILE")
+    : # Windows dependencies are part of the complete target lock.
   fi
 
   if requirements_cache_matches "$key" "$dest" && has_core_requirements "$key" "$dest"; then
@@ -286,6 +300,7 @@ install_requirements() {
   fi
 
   echo "[deps] Installing backend requirements into $key ..."
+  [ -d "${WHEELHOUSE_ROOT}/${key}" ] || { echo "[error] Missing locked wheelhouse; run app/scripts/prepare-python-wheels.py $key"; exit 1; }
   if ! "$py_bin" -m pip --version >/dev/null 2>&1; then
     "$py_bin" -m ensurepip --upgrade
   fi

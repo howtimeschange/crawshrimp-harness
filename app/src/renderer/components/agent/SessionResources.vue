@@ -32,7 +32,8 @@
     <template v-else-if="selection?.kind === 'artifact'">
       <div class="resource-toolbar"><strong :title="selection.path">{{ selection.filename }}</strong><button @click="fileAction('openFile', selection)">系统打开</button><button @click="fileAction('revealFile', selection)">定位</button></div>
       <div class="resource-preview">
-        <p v-if="previewLoading" class="empty">正在加载…</p>
+        <OfficePreview v-if="selection.office" :office="selection.office" />
+        <p v-else-if="previewLoading" class="empty">正在加载…</p>
         <img v-else-if="previewKind === 'image'" :src="previewUrl" :alt="selection.filename" @error="error = '文件无法加载，可能已移动或删除'" />
         <video v-else-if="previewKind === 'video'" :src="previewUrl" controls />
         <audio v-else-if="previewKind === 'audio'" :src="previewUrl" controls />
@@ -74,6 +75,7 @@
 </template>
 
 <script setup>
+import OfficePreview from './OfficePreview.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import AgentBrowserPanel from './AgentBrowserPanel.vue'
 const props = defineProps({ sessionId: { type: String, default: '' }, revision: Number })
@@ -184,6 +186,10 @@ async function refresh() {
     if (error.value.startsWith('资源加载失败：')) error.value = ''
     loadedOnce = true
     artifacts.value = next
+    if (selection.value?.kind === 'artifact') {
+      const updated = next.find(item => item.path === selection.value.path)
+      if (updated) selection.value = { ...updated, kind: 'artifact' }
+    }
     const liveById = new Map((live?.tabs || []).map(t => [t.id, t]))
     tabs.value = (data.tabs || []).map(t => ({ ...t, ...(liveById.get(t.id) || {}), closed: live?.ok === true && !liveById.has(t.id) }))
     activeTabId.value = data.activeTabId || ''

@@ -7,6 +7,16 @@ const { spawnSync } = require('node:child_process')
 
 const scriptPath = path.join(__dirname, 'download-python.sh')
 
+function prepareLockedOfficeFixture(tmp) {
+  const locks = path.join(tmp, 'runtime-locks', 'python')
+  fs.mkdirSync(locks, { recursive: true })
+  for (const target of ['mac-arm64', 'mac-x64', 'win-x64']) {
+    fs.writeFileSync(path.join(locks, `${target}-py312.txt`), 'fastapi==0.0.0\npywin32==311\n')
+    fs.mkdirSync(path.join(tmp, 'build-staging', 'python-wheels', target), { recursive: true })
+  }
+}
+
+
 test('download-python cache validation requires cryptography', () => {
   const source = fs.readFileSync(scriptPath, 'utf8')
   assert.match(source, /site_packages\}\/cryptography/)
@@ -30,6 +40,7 @@ function symlinkCommand(binDir, name) {
 
 test('download-python retries invalid GitHub asset responses before extracting', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-python-download-'))
+  prepareLockedOfficeFixture(tmp)
 
   try {
     const appDir = path.join(tmp, 'app')
@@ -165,6 +176,7 @@ chmod +x "$dest/bin/python3"
 
 test('download-python verifies archive SHA256 before extracting', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-python-sha256-'))
+  prepareLockedOfficeFixture(tmp)
 
   try {
     const appDir = path.join(tmp, 'app')
@@ -286,6 +298,7 @@ chmod +x "$dest/bin/python3"
 
 test('download-python falls back to sha256sum when shasum is unavailable', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-python-sha256sum-'))
+  prepareLockedOfficeFixture(tmp)
 
   try {
     const appDir = path.join(tmp, 'app')
@@ -411,6 +424,7 @@ chmod +x "$dest/bin/python3"
 
 test('download-python reinstalls cached bundle when xlrd is missing', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-python-cache-'))
+  prepareLockedOfficeFixture(tmp)
 
   try {
     const appDir = path.join(tmp, 'app')
@@ -451,6 +465,7 @@ test('download-python reinstalls cached bundle when xlrd is missing', () => {
       'websockets',
       'yaml',
       'apscheduler',
+      'docx', 'pptx', 'pandas', 'matplotlib',
       'openpyxl',
       'pydantic',
       'aiofiles',
@@ -517,6 +532,7 @@ exit 0
 
 test('download-python repairs a cached Windows bundle missing pywintypes', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-python-win-deps-'))
+  prepareLockedOfficeFixture(tmp)
 
   try {
     const appDir = path.join(tmp, 'app')
@@ -543,6 +559,7 @@ test('download-python repairs a cached Windows bundle missing pywintypes', () =>
       'websockets',
       'yaml',
       'apscheduler',
+      'docx', 'pptx', 'pandas', 'matplotlib',
       'openpyxl',
       'xlrd',
       'pydantic',
@@ -578,7 +595,7 @@ if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then
       -r)
         shift
         case "$1" in
-          *requirements-win.txt) windows_requirements="$1" ;;
+          *win-x64-py312.txt) windows_requirements="$1" ;;
         esac
         ;;
     esac
@@ -629,6 +646,7 @@ exit 0
 
 test('download-python refreshes Windows dependencies when their requirements change', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-python-win-cache-'))
+  prepareLockedOfficeFixture(tmp)
 
   try {
     const appDir = path.join(tmp, 'app')
@@ -657,6 +675,7 @@ test('download-python refreshes Windows dependencies when their requirements cha
       'websockets',
       'yaml',
       'apscheduler',
+      'docx', 'pptx', 'pandas', 'matplotlib',
       'openpyxl',
       'xlrd',
       'pydantic',
@@ -729,6 +748,7 @@ exit 0
 
 test('download-python smoke-tests the backend and dependency closure with a runnable Windows interpreter', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-python-win-import-'))
+  prepareLockedOfficeFixture(tmp)
 
   try {
     const appDir = path.join(tmp, 'app')
@@ -749,6 +769,7 @@ test('download-python smoke-tests the backend and dependency closure with a runn
     fs.writeFileSync(path.join(coreDir, 'requirements-win.txt'), windowsRequirements)
     fs.writeFileSync(path.join(bundleDir, '.crawshrimp-requirements.txt'), requirements)
     fs.writeFileSync(path.join(bundleDir, '.crawshrimp-requirements-win.txt'), windowsRequirements)
+    fs.copyFileSync(path.join(tmp, 'runtime-locks', 'python', 'win-x64-py312.txt'), path.join(bundleDir, '.crawshrimp-python.lock'))
 
     for (const name of [
       'fastapi',
@@ -756,6 +777,7 @@ test('download-python smoke-tests the backend and dependency closure with a runn
       'websockets',
       'yaml',
       'apscheduler',
+      'docx', 'pptx', 'pandas', 'matplotlib',
       'openpyxl',
       'xlrd',
       'pydantic',
