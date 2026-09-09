@@ -2,11 +2,11 @@
 
 日期：2026-09-09
 
-状态：核心实现与分支回归已完成；按用户后续授权合并本地 main 后执行最终客户端与打包验收。跨平台原生验证未全部完成。
+状态：实现已合并本地 main；main 开发客户端的三件套生成、11 页真实视觉检查、资源翻页及原件打开已通过。macOS ARM 本地安装包的迁移后原生冒烟通过。Intel/Windows 原生、正式签名公证与升级验证尚未执行，不能宣称全平台发布验收完成。详情见 [实际验收报告](2026-09-09-office-suite-acceptance.md)。
 
 工作分支：`codex/office-suite-runtime`
 
-独立工作区：`/Users/xingyicheng/Documents/crawshrimp-harness-office-suite`
+原独立工作区：`/Users/xingyicheng/Documents/crawshrimp-harness-office-suite`。其开发客户端已关闭，后续仅用于构建 main 的干净提交快照；真实客户端验收使用原项目 main 的 5173 开发环境。
 
 基线：`b11b7f9c`，从当前 main 已提交状态创建，不包含原工作区未提交改动。
 
