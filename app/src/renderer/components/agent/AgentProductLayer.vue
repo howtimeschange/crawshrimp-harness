@@ -313,6 +313,10 @@ function rememberArtifact(data, runtimeSessionId) {
 
 async function pushArtifactToSession(data, runtimeSessionId) {
   if (!runtimeSessionId || runtimeSessionId !== props.activeRuntimeSessionId) return
+  // Document navigation belongs to native message links and Session Resources.
+  // Keep image previews (including image galleries from ZIP files) in the chat.
+  if (data?.media_kind !== 'image'
+    && !(data?.media_kind === 'zip' && Array.isArray(data?.zip_images) && data.zip_images.length)) return
   const path = String(data?.path || '').trim()
   if (!path) return
   const urlFor = async (entry) => {

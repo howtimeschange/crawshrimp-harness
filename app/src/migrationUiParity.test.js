@@ -37,7 +37,7 @@ for (const columnClass of ['EvIC1a_column', 'Md3f7G_column']) {
     const end = source.indexOf('\n    }', source.indexOf('    function renderArtifactShow(')) + 6
     assert.ok(start > 0 && end > start)
     vm.runInNewContext(source.slice(start, end), sandbox)
-    for (const [mediaKind, tag] of [['image', 'img'], ['video', 'video'], ['audio', 'audio'], ['zip', 'div']]) {
+    for (const [mediaKind, tag] of [['image', 'img'], ['zip', 'div']]) {
       const data = { artifact: { path: `/tmp/${mediaKind}`, filename: mediaKind, mediaKind, zipImages: ['one.png'] }, urls: { file: 'https://media.test/file', entries: ['https://media.test/one.png'] } }
       sandbox.renderArtifactShow(data)
       const block = column.children.at(-1)
@@ -50,7 +50,10 @@ for (const columnClass of ['EvIC1a_column', 'Md3f7G_column']) {
       assert.equal(messages.at(-1).path, data.artifact.path)
       sandbox.renderArtifactShow(data)
     }
-    assert.equal(column.children.length, 4)
+    for (const mediaKind of ['file', 'video', 'audio', 'zip']) {
+      sandbox.renderArtifactShow({ artifact: { path: `/tmp/hidden-${mediaKind}`, mediaKind }, urls: { file: 'https://media.test/file' } })
+    }
+    assert.equal(column.children.length, 2)
     assert.equal(scroll.scrollTop, 900)
     assert.equal(timers.length, 0)
   })

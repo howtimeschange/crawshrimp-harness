@@ -383,6 +383,8 @@ window.__ModuleLoader__.load({
 
     // 去品牌 + 抓虾化样式
     const BRAND_CSS = [
+      // Hide legacy non-image cards; native links, produced-file chips and resources remain.
+      '.cs-artifact-block:not(:has(img)) { display: none !important; }',
       '.wSkVaW_header { padding-top: 6px; padding-bottom: 6px; }',
       '.cs-tool-group { min-width: 0; }',
       '.cs-tool-group-latest { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }',
@@ -1032,6 +1034,9 @@ window.__ModuleLoader__.load({
       if (data.runtimeSessionId && data.runtimeSessionId !== activeRuntimeSessionId()) return
       const artifact = data && data.artifact
       if (!artifact || !artifact.path) return
+      const hasImages = artifact.mediaKind === 'image'
+        || (artifact.mediaKind === 'zip' && Array.isArray(data.urls?.entries) && data.urls.entries.some(Boolean))
+      if (!hasImages) return
       injectArtifactCss()
       // 去重以 DOM 为准(页面重载后内存 set 失效会造成「有记忆无块」)
       const existing = [...document.querySelectorAll('.cs-artifact-block')]
