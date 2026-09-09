@@ -7,6 +7,8 @@ description: 创建、修改、检查PowerPoint 演示文稿，提供可编辑�
 
 读取 `office-common/README.md` 并遵守统一执行与交付流程。使用 python-pptx；不要安装其他运行库。
 
+新建演示、调整版式或美化时，先 `skill_read('office-design-taste/SKILL.md')`，再读取其中的 PPT 版式参考；仅提取文字/数据或小范围内容替换时保留原样式即可。
+
 ## 布局与数据
 
 默认 16:9；每页单一主题，统一安全边距、字体层级和对齐。优先原生形状/表格/图表；插入的 matplotlib 图是图片，不能承诺逐元素可编辑。检查每页长标题、文本框越界、遮挡和小字号。

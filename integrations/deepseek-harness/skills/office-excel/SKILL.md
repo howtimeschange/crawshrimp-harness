@@ -7,6 +7,8 @@ description: 创建、修改、检查Excel 工作簿，提供可编辑原件、P
 
 读取 `office-common/README.md` 并遵守统一执行与交付流程。使用 openpyxl 与 pandas；不要安装其他运行库。
 
+需要设计汇报页、图表或统一视觉样式时，读取 `office-design-taste/SKILL.md`；普通数据处理无需额外设计流程，公式与数据规则始终适用。
+
 ## 布局与数据
 
 数据/汇总/说明分表；保留商品编号前导零，空值不当作零；确认统计口径、日期与金额精度。pandas 的 Excel 引擎显式用 openpyxl。冻结表头、筛选、数值格式、打印范围；打印宽度一页而高度自动。隐藏表及不打印的数据区域说明范围。openpyxl 不计算公式，data_only=True 是旧缓存，不是实时结果。新建普通工作簿允许 LibreOffice 重算副本后读回；Excel 特有函数、宏、外链及复杂图表须保留原件并报告限制。

@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 
 from core.agent import mcp_gateway
 
@@ -8,6 +9,13 @@ HARNESS_ROOT = ROOT / "integrations" / "deepseek-harness"
 SKILLS_ROOT = HARNESS_ROOT / "skills"
 
 BUILTIN_GENERAL_SKILLS = {
+    "office-design-taste": [
+        "SKILL.md",
+        "LICENSE",
+        "UPSTREAM.md",
+        "references/ppt-layout.md",
+        "references/word-layout.md",
+    ],
     "bilibili-video-transcript": [
         "SKILL.md",
         "README.md",
@@ -89,6 +97,29 @@ def test_general_builtin_skill_packages_have_required_files():
             assert (skill_root / rel).is_file(), f"{skill}/{rel} missing"
         frontmatter = (skill_root / "SKILL.md").read_text(encoding="utf-8").split("---", 2)[1]
         assert f"name: {skill}" in frontmatter
+
+
+def test_office_design_skill_remains_readable_after_install_relocation(monkeypatch, tmp_path):
+    """The model must find the design pack and read each guide from an installed root."""
+    installed = tmp_path / "应用 Resources" / "deepseek-harness" / "skills"
+    pack = "office-design-taste"
+    shutil.copytree(SKILLS_ROOT / pack, installed / pack)
+    monkeypatch.setenv("CRAWSHRIMP_SKILL_ROOT", str(installed))
+    monkeypatch.setenv("CRAWSHRIMP_GENERATED_SKILL_ROOT", str(tmp_path / "generated"))
+    previous = _with_active_run()
+    try:
+        listed = mcp_gateway.tool_skill_list()
+        assert pack in listed["data"]["packs"]
+        for rel in BUILTIN_GENERAL_SKILLS[pack]:
+            if not rel.endswith(".md"):
+                continue
+            result = mcp_gateway.tool_skill_read(f"{pack}/{rel}")
+            assert result["ok"] is True
+            assert result["data"]["truncated"] is False
+            assert result["data"]["content"] == (installed / pack / rel).read_text(encoding="utf-8")
+            assert result["data"]["absolute_path"] == str(installed / pack / rel)
+    finally:
+        mcp_gateway.ctx.active_run = previous
 
 
 def test_every_staged_top_level_skill_is_discoverable_and_has_frontmatter(monkeypatch):

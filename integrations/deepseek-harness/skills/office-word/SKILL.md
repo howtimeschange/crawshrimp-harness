@@ -7,6 +7,8 @@ description: 创建、修改、检查Word 文档，提供可编辑原件、PDF �
 
 读取 `office-common/README.md` 并遵守统一执行与交付流程。使用 python-docx；不要安装其他运行库。
 
+新建报告、调整排版或美化时，先 `skill_read('office-design-taste/SKILL.md')`，再读取其中的 Word 版式参考；仅提取文字/数据或小范围内容替换时保留原样式即可。
+
 ## 布局与数据
 
 A4；标题层级、页边距、页眉页脚；长表格重复表头，标题避免孤行。所有正文、表格及页眉页脚显式设定东亚字体。生成 DOCX 不等于已分页，实际页数与布局以 LibreOffice PDF 为准。复杂修订/嵌入对象可能无法保真，默认另存。
