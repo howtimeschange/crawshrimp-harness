@@ -22,15 +22,14 @@
       <div class="browser-tabs" role="tablist" aria-label="浏览器标签页">
         <div v-for="tab in tabs" :key="tab.id" class="browser-tab" :class="{ selected: selection.id === tab.id }">
           <button :id="`resource-tab-${tab.id}`" role="tab" :aria-selected="selection.id === tab.id" aria-controls="resource-browser-content" :tabindex="selection.id === tab.id ? 0 : -1" :title="`${tab.title || tab.url}\n${tab.url}`" @click="openBrowser(tab.id)" @keydown.right.prevent="stepTab(1)" @keydown.left.prevent="stepTab(-1)" @keydown.home.prevent="selectEdgeTab(false)" @keydown.end.prevent="selectEdgeTab(true)">
-            <span class="tab-site-icon" aria-hidden="true">◎</span><span class="tab-label">{{ tab.title || tab.url || '新页面' }}</span><span v-if="tab.closed" class="tab-closed">已关闭</span>
+            <span class="tab-site-icon" aria-hidden="true">◎</span><span class="tab-label">{{ tab.title || tab.url || '新页面' }}</span>
           </button>
-          <button v-if="!tab.closed" class="tab-close" :aria-label="`关闭页面 ${tab.title || tab.url || '新页面'}`" @click="closePage(tab)">×</button>
+          <button class="tab-close" :aria-label="`关闭页面 ${tab.title || tab.url || '新页面'}`" @click="closePage(tab)">×</button>
         </div>
         <button class="tab-add" title="新开页面" aria-label="新开页面" :disabled="busy" @click="newPage">＋</button>
       </div>
       <div id="resource-browser-content" class="browser-content" role="tabpanel" :aria-labelledby="`resource-tab-${selection.id}`">
-        <p v-if="selectedTab?.closed" class="empty">该浏览器页面已关闭</p>
-        <AgentBrowserPanel v-else-if="browserReady" :key="selection.id" :tab-id="selection.id" layout="docked" dock-action-label="缩为小窗" @collapse="back" @layout-change="back" />
+        <AgentBrowserPanel v-if="selectedTab && browserReady" :key="selection.id" :tab-id="selection.id" layout="docked" dock-action-label="缩为小窗" @collapse="back" @layout-change="back" />
       </div>
     </template>
     <template v-else-if="selection?.kind === 'artifact'">
@@ -52,8 +51,8 @@
           <div class="section-heading"><button :aria-expanded="pagesExpanded || !!query" @click="pagesExpanded = !pagesExpanded">{{ pagesExpanded || query ? '▾' : '▸' }} 浏览器页面 <small>{{ query ? `${filteredTabs.length} / ${tabs.length}` : tabs.length }}</small></button><button title="新开页面" aria-label="新开页面" :disabled="busy || !sessionId" @click="newPage">＋</button></div>
           <div v-if="pagesExpanded || query" class="section-items page-items" aria-label="浏览器页面列表" tabindex="0"><p v-if="!filteredTabs.length" class="empty">{{ query ? '没有匹配的页面' : '当前会话暂无浏览器页面' }}</p>
             <div v-for="tab in filteredTabs" :key="tab.id" class="resource-row">
-              <button class="resource-main" :title="`${tab.title || tab.url}\n${tab.url}`" @click="openBrowser(tab.id)"><span class="type-icon">◎</span><span class="resource-name">{{ tab.title || tab.url || '新页面' }}</span><small v-if="tab.closed" class="closed-label">已关闭</small><i v-if="tab.id === activeTabId && !tab.closed" title="最近执行的页面" class="activity-dot"></i></button>
-              <ResourceMenu label="页面操作"><button @click="copy(tab.url)">复制链接</button><button v-if="!tab.closed" @click="closePage(tab)">关闭页面</button></ResourceMenu>
+              <button class="resource-main" :title="`${tab.title || tab.url}\n${tab.url}`" @click="openBrowser(tab.id)"><span class="type-icon">◎</span><span class="resource-name">{{ tab.title || tab.url || '新页面' }}</span><i v-if="tab.id === activeTabId" title="最近执行的页面" class="activity-dot"></i></button>
+              <ResourceMenu label="页面操作"><button @click="copy(tab.url)">复制链接</button><button @click="closePage(tab)">关闭页面</button></ResourceMenu>
             </div>
           </div>
         </section>
@@ -78,6 +77,7 @@
 </template>
 
 <script setup>
+import { liveSessionBrowserPages, isClosedBrowserPageError } from '../../utils/sessionBrowserPages.js'
 import { isPartialTextPreview } from '../../utils/textPreview.js'
 import OfficePreview from './OfficePreview.vue'
 import ResourceMenu from './ResourceMenu.vue'
@@ -95,6 +95,7 @@ const query = ref(''), pagesExpanded = ref(true), filesExpanded = ref(true)
 const now = ref(Date.now())
 const artifactAge = item => formatArtifactAge(item.updated_at || item.created_at, now.value)
 const artifacts = ref([]), tabs = ref([]), activeTabId = ref('')
+const closedBrowserIds = new Set()
 const unseen = ref(0), error = ref(''), loading = ref(false), busy = ref(false)
 const previewUrl = ref(''), previewKind = ref(''), previewText = ref(''), previewLoading = ref(false)
 const browserReady = ref(true)
@@ -143,13 +144,34 @@ const compactOpen = computed(() => opened.value && !selection.value)
 watch(compactOpen, value => emit('compact-change', value), { immediate: true })
 function togglePanel() { opened.value = !opened.value; if (opened.value && !selection.value) unseen.value = 0 }
 function back() { prepareBrowserTransition(); selection.value = null; maximized.value = false; unseen.value = 0; error.value = ''; previewGeneration++ }
+function forgetBrowserPage(id) {
+  closedBrowserIds.add(id)
+  tabs.value = tabs.value.filter(tab => tab.id !== id)
+  if (activeTabId.value === id) activeTabId.value = ''
+  if (selection.value?.kind === 'browser' && selection.value.id === id) back()
+}
 async function openBrowser(id) {
   const sessionId = props.sessionId
+  if (!tabs.value.some(tab => tab.id === id && !tab.closed)) {
+    forgetBrowserPage(id)
+    return
+  }
   try {
     await window.cs.agentApi('POST', `/agent/session-resources/pages/${encodeURIComponent(id)}/select`, { runtime_session_id: sessionId })
     if (sessionId !== props.sessionId) return
-    activeTabId.value = id
-  } catch (e) { error.value = `选择失败：${e.message}`; return }
+  } catch (e) {
+    if (sessionId !== props.sessionId) return
+    if (isClosedBrowserPageError(e)) {
+      forgetBrowserPage(id)
+      error.value = ''
+      await refresh()
+    } else {
+      error.value = '选择页面失败，请稍后重试'
+    }
+    return
+  }
+  if (!tabs.value.some(tab => tab.id === id)) return
+  activeTabId.value = id
   prepareBrowserTransition()
   selection.value = { kind: 'browser', id }
   nextTick(() => document.getElementById(`resource-tab-${id}`)?.closest('.browser-tab')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }))
@@ -205,14 +227,20 @@ async function refresh() {
       const updated = next.find(item => item.path === selection.value.path)
       if (updated) selection.value = { ...updated, kind: 'artifact' }
     }
-    const liveById = new Map((live?.tabs || []).map(t => [t.id, t]))
-    tabs.value = (data.tabs || []).map(t => ({ ...t, ...(liveById.get(t.id) || {}), closed: live?.ok === true && !liveById.has(t.id) }))
-    activeTabId.value = data.activeTabId || ''
+    if (live?.ok === true && Array.isArray(live.tabs)) {
+      const liveIds = new Set(live.tabs.map(tab => tab.id))
+      for (const tab of data.tabs || []) {
+        if (!liveIds.has(tab.id)) closedBrowserIds.add(tab.id)
+      }
+    }
+    tabs.value = liveSessionBrowserPages(data.tabs, live, closedBrowserIds)
+    activeTabId.value = tabs.value.some(tab => tab.id === data.activeTabId) ? data.activeTabId : ''
+    if (selection.value?.kind === 'browser' && !tabs.value.some(tab => tab.id === selection.value.id)) back()
   } catch (e) { if (token === generation) error.value = `资源加载失败：${e.message}` }
   finally { if (token === generation) loading.value = false }
 }
 async function newPage() { busy.value = true; error.value = ''; const id = props.sessionId; try { const tab = await window.cs.agentApi('POST', '/agent/session-resources/pages', { runtime_session_id: id }); if (id !== props.sessionId) return; await refresh(); openBrowser(tab.id) } catch (e) { error.value = `新建失败：${e.message}` } finally { busy.value = false } }
-async function closePage(tab) { const id = props.sessionId; error.value = ''; try { await window.cs.agentApi('DELETE', `/agent/session-resources/pages/${encodeURIComponent(tab.id)}?runtime_session_id=${encodeURIComponent(id)}`); if (id !== props.sessionId) return; if (selection.value?.id === tab.id) { const next = tabs.value.find(t => t.id !== tab.id && !t.closed); if (next) openBrowser(next.id); else back() }; await refresh() } catch (e) { error.value = `关闭失败：${e.message}` } }
+async function closePage(tab) { const id = props.sessionId; error.value = ''; try { await window.cs.agentApi('DELETE', `/agent/session-resources/pages/${encodeURIComponent(tab.id)}?runtime_session_id=${encodeURIComponent(id)}`); if (id !== props.sessionId) return; const wasSelected = selection.value?.kind === 'browser' && selection.value.id === tab.id; forgetBrowserPage(tab.id); if (wasSelected && tabs.value.length) await openBrowser(tabs.value[0].id); await refresh() } catch (e) { error.value = `关闭失败：${e.message}` } }
 function resize(event) {
   if (event.button !== 0) return
   event.preventDefault()
@@ -242,6 +270,8 @@ function syncSessionPanel() {
   saveState(panelSessionId)
   panelSessionId = id; panelConversationPhase = phase
   loadedOnce = false
+  closedBrowserIds.clear()
+  activeTabId.value = ''
   generation++; previewGeneration++; artifacts.value = []; tabs.value = []; query.value = ''; searching.value = false; error.value = ''; unseen.value = 0; maximized.value = false
   const state = id ? readState(id) : null
   // DSH assigns IDs to blank sessions too. Only the rendered active phase

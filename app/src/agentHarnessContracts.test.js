@@ -803,7 +803,7 @@ test('browser windows are isolated per target and remove closed tabs', () => {
   assert.match(webView, /<SessionResources/)
   assert.doesNotMatch(webView, /browser-toggle|showBrowserWindows|tabsForActiveBrowserWindow/)
   assert.match(resources, /listAgentBrowserTabs/)
-  assert.match(resources, /liveById.has\(t.id\)/)
+  assert.match(resources, /tabs\.value = liveSessionBrowserPages\(data\.tabs, live, closedBrowserIds\)/)
   assert.match(resources, /:key="selection.id"/)
   assert.match(resources, /:tab-id="selection.id"/)
   assert.match(resources, /role="separator"/)
