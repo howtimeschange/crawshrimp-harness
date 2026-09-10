@@ -49,9 +49,10 @@ test('desktop file return forwards in the active session workspace and releases 
     const exec = { name: 'dsh_im_return_file', arguments: { path: 'existing.png' }, callId: 'send-call', agent: { id: 'web-session', session: { header: { cwd: dir } } } }
     const nativeResult = { content: [{ type: 'text', text: 'Registered' }] }
     assert.equal(await hooks['tools/execute'](exec, async () => nativeResult), nativeResult)
-    assert.deepEqual(requests.map(r => r.action), ['/context/acquire', '/context/return-file', '/context/release'])
+    assert.deepEqual(requests.map(r => r.action), ['/context/acquire', '/context/validate-return-file', '/context/release', '/context/acquire', '/context/return-file', '/context/release'])
     assert.deepEqual(requests[0].body, { runtime_session_id: 'web-session', call_id: 'send-call' })
     assert.equal(requests[1].body.path, file)
+    assert.equal(requests[4].body.path, file)
     requests.length = 0
     failDelivery = true
     await assert.rejects(hooks['tools/execute'](exec, async () => nativeResult))
@@ -59,7 +60,7 @@ test('desktop file return forwards in the active session workspace and releases 
     requests.length = 0
     const failed = { isError: true }
     assert.equal(await hooks['tools/execute'](exec, async () => failed), failed)
-    assert.equal(requests.length, 0)
+    assert.deepEqual(requests.map(r => r.action), ['/context/acquire', '/context/validate-return-file', '/context/release'])
     await assert.rejects(hooks['tools/execute']({ ...exec, arguments: { path: '../outside.png' } }, async () => nativeResult), /workspace/)
   } finally {
     globalThis.fetch = originalFetch

@@ -171,7 +171,9 @@ test('collapsed update tooltip keeps readable contrast in both themes', () => {
 })
 
 test('settings default model select shares the complete themed field treatment', () => {
-  const source = readRendererFile('views/SettingsPage.vue')
+  const page = readRendererFile('views/SettingsPage.vue')
+  assert.match(page, /<style[^>]*src=["']\.\/settingsPanel\.css["']/)
+  const source = readRendererFile('views/settingsPanel.css')
 
   assert.match(source, /\.input,\s*\.select\s*\{[\s\S]*?background:\s*var\(--bg\);[\s\S]*?border:\s*1px solid var\(--border\);/)
   assert.match(source, /\.input:focus,\s*\.select:focus\s*\{[\s\S]*?border-color:\s*var\(--orange\);/)

@@ -8,6 +8,7 @@ const source = readFileSync(resolve(root, 'crawshrimp-slots/lib/client.js'), 'ut
 
 function element(tag) {
   return { tag, dataset: {}, children: [], listeners: {},
+    setAttribute(name, value) { this[name] = String(value) },
     appendChild(child) { this.children.push(child) },
     querySelectorAll() { return [] },
     addEventListener(type, listener) { this.listeners[type] = listener },

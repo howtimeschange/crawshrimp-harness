@@ -124,6 +124,7 @@ test('preload trusts the validated status port even when isolated-world URL stor
   }
 
   runInNewContext(preload, {
+    process: { platform: process.platform },
     require: (id) => {
       if (id !== 'electron') throw new Error(`Unexpected preload dependency: ${id}`)
       return {
