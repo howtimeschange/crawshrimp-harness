@@ -1,0 +1,1 @@
+"""Crawshrimp desktop execution protocol."""

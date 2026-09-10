@@ -1,0 +1,96 @@
+[stage-runtime] staging DSH rc.1 Web profile closure -> /Users/xingyicheng/Documents/crawshrimp-harness/build-staging/deepseek-harness/darwin-arm64
+npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+
+added 561 packages in 3s
+Lockfile is up to date, resolution step is skipped
+Packages: +157
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 0, reused 1, downloaded 0, added 0
+Progress: resolved 0, reused 152, downloaded 0, added 157, done
+
+Done in 498ms
+
+> bmall-cli@0.1.0 build /Users/xingyicheng/Documents/crawshrimp-harness/build-staging/deepseek-harness/darwin-arm64/skills/cli/bmall-cli
+> tsc -p tsconfig.json
+
+Lockfile is up to date, resolution step is skipped
+Packages: +105
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 0, reused 1, downloaded 0, added 0
+Progress: resolved 0, reused 101, downloaded 0, added 105, done
+
+devDependencies: skipped
+
+Done in 392ms
+npm warn deprecated prebuild-install@7.1.3: No longer maintained. Please contact the author of the relevant native addon; alternatives are available.
+
+added 55 packages, and audited 56 packages in 2s
+
+10 packages are looking for funding
+  run `npm fund` for details
+
+1 high severity vulnerability
+
+Some issues need review, and may require choosing
+a different dependency.
+
+Run `npm audit` for details.
+
+> deepdraw-cli@0.1.0 build
+> node -e "require('node:fs').rmSync('dist',{recursive:true,force:true})" && tsc -p tsconfig.json
+
+
+up to date, audited 49 packages in 2s
+
+10 packages are looking for funding
+  run `npm fund` for details
+
+1 high severity vulnerability
+
+Some issues need review, and may require choosing
+a different dependency.
+
+Run `npm audit` for details.
+
+added 54 packages, and audited 55 packages in 5s
+
+17 packages are looking for funding
+  run `npm fund` for details
+
+4 vulnerabilities (2 moderate, 2 high)
+
+To address all issues, run:
+  npm audit fix
+
+Run `npm audit` for details.
+
+> semir-yunpan-cli@0.1.0 build
+> tsc -p tsconfig.json && chmod +x dist/cli.js
+
+
+up to date, audited 3 packages in 2s
+
+found 0 vulnerabilities
+
+added 54 packages, and audited 55 packages in 1s
+
+17 packages are looking for funding
+  run `npm fund` for details
+
+4 vulnerabilities (3 moderate, 1 high)
+
+To address all issues, run:
+  npm audit fix
+
+Run `npm audit` for details.
+
+> tmall-cli@0.1.0 build
+> tsc -p tsconfig.json && chmod +x dist/cli.js
+
+
+up to date, audited 3 packages in 2s
+
+found 0 vulnerabilities
+[stage-dws] dws version v1.0.61 (50eb73a0, 2026-08-31T14:46:17Z)
+[stage-runtime] staging complete
+[stage-runtime] Web profile config check OK

@@ -44,7 +44,7 @@ const crossTarget = isCrossStageTarget(target)
 const skipBootCheck = shouldSkipBootCheck({ args }) || crossTarget
 const force = args.includes('--force')
 const cliSource = join(repoRoot, 'skills', 'cli')
-const EXCLUDED_SOURCE_TREE_ENTRIES = new Set(['.git', 'node_modules', '.DS_Store'])
+const EXCLUDED_SOURCE_TREE_ENTRIES = new Set(['.git', 'node_modules', '.DS_Store', '__pycache__', '.pytest_cache'])
 
 // Public built-in skills must ship as executable production closures, rather
 // than leaving npm/pnpm installation to an end user on first use.
@@ -60,6 +60,7 @@ const REQUIRED_SKILL_SOURCE_FILES = [
   [sourceRoot, 'skills/dws/LICENSE'],
   [repoRoot, 'skills/cli/manifest.json'],
   [sourceRoot, 'skills/dont-stop/SKILL.md'],
+  ...['SKILL.md', 'scripts/computer_use.py', 'scripts/native/mac.swift', 'scripts/native/mac_feedback.swift', 'scripts/cu/windows.py'].map(file => [sourceRoot, `skills/crawshrimp-computer-use/${file}`]),
   [sourceRoot, 'skills/crawshrimp-skill/SKILL.md'],
   [sourceRoot, 'skills/web-automation-skill/SKILL.md'],
   [sourceRoot, 'skills/crawshrimp-adapter-skill/SKILL.md'],
@@ -119,6 +120,9 @@ const required = [
   'profiles/web/node_modules/crawshrimp-product-bridge/lib/index.js',
   'profiles/web/node_modules/crawshrimp-slots/lib/client.js',
   'skills/dont-stop/SKILL.md',
+  'skills/crawshrimp-computer-use/SKILL.md',
+  'skills/crawshrimp-computer-use/scripts/computer_use.py',
+  ...(target.platform === 'darwin' ? ['skills/crawshrimp-computer-use/scripts/native/mac'] : []),
   'skills/crawshrimp-skill/SKILL.md',
   'skills/web-automation-skill/SKILL.md',
   'skills/crawshrimp-adapter-skill/SKILL.md',
@@ -157,6 +161,7 @@ function hashTree(path) {
     for (const name of readdirSync(directory).sort()) {
       if (EXCLUDED_SOURCE_TREE_ENTRIES.has(name)) continue
       const child = join(directory, name)
+      if (child === join(sourceRoot, 'skills/crawshrimp-computer-use/scripts/native/mac')) continue
       const stat = statSync(child)
       if (stat.isDirectory()) walk(child)
       else if (stat.isFile()) hash.update(name).update(readFileSync(child))
@@ -173,7 +178,8 @@ function copyDir(source, destination) {
     recursive: true,
     force: true,
     errorOnExist: false,
-    filter: (path) => !EXCLUDED_SOURCE_TREE_ENTRIES.has(basename(path)),
+    filter: (path) => !EXCLUDED_SOURCE_TREE_ENTRIES.has(basename(path)) &&
+      path !== join(sourceRoot, 'skills/crawshrimp-computer-use/scripts/native/mac'),
   })
 }
 
@@ -312,6 +318,7 @@ if (force || current !== fingerprint) {
     const source = join(sourceRoot, name)
     if (existsSync(source)) copyDir(source, join(stageRoot, name))
   }
+  stageComputerUse()
   const cliDest = join(stageRoot, 'skills', 'cli')
   // skills/cli is sourced exclusively from the pinned top-level CLI tree.
   // A legacy copy under integration skills must not leave obsolete SDK jars
@@ -333,6 +340,19 @@ for (const relativePath of required) {
   if (!existsSync(join(stageRoot, relativePath))) fail('staging missing required file: ' + relativePath)
 }
 assertNativePackages()
+// Development runs from sourceRoot; reuse the same host-architecture helper.
+if (target.platform === 'darwin' && !crossTarget) {
+  copyFileSync(join(stageRoot, 'skills/crawshrimp-computer-use/scripts/native/mac'), join(sourceRoot, 'skills/crawshrimp-computer-use/scripts/native/mac'))
+  // Electron's development plist is unsealed; declare the same purpose as the packaged app.
+  const devPlist = join(appRoot, 'node_modules/electron/dist/Electron.app/Contents/Info.plist')
+  if (existsSync(devPlist)) {
+    const checked = spawnSync('/usr/bin/plutil', ['-extract', 'NSAppleEventsUsageDescription', 'raw', devPlist])
+    if (checked.status !== 0) {
+      const updated = spawnSync('/usr/bin/plutil', ['-insert', 'NSAppleEventsUsageDescription', '-string', '抓虾仅在你授权的桌面任务中控制所选应用，用于读取内容和执行操作。', devPlist])
+      if (updated.status !== 0) fail('Could not configure development Apple Events usage description')
+    }
+  }
+}
 
 if (skipBootCheck) {
   console.log('[stage-runtime] Web profile config check skipped')
@@ -359,4 +379,17 @@ if (skipBootCheck) {
     fail('Web profile config check failed: ' + String(probe.stderr || probe.error?.message || '').slice(-3000))
   }
   console.log('[stage-runtime] Web profile config check OK')
+}
+
+function stageComputerUse() {
+  if (target.platform !== 'darwin') return
+  if (process.platform !== 'darwin') fail('macOS computer use helper must be built on macOS')
+  const native = join(stageRoot, 'skills/crawshrimp-computer-use/scripts/native')
+  const source = join(native, 'main.swift')
+  writeFileSync(source, readFileSync(join(native, 'mac_feedback.swift'), 'utf8') + '\n' + readFileSync(join(native, 'mac.swift'), 'utf8'))
+  try {
+    const arch = target.arch === 'x64' ? 'x86_64' : target.arch
+    const result = spawnSync('xcrun', ['swiftc', '-O', '-target', `${arch}-apple-macosx14.0`, source, '-o', join(native, 'mac')], { stdio: 'inherit' })
+    if (result.status !== 0) fail('computer use native helper compilation failed: ' + String(result.error || result.status))
+  } finally { rmSync(source, { force: true }) }
 }

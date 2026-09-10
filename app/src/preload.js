@@ -507,6 +507,11 @@ function createLocalPromptFallbackLibrary(payload = {}) {
 }
 
 contextBridge.exposeInMainWorld('cs', {
+  platform: process.platform,
+  manageAutomationPermissions: () => ipcRenderer.invoke('automation-permission:manage'),
+  listAutomationApplications: () => ipcRenderer.invoke('automation-permission:list'),
+  checkAutomationPermission: bundleId => ipcRenderer.invoke('automation-permission:check', bundleId),
+  requestAutomationPermission: bundleId => ipcRenderer.invoke('automation-permission:request', bundleId),
   getStatus:       () => ipcRenderer.invoke('get-status').then(rememberAndMarkApiConnection),
   restartBackend:  () => ipcRenderer.invoke('restart-backend').then(rememberAndMarkApiConnection),
   openDiagnosticLog: () => ipcRenderer.invoke('open-diagnostic-log'),

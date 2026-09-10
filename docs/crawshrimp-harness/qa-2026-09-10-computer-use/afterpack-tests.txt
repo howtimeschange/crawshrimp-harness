@@ -1,0 +1,112 @@
+TAP version 13
+# Subtest: Office native links survive removing their staging directory
+ok 1 - Office native links survive removing their staging directory
+  ---
+  duration_ms: 5.724959
+  type: 'test'
+  ...
+# Subtest: copyDirSync materializes directory symlinks instead of shipping or dropping them
+ok 2 - copyDirSync materializes directory symlinks instead of shipping or dropping them
+  ---
+  duration_ms: 1.81625
+  type: 'test'
+  ...
+# Subtest: copyDirSync ignores pnpm virtual-store links left dangling after production pruning
+ok 3 - copyDirSync ignores pnpm virtual-store links left dangling after production pruning
+  ---
+  duration_ms: 3.352042
+  type: 'test'
+  ...
+# Subtest: requirePythonBundle rejects missing bundled Python source
+ok 4 - requirePythonBundle rejects missing bundled Python source
+  ---
+  duration_ms: 0.251459
+  type: 'test'
+  ...
+# Subtest: requirePythonBundle rejects Windows bundle without python.exe
+ok 5 - requirePythonBundle rejects Windows bundle without python.exe
+  ---
+  duration_ms: 0.382833
+  type: 'test'
+  ...
+# Subtest: requirePythonBundle rejects bundle missing required backend dependencies
+ok 6 - requirePythonBundle rejects bundle missing required backend dependencies
+  ---
+  duration_ms: 1.031459
+  type: 'test'
+  ...
+# Subtest: requirePythonBundle rejects a legacy-complete bundle missing cryptography
+ok 7 - requirePythonBundle rejects a legacy-complete bundle missing cryptography
+  ---
+  duration_ms: 1.714666
+  type: 'test'
+  ...
+# Subtest: requirePythonBundle rejects a Windows bundle missing pywintypes
+ok 8 - requirePythonBundle rejects a Windows bundle missing pywintypes
+  ---
+  duration_ms: 2.368625
+  type: 'test'
+  ...
+# Subtest: requirePythonBundle rejects a Windows bundle missing ACL modules
+ok 9 - requirePythonBundle rejects a Windows bundle missing ACL modules
+  ---
+  duration_ms: 3.138917
+  type: 'test'
+  ...
+# Subtest: requirePythonBundle rejects a Windows bundle missing colorama
+ok 10 - requirePythonBundle rejects a Windows bundle missing colorama
+  ---
+  duration_ms: 2.807208
+  type: 'test'
+  ...
+# Subtest: requirePythonScriptsBundle rejects resources without backend entrypoint
+ok 11 - requirePythonScriptsBundle rejects resources without backend entrypoint
+  ---
+  duration_ms: 0.380917
+  type: 'test'
+  ...
+# Subtest: requirePythonScriptsBundle rejects resources without adapter manifests
+ok 12 - requirePythonScriptsBundle rejects resources without adapter manifests
+  ---
+  duration_ms: 0.745583
+  type: 'test'
+  ...
+# Subtest: requirePythonScriptsBundle rejects adapter directories without manifest
+ok 13 - requirePythonScriptsBundle rejects adapter directories without manifest
+  ---
+  duration_ms: 0.876167
+  type: 'test'
+  ...
+# Subtest: requirePythonScriptsBundle rejects resources without shared video integrations
+ok 14 - requirePythonScriptsBundle rejects resources without shared video integrations
+  ---
+  duration_ms: 0.704417
+  type: 'test'
+  ...
+# Subtest: requireDeepseekHarnessBundle rejects staging built for the wrong platform
+ok 15 - requireDeepseekHarnessBundle rejects staging built for the wrong platform
+  ---
+  duration_ms: 0.854291
+  type: 'test'
+  ...
+# Subtest: requireDeepseekHarnessBundle rejects staging built for the wrong macOS architecture
+ok 16 - requireDeepseekHarnessBundle rejects staging built for the wrong macOS architecture
+  ---
+  duration_ms: 0.862958
+  type: 'test'
+  ...
+# Subtest: requireNativeRuntimePackages rejects Windows staging without native packages
+ok 17 - requireNativeRuntimePackages rejects Windows staging without native packages
+  ---
+  duration_ms: 0.172209
+  type: 'test'
+  ...
+1..17
+# tests 17
+# suites 0
+# pass 17
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 63.997125

@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "action_id": "textedit-write-001",
+  "request_hash": "309bd7882cde0980ba2b50e2c75c0057e23845905e908e546fa8977fbdc2e282",
+  "snapshot": "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/agent/workspace/cu-run-0910/observations/ec58468a0f764d5b864704b4ae5ca966.json",
+  "status": "verified_control",
+  "business_success": false,
+  "started_at": 1789027913.25559,
+  "request": {
+    "action_id": "textedit-write-001",
+    "snapshot": "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/agent/workspace/cu-run-0910/observations/ec58468a0f764d5b864704b4ae5ca966.json",
+    "kind": "set_value",
+    "selector": {
+      "role": "text_area"
+    },
+    "text": "抓虾桌面验收 CU-0910",
+    "expect": {
+      "selector": {
+        "role": "text_area"
+      },
+      "property": "value",
+      "equals": "抓虾桌面验收 CU-0910"
+    }
+  },
+  "feedback_session": {
+    "directory": "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/agent/workspace/cu-run-0910/feedback",
+    "pid": 12822
+  },
+  "dispatch": {
+    "business_success": false,
+    "dispatched": true,
+    "feedback": {
+      "click_pulse": true,
+      "phase": "idle",
+      "phase_token": "",
+      "pointer_animated": true,
+      "reduced_motion": false,
+      "resident": true,
+      "shown": true,
+      "stop_button": false,
+      "style": "native_frosted_glass",
+      "subtitle": "",
+      "system_cursor_moved": false,
+      "takes_focus": false,
+      "theme": "glass",
+      "title": ""
+    },
+    "focus_report": null
+  },
+  "verification": {
+    "passed": true,
+    "property": "value",
+    "actual": "抓虾桌面验收 CU-0910",
+    "expected": "抓虾桌面验收 CU-0910",
+    "level": "control_readback",
+    "business_success": false
+  },
+  "finished_at": 1789027914.1179142
+}

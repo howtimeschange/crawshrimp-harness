@@ -9,6 +9,7 @@ HARNESS_ROOT = ROOT / "integrations" / "deepseek-harness"
 SKILLS_ROOT = HARNESS_ROOT / "skills"
 
 BUILTIN_GENERAL_SKILLS = {
+    "crawshrimp-computer-use": ["SKILL.md", "UPSTREAM.md", "scripts/computer_use.py", "scripts/native/mac.swift", "scripts/native/mac_feedback.swift", "scripts/cu/windows.py", "references/protocol.md"],
     "office-design-taste": [
         "SKILL.md",
         "LICENSE",
@@ -267,3 +268,32 @@ def test_web_skills_distinguish_installed_product_tools_from_repo_only_helpers()
     assert "browser_observe" in web
     assert "## Installed Product Action" in probe
     assert "## Repository Development Action" in probe
+
+
+def test_computer_use_relocated_doctor_and_desktop_web_routing(monkeypatch, tmp_path):
+    import json
+    import subprocess
+    import sys
+    from core.agent.cordis_config import AGENT_PERSONA
+
+    installed = tmp_path / "抓虾 Resources" / "skills"
+    pack = "crawshrimp-computer-use"
+    shutil.copytree(SKILLS_ROOT / pack, installed / pack,
+                    ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
+    monkeypatch.setenv("CRAWSHRIMP_SKILL_ROOT", str(installed))
+    previous = _with_active_run()
+    try:
+        assert pack in mcp_gateway.tool_skill_list()["data"]["packs"]
+        entry = mcp_gateway.tool_skill_read(f"{pack}/SKILL.md")["data"]
+        assert entry["absolute_path"] == str(installed / pack / "SKILL.md")
+        assert "crawshrimp-skill" in entry["content"]
+    finally:
+        mcp_gateway.ctx.active_run = previous
+    result = subprocess.run([sys.executable, str(installed / pack / "scripts/computer_use.py"),
+                             "doctor"], text=True, capture_output=True, timeout=30)
+    # Native helper may be absent in source-only CI, but the relocated entry
+    # must import its complete local Python closure and produce JSON diagnostics.
+    data = json.loads(result.stdout)
+    assert data.get("platform") or data.get("error")
+    assert "crawshrimp-computer-use/SKILL.md" in AGENT_PERSONA
+    assert "所有网页任务必须使用抓虾 CDP" in AGENT_PERSONA

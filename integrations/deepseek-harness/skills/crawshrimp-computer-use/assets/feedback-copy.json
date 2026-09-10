@@ -1,0 +1,11 @@
+{
+  "background": {"title": "抓虾正在操作", "subtitles": ["后台操作 · 保持你的窗口焦点"]},
+  "foreground": {"title": "抓虾正在操作", "subtitles": ["当前窗口操作 · 随时可接管"]},
+  "borrowed": {"title": "抓虾正在操作", "subtitles": ["正在借用窗口 · 随时可接管"]},
+  "idle": {"title": "抓虾任务进行中", "subtitles": ["稍等一下 · 等待下一步安排", "指针先歇一会儿 · 随时准备继续", "还在这里陪你 · 下一步就绪再出发"]},
+  "thinking": {"title": "抓虾思考中…", "subtitles": ["理一理刚刚看到的信息"]},
+  "planning": {"title": "抓虾正在规划…", "subtitles": ["把接下来的步骤安排妥当"]},
+  "observing": {"title": "抓虾正在读取屏幕", "subtitles": ["看看窗口里有哪些新变化"]},
+  "verifying": {"title": "抓虾正在核对", "subtitles": ["确认刚才的操作是否到位"]},
+  "waiting": {"title": "抓虾正在等候", "subtitles": ["等待应用响应 · 不重复操作"]}
+}

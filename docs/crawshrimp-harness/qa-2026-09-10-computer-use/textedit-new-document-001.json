@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "action_id": "textedit-new-document-001",
+  "request_hash": "2c9581031deb1ea9cdb31e4cf6998123c5ca731d8b05e788a928be285fc77f2b",
+  "snapshot": "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/agent/workspace/cu-run-0910/observations/7d78744c52c44f87be6817a8514390e4.json",
+  "status": "executed_unverified",
+  "business_success": false,
+  "started_at": 1789027900.729619,
+  "request": {
+    "action_id": "textedit-new-document-001",
+    "snapshot": "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/agent/workspace/cu-run-0910/observations/7d78744c52c44f87be6817a8514390e4.json",
+    "kind": "invoke",
+    "selector": {
+      "role": "button",
+      "automation_id": "NewDocumentButton"
+    }
+  },
+  "feedback_session": {
+    "directory": "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/agent/workspace/cu-run-0910/feedback",
+    "pid": 12822
+  },
+  "dispatch": {
+    "business_success": false,
+    "dispatched": true,
+    "feedback": {
+      "click_pulse": true,
+      "phase": "idle",
+      "phase_token": "",
+      "pointer_animated": true,
+      "reduced_motion": false,
+      "resident": true,
+      "shown": true,
+      "stop_button": false,
+      "style": "native_frosted_glass",
+      "subtitle": "",
+      "system_cursor_moved": false,
+      "takes_focus": false,
+      "theme": "glass",
+      "title": ""
+    },
+    "focus_report": null
+  },
+  "finished_at": 1789027902.1184719
+}

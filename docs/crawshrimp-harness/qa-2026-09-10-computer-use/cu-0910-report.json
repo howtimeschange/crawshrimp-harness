@@ -1,0 +1,77 @@
+{
+  "task": "QA-CU-0910 抓虾桌面验收 · macOS 文本编辑新建独立测试文稿",
+  "status": "passed",
+  "channel": {
+    "preferred": "L0 AppleScript app dictionary",
+    "result": "denied",
+    "detail": "osascript → TextEdit / System Events 均返回 -10004 权限违例(宿主未获自动化授权);未修改 TCC",
+    "used": "L1 AX 语义控件 (AXPress invoke + AXValue set_value) + 窗口合成截图"
+  },
+  "target": {
+    "app": "文本编辑 (TextEdit)",
+    "executable": "/System/Applications/TextEdit.app/Contents/MacOS/TextEdit",
+    "instance_pid": 11443,
+    "instance_started": "2026-09-10 16:10:14 +0800",
+    "isolation": "本任务用 open -na 另起独立实例,不触碰运行中的既有实例 pid 15501"
+  },
+  "document": {
+    "window_id": 35168,
+    "title": "未命名",
+    "created_via": "应用自带 AX 按钮 NewDocumentButton(打开面板左下“新建文稿”),非菜单快捷键",
+    "file_backed": false,
+    "saved_to_disk": false
+  },
+  "actions": [
+    {
+      "action_id": "textedit-new-document-001",
+      "kind": "invoke",
+      "selector": {
+        "role": "button",
+        "automation_id": "NewDocumentButton"
+      },
+      "status": "executed_unverified",
+      "effect_verified_by": "新文稿窗口 35168 出现"
+    },
+    {
+      "action_id": "textedit-write-001",
+      "kind": "set_value",
+      "selector": {
+        "role": "text_area"
+      },
+      "text": "抓虾桌面验收 CU-0910",
+      "status": "verified_control",
+      "verification": {
+        "passed": true,
+        "property": "value",
+        "actual": "抓虾桌面验收 CU-0910",
+        "expected": "抓虾桌面验收 CU-0910",
+        "level": "control_readback",
+        "business_success": false
+      }
+    }
+  ],
+  "readback": {
+    "method": "独立 verify 命令只读复核 + 新鲜 observe",
+    "value": "抓虾桌面验收 CU-0910",
+    "expected": "抓虾桌面验收 CU-0910",
+    "passed": true
+  },
+  "evidence": {
+    "screenshot": "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/agent/workspace/cu-run-0910/screenshots/05778c50c4f146e69bb6e6a170c347f3.png",
+    "sha256": "9e03fe0d5a041284c810ebe3f56034b40f3370dafb5217e292e498b04c8bee10",
+    "snapshot": "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/agent/workspace/cu-run-0910/observations/05778c50c4f146e69bb6e6a170c347f3.json",
+    "visual": "标题栏“未命名”,正文首行渲染“抓虾桌面验收 CU-0910”,标尺与格式栏正常,无遮挡"
+  },
+  "untouched": {
+    "pre_existing_instance_pid": 15501,
+    "windows_before": 7,
+    "windows_after": 7,
+    "note": "窗口集合完全一致;未保存/未关闭/未修改任何既有文稿"
+  },
+  "no_messages_sent": true,
+  "cleanup": {
+    "feedback_layer": "stopped",
+    "run_dir": "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/agent/workspace/cu-run-0910"
+  },
+  "generated_at": "2026-09-10 16:12:19 +0800"
+}

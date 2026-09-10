@@ -39,6 +39,9 @@ const REQUIRED_BACKEND_IMPORTS = [
 ]
 
 const REQUIRED_WINDOWS_BACKEND_PATHS = [
+  'pywinauto',
+  'comtypes',
+  'psutil',
   'colorama',
   'win32/lib/pywintypes.py',
   'win32/lib/win32con.py',
@@ -61,6 +64,8 @@ const REQUIRED_VIDEO_INTEGRATION_FILES = [
 ]
 
 const REQUIRED_DEEPSEEK_HARNESS_FILES = [
+  'skills/crawshrimp-computer-use/SKILL.md',
+  'skills/crawshrimp-computer-use/scripts/computer_use.py',
   'worker/builtin-runtime.cjs',
   'skills/dws/SKILL.md',
   'skills/dws/LICENSE',
@@ -255,6 +260,9 @@ function requireDeepseekHarnessBundle(resourcesPath, expectedTarget = {}) {
     const target = path.join(bundleRoot, relativePath)
     return !fs.existsSync(target) || !fs.statSync(target).isFile()
   })
+  if (expectedTarget.platform === 'darwin' && !fs.existsSync(path.join(bundleRoot, 'skills/crawshrimp-computer-use/scripts/native/mac'))) {
+    missing.push('skills/crawshrimp-computer-use/scripts/native/mac')
+  }
   if (missing.length) {
     throw new Error(
       `[after-pack] deepseek-harness bundle 不完整,缺少: ${missing.join(', ')}。` +

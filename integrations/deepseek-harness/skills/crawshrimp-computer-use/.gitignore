@@ -1,0 +1,25 @@
+# OS / editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Python environments and caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local native build (rebuild on the target Mac)
+/scripts/native/mac
+*.dSYM/
+
+# Task observations, screenshots, receipts and local credentials
+/work/
+/outputs/
+/runs/
+.env
+.env.*
+!.env.example

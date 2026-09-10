@@ -20,6 +20,7 @@ const { createLifecycleController } = require('./lifecycleController')
 const { stopManagedChrome: stopManagedChromeFromState } = require('./managedChrome')
 const { startDesktopServices } = require('./startupServices')
 const { createBrowserLaunchBridge } = require('./browserLaunchBridge')
+const { createAutomationPermissionBridge } = require('./automationPermissionBridge')
 const { waitForServiceReadiness } = require('./serviceReadiness')
 const { normalizeAgentApiRequest } = require('./agentApiBridge')
 const {
@@ -1257,6 +1258,7 @@ function spawnBackendProcess() {
       CRAWSHRIMP_CDP_PORT: String(CDP_PORT),
       CRAWSHRIMP_CDP_URL: loopbackCdpUrl(CDP_PORT),
       ...browserLaunchBridge.environment(),
+      ...automationPermissionBridge.environment(),
       CRAWSHRIMP_DATA: resolvedCrawshrimpDataDir,
       CRAWSHRIMP_ALLOW_DATA_FALLBACK: '1',
       CRAWSHRIMP_API_TOKEN: apiToken,
@@ -1562,6 +1564,7 @@ async function performLaunchChrome(customPath = '') {
 
 const launchChrome = createSingleFlightRecovery(performLaunchChrome)
 const browserLaunchBridge = createBrowserLaunchBridge({ launchChrome })
+const automationPermissionBridge = createAutomationPermissionBridge({ requestPermission: (bundleId, purpose) => getAutomationPermissions().request(bundleId, purpose) })
 
 // ── HTTP helper (call FastAPI) ─────────────────────────────────────────────────
 
@@ -2420,6 +2423,7 @@ const restartBackend = createSingleFlightRecovery(async () => {
 
 async function startBackend() {
   await browserLaunchBridge.start()
+  await automationPermissionBridge.start()
   await prepareBackendEndpoint()
   await backendController.ensureReady()
 }
@@ -2763,6 +2767,37 @@ async function getDesktopStatus() {
   }
 }
 
+let automationPermissions
+function desktopAutomationPermissions(event) {
+  if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) {
+    throw new Error('此 IPC 只允许从抓虾主窗口发起')
+  }
+  return getAutomationPermissions()
+}
+function getAutomationPermissions() {
+  if (!automationPermissions) {
+    const { createAutomationPermissions } = require('./automationPermissions')
+    automationPermissions = createAutomationPermissions({
+      helper: path.join(getDeepseekHarnessRoot(), 'skills/crawshrimp-computer-use/scripts/native/mac'),
+      executable: process.execPath,
+      onBeforePrompt: ({ target_name, bundle_id, purpose }) => {
+        try {
+          if (Notification.isSupported()) new Notification({ title: `抓虾申请控制 ${target_name || bundle_id}`, body: purpose }).show()
+        } catch { /* Notification delivery must not prevent the OS consent dialog. */ }
+      },
+    })
+  }
+  return automationPermissions
+}
+secureHandle('automation-permission:manage', async event => {
+  desktopAutomationPermissions(event)
+  if (process.platform !== 'darwin') return { opened: false }
+  await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Automation')
+  return { opened: true }
+})
+secureHandle('automation-permission:list', event => desktopAutomationPermissions(event).list())
+secureHandle('automation-permission:check', (event, bundleId) => desktopAutomationPermissions(event).check(bundleId))
+secureHandle('automation-permission:request', (event, bundleId) => desktopAutomationPermissions(event).request(bundleId))
 secureHandle('get-status', async () => getDesktopStatus())
 secureHandle('agent:api', async (_, method, requestPath, body) => {
   const request = normalizeAgentApiRequest(method, requestPath)

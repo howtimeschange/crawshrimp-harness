@@ -1,0 +1,196 @@
+TAP version 13
+# Subtest: Office native links survive removing their staging directory
+ok 1 - Office native links survive removing their staging directory
+  ---
+  duration_ms: 3.040167
+  type: 'test'
+  ...
+# Subtest: copyDirSync materializes directory symlinks instead of shipping or dropping them
+ok 2 - copyDirSync materializes directory symlinks instead of shipping or dropping them
+  ---
+  duration_ms: 2.156041
+  type: 'test'
+  ...
+# Subtest: copyDirSync ignores pnpm virtual-store links left dangling after production pruning
+ok 3 - copyDirSync ignores pnpm virtual-store links left dangling after production pruning
+  ---
+  duration_ms: 3.555875
+  type: 'test'
+  ...
+# Subtest: requirePythonBundle rejects missing bundled Python source
+ok 4 - requirePythonBundle rejects missing bundled Python source
+  ---
+  duration_ms: 0.258542
+  type: 'test'
+  ...
+# Subtest: requirePythonBundle rejects Windows bundle without python.exe
+ok 5 - requirePythonBundle rejects Windows bundle without python.exe
+  ---
+  duration_ms: 0.34525
+  type: 'test'
+  ...
+# Subtest: requirePythonBundle rejects bundle missing required backend dependencies
+ok 6 - requirePythonBundle rejects bundle missing required backend dependencies
+  ---
+  duration_ms: 1.018583
+  type: 'test'
+  ...
+# Subtest: requirePythonBundle rejects a legacy-complete bundle missing cryptography
+ok 7 - requirePythonBundle rejects a legacy-complete bundle missing cryptography
+  ---
+  duration_ms: 1.44075
+  type: 'test'
+  ...
+# Subtest: requirePythonBundle rejects a Windows bundle missing pywintypes
+ok 8 - requirePythonBundle rejects a Windows bundle missing pywintypes
+  ---
+  duration_ms: 1.912959
+  type: 'test'
+  ...
+# Subtest: requirePythonBundle rejects a Windows bundle missing ACL modules
+ok 9 - requirePythonBundle rejects a Windows bundle missing ACL modules
+  ---
+  duration_ms: 2.729709
+  type: 'test'
+  ...
+# Subtest: requirePythonBundle rejects a Windows bundle missing colorama
+ok 10 - requirePythonBundle rejects a Windows bundle missing colorama
+  ---
+  duration_ms: 4.607625
+  type: 'test'
+  ...
+# Subtest: requirePythonScriptsBundle rejects resources without backend entrypoint
+ok 11 - requirePythonScriptsBundle rejects resources without backend entrypoint
+  ---
+  duration_ms: 4.889584
+  type: 'test'
+  ...
+# Subtest: requirePythonScriptsBundle rejects resources without adapter manifests
+ok 12 - requirePythonScriptsBundle rejects resources without adapter manifests
+  ---
+  duration_ms: 4.183375
+  type: 'test'
+  ...
+# Subtest: requirePythonScriptsBundle rejects adapter directories without manifest
+ok 13 - requirePythonScriptsBundle rejects adapter directories without manifest
+  ---
+  duration_ms: 11.903334
+  type: 'test'
+  ...
+# Subtest: requirePythonScriptsBundle rejects resources without shared video integrations
+ok 14 - requirePythonScriptsBundle rejects resources without shared video integrations
+  ---
+  duration_ms: 1.263333
+  type: 'test'
+  ...
+# Subtest: requireDeepseekHarnessBundle rejects staging built for the wrong platform
+ok 15 - requireDeepseekHarnessBundle rejects staging built for the wrong platform
+  ---
+  duration_ms: 0.838584
+  type: 'test'
+  ...
+# Subtest: requireDeepseekHarnessBundle rejects staging built for the wrong macOS architecture
+ok 16 - requireDeepseekHarnessBundle rejects staging built for the wrong macOS architecture
+  ---
+  duration_ms: 0.986208
+  type: 'test'
+  ...
+# Subtest: requireNativeRuntimePackages rejects Windows staging without native packages
+ok 17 - requireNativeRuntimePackages rejects Windows staging without native packages
+  ---
+  duration_ms: 0.380208
+  type: 'test'
+  ...
+# Subtest: Windows CI keeps the staged runtime boot check enabled
+ok 18 - Windows CI keeps the staged runtime boot check enabled
+  ---
+  duration_ms: 2.816458
+  type: 'test'
+  ...
+# Subtest: stage runtime resolves the real Electron executable instead of a Windows cmd shim
+ok 19 - stage runtime resolves the real Electron executable instead of a Windows cmd shim
+  ---
+  duration_ms: 1.86875
+  type: 'test'
+  ...
+# Subtest: stage runtime rejects an Electron path that escapes the package dist directory
+ok 20 - stage runtime rejects an Electron path that escapes the package dist directory
+  ---
+  duration_ms: 1.357375
+  type: 'test'
+  ...
+# Subtest: stage runtime lets the Electron package repair a missing downloaded executable
+ok 21 - stage runtime lets the Electron package repair a missing downloaded executable
+  ---
+  duration_ms: 0.966042
+  type: 'test'
+  ...
+# Subtest: stage runtime rejects an Electron loader result outside the package dist directory
+ok 22 - stage runtime rejects an Electron loader result outside the package dist directory
+  ---
+  duration_ms: 0.525084
+  type: 'test'
+  ...
+# Subtest: Windows staging records its target and requires Windows x64 native dependencies
+ok 23 - Windows staging records its target and requires Windows x64 native dependencies
+  ---
+  duration_ms: 0.458834
+  type: 'test'
+  ...
+# Subtest: staging parses explicit macOS targets and selects target-specific npm optional dependencies
+ok 24 - staging parses explicit macOS targets and selects target-specific npm optional dependencies
+  ---
+  duration_ms: 0.265
+  type: 'test'
+  ...
+# Subtest: staging rejects unsafe or unsupported target values
+ok 25 - staging rejects unsafe or unsupported target values
+  ---
+  duration_ms: 0.410167
+  type: 'test'
+  ...
+# Subtest: status checks never request permission; explicit request rechecks after consent
+ok 26 - status checks never request permission; explicit request rechecks after consent
+  ---
+  duration_ms: 0.686083
+  type: 'test'
+  ...
+# Subtest: denial falls back to AX without repeating prompt
+ok 27 - denial falls back to AX without repeating prompt
+  ---
+  duration_ms: 0.092541
+  type: 'test'
+  ...
+# Subtest: missing usage string and hardened entitlement identify build failure before requesting
+ok 28 - missing usage string and hardened entitlement identify build failure before requesting
+  ---
+  duration_ms: 0.076041
+  type: 'test'
+  ...
+# Subtest: sandbox and ambiguous denial never masquerade as a fresh permission request
+ok 29 - sandbox and ambiguous denial never masquerade as a fresh permission request
+  ---
+  duration_ms: 0.043625
+  type: 'test'
+  ...
+# Subtest: invalid targets cannot reach native execution
+ok 30 - invalid targets cannot reach native execution
+  ---
+  duration_ms: 0.580792
+  type: 'test'
+  ...
+# Subtest: concurrent requests cannot produce duplicate system prompts
+ok 31 - concurrent requests cannot produce duplicate system prompts
+  ---
+  duration_ms: 0.2595
+  type: 'test'
+  ...
+1..31
+# tests 31
+# suites 0
+# pass 31
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 86.589084

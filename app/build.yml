@@ -17,6 +17,8 @@ mac:
   category: public.app-category.business
   icon: assets/icon.icns
   artifactName: crawshrimp-harness-v${version}-mac-${arch}.${ext}
+  extendInfo:
+    NSAppleEventsUsageDescription: 抓虾仅在你授权的桌面任务中控制所选应用，用于读取内容和执行操作。
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: assets/entitlements.mac.plist

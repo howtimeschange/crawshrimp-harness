@@ -202,6 +202,8 @@
           </div>
         </section>
 
+        <AutomationPermissionsPanel v-else-if="isMacOS && activePanelId === 'application-automation'" key="application-automation" />
+
         <section v-else-if="activePanelId === 'application-update'" key="application-update" class="panel">
           <div class="panel-head">
             <div>
@@ -1031,6 +1033,7 @@
 
 <script setup>
 import { computed, defineComponent, h, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import AutomationPermissionsPanel from '../components/AutomationPermissionsPanel.vue'
 import { IconExternalLink } from '@tabler/icons-vue'
 import {
   AI_VIDEO_CONNECTION_DEFAULTS,
@@ -1254,6 +1257,8 @@ const themeOptions = [
   { value: 'dark', label: '深色', description: '低光、专注' },
 ]
 
+const isMacOS = window.cs?.platform === 'darwin'
+
 const menuGroups = [
   {
     id: 'appearance',
@@ -1286,7 +1291,10 @@ const menuGroups = [
     icon: '●',
     label: '应用',
     desc: '版本 / 桌面更新',
-    children: [{ id: 'application-update', label: '桌面更新' }],
+    children: [
+      { id: 'application-update', label: '桌面更新' },
+      ...(isMacOS ? [{ id: 'application-automation', label: '桌面自动化权限' }] : []),
+    ],
   },
   {
     id: 'storage',
@@ -2128,6 +2136,7 @@ watch(imSettingsUrl, () => {
 })
 </script>
 
+<style scoped src="./settingsPanel.css"></style>
 <style scoped>
 .view {
   height: 100%;
@@ -2352,17 +2361,8 @@ watch(imSettingsUrl, () => {
   padding-right: 4px;
 }
 
-.panel {
-  width: min(100%, 1180px);
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 22px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  transform-origin: top left;
-}
+
+
 
 .im-panel-transition-anchor {
   display: block;
@@ -2500,35 +2500,17 @@ watch(imSettingsUrl, () => {
   line-height: 1.6;
 }
 
-.panel-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border);
-}
 
-.panel-kicker {
-  margin: 0 0 5px;
-  color: var(--orange-text);
-  font-size: 12px;
-  font-weight: 700;
-}
 
-.panel-head h3 {
-  margin: 0;
-  font-size: 19px;
-  line-height: 1.25;
-}
 
-.panel-layout,
-.guide-grid {
-  display: grid;
-  grid-template-columns: minmax(360px, 1.15fr) minmax(280px, 0.85fr);
-  gap: 18px;
-  align-items: start;
-}
+
+
+
+
+
+
+
+
 
 .status-grid {
   display: grid;
@@ -2775,13 +2757,8 @@ watch(imSettingsUrl, () => {
   text-align: right;
 }
 
-.status-card,
-.side-note,
-.guide-block {
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  border-radius: 9px;
-}
+
+
 
 .status-card {
   display: flex;
@@ -2808,12 +2785,8 @@ watch(imSettingsUrl, () => {
   font-weight: 700;
 }
 
-.form-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 0;
-}
+
+
 
 .llm-provider-head {
   display: flex;
@@ -3165,24 +3138,14 @@ watch(imSettingsUrl, () => {
   border-bottom: 0;
 }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
 
-.field label {
-  font-size: 12px;
-  color: var(--text2);
-}
 
-.field-hint {
-  margin: -2px 0 0;
-  color: var(--text3);
-  font-size: 11px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
+
+
+
+
+
+
 
 .settings-advanced-panel,
 .settings-subsection {
@@ -3279,23 +3242,11 @@ watch(imSettingsUrl, () => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.input,
-.select {
-  width: 100%;
-  min-width: 0;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  color: var(--text);
-  font-size: 13px;
-  outline: none;
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
 
-.select {
-  cursor: pointer;
-}
+
+
+
+
 
 .textarea {
   width: 100%;
@@ -3314,37 +3265,22 @@ watch(imSettingsUrl, () => {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
 }
 
-.input:focus,
-.select:focus {
-  border-color: var(--orange);
-  background: var(--input-focus);
-}
+
+
 
 .textarea:focus {
   border-color: var(--orange);
   background: var(--input-focus);
 }
 
-.side-note {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 15px;
-  color: var(--text2);
-}
 
-.side-note strong {
-  color: var(--text);
-  font-size: 13px;
-}
 
-.side-note p {
-  margin: 0;
-  color: var(--text3);
-  font-size: 12px;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
+
+
+
+
+
+
 
 .path-note p {
   color: var(--text2);
@@ -3352,45 +3288,23 @@ watch(imSettingsUrl, () => {
   font-size: 11px;
 }
 
-.panel-actions,
-.action-strip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 38px;
-}
 
-.badge,
-.msg,
-.test-result {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  max-width: 100%;
-}
 
-.badge {
-  flex: 0 0 auto;
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-weight: 700;
-}
 
-.badge.on {
-  background: rgba(74, 222, 128, 0.12);
-  color: var(--green);
-}
 
-.badge.off {
-  background: rgba(248, 113, 113, 0.12);
-  color: var(--red);
-}
 
-.badge.neutral {
-  background: rgba(148, 163, 184, 0.12);
-  color: var(--text2);
-}
+
+
+
+
+
+
+
+
+
+
+
+
 
 .inline-msg,
 .msg,
@@ -3527,42 +3441,23 @@ watch(imSettingsUrl, () => {
   flex-wrap: wrap;
 }
 
-.btn-orange,
-.btn-ghost {
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 700;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
-}
 
-.btn-orange {
-  padding: 10px 18px;
-  border: none;
-  background: var(--orange);
-  color: var(--on-orange);
-}
 
-.btn-orange:hover:not(:disabled) {
-  background: var(--orange-hover);
-}
 
-.btn-ghost {
-  padding: 9px 13px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text2);
-}
 
-.btn-ghost:hover:not(:disabled) {
-  background: var(--bg2);
-  color: var(--text);
-}
 
-.btn-orange:disabled,
-.btn-ghost:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
+
+
+
+
+
+
+
+
+
+
+
+
 
 :deep(.panel-actions) {
   display: flex;
