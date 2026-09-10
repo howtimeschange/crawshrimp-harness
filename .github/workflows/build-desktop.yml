@@ -136,6 +136,17 @@ jobs:
           done
           npm ci
 
+      - name: Install DSH runtime deps
+        working-directory: integrations/deepseek-harness
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            npm ci && exit 0
+            echo "::warning::npm ci failed on attempt ${attempt}; retrying after transient download failure"
+            sleep $((attempt * 10))
+          done
+          npm ci
+
       - name: Setup build Python
         uses: actions/setup-python@v5
         with:
