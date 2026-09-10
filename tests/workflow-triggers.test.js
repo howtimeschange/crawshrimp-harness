@@ -79,7 +79,9 @@ test('desktop version release uploads build assets directly and validates releas
   assert.match(workflow, /gh release download "\$\{GITHUB_REF_NAME\}" --dir release-downloads --clobber/)
   assert.match(workflow, /node app\/scripts\/validate-update-artifacts\.js release-assets --formal-release --version "\$\{APP_VERSION\}"/)
   assert.match(publishStep, /gh release view "\$\{GITHUB_REF_NAME\}" --json assets --jq '\.assets\[\]\.name'/)
-  assert.doesNotMatch(workflow, /actions\/upload-artifact@v4/)
+  const deliveryWorkflow = workflow.replace(/\n      - name: Preserve failed Office smoke evidence[\s\S]*?(?=\n  prepare-version-release:)/, '')
+  assert.doesNotMatch(deliveryWorkflow, /actions\/upload-artifact@v4/)
+  assert.match(workflow, /name: Preserve failed Office smoke evidence\n\s+if: failure\(\)/)
   assert.doesNotMatch(workflow, /actions\/download-artifact@v4/)
 })
 
