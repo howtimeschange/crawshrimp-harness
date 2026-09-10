@@ -574,6 +574,11 @@ function onWindowMessage(event) {
     } else if (previousRuntimeSessionId !== activeRuntimeSessionId.value) {
       void observeNativeWebSession(activeRuntimeSessionId.value)
     }
+  } else if (data.__crawshrimp === 'reveal-file') {
+    const p = String(data.path || '').trim()
+    if (p && typeof window.cs?.revealFile === 'function') {
+      window.cs.revealFile(p).catch(() => {})
+    }
   } else if (data.__crawshrimp === 'open-file') {
     // 会话内附件点击 → 系统默认应用打开
     const p = String(data.path || '').trim()

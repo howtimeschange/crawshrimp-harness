@@ -802,6 +802,9 @@ window.__ModuleLoader__.load({
       '.cs-artifact-grid img:hover { border-color: var(--dsw-alias-state-business-primary); transform: scale(1.01); }',
       '.cs-artifact-video { display: block; width: 100%; max-width: 480px; max-height: 340px; border-radius: 8px; margin-top: 8px; background: #000; }',
       '.cs-artifact-audio { display: block; width: 100%; margin-top: 8px; }',
+      '.cs-artifact-image-dialog { width: fit-content; max-width: 90vw; max-height: 90vh; padding: 16px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); }',
+      '.cs-artifact-image-dialog::backdrop { background: #000b; }',
+      '.cs-artifact-image-dialog > img { display: block; max-width: 85vw; max-height: 78vh; object-fit: contain; margin-top: 12px; }',
       '.cs-artifact-zip-hint { margin-top: 8px; font-size: 12px; color: var(--dsw-alias-label-secondary); }',
       '@media (prefers-reduced-motion: reduce) { .cs-artifact-grid img { transition: none; } }',
     ].join('\n')
@@ -835,18 +838,38 @@ window.__ModuleLoader__.load({
       return '📄'
     }
 
+    function previewArchiveImage(url, filename) {
+      const dialog = document.createElement('dialog')
+      dialog.className = 'cs-artifact-image-dialog'
+      dialog.setAttribute('aria-label', filename || '图片预览')
+      const close = document.createElement('button')
+      close.type = 'button'
+      close.className = 'cs-artifact-open'
+      close.textContent = '关闭'
+      close.addEventListener('click', () => dialog.close())
+      const img = document.createElement('img')
+      img.src = url
+      img.alt = filename || '图片预览'
+      dialog.append(close, img)
+      dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close() })
+      dialog.addEventListener('close', () => dialog.remove(), { once: true })
+      document.body.appendChild(dialog)
+      dialog.showModal()
+    }
+
     function makeArtifactBlock(artifact, urls) {
       const block = document.createElement('div')
       block.className = 'cs-artifact-block'
       block.dataset.artifactPath = String(artifact.path || '')
       block.dataset.artifactCallId = String(artifact.toolCallId || '')
+      const isZip = artifact.mediaKind === 'zip' || /\.zip$/i.test(artifact.path || artifact.filename || '')
       const open = () => {
-        if (artifact.path) postToShell({ __crawshrimp: 'open-file', path: artifact.path })
+        if (artifact.path) postToShell({ __crawshrimp: isZip ? 'reveal-file' : 'open-file', path: artifact.path })
       }
 
       const head = document.createElement('div')
       head.className = 'cs-artifact-head'
-      head.title = '点击打开文件'
+      head.title = isZip ? '在文件夹中显示压缩包' : '点击打开文件'
       const icon = document.createElement('span')
       icon.className = 'cs-artifact-icon'
       icon.textContent = artifactIconFor(artifact.mediaKind, artifact.filename)
@@ -859,7 +882,7 @@ window.__ModuleLoader__.load({
       const openBtn = document.createElement('button')
       openBtn.type = 'button'
       openBtn.className = 'cs-artifact-open'
-      openBtn.textContent = '打开'
+      openBtn.textContent = isZip ? '显示文件' : '打开'
       openBtn.addEventListener('click', (event) => {
         event.stopPropagation()
         open()
@@ -904,13 +927,19 @@ window.__ModuleLoader__.load({
           img.alt = entries[index] || ''
           img.title = entries[index] || ''
           img.decoding = 'async'
-          img.addEventListener('click', open)
+          img.tabIndex = 0
+          img.setAttribute('role', 'button')
+          const preview = () => previewArchiveImage(entryUrl, entries[index])
+          img.addEventListener('click', preview)
+          img.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); preview() }
+          })
           grid.appendChild(img)
         })
         block.appendChild(grid)
         const hint = document.createElement('div')
         hint.className = 'cs-artifact-zip-hint'
-        hint.textContent = `${Math.min(entries.length, 20)} 张预览图 · 点击图片或「打开」查看完整压缩包`
+        hint.textContent = `${Math.min(entries.length, 20)} 张预览图 · 点击图片放大预览，「显示文件」定位压缩包`
         block.appendChild(hint)
       } else if (fileUrl && artifact.mediaKind !== 'file') {
         const link = document.createElement('a')

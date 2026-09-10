@@ -3182,8 +3182,14 @@ secureHandle('open-file', async (_, filePath) => {
       return { ok: true }
     }
   } catch {}
-  shell.openPath(filePath)
-  return { ok: true }
+  // Opening ZIPs launches Archive Utility on macOS and extracts another copy.
+  // Reveal the original archive instead, consistently across artifact entry points.
+  if (path.extname(String(filePath || '')).toLowerCase() === '.zip') {
+    shell.showItemInFolder(filePath)
+    return { ok: true }
+  }
+  const error = await shell.openPath(filePath)
+  return error ? { ok: false, error } : { ok: true }
 })
 
 secureHandle('open-external-url', async (_, rawUrl) => {

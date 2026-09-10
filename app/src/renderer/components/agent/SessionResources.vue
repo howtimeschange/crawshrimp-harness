@@ -33,7 +33,7 @@
       </div>
     </template>
     <template v-else-if="selection?.kind === 'artifact'">
-      <div class="resource-toolbar"><strong :title="selection.path">{{ selection.filename }}</strong><button @click="fileAction('openFile', selection)">系统打开</button><button @click="fileAction('revealFile', selection)">定位</button></div>
+      <div class="resource-toolbar"><strong :title="selection.path">{{ selection.filename }}</strong><button @click="fileAction('openFile', selection)">{{ extension(selection.filename).toLowerCase() === 'zip' ? '显示文件' : '系统打开' }}</button><button @click="fileAction('revealFile', selection)">定位</button></div>
       <div class="resource-preview">
         <OfficePreview v-if="isOfficeDocument(selection)" :office="selection.office" :path="selection.path" />
         <p v-else-if="previewLoading" class="empty">正在加载…</p>
@@ -41,7 +41,7 @@
         <video v-else-if="previewKind === 'video'" :src="previewUrl" controls />
         <audio v-else-if="previewKind === 'audio'" :src="previewUrl" controls />
         <pre v-else-if="previewKind === 'text'">{{ previewText }}</pre>
-        <p v-else class="empty">此文件暂不支持内置预览，请使用系统打开。</p>
+        <p v-else class="empty">{{ extension(selection.filename).toLowerCase() === 'zip' ? '点击「显示文件」在文件夹中查看压缩包。' : '此文件暂不支持内置预览，请使用系统打开。' }}</p>
       </div>
     </template>
     <template v-else>
@@ -60,7 +60,7 @@
           <div v-if="filesExpanded || query" class="section-items file-items" aria-label="产物列表" tabindex="0"><p v-if="!filteredArtifacts.length" class="empty">{{ loading ? '正在加载资源…' : query ? '没有匹配的产物' : '生成的文件会显示在这里' }}</p>
             <div v-for="item in filteredArtifacts" :key="item.path || item.artifact_id" class="resource-row">
               <button class="resource-main" :title="`${item.filename}\n${size(item.size)} · ${item.path}`" @click="openArtifact(item)"><span class="type-icon">{{ extension(item.filename) }}</span><span class="resource-name">{{ item.filename }}</span><small v-if="item.office?.delivery?.status === 'final'" title="文件哈希与数据、视觉验收记录一致">已验收交付</small><small v-else-if="item.office" title="尚未登记为最终交付">待交付</small><small v-if="artifactAge(item)" class="artifact-age">{{ artifactAge(item) }}</small></button>
-              <ResourceMenu label="文件操作"><button @click="fileAction('openFile', item)">系统打开</button><button @click="fileAction('revealFile', item)">在文件夹中定位</button><button @click="copy(item.path)">复制路径</button></ResourceMenu>
+              <ResourceMenu label="文件操作"><button @click="fileAction('openFile', item)">{{ extension(item.filename).toLowerCase() === 'zip' ? '显示文件' : '系统打开' }}</button><button @click="fileAction('revealFile', item)">在文件夹中定位</button><button @click="copy(item.path)">复制路径</button></ResourceMenu>
             </div>
           </div>
         </section>
@@ -193,7 +193,7 @@ function selectEdgeTab(last) {
   if (tab) { openBrowser(tab.id); focusSelectedTab() }
 }
 function adjustWidth(delta) { width.value = Math.max(320, Math.min(900, window.innerWidth * .7, width.value + delta)) }
-async function fileAction(action, item) { try { const result = await window.cs[action](item.path); if (result?.ok === false || typeof result === 'string' && result) throw new Error(result.error || result) } catch (e) { error.value = `操作失败：${e.message}` } }
+async function fileAction(action, item) { if (action === 'openFile' && extension(item.filename).toLowerCase() === 'zip') action = 'revealFile'; try { const result = await window.cs[action](item.path); if (result?.ok === false || typeof result === 'string' && result) throw new Error(result.error || result) } catch (e) { error.value = `操作失败：${e.message}` } }
 async function copy(value) { try { await navigator.clipboard.writeText(value || '') } catch (e) { error.value = `复制失败：${e.message}` } }
 async function openArtifact(item) {
   selection.value = { ...item, kind: 'artifact' }; opened.value = true; error.value = ''
