@@ -1,9 +1,17 @@
-"""Normalize bundled font aliases in a working copy, preserving all other OOXML."""
+"""Use localized family fallbacks in disposable LibreOffice preview inputs."""
 from pathlib import Path
 from zipfile import ZipFile
 from lxml import etree
 
-ALIASES = {"Source Han Sans SC": "思源黑体", "Source Han Serif SC": "思源宋体"}
+# LibreOffice enumerates localized family names: English on CI, Chinese on
+# Chinese desktops. Its semicolon fallback syntax covers both without depending
+# on system fonts. These names belong only in the disposable preview input.
+ALIASES = {
+    "Source Han Sans SC": "Source Han Sans SC;思源黑体",
+    "思源黑体": "Source Han Sans SC;思源黑体",
+    "Source Han Serif SC": "Source Han Serif SC;思源宋体",
+    "思源宋体": "Source Han Serif SC;思源宋体",
+}
 
 
 def normalize_office_fonts(path: Path) -> None:

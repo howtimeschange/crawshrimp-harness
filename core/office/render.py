@@ -31,8 +31,6 @@ def render(document: Path, work: Path, *, recalculate: bool = False,
     preview.mkdir(exist_ok=True)
     copied = editable / document.name
     shutil.copy2(document, copied)
-    from .fonts import normalize_office_fonts
-    normalize_office_fonts(copied)
     if recalculate:
         if copied.suffix.lower() != ".xlsx":
             raise OfficeError("OFFICE_INVALID_INPUT", "重算只适用于 XLSX。")
@@ -43,11 +41,19 @@ def render(document: Path, work: Path, *, recalculate: bool = False,
         if not recalculated.is_file():
             raise OfficeError("OFFICE_RECALC_FAILED", "LibreOffice 未产生重算文件。")
         shutil.copy2(recalculated, copied)
+    # Keep editable documents in their native font names. LibreOffice's
+    # localized family fallback lists are only needed for PDF rendering.
+    render_input_dir = work / "render-input"
+    render_input_dir.mkdir(exist_ok=True)
+    render_input = render_input_dir / copied.name
+    shutil.copy2(copied, render_input)
+    from .fonts import normalize_office_fonts
+    normalize_office_fonts(render_input)
     filters = {".docx": "writer_pdf_Export", ".pptx": "impress_pdf_Export", ".xlsx": "calc_pdf_Export"}
     filter_name = filters.get(copied.suffix.lower())
     if not filter_name:
         raise OfficeError("OFFICE_FORMAT_UNSUPPORTED", "仅支持 docx、pptx、xlsx。")
-    execute([*command, "--convert-to", f"pdf:{filter_name}", "--outdir", str(preview), str(copied)], work, cancel=cancel)
+    execute([*command, "--convert-to", f"pdf:{filter_name}", "--outdir", str(preview), str(render_input)], work, cancel=cancel)
     pdf = preview / (copied.stem + ".pdf")
     if not pdf.is_file():
         raise OfficeError("OFFICE_RENDER_FAILED", "LibreOffice 未产生 PDF，原件已保留。")
