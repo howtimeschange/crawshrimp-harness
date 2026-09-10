@@ -5,11 +5,11 @@ This checklist is the required evidence record before claiming Crawshrimp Harnes
 ## Release Identity
 
 - Release scope (`PATCH` / `MINOR` / `MAJOR`): `MINOR`
-- Version selection rationale: Harness 首个独立桌面发行版本，建立独立 app identity、GitHub Release 更新源和 macOS 公证链路。
-- Target version selected under the [release versioning policy](release-versioning.md): `v0.1.0`
+- Version selection rationale: 新增自动化中心、Office 原生文档生成与逐页审查、桌面操作和统一会话资源能力；仍沿用 Electron + FastAPI + DSH 架构及独立 GitHub 更新源，按功能级 MINOR 发布。
+- Target version selected under the [release versioning policy](release-versioning.md): `v0.2.0`
 - Source commit: `PENDING`
-- Old version under test: `PENDING`
-- New version under test: `v0.1.0`
+- Old version under test: `PENDING` (previous published release: `v0.1.13`)
+- New version under test: `v0.2.0`
 - GitHub main build run ID: `PENDING`
 - GitHub tag build run ID: `PENDING`
 - Formal release URL: `PENDING`
