@@ -2,6 +2,9 @@ const fs = require('fs')
 const path = require('path')
 const { spawnSync } = require('child_process')
 
+// Apply before the builder process loads osx-sign (before custom sign hooks).
+require('./patch-osx-sign').patchOsxSign()
+
 function findCommand(cmd) {
   const tool = process.platform === 'win32' ? 'where' : 'which'
   const result = spawnSync(tool, [cmd], { encoding: 'utf8' })
