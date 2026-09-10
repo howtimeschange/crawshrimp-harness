@@ -10,6 +10,7 @@ from typing import Any, Optional
 from core.llm_gateway import (
     BUILTIN_LLM_PROVIDERS,
     DEEPSEEK_OFFICIAL_MODELS,
+    normalize_deepseek_model_id,
     DOMESTIC_OPENAI_MODELS,
     GLM_OFFICIAL_MODELS,
     OVERSEAS_ANTHROPIC_MODELS,
@@ -35,9 +36,8 @@ MODEL_CAPABILITIES: dict[str, dict[str, Any]] = {
     "deepseek-v4-flash": {"context_window": 128000, "max_output_tokens": 8192, "supports_tools": True},
     "deepseek-v4-pro": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
     # DeepSeek 原生接入(官方 API,产品内 ID 加 official 前缀与网关模型区分)
-    "deepseek-official-v4-flash": {"context_window": 128000, "max_output_tokens": 32768, "supports_tools": True},
-    "deepseek-official-v4-pro": {"context_window": 128000, "max_output_tokens": 32768, "supports_tools": True},
-    "deepseek-official-v4-flash-vision-exp": {"context_window": 128000, "max_output_tokens": 32768, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "deepseek-official-flash": {"context_window": 1000000, "max_output_tokens": 393216, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "deepseek-official-v4-pro": {"context_window": 1000000, "max_output_tokens": 393216, "supports_tools": True},
     "glm-official-5.3-flash": {"context_window": 128000, "max_output_tokens": 8192, "supports_tools": True, "input_modalities": ["text", "image"]},
     "glm-official-5.3": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
     "glm-official-5.2": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
@@ -96,6 +96,7 @@ AGENT_PERSONA = """你是抓虾智能体，运行在抓虾桌面应用中。你�
 
 
 def model_capabilities(model_id: str) -> dict[str, Any]:
+    model_id = normalize_deepseek_model_id(model_id)
     if model_id in MODEL_CAPABILITIES:
         return dict(MODEL_CAPABILITIES[model_id])
     for provider in custom_llm_providers(include_secrets=False):
@@ -136,6 +137,10 @@ def agent_capable_model_ids() -> list[str]:
 
 def resolve_session_model_selection(provider_id: str, model_id: str, config: dict) -> tuple[str, str]:
     """Resolve a native selection without crossing provider boundaries."""
+    if provider_id == "crawshrimp-deepseek-official":
+        model_id = normalize_deepseek_model_id(model_id)
+        if model_id in ("deepseek-v4-flash", "deepseek-v4-flash-vision-exp"):
+            model_id = "deepseek-flash"
     for provider in BUILTIN_LLM_PROVIDERS:
         if provider["id"] != provider_id:
             continue
@@ -165,7 +170,7 @@ def resolve_provider_for_model(model_id: str, config: Optional[dict] = None) -> 
         return "crawshrimp-overseas-anthropic"
     if model_id in DOMESTIC_OPENAI_MODELS:
         return "crawshrimp-domestic-openai"
-    if model_id in DEEPSEEK_OFFICIAL_MODELS:
+    if normalize_deepseek_model_id(model_id) in DEEPSEEK_OFFICIAL_MODELS:
         return "crawshrimp-deepseek-official"
     if model_id in GLM_OFFICIAL_MODELS:
         return "crawshrimp-glm-official"

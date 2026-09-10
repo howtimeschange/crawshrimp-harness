@@ -20,11 +20,11 @@ test('read_image admits both official text models through the paired Vision rout
   for (const model of ['deepseek-v4-flash', 'deepseek-v4-pro']) {
     const calls = []
     const ctx = { get: () => ({ resolveModelInfo: async (provider, name) => {
-      calls.push([provider, name]); return { inputModalities: name.endsWith('vision-exp') ? ['text', 'image'] : ['text'] }
+      calls.push([provider, name]); return { inputModalities: name === 'deepseek-flash' ? ['text', 'image'] : ['text'] }
     } }) }
     const exec = { agent: { session: { requestHeader: () => ({ config: { provider: 'crawshrimp-deepseek-official', model } }) } } }
     await gate(ctx, exec, '/workspace/result.png')
-    assert.deepEqual(calls.map(c => c[1]), [model, 'deepseek-v4-flash-vision-exp'])
+    assert.deepEqual(calls.map(c => c[1]), [model, 'deepseek-flash'])
   }
 })
 

@@ -55,7 +55,7 @@ DEFAULT_CONFIG = {
             "domestic_base_url": "https://ai-aigw.semir.com/bailian-codingplan/v1",
             "deepseek_base_url": "https://api.deepseek.com",
             "glm_base_url": "https://open.bigmodel.cn/api/paas/v4",
-            "default_model": "deepseek-official-v4-flash",
+            "default_model": "deepseek-official-flash",
             "custom_providers": [],
         },
     },

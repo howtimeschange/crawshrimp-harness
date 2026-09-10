@@ -24,7 +24,7 @@ export const LLM_DEFAULTS = Object.freeze({
   'ai.llm.domestic_base_url': 'https://ai-aigw.semir.com/bailian-codingplan/v1',
   'ai.llm.deepseek_base_url': DEEPSEEK_OFFICIAL_BASE_URL_DEFAULT,
   'ai.llm.glm_base_url': GLM_OFFICIAL_BASE_URL_DEFAULT,
-  'ai.llm.default_model': 'deepseek-official-v4-flash',
+  'ai.llm.default_model': 'deepseek-official-flash',
 })
 
 const OVERSEAS_OPENAI_MODELS = Object.freeze([
@@ -52,9 +52,8 @@ const DOMESTIC_OPENAI_MODELS = Object.freeze([
 ])
 
 export const DEEPSEEK_OFFICIAL_MODELS_UI = Object.freeze([
-  { value: 'deepseek-official-v4-flash', label: 'DeepSeek 官方 · V4 Flash' },
+  { value: 'deepseek-official-flash', label: 'DeepSeek 官方 · V4.1 Flash' },
   { value: 'deepseek-official-v4-pro', label: 'DeepSeek 官方 · V4 Pro' },
-  { value: 'deepseek-official-v4-flash-vision-exp', label: 'DeepSeek 官方 · V4 Flash Vision Exp' },
 ])
 
 export const GLM_OFFICIAL_MODELS_UI = Object.freeze([
@@ -307,4 +306,10 @@ export function clearWrittenLlmSettings(cfg = {}, patch = {}) {
     })
   }
   return cfg
+}
+
+// Keep saved official selections aligned with the canonical catalog entry.
+export function normalizeDeepSeekModelId(modelId) {
+  return ['deepseek-official-v4-flash', 'deepseek-official-v4-flash-vision-exp'].includes(modelId)
+    ? 'deepseek-official-flash' : modelId
 }

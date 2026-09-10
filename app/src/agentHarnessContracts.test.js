@@ -158,7 +158,7 @@ test('staged DSH rc.1 runtime applies the small verified 4.11 source overlay aft
   assert.match(patcher, /CRAWSHRIMP_DSH_IM_SESSION_PERMISSION_MARKER/)
   assert.match(patcher, /CRAWSHRIMP_DEEPSEEK_VISION_BRIDGE_MARKER/)
   assert.match(patcher, /crawshrimpBridgeDeepSeekImages/)
-  assert.match(patcher, /deepseek-v4-flash-vision-exp/)
+  assert.match(patcher, /deepseek-flash/)
   assert.match(patcher, /upstreamModelDispatch/)
   assert.match(patcher, /TextHarnessBridge natural model dispatch/)
   assert.match(patcher, /@deepseek-ai\/dsh\/package\.json[\s\S]*0\.1\.2-rc\.1/)
@@ -460,14 +460,14 @@ test('rc.1 Web transport keeps image input and session-follow without reviving t
   assert.match(worker, /type:\s*'image'[\s\S]*?data:\s*readFileSync\(imagePath\)\.toString\('base64'\)/)
   assert.match(client, /endpoint:\s*'session\/follow'/)
   assert.match(client, /type\s*===\s*['"]snapshot['"]/)
-  assert.match(profile, /id:\s*deepseek-v4-flash-vision-exp[\s\S]*input:\s*\[text, image\]/)
+  assert.match(profile, /id:\s*deepseek-flash[\s\S]*input:\s*\[text, image\]/)
   assert.doesNotMatch(client, /dsh-sdk-jsonrpc-demo/)
 })
 
 test('the Vision model is not forced onto a DeepSeek-only reasoning effort', () => {
   const profile = readFileSync(resolve(appRoot, '../integrations/deepseek-harness/profile/web/cordis.patch.yml'), 'utf8')
   const deepseekProvider = profile.split('crawshrimp-deepseek-official:', 2)[1].split('crawshrimp-overseas-openai:', 1)[0]
-  const visionModel = deepseekProvider.split('- id: deepseek-v4-flash-vision-exp', 2)[1].split('crawshrimp-overseas-openai:', 1)[0]
+  const visionModel = deepseekProvider.split('- id: deepseek-flash', 2)[1].split('crawshrimp-overseas-openai:', 1)[0]
   assert.doesNotMatch(deepseekProvider, /^\s+reasoning:\s+high\s*$/mu)
   assert.match(visionModel, /input:\s*\[text, image\]/)
 })
@@ -513,7 +513,7 @@ test('Web RPC reasserts a product session model through the authenticated Sessio
   const requests = []
   global.fetch = async (url, options) => {
     requests.push({ url: String(url), body: JSON.parse(String(options.body)) })
-    return new Response(JSON.stringify({ ok: true, selected: { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash-vision-exp' } }), {
+    return new Response(JSON.stringify({ ok: true, selected: { provider: 'crawshrimp-deepseek-official', model: 'deepseek-flash' } }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     })
@@ -523,16 +523,16 @@ test('Web RPC reasserts a product session model through the authenticated Sessio
     const result = await runtime.selectModel({
       sessionId: 'dsh-test',
       provider: 'crawshrimp-deepseek-official',
-      model: 'deepseek-v4-flash-vision-exp',
+      model: 'deepseek-flash',
     })
     assert.equal(requests.length, 1)
     assert.equal(requests[0].url, 'http://127.0.0.1:19099/api/crawshrimp/session/select-model')
     assert.deepEqual(requests[0].body, {
       sessionId: 'dsh-test',
       provider: 'crawshrimp-deepseek-official',
-      model: 'deepseek-v4-flash-vision-exp',
+      model: 'deepseek-flash',
     })
-    assert.equal(result.selected.model, 'deepseek-v4-flash-vision-exp')
+    assert.equal(result.selected.model, 'deepseek-flash')
   } finally {
     global.fetch = originalFetch
   }
@@ -1155,7 +1155,7 @@ test('DSH Web profile registers Crawshrimp providers through a persistent offici
 
   assert.match(webClient, /dshBin, 'web', '--no-open', '--host', '127\.0\.0\.1'/)
   assert.match(defaultBlock, /provider:\s*!!js process\.env\.CRAWSHRIMP_AGENT_PROVIDER \?\? 'crawshrimp-deepseek-official'/)
-  assert.match(defaultBlock, /model:\s*!!js process\.env\.CRAWSHRIMP_AGENT_MODEL \?\? 'deepseek-v4-flash'/)
+  assert.match(defaultBlock, /model:\s*!!js process\.env\.CRAWSHRIMP_AGENT_MODEL \?\? 'deepseek-flash'/)
   assert.match(attachmentBlock, /maxImageDimension:\s*8192/)
   assert.match(attachmentBlock, /maxImageBytes:\s*16777216/)
   assert.match(piAiBlock, /crawshrimp-deepseek-official:/)
@@ -1163,9 +1163,9 @@ test('DSH Web profile registers Crawshrimp providers through a persistent offici
   assert.match(piAiBlock, /baseURL:\s*!!js process\.env\.CRAWSHRIMP_DEEPSEEK_BASE_URL \?\? 'https:\/\/api\.deepseek\.com'/)
   assert.match(piAiBlock, /id:\s*deepseek-v4-flash/)
   assert.match(piAiBlock, /reasoningEfforts:[\s\S]*low:\s*low[\s\S]*high:\s*high[\s\S]*max:\s*max/)
-  assert.match(piAiBlock, /id:\s*deepseek-v4-flash-vision-exp[\s\S]*input:\s*\[text,\s*image\]/)
+  assert.match(piAiBlock, /id:\s*deepseek-flash[\s\S]*input:\s*\[text,\s*image\]/)
   assert.match(piAiBlock, /id:\s*kimi-k3/)
-  assert.doesNotMatch(piAiBlock.split('id: deepseek-v4-flash-vision-exp', 2)[1]?.split('crawshrimp-overseas-openai:', 1)[0] || '', /reasoningEfforts|reasoning:\s*high/)
+  assert.match(piAiBlock.split('id: deepseek-flash', 2)[1]?.split('crawshrimp-overseas-openai:', 1)[0] || '', /reasoningEfforts|reasoning:\s*high/)
 })
 
 test('native DSH model discovery suppresses the duplicate upstream DeepSeek credential route', () => {

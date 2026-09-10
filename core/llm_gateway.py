@@ -27,14 +27,24 @@ DOMESTIC_OPENAI_BASE_URL = "https://ai-aigw.semir.com/bailian-codingplan/v1"
 # 调用官方 API 时映射回真实模型名。
 DEEPSEEK_OFFICIAL_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_OFFICIAL_MODELS = (
-    "deepseek-official-v4-flash",
+    "deepseek-official-flash",
     "deepseek-official-v4-pro",
-    "deepseek-official-v4-flash-vision-exp",
 )
+DEEPSEEK_OFFICIAL_MODEL_ALIASES = {
+    "deepseek-official-v4-flash": "deepseek-official-flash",
+    "deepseek-official-v4-flash-vision-exp": "deepseek-official-flash",
+}
+
+
+def normalize_deepseek_model_id(model_id: str) -> str:
+    return DEEPSEEK_OFFICIAL_MODEL_ALIASES.get(model_id, model_id)
+
+
 _DEEPSEEK_OFFICIAL_REAL_MODELS = {
-    "deepseek-official-v4-flash": "deepseek-v4-flash",
+    "deepseek-official-flash": "deepseek-flash",
+    "deepseek-official-v4-flash": "deepseek-flash",
     "deepseek-official-v4-pro": "deepseek-v4-pro",
-    "deepseek-official-v4-flash-vision-exp": "deepseek-v4-flash-vision-exp",
+    "deepseek-official-v4-flash-vision-exp": "deepseek-flash",
 }
 
 
@@ -93,7 +103,7 @@ SUPPORTED_MODELS = (
     *DEEPSEEK_OFFICIAL_MODELS,
     *GLM_OFFICIAL_MODELS,
 )
-DEFAULT_MODEL = "deepseek-official-v4-flash"
+DEFAULT_MODEL = "deepseek-official-flash"
 GATEWAY_FALLBACK_MODEL = "gpt-5.6-terra"
 BUILTIN_LLM_PROVIDERS = (
     {
@@ -169,7 +179,7 @@ RECOMMEND_TITLE_MAX_CHARS = 20
 
 BALA_VIDEO_PROMPT_DEFAULT_MODEL = "gemini-3.5-flash"
 BALA_VIDEO_PROMPT_BUILTIN_MODELS = (
-    "deepseek-official-v4-flash-vision-exp",
+    "deepseek-official-flash",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
@@ -263,7 +273,7 @@ def _provider_by_id(provider_id: str) -> dict | None:
 
 
 def _provider_for_builtin_model(model_id: str) -> dict | None:
-    selected = _compact(model_id)
+    selected = normalize_deepseek_model_id(_compact(model_id))
     for provider in BUILTIN_LLM_PROVIDERS:
         if selected in provider["models"]:
             return provider
@@ -381,7 +391,7 @@ def custom_llm_providers(config: dict | None = None, *, include_secrets: bool = 
 
 
 def _custom_provider_for_model(model_id: str, config: dict | None = None) -> dict | None:
-    selected = _compact(model_id)
+    selected = normalize_deepseek_model_id(_compact(model_id))
     for provider in custom_llm_providers(config):
         if any(model.get("id") == selected for model in provider.get("models") or []):
             return provider
@@ -433,7 +443,7 @@ def custom_providers_runtime_payload(config: dict | None = None) -> tuple[list[d
 
 
 def model_has_configured_key(model_id: str, config: dict | None = None) -> bool:
-    selected = _compact(model_id)
+    selected = normalize_deepseek_model_id(_compact(model_id))
     cfg = config if isinstance(config, dict) else load_config()
     llm = _llm_settings(cfg)
     provider = _provider_for_builtin_model(selected)
@@ -457,7 +467,7 @@ def custom_provider_for_configured_model(model_id: str, config: dict | None = No
 
 
 def builtin_provider_has_configured_key(model_id: str, config: dict | None = None) -> bool:
-    selected = _compact(model_id)
+    selected = normalize_deepseek_model_id(_compact(model_id))
     cfg = config if isinstance(config, dict) else load_config()
     provider = _provider_for_builtin_model(selected)
     if not provider:
@@ -469,7 +479,7 @@ def builtin_provider_has_configured_key(model_id: str, config: dict | None = Non
 def select_default_model(config: dict | None = None) -> str:
     cfg = config if isinstance(config, dict) else load_config()
     llm = _llm_settings(cfg)
-    configured = _compact(llm.get("default_model")) or DEFAULT_MODEL
+    configured = normalize_deepseek_model_id(_compact(llm.get("default_model"))) or DEFAULT_MODEL
     supported = all_supported_model_ids(cfg)
     if configured not in supported:
         configured = DEFAULT_MODEL
@@ -489,7 +499,7 @@ def select_default_model(config: dict | None = None) -> str:
 def route_for_model(model_id: str, config: dict | None = None) -> LlmRoute:
     cfg = config if isinstance(config, dict) else load_config()
     llm = _llm_settings(cfg)
-    selected = _compact(model_id) or select_default_model(cfg)
+    selected = normalize_deepseek_model_id(_compact(model_id)) or select_default_model(cfg)
     if selected not in all_supported_model_ids(cfg):
         raise LlmConfigurationError(f"不支持的文本模型：{selected}")
 
@@ -1257,7 +1267,7 @@ def generate_bala_video_prompt(
 ) -> tuple[str, LlmRoute]:
     """Generate a short-video prompt from selected Bala model images."""
 
-    selected_model_id = _compact(model_id) or BALA_VIDEO_PROMPT_DEFAULT_MODEL
+    selected_model_id = normalize_deepseek_model_id(_compact(model_id)) or BALA_VIDEO_PROMPT_DEFAULT_MODEL
     if selected_model_id not in bala_video_prompt_model_ids(config):
         raise LlmConfigurationError(f"不支持的视频 Prompt 视觉模型：{selected_model_id}")
     images = [_compact(item) for item in image_inputs if _compact(item)][:5]

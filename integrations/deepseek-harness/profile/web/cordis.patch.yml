@@ -30,7 +30,7 @@
 - id: agent-default-model
   config:
     provider: !!js process.env.CRAWSHRIMP_AGENT_PROVIDER ?? 'crawshrimp-deepseek-official'
-    model: !!js process.env.CRAWSHRIMP_AGENT_MODEL ?? 'deepseek-v4-flash'
+    model: !!js process.env.CRAWSHRIMP_AGENT_MODEL ?? 'deepseek-flash'
 
 - id: llm-pi-ai
   config:
@@ -41,28 +41,34 @@
         api: openai-completions
         baseURL: !!js process.env.CRAWSHRIMP_DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com'
         models:
-          - id: deepseek-v4-flash
-            contextWindow: 128000
-            maxTokens: 32768
-            input: [text]
+          - id: deepseek-flash
+            name: DeepSeek V4.1 Flash
+            contextWindow: 1000000
+            maxTokens: 393216
+            input: [text, image]
+            compat:
+              thinkingFormat: deepseek
+              supportsReasoningEffort: true
+              requiresReasoningContentOnAssistantMessages: true
             reasoningEfforts:
-              off:
+              off: off
               low: low
               high: high
               max: max
           - id: deepseek-v4-pro
-            contextWindow: 128000
-            maxTokens: 32768
+            name: DeepSeek V4 Pro
+            contextWindow: 1000000
+            maxTokens: 393216
             input: [text]
+            compat:
+              thinkingFormat: deepseek
+              supportsReasoningEffort: true
+              requiresReasoningContentOnAssistantMessages: true
             reasoningEfforts:
-              off:
+              off: off
               low: low
               high: high
               max: max
-          - id: deepseek-v4-flash-vision-exp
-            contextWindow: 128000
-            maxTokens: 32768
-            input: [text, image]
       crawshrimp-overseas-openai:
         displayName: 抓虾-海外 OpenAI
         apiKeyEnv: CRAWSHRIMP_OVERSEAS_OPENAI_API_KEY

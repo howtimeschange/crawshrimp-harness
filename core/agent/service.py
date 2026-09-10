@@ -629,8 +629,11 @@ def _dsh_llm_pi_ai_settings(
                 "maxTokens": int(cap.get("max_output_tokens") or 8192),
                 "input": list(cap.get("input_modalities") or ["text"]),
             }
-            if provider.get("official_deepseek") and model["input"] == ["text"]:
-                model["reasoningEfforts"] = {"off": None, "low": "low", "high": "high", "max": "max"}
+            if provider.get("official_deepseek"):
+                model["reasoningEfforts"] = {"off": "off", "low": "low", "high": "high", "max": "max"}
+            if provider.get("official_deepseek"):
+                model["name"] = "DeepSeek V4.1 Flash" if runtime_model_id == "deepseek-flash" else "DeepSeek V4 Pro"
+                model["compat"] = {"thinkingFormat": "deepseek", "supportsReasoningEffort": True, "requiresReasoningContentOnAssistantMessages": True}
             models.append(model)
         base_url = (
             _compact_text(llm.get(str(provider.get("base_url_key") or "")))
@@ -681,25 +684,13 @@ def _sync_dsh_default_model_settings(
     current = settings.get("agent-default-model")
     entry = dict(current) if isinstance(current, dict) else {}
     entry.update({"provider": provider_id, "model": runtime_model_id})
-    # DSH persists the complete default selection.  A previous text-only
-    # selection may carry `reasoningEffort: high`; carrying it into a vision
-    # route makes DeepSeek reject the first image turn.  The generated
-    # Crawshrimp catalog only exposes reasoning controls for text-only routes,
-    # so remove that stale field whenever the new model is multimodal.
-    runtime_is_multimodal = (
-        "image" in list(model_capabilities(runtime_model_id).get("input_modalities") or [])
-        # Official DeepSeek provider IDs are normalized before entering DSH,
-        # while the product capability table uses the `official` prefix.
-        or runtime_model_id.endswith("-vision-exp")
-    )
-    if runtime_is_multimodal:
-        entry.pop("reasoningEffort", None)
-    elif provider_id == "crawshrimp-deepseek-official" and runtime_model_id in (
-        "deepseek-v4-flash", "deepseek-v4-pro",
-    ):
-        # Default new/unconfigured text-model sessions to High. Explicit user
-        # selections (including off/low) remain authoritative across restarts.
+    # Official Flash supports thinking with both text and image input.
+    if provider_id == "crawshrimp-deepseek-official":
+        if runtime_model_id in ("deepseek-v4-flash", "deepseek-v4-flash-vision-exp"):
+            entry["model"] = "deepseek-flash"
         entry.setdefault("reasoningEffort", "high")
+    elif "image" in list(model_capabilities(runtime_model_id).get("input_modalities") or []):
+        entry.pop("reasoningEffort", None)
     settings["agent-default-model"] = entry
     settings["llm-pi-ai"] = _dsh_llm_pi_ai_settings(
         cfg if isinstance(cfg, dict) else {},

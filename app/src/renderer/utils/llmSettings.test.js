@@ -27,17 +27,16 @@ import {
 } from './llmSettings.mjs'
 
 test('LLM settings expose all configured gateway defaults and supported model ids', () => {
-  assert.equal(LLM_DEFAULTS['ai.llm.default_model'], 'deepseek-official-v4-flash')
+  assert.equal(LLM_DEFAULTS['ai.llm.default_model'], 'deepseek-official-flash')
   assert.equal(LLM_DEFAULTS['ai.llm.deepseek_base_url'], 'https://api.deepseek.com')
   assert.equal(LLM_DEFAULTS['ai.llm.glm_base_url'], GLM_OFFICIAL_BASE_URL_DEFAULT)
   assert.equal(DEEPSEEK_PLATFORM_URL, 'https://platform.deepseek.com/')
-  assert.equal(LLM_MODELS.length, 21)
+  assert.equal(LLM_MODELS.length, 20)
   assert.deepEqual(
     LLM_MODELS.map(item => item.value),
     [
-      'deepseek-official-v4-flash',
+      'deepseek-official-flash',
       'deepseek-official-v4-pro',
-      'deepseek-official-v4-flash-vision-exp',
       'glm-official-5.3-flash',
       'glm-official-5.3',
       'glm-official-5.2',
@@ -59,9 +58,8 @@ test('LLM settings expose all configured gateway defaults and supported model id
     ],
   )
   assert.deepEqual(DEEPSEEK_OFFICIAL_MODELS_UI.map(item => item.value), [
-    'deepseek-official-v4-flash',
+    'deepseek-official-flash',
     'deepseek-official-v4-pro',
-    'deepseek-official-v4-flash-vision-exp',
   ])
   assert.deepEqual(GLM_OFFICIAL_MODELS_UI.map(item => item.value), [
     'glm-official-5.3-flash',
@@ -91,11 +89,11 @@ test('DeepSeek official key is posted as its own field and cleared after write',
   assert.deepEqual(buildLlmSettingsPatch({
     [DEEPSEEK_API_KEY_FIELD]: 'sk-deepseek-unit',
     'ai.llm.deepseek_base_url': 'https://api.deepseek.com',
-    'ai.llm.default_model': 'deepseek-official-v4-flash',
+    'ai.llm.default_model': 'deepseek-official-flash',
   }), {
     [DEEPSEEK_API_KEY_FIELD]: 'sk-deepseek-unit',
     'ai.llm.deepseek_base_url': 'https://api.deepseek.com',
-    'ai.llm.default_model': 'deepseek-official-v4-flash',
+    'ai.llm.default_model': 'deepseek-official-flash',
   })
   const cfg = { [DEEPSEEK_API_KEY_FIELD]: 'sk-deepseek-unit' }
   clearWrittenLlmSettings(cfg, { [DEEPSEEK_API_KEY_FIELD]: 'sk-deepseek-unit' })
@@ -125,7 +123,7 @@ test('LLM settings patch is structured-clone safe when custom models are reactiv
   const cfg = reactive({
     [DEEPSEEK_API_KEY_FIELD]: 'sk-deepseek-unit',
     'ai.llm.deepseek_base_url': 'https://api.deepseek.com',
-    'ai.llm.default_model': 'deepseek-official-v4-flash',
+    'ai.llm.default_model': 'deepseek-official-flash',
     [LLM_CUSTOM_PROVIDERS_FIELD]: [
       {
         id: 'custom-reactive',
@@ -184,4 +182,11 @@ test('legacy shared gateway key fills all Semir provider configured states', () 
   for (const provider of LLM_BUILTIN_PROVIDERS.filter(item => item.legacyApiKeyField === LLM_API_KEY_FIELD)) {
     assert.equal(llmProviderConfigured(cfg, provider), true)
   }
+})
+
+test('saved official Flash defaults migrate without renaming gateway models', async () => {
+  const { normalizeDeepSeekModelId } = await import('./llmSettings.mjs')
+  assert.equal(normalizeDeepSeekModelId('deepseek-official-v4-flash'), 'deepseek-official-flash')
+  assert.equal(normalizeDeepSeekModelId('deepseek-official-v4-flash-vision-exp'), 'deepseek-official-flash')
+  assert.equal(normalizeDeepSeekModelId('deepseek-v4-flash'), 'deepseek-v4-flash')
 })

@@ -1048,6 +1048,7 @@ import {
   LLM_CUSTOM_PROVIDERS_FIELD,
   DEEPSEEK_PLATFORM_URL,
   LLM_DEFAULTS,
+  normalizeDeepSeekModelId,
   LLM_MASKED_CREDENTIAL_VALUE,
   LLM_PANEL_FIELDS,
   buildLlmSettingsPatch,
@@ -1746,6 +1747,7 @@ function flattenSettings(source, prefix = '', target = {}) {
 
 function normalizedSettings(raw) {
   const flat = flattenSettings(raw || {})
+  flat['ai.llm.default_model'] = normalizeDeepSeekModelId(flat['ai.llm.default_model'])
   if (!flat['ai.1xm.base_url']) flat['ai.1xm.base_url'] = 'https://one-xm-proxy.crawshrimp.com/v1'
   for (const [key, value] of Object.entries(LLM_DEFAULTS)) {
     if (!flat[key]) flat[key] = value

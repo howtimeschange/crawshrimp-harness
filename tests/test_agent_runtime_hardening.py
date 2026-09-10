@@ -1581,7 +1581,7 @@ def test_runtime_status_without_any_model_key_keeps_runtime_startable(monkeypatc
     monkeypatch.setattr("core.agent.service.load_config", lambda: {"ai": {"llm": {
         "api_key": "",
         "deepseek_api_key": "",
-        "default_model": "deepseek-official-v4-flash",
+        "default_model": "deepseek-official-flash",
     }}})
     monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
     monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
@@ -2304,14 +2304,14 @@ def test_dsh_web_profile_preserves_product_model_catalog_without_widening_text_o
     from core.agent.cordis_config import model_capabilities
 
     assert model_capabilities("gpt-5.5")["input_modalities"] == ["text", "image"]
-    assert model_capabilities("deepseek-official-v4-flash-vision-exp")["input_modalities"] == ["text", "image"]
+    assert model_capabilities("deepseek-official-flash")["input_modalities"] == ["text", "image"]
     assert model_capabilities("glm-official-5.3-flash")["input_modalities"] == ["text", "image"]
     assert "input_modalities" not in model_capabilities("deepseek-v4-pro")
 
     profile = (Path(__file__).resolve().parents[1] / "integrations" / "deepseek-harness" / "profile" / "web" / "cordis.patch.yml").read_text(encoding="utf-8")
     assert re.search(r"id: gpt-5\.5[\s\S]*input: \[text, image\]", profile)
     assert re.search(r"id: deepseek-v4-pro[\s\S]*input: \[text\]", profile)
-    assert re.search(r"id: deepseek-v4-flash-vision-exp[\s\S]*input: \[text, image\]", profile)
+    assert re.search(r"id: deepseek-flash[\s\S]*input: \[text, image\]", profile)
     assert re.search(r"crawshrimp-glm-official:[\s\S]*id: glm-official-5\.3-flash[\s\S]*input: \[text, image\]", profile)
 
 
@@ -2328,9 +2328,9 @@ def test_dsh_native_deepseek_route_is_hidden_in_favor_of_crawshrimp_route():
 def test_dsh_deepseek_official_models_expose_reasoning_efforts():
     profile_patch = (Path(__file__).resolve().parents[1] / "integrations" / "deepseek-harness" / "profile" / "web" / "cordis.patch.yml").read_text(encoding="utf-8")
     official_block = profile_patch.split("crawshrimp-deepseek-official:", 1)[1].split("crawshrimp-overseas-openai:", 1)[0]
-    flash_block = official_block.split("- id: deepseek-v4-flash", 1)[1].split("- id:", 1)[0]
+    flash_block = official_block.split("- id: deepseek-flash", 1)[1].split("- id:", 1)[0]
     pro_block = official_block.split("- id: deepseek-v4-pro", 1)[1].split("- id:", 1)[0]
-    vision_block = official_block.split("- id: deepseek-v4-flash-vision-exp", 1)[1]
+    vision_block = official_block.split("- id: deepseek-flash", 1)[1]
 
     assert "reasoning: high" not in official_block
     for block in (flash_block, pro_block):
@@ -2339,7 +2339,7 @@ def test_dsh_deepseek_official_models_expose_reasoning_efforts():
         assert "high: high" in block
         assert "max: max" in block
     assert "input: [text, image]" in vision_block
-    assert "reasoningEfforts" not in vision_block
+    assert "reasoningEfforts" in vision_block
 
 
 def test_dsh_runtime_settings_do_not_force_vision_models_to_text_reasoning_effort():
@@ -2347,13 +2347,13 @@ def test_dsh_runtime_settings_do_not_force_vision_models_to_text_reasoning_effor
 
     settings = _dsh_llm_pi_ai_settings({"ai": {"llm": {}}}, [])
     provider = settings["providers"]["crawshrimp-deepseek-official"]
-    flash = next(model for model in provider["models"] if model["id"] == "deepseek-v4-flash")
-    vision = next(model for model in provider["models"] if model["id"] == "deepseek-v4-flash-vision-exp")
+    flash = next(model for model in provider["models"] if model["id"] == "deepseek-flash")
+    vision = next(model for model in provider["models"] if model["id"] == "deepseek-flash")
 
     assert "reasoning" not in provider
     assert flash["reasoningEfforts"]["high"] == "high"
     assert vision["input"] == ["text", "image"]
-    assert "reasoningEfforts" not in vision
+    assert vision["reasoningEfforts"]["off"] == "off"
 
 
 def test_dsh_runtime_guard_checks_rc1_and_dsh_im_contracts_with_verified_source_overlay():
@@ -2370,7 +2370,7 @@ def test_dsh_runtime_guard_checks_rc1_and_dsh_im_contracts_with_verified_source_
     assert "model-setting.mjs" in patcher
     assert "patched: true" in patcher
     assert "CRAWSHRIMP_DEEPSEEK_VISION_BRIDGE_MARKER" in patcher
-    assert "deepseek-v4-flash-vision-exp" in patcher
+    assert "deepseek-flash" in patcher
     assert "当前 DeepSeek 文本模型应直接基于这些文字继续回答" in patcher
     assert "CRAWSHRIMP_DISABLE_NATIVE_WEB_TOOLS_MARKER" in patcher
     assert "CRAWSHRIMP_WORKSPACE_ACCESS_PROBE_MARKER" in patcher
@@ -2503,14 +2503,14 @@ def test_agent_default_model_prefers_deepseek_flash_when_key_is_configured(monke
         "ai": {"llm": {
             "api_key": "",
             "deepseek_api_key": "sk-ds-official-unit",
-            "default_model": "deepseek-official-v4-flash",
+            "default_model": "deepseek-official-flash",
         }}
     })
 
     service = service_mod.AgentService()
 
     assert service._resolve_model() == (
-        "deepseek-official-v4-flash",
+        "deepseek-official-flash",
         "crawshrimp-deepseek-official",
     )
 
@@ -2525,7 +2525,7 @@ def test_agent_default_model_falls_back_to_gateway_when_deepseek_key_missing(mon
         "ai": {"llm": {
             "api_key": "gateway-key",
             "deepseek_api_key": "",
-            "default_model": "deepseek-official-v4-flash",
+            "default_model": "deepseek-official-flash",
         }}
     })
 
@@ -2570,16 +2570,15 @@ def test_agent_models_endpoint_hides_unconfigured_gateway_models(monkeypatch):
         "ai": {"llm": {
             "api_key": "",
             "deepseek_api_key": "sk-ds-official-unit",
-            "default_model": "deepseek-official-v4-flash",
+            "default_model": "deepseek-official-flash",
         }}
     })
 
     model_ids = [item["model_id"] for item in agent_api.list_agent_models()["models"]]
 
     assert model_ids == [
-        "deepseek-official-v4-flash",
+        "deepseek-official-flash",
         "deepseek-official-v4-pro",
-        "deepseek-official-v4-flash-vision-exp",
     ]
 
 
@@ -2594,16 +2593,15 @@ def test_agent_models_endpoint_keeps_official_deepseek_first_when_all_keys_exist
         "ai": {"llm": {
             "api_key": "gateway-key",
             "deepseek_api_key": "sk-ds-official-unit",
-            "default_model": "deepseek-official-v4-flash",
+            "default_model": "deepseek-official-flash",
         }}
     })
 
     model_ids = [item["model_id"] for item in agent_api.list_agent_models()["models"]]
 
-    assert model_ids[:3] == [
-        "deepseek-official-v4-flash",
+    assert model_ids[:2] == [
+        "deepseek-official-flash",
         "deepseek-official-v4-pro",
-        "deepseek-official-v4-flash-vision-exp",
     ]
     assert "glm-official-5.3-flash" not in model_ids
 
@@ -2649,7 +2647,7 @@ def test_agent_model_catalog_endpoint_lists_configured_product_models(monkeypatc
             "llm": {
                 "api_key": "",
                 "deepseek_api_key": "sk-ds-official-unit",
-                "default_model": "deepseek-official-v4-flash",
+                "default_model": "deepseek-official-flash",
                 "custom_providers": [{
                     "id": "unit-custom",
                     "name": "Unit Custom",
@@ -2699,7 +2697,7 @@ def test_agent_model_catalog_endpoint_lists_configured_product_models(monkeypatc
     llm_models = {model["id"]: model for model in groups["llm"]["models"]}
     image_models = {model["id"]: model for model in groups["ai-image"]["models"]}
     video_models = {model["id"]: model for model in groups["ai-video"]["models"]}
-    assert llm_models["deepseek-official-v4-flash"]["default"] is True
+    assert llm_models["deepseek-official-flash"]["default"] is True
     assert llm_models["deepseek-official-v4-pro"]["configured"] is True
     assert llm_models["unit-model"]["provider"] == "unit-custom"
     assert image_models["gpt-image-2k"]["configured"] is True
@@ -2820,7 +2818,7 @@ def test_agent_start_generation_overwrites_stale_dsh_default_model_settings_with
         {"ai": {"llm": {
             "api_key": "",
             "deepseek_api_key": "sk-ds-official-unit",
-            "default_model": "deepseek-official-v4-flash",
+            "default_model": "deepseek-official-flash",
         }}},
     )
     settings_path = data_root / "agent" / "dsh-home" / "settings.yaml"
@@ -2839,10 +2837,10 @@ def test_agent_start_generation_overwrites_stale_dsh_default_model_settings_with
     assert asyncio.run(service.start_generation())
 
     assert calls["worker.start_generation"]["params"]["provider"] == "crawshrimp-deepseek-official"
-    assert calls["worker.start_generation"]["params"]["model"] == "deepseek-v4-flash"
+    assert calls["worker.start_generation"]["params"]["model"] == "deepseek-flash"
     settings = settings_path.read_text(encoding="utf-8")
     assert "provider: crawshrimp-deepseek-official" in settings
-    assert "model: deepseek-v4-flash" in settings
+    assert "model: deepseek-flash" in settings
     assert "keep: true" in settings
 
 
@@ -2860,7 +2858,7 @@ def test_agent_start_generation_exposes_deepseek_compatibility_aliases_only_in_r
             "api_key": "",
             "deepseek_api_key": "sk-ds-official-unit",
             "deepseek_base_url": "https://api.deepseek.example/v1",
-            "default_model": "deepseek-official-v4-flash",
+            "default_model": "deepseek-official-flash",
         }}},
     )
     service = service_mod.AgentService()
@@ -2887,7 +2885,7 @@ def test_agent_restart_uses_the_newly_saved_deepseek_key_instead_of_its_previous
     config = {"ai": {"llm": {
         "api_key": "",
         "deepseek_api_key": "sk-ds-before-save",
-        "default_model": "deepseek-official-v4-flash",
+        "default_model": "deepseek-official-flash",
     }}}
     calls, _harness_root, _data_root = _patch_agent_generation_runtime(
         monkeypatch, service_mod, tmp_path, config,
@@ -2914,7 +2912,7 @@ def test_dsh_settings_sync_writes_runtime_provider_profiles_without_secrets(tmp_
         "api_key": "legacy-gateway-key",
         "deepseek_api_key": "sk-ds-official-unit",
         "glm_api_key": "glm-unit-key",
-        "default_model": "deepseek-official-v4-flash",
+        "default_model": "deepseek-official-flash",
         "custom_providers": [{
             "id": "custom-1xm",
             "name": "1XM",
@@ -2930,7 +2928,7 @@ def test_dsh_settings_sync_writes_runtime_provider_profiles_without_secrets(tmp_
     service_mod._sync_dsh_default_model_settings(
         agent_dir,
         "crawshrimp-deepseek-official",
-        "deepseek-v4-flash",
+        "deepseek-flash",
         cfg,
         custom_profiles,
     )
@@ -2941,10 +2939,10 @@ def test_dsh_settings_sync_writes_runtime_provider_profiles_without_secrets(tmp_
 
     assert settings["agent-default-model"] == {
         "provider": "crawshrimp-deepseek-official",
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-flash",
         "reasoningEffort": "high",
     }
-    assert "deepseek-v4-flash" in [item["id"] for item in providers["crawshrimp-deepseek-official"]["models"]]
+    assert "deepseek-flash" in [item["id"] for item in providers["crawshrimp-deepseek-official"]["models"]]
     assert "glm-5.3-flash" in [item["id"] for item in providers["crawshrimp-glm-official"]["models"]]
     assert "deepseek-v4-flash" in [item["id"] for item in providers["crawshrimp-domestic-openai"]["models"]]
     assert "kimi-k3" in [item["id"] for item in providers["crawshrimp-domestic-openai"]["models"]]
@@ -2955,7 +2953,7 @@ def test_dsh_settings_sync_writes_runtime_provider_profiles_without_secrets(tmp_
     assert "custom-secret-key" not in text
 
 
-def test_dsh_settings_sync_clears_stale_reasoning_effort_for_vision_model(tmp_path):
+def test_dsh_settings_sync_preserves_reasoning_effort_for_flash_images(tmp_path):
     import yaml
     from core.agent import service as service_mod
 
@@ -2965,7 +2963,7 @@ def test_dsh_settings_sync_clears_stale_reasoning_effort_for_vision_model(tmp_pa
     settings_path.write_text(
         "agent-default-model:\n"
         "  provider: crawshrimp-deepseek-official\n"
-        "  model: deepseek-v4-flash\n"
+        "  model: deepseek-flash\n"
         "  reasoningEffort: high\n",
         encoding="utf-8",
     )
@@ -2973,7 +2971,7 @@ def test_dsh_settings_sync_clears_stale_reasoning_effort_for_vision_model(tmp_pa
     service_mod._sync_dsh_default_model_settings(
         agent_dir,
         "crawshrimp-deepseek-official",
-        "deepseek-v4-flash-vision-exp",
+        "deepseek-flash",
         {"ai": {"llm": {}}},
         [],
     )
@@ -2981,7 +2979,8 @@ def test_dsh_settings_sync_clears_stale_reasoning_effort_for_vision_model(tmp_pa
     settings = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
     assert settings["agent-default-model"] == {
         "provider": "crawshrimp-deepseek-official",
-        "model": "deepseek-v4-flash-vision-exp",
+        "model": "deepseek-flash",
+        "reasoningEffort": "high",
     }
 
 
@@ -3009,10 +3008,10 @@ def test_agent_start_generation_falls_back_from_unkeyed_gateway_model_to_deepsee
     assert asyncio.run(service.start_generation("crawshrimp-overseas-openai", "gpt-5.6-terra"))
 
     assert calls["worker.start_generation"]["params"]["provider"] == "crawshrimp-deepseek-official"
-    assert calls["worker.start_generation"]["params"]["model"] == "deepseek-v4-flash"
+    assert calls["worker.start_generation"]["params"]["model"] == "deepseek-flash"
     runtime_env = calls["worker_kwargs"]["runtime_env"]
     assert runtime_env["CRAWSHRIMP_AGENT_PROVIDER"] == "crawshrimp-deepseek-official"
-    assert runtime_env["CRAWSHRIMP_AGENT_MODEL"] == "deepseek-v4-flash"
+    assert runtime_env["CRAWSHRIMP_AGENT_MODEL"] == "deepseek-flash"
 
 
 def test_agent_start_generation_uses_custom_provider_for_duplicate_builtin_model(tmp_path, monkeypatch):
@@ -3030,7 +3029,7 @@ def test_agent_start_generation_uses_custom_provider_for_duplicate_builtin_model
         {"ai": {"llm": {
             "api_key": "",
             "deepseek_api_key": "",
-            "default_model": "deepseek-official-v4-flash",
+            "default_model": "deepseek-official-flash",
             "custom_providers": [{
                 "id": "custom-1xm",
                 "name": "1xm",
@@ -3091,7 +3090,7 @@ def test_agent_start_generation_missing_all_model_keys_launches_config_gate_runt
     assert service.crash_budget == []
 
 
-@pytest.mark.parametrize("model", ["deepseek-v4-flash", "deepseek-v4-pro"])
+@pytest.mark.parametrize("model", ["deepseek-flash", "deepseek-v4-pro"])
 @pytest.mark.parametrize("effort", [None, "off", "low", "high", "max"])
 def test_deepseek_text_default_high_preserves_explicit_effort(tmp_path, model, effort):
     import yaml
@@ -3260,3 +3259,21 @@ def test_web_file_return_requires_valid_lease_and_emits_image(tmp_path, monkeypa
         assert events[0][0] == 'artifact.created'
         assert events[0][1]['media_kind'] == 'image'
         assert events[0][1]['tool_call_id'] == 'send-run:send-call'
+
+
+def test_deepseek_flash_legacy_selection_migration_retains_explicit_thinking_off(tmp_path):
+    import yaml
+    from core.agent.service import _sync_dsh_default_model_settings
+    from core.agent.cordis_config import resolve_session_model_selection
+
+    cfg = {"ai": {"llm": {"deepseek_api_key": "unit-placeholder"}}}
+    for legacy in ("deepseek-v4-flash", "deepseek-v4-flash-vision-exp"):
+        assert resolve_session_model_selection("crawshrimp-deepseek-official", legacy, cfg) == (
+            "deepseek-official-flash", "crawshrimp-deepseek-official")
+    settings_path = tmp_path / "dsh-home" / "settings.yaml"
+    settings_path.parent.mkdir()
+    settings_path.write_text("agent-default-model:\n  reasoningEffort: 'off'\n")
+    _sync_dsh_default_model_settings(tmp_path, "crawshrimp-deepseek-official", "deepseek-v4-flash-vision-exp", cfg, [])
+    selected = yaml.safe_load(settings_path.read_text())["agent-default-model"]
+    assert selected["model"] == "deepseek-flash"
+    assert selected["reasoningEffort"] == "off"

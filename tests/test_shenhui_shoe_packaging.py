@@ -3708,7 +3708,7 @@ class ShenhuiShoePackagingRuleTests(unittest.TestCase):
                 "qwen3.7-plus",
                 "gpt-5.6-terra",
                 "kimi-k2.7-code",
-                "deepseek-official-v4-flash-vision-exp",
+                "deepseek-official-flash",
             ),
         )
         self.assertEqual(
@@ -9456,7 +9456,7 @@ class ShenhuiShoePackagingRuleTests(unittest.TestCase):
                 "gpt-5.6-terra",
                 "gpt-5.6-luna",
                 "gpt-5.5",
-                "deepseek-official-v4-flash-vision-exp",
+                "deepseek-official-flash",
                 "kimi-k2.7-code",
             ],
         )

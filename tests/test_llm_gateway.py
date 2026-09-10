@@ -88,12 +88,12 @@ class LlmGatewayTests(unittest.TestCase):
             flash = llm_gateway.route_for_model("deepseek-official-v4-flash", config)
             pro = llm_gateway.route_for_model("deepseek-official-v4-pro", config)
             vision = llm_gateway.route_for_model("deepseek-official-v4-flash-vision-exp", config)
-            self.assertEqual(flash.model_id, "deepseek-v4-flash")
+            self.assertEqual(flash.model_id, "deepseek-flash")
             self.assertEqual(flash.base_url, "https://api.deepseek.example")
             self.assertEqual(flash.api_key, "sk-ds-official-unit")
             self.assertEqual(flash.protocol, "openai")
             self.assertEqual(pro.model_id, "deepseek-v4-pro")
-            self.assertEqual(vision.model_id, "deepseek-v4-flash-vision-exp")
+            self.assertEqual(vision.model_id, "deepseek-flash")
             self.assertEqual(vision.base_url, "https://api.deepseek.example")
             self.assertEqual(vision.api_key, "sk-ds-official-unit")
             self.assertEqual(vision.protocol, "openai")
@@ -159,7 +159,7 @@ class LlmGatewayTests(unittest.TestCase):
         config["ai"]["llm"]["deepseek_api_key"] = "sk-ds-official-unit"
         with patch.dict(os.environ, {}, clear=True):
             route = llm_gateway.route_for_model("", config)
-        self.assertEqual(route.model_id, "deepseek-v4-flash")
+        self.assertEqual(route.model_id, "deepseek-flash")
         self.assertEqual(route.api_key, "sk-ds-official-unit")
 
     def test_default_model_falls_back_to_gateway_when_deepseek_key_is_missing(self):

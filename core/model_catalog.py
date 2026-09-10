@@ -92,7 +92,10 @@ def _llm_provider_maps(config: Mapping[str, Any]) -> tuple[dict[str, dict], dict
     for provider in BUILTIN_LLM_PROVIDERS:
         for model_id in provider.get("models") or ():
             providers_by_model.setdefault(str(model_id), provider)
-            labels_by_model.setdefault(str(model_id), str(model_id))
+            labels_by_model.setdefault(str(model_id), {
+                "deepseek-official-flash": "DeepSeek V4.1 Flash",
+                "deepseek-official-v4-pro": "DeepSeek V4 Pro",
+            }.get(str(model_id), str(model_id)))
     for provider in custom_llm_providers(dict(config), include_secrets=False):
         for model in provider.get("models") or []:
             model_id = _compact(model.get("id"))

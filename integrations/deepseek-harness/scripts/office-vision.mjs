@@ -9,7 +9,7 @@ export function patchOfficeMcpImageAdmissionSource(source) {
   return source.replace(anchor, `\t// ${marker}: the installed paired vision bridge also handles MCP page images.
 \tlet officeImageAllowed = info.inputModalities?.includes("image") === true;
 \tif (!officeImageAllowed && provider === "crawshrimp-deepseek-official" && (model === "deepseek-v4-flash" || model === "deepseek-v4-pro")) {
-\t\tconst vision = await llm.resolveModelInfo(provider, "deepseek-v4-flash-vision-exp", exec.signal);
+\t\tconst vision = await llm.resolveModelInfo(provider, "deepseek-flash", exec.signal);
 \t\tofficeImageAllowed = vision.inputModalities?.includes("image") === true;
 \t}
 \tif (!officeImageAllowed) throw new Error(\`model "\${model}" does not declare image input and no verified paired vision route is available\`);`)

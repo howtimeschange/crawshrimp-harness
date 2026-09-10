@@ -1,3 +1,4 @@
+import { patchDeepSeekFlash } from './deepseek-flash.mjs'
 /**
  * DSH rc.1 / dsh-im 4.11 clean-install guard.
  *
@@ -77,11 +78,15 @@ const PRODUCT_MODEL_ALIASES = new Map([
   ['v4pro', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-pro' }],
   ['deepseekv4pro', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-pro' }],
   ['deepseekofficialv4pro', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-pro' }],
-  ['v4flash', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash' }],
-  ['deepseekv4flash', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash' }],
-  ['deepseekofficialv4flash', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash' }],
-  ['deepseekv4flashvisionexp', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash-vision-exp' }],
-  ['deepseekofficialv4flashvisionexp', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash-vision-exp' }],
+  ['flash', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-flash' }],
+  ['deepseekflash', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-flash' }],
+  ['deepseekofficialflash', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-flash' }],
+  ['deepseekv41flash', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-flash' }],
+  ['v4flash', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-flash' }],
+  ['deepseekv4flash', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-flash' }],
+  ['deepseekofficialv4flash', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-flash' }],
+  ['deepseekv4flashvisionexp', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-flash' }],
+  ['deepseekofficialv4flashvisionexp', { provider: 'crawshrimp-deepseek-official', model: 'deepseek-flash' }],
   ['gpt5', { provider: 'crawshrimp-overseas-openai', model: 'gpt-5.5' }],
   ['gpt55', { provider: 'crawshrimp-overseas-openai', model: 'gpt-5.5' }],
 ]);
@@ -1839,7 +1844,7 @@ function patchPiAiDeepSeekVisionBridge(root) {
 \treturn images === void 0 ? textOnlyContext(options, onReplayDegrade) : toPiContextWithImages(options, images, onReplayDegrade);
 }
 const CRAWSHRIMP_DEEPSEEK_OFFICIAL_PROVIDER = "crawshrimp-deepseek-official";
-const CRAWSHRIMP_DEEPSEEK_VISION_MODEL = "deepseek-v4-flash-vision-exp";
+const CRAWSHRIMP_DEEPSEEK_VISION_MODEL = "deepseek-flash";
 function crawshrimpDeepSeekTextModelCanUseVisionBridge(provider, model) {
 \treturn provider === CRAWSHRIMP_DEEPSEEK_OFFICIAL_PROVIDER && (model === "deepseek-v4-flash" || model === "deepseek-v4-pro");
 }
@@ -2018,7 +2023,7 @@ export function patchDeepSeekReadImageSource(source) {
     `\t/* ${marker}: the installed Pi-AI bridge converts these image tool results through Vision. */
 \tif (active.inputModalities?.includes("image")) return;
 \tif (provider === "crawshrimp-deepseek-official" && (model === "deepseek-v4-flash" || model === "deepseek-v4-pro")) {
-\t\tconst vision = await llm.resolveModelInfo(provider, "deepseek-v4-flash-vision-exp", exec.signal);
+\t\tconst vision = await llm.resolveModelInfo(provider, "deepseek-flash", exec.signal);
 \t\tif (vision.inputModalities?.includes("image")) return;
 \t}
 \tthrow new Error(\`cannot read "\${requestedPath}" as an image: model "\${model}" does not declare image input; switch to an image-capable model to read images\`);`,
@@ -2243,6 +2248,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const deepseekVisionAdmission = patchDeepSeekVisionAdmission(root, deepseekVisionBridge)
   const deepseekReadImage = patchDeepSeekReadImage(root, deepseekVisionBridge)
   patchOfficeVision(root, deepseekVisionBridge)
+  patchDeepSeekFlash(root)
   const profilePackages = assertEffectiveProfileRootClosure(root)
   const standardPreset = assertStandardPresetRootClosure(root)
   const inboundTtl = requireText(

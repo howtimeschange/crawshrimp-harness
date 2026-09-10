@@ -461,12 +461,12 @@ SHOE_MAIN_TEMPLATE_CATEGORY_SLUGS: dict[str, str] = {
 SHOE_POSE_MULTI_MODEL_ID = "multi-model"
 SHOE_LABEL_OCR_MODEL = "gpt-5.6-sol"
 SHOE_POSE_DEFAULT_MODEL = "gpt-5.6-sol"
-SHOE_OFFICIAL_DEEPSEEK_VISION_MODEL = "deepseek-official-v4-flash-vision-exp"
+SHOE_OFFICIAL_DEEPSEEK_VISION_MODEL = "deepseek-official-flash"
 SHOE_POSE_DEFAULT_FALLBACK_MODELS: tuple[str, ...] = (
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "gpt-5.5",
-    "deepseek-official-v4-flash-vision-exp",
+    "deepseek-official-flash",
     "kimi-k2.7-code",
 )
 SHOE_LABEL_OCR_DEFAULT_MODEL_CHAIN: tuple[str, ...] = (
@@ -475,12 +475,11 @@ SHOE_LABEL_OCR_DEFAULT_MODEL_CHAIN: tuple[str, ...] = (
     "qwen3.7-plus",
     "gpt-5.6-terra",
     "kimi-k2.7-code",
-    "deepseek-official-v4-flash-vision-exp",
+    "deepseek-official-flash",
 )
 SHOE_FALLBACK_MODEL_LIMIT = 5
 SHOE_POSE_MODEL_CANDIDATES = (
-    "deepseek-official-v4-flash-vision-exp",
-    "deepseek-official-v4-flash",
+    "deepseek-official-flash",
     "deepseek-official-v4-pro",
     "glm-official-5.3-flash",
     "gpt-5.6-sol",
