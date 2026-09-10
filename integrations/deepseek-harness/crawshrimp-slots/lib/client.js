@@ -385,7 +385,7 @@ window.__ModuleLoader__.load({
     const BRAND_CSS = [
       // Hide legacy non-image cards; native links, produced-file chips and resources remain.
       '.cs-artifact-block:not(:has(img)) { display: none !important; }',
-      '.wSkVaW_header { padding-top: 6px; padding-bottom: 6px; }',
+      '.wSkVaW_header { height: 44px; min-height: 44px; box-sizing: border-box; padding-top: 6px; padding-bottom: 6px; }',
       '.cs-tool-group { min-width: 0; }',
       '.cs-tool-group-latest { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }',
       '.cs-tool-group-latest > [data-chat-flow-key] { flex: 1; min-width: 0; }',

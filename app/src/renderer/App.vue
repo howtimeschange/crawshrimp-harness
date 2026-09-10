@@ -11,6 +11,7 @@
     <!-- macOS keeps a native traffic-light/drag strip; Windows uses its OS titlebar. -->
     <div v-if="isMacTitlebar" class="titlebar" aria-hidden="true"></div>
     <DesktopStatusFooter
+      v-if="agentShellControlsVisible || currentView !== 'agent' || activeScript"
       class="shell-status-footer"
       :style="{ width: `${activeScript ? 168 : railWidth}px` }"
       :status="status"
@@ -83,6 +84,7 @@
           :resource-revision="resourceRevision"
           @nav-select="onAgentNavSelect"
           @rail-metrics="onRailMetrics"
+          @shell-controls-change="agentShellControlsVisible = $event"
           @session-nav="onSessionNav"
           @runtime-session="onRuntimeSession"
           @repair-core="repairCoreService"
@@ -348,6 +350,7 @@ function openAgentFromAutomation() {
 
 // 会话侧边栏宽度/折叠状态(覆盖层左偏移跟随;默认与 DSH 侧栏默认宽一致,
 // 即使消息全部丢失也不会压到菜单)
+const agentShellControlsVisible = ref(false)
 const railWidth = ref(280)
 function onRailMetrics(metrics) {
   if (!metrics) return
@@ -629,6 +632,7 @@ provide('repairCoreService', repairCoreService)
   --bg4: #292932;
   --dock-bg: color-mix(in srgb, var(--bg) 88%, #111827 12%);
   --border: #2e2e3a;
+  --agent-header-divider: #ffffff29;
   --border-strong: #484858;
   --text: #e2e0f0;
   --text2: #aaa8bd;
@@ -663,6 +667,7 @@ provide('repairCoreService', repairCoreService)
   --bg4: #e6e6e9;
   --dock-bg: #f2f2f4;
   --border: #d8d8de;
+  --agent-header-divider: #0000001f;
   --border-strong: #b9bac3;
   --text: #24242b;
   --text2: #565866;

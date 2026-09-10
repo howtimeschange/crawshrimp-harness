@@ -4,7 +4,7 @@
     <div
       class="web-body"
     >
-      <div class="web-frame-wrap" :style="{ marginRight: resourcesCompact ? '332px' : undefined }">
+      <div class="web-frame-wrap" :style="{ marginRight: frameReady && resourcesCompact ? '332px' : undefined }">
         <iframe
           v-if="webUrl"
           ref="frameEl"
@@ -79,7 +79,7 @@
           </section>
         </div>
       </div>
-      <SessionResources ref="resourcesPanel" @compact-change="resourcesCompact = $event" :session-id="activeRuntimeSessionId" :conversation-phase="activeConversationPhase" :revision="props.resourceRevision" @download-log="postToFrame({ __crawshrimp: 'download-session-log', runtimeSessionId: activeRuntimeSessionId })" />
+      <SessionResources v-if="frameReady" ref="resourcesPanel" @compact-change="resourcesCompact = $event" :session-id="activeRuntimeSessionId" :conversation-phase="activeConversationPhase" :revision="props.resourceRevision" @download-log="postToFrame({ __crawshrimp: 'download-session-log', runtimeSessionId: activeRuntimeSessionId })" />
     </div>
     <Teleport to="body">
       <div v-if="inlineLlmModalOpen" class="inline-llm-modal-backdrop" @click.self="closeInlineLlmModal">
@@ -178,11 +178,12 @@ const props = defineProps({
   resourceRevision: { type: Number, default: 0 },
 })
 
-const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav', 'runtime-session', 'repair-core', 'open-settings'])
+const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav', 'runtime-session', 'repair-core', 'open-settings', 'shell-controls-change'])
 
 const resourcesPanel = ref(null)
 const resourcesCompact = ref(false)
 const webUrl = ref('')
+const frameReady = ref(false)
 const error = ref('')
 const loading = ref(true)
 const recoverAttempts = ref(0)
@@ -588,6 +589,7 @@ function onWindowMessage(event) {
   } else if (data.__crawshrimp === 'workspace-directory-pick') {
     handleWorkspaceDirectoryPick(data)
   } else if (data.__crawshrimp === 'workspace-ready') {
+    frameReady.value = true
     // The slots client registers after the iframe's initial load event. Replay
     // the default workspace only after it explicitly confirms that its
     // postMessage listener is ready, so first launch cannot lose the binding.
@@ -813,6 +815,16 @@ watch(() => [props.navItems, props.activeNav], () => {
 watch(() => props.appVersion, () => {
   pushAppVersion()
 })
+
+// A runtime URL alone does not mean the embedded conversation UI is ready.
+watch(frameSrc, () => {
+  frameReady.value = false
+  resourcesCompact.value = false
+}, { flush: 'sync' })
+
+watch(() => frameReady.value || isRuntimeNeedsConfiguration.value || runtimeNeedsAttention.value || isRuntimeDisabled.value, (visible) => {
+  emit('shell-controls-change', visible)
+}, { immediate: true })
 
 watch(showFallbackNav, (visible) => {
   if (visible) emit('rail-metrics', { width: 280, collapsed: false })

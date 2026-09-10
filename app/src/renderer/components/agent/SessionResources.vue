@@ -1,9 +1,11 @@
 <template>
+  <div v-if="!opened || !selection" class="session-header-actions" :class="{ 'extends-divider': compactOpen }">
   <button v-if="!opened || !selection" class="session-export-button export-log" type="button" :disabled="!sessionId" aria-label="导出会话日志" data-tooltip="导出会话日志" @click="error = ''; $emit('download-log')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg></button>
   <button v-if="!opened || !selection" class="session-panel-toggle" type="button" :title="opened ? '收起会话资源' : '展开会话资源'" :aria-label="opened ? '收起会话资源' : '展开会话资源'" :aria-expanded="opened" @click="togglePanel">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M15 4v16" /></svg>
     <small v-if="unseen" class="unseen-count">{{ unseen }}</small>
   </button>
+  </div>
   <aside v-if="opened" class="session-resources" :class="{ viewing: selection, maximized, compact: !selection }" :style="{ width: maximized ? undefined : selection ? `${width}px` : '300px' }" aria-label="会话资源">
     <div v-if="selection && !maximized" class="resource-resizer" role="separator" aria-label="调整会话面板宽度" aria-orientation="vertical" :aria-valuenow="Math.round(width)" :aria-valuemin="320" :aria-valuemax="900" tabindex="0" @pointerdown="resize" @keydown.left.prevent="adjustWidth(20)" @keydown.right.prevent="adjustWidth(-20)"></div>
     <div class="resource-card">
@@ -258,6 +260,12 @@ onUnmounted(() => { browserTransition++; window.removeEventListener('resize', on
 </script>
 
 <style scoped>
+/* Match the embedded conversation header, including its bottom divider. */
+.session-header-actions{position:absolute;right:0;top:0;height:44px;box-sizing:border-box;z-index:20;display:flex;align-items:center;justify-content:flex-end;gap:6px;padding:0 16px;border-bottom:1px solid transparent}
+.session-header-actions.extends-divider{width:332px}
+/* DSH header uses a half-pixel pseudo-element above its transparent border. */
+.session-header-actions.extends-divider::after{content:"";position:absolute;left:0;right:0;bottom:1px;height:.5px;background:var(--agent-header-divider);pointer-events:none}
+.session-header-actions .session-export-button,.session-header-actions .session-panel-toggle{position:relative;top:auto;right:auto;flex:none}
 .session-panel-toggle{position:absolute;right:16px;top:14px;z-index:20;width:32px;height:32px;border:0;border-radius:7px;background:transparent;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:6px}
 .session-panel-toggle:hover{background:var(--bg2)}.unseen-count{position:absolute;right:-3px;top:-3px;min-width:14px;height:14px;border-radius:7px;background:var(--orange,#ff6b2b);color:white;font-size:9px;line-height:14px;text-align:center}
 .session-resources{position:relative;flex-shrink:0;max-width:70%;min-width:280px;display:flex;flex-direction:column;background:var(--bg);border-left:1px solid var(--border);padding-top:0;min-height:0;color:var(--text);font-size:13px}
