@@ -19,6 +19,8 @@ import {
 } from './stage-runtime-platform.mjs'
 import { buildImageGenerationEffect } from './build-image-generation-effect.mjs'
 import { patchRuntimeDependencies } from './patch-runtime-dependencies.mjs'
+import { dwsReleasePath, stageDwsRuntime } from './stage-dws-runtime.mjs'
+import { patchBmallHelpExit } from './builtin-cli-patches.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const sourceRoot = resolve(here, '..')
@@ -54,6 +56,9 @@ const CLI_NODE_SKILL_RUNTIMES = [
 ]
 
 const REQUIRED_SKILL_SOURCE_FILES = [
+  [sourceRoot, 'skills/dws/SKILL.md'],
+  [sourceRoot, 'skills/dws/LICENSE'],
+  [repoRoot, 'skills/cli/manifest.json'],
   [sourceRoot, 'skills/dont-stop/SKILL.md'],
   [sourceRoot, 'skills/crawshrimp-skill/SKILL.md'],
   [sourceRoot, 'skills/web-automation-skill/SKILL.md'],
@@ -66,6 +71,14 @@ const REQUIRED_SKILL_SOURCE_FILES = [
   ...CLI_NODE_SKILL_RUNTIMES.map(({ directory }) => [repoRoot, `skills/cli/${directory}/package.json`]),
 ]
 const required = [
+  'worker/builtin-runtime.cjs',
+  'skills/dws/SKILL.md',
+  'skills/dws/UPSTREAM.md',
+  'skills/cli/manifest.json',
+  `skills/cli/dws/bin/${target.platform === 'win32' ? 'dws.exe' : 'dws'}`,
+  'skills/cli/dws/runtime.json',
+  'skills/cli/dws/LICENSE',
+  'skills/cli/dws/NOTICE',
   markerName,
   'package.json',
   'node_modules/@deepseek-ai/dsh/package.json',
@@ -230,9 +243,15 @@ function buildCliSkillRuntimes(cliDest) {
     rmSync(join(skillRoot, 'node_modules'), { recursive: true, force: true })
     rmSync(join(skillRoot, 'dist'), { recursive: true, force: true })
     if (spec.packageManager === 'pnpm') {
-      runCliBuild('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], skillRoot)
+      // afterPack materializes directory links. pnpm's isolated layout relies
+      // on the original realpath to find sibling transitive dependencies;
+      // a hoisted production tree remains executable after that relocation.
+      runCliBuild('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts', '--config.node-linker=hoisted'], skillRoot)
       runCliBuild('pnpm', ['run', 'build'], skillRoot)
-      runCliBuild('pnpm', ['prune', '--prod', '--ignore-scripts'], skillRoot)
+      // Reinstall only the production graph from the store populated above.
+      // pnpm prune can fetch unrelated optional dev artifacts in hoisted mode.
+      rmSync(join(skillRoot, 'node_modules'), { recursive: true, force: true })
+      runCliBuild('pnpm', ['install', '--prod', '--offline', '--frozen-lockfile', '--ignore-scripts', '--config.node-linker=hoisted'], skillRoot)
     } else {
       runCliBuild('npm', ['ci', '--ignore-scripts'], skillRoot)
       runCliBuild('npm', ['run', 'build'], skillRoot)
@@ -240,6 +259,10 @@ function buildCliSkillRuntimes(cliDest) {
     }
     if (!existsSync(join(skillRoot, spec.entry)) || !existsSync(join(skillRoot, 'node_modules'))) {
       fail(`CLI 技能包生产产物不完整: ${spec.directory}`)
+    }
+    if (spec.directory === 'bmall-cli') {
+      const entry = join(skillRoot, spec.entry)
+      writeFileSync(entry, patchBmallHelpExit(readFileSync(entry, 'utf8')))
     }
   }
 }
@@ -257,6 +280,9 @@ const hashInputs = [
   hashTree(profileSource),
   readFileSync(fileURLToPath(import.meta.url)),
   readFileSync(join(here, 'patch-runtime-dependencies.mjs')),
+  readFileSync(join(here, 'stage-dws-runtime.mjs')),
+  readFileSync(join(here, 'builtin-cli-patches.mjs')),
+  readFileSync(dwsReleasePath),
   readFileSync(join(here, 'office-vision.mjs')),
   readFileSync(join(here, 'configured-model-catalog.mjs')),
   readFileSync(join(here, 'currency-math.mjs')),
@@ -287,8 +313,13 @@ if (force || current !== fingerprint) {
     if (existsSync(source)) copyDir(source, join(stageRoot, name))
   }
   const cliDest = join(stageRoot, 'skills', 'cli')
+  // skills/cli is sourced exclusively from the pinned top-level CLI tree.
+  // A legacy copy under integration skills must not leave obsolete SDK jars
+  // or modules behind when the authoritative tree is overlaid.
+  rmSync(cliDest, { recursive: true, force: true })
   copyDir(cliSource, cliDest)
   buildCliSkillRuntimes(cliDest)
+  await stageDwsRuntime({ cliRoot: cliDest, cacheRoot: join(repoRoot, 'build-staging', 'dws-cache'), target })
   stageProfile()
   patchRuntimeDependencies(stageRoot)
   writeFileSync(join(stageRoot, markerName), JSON.stringify(target, null, 2) + '\n')

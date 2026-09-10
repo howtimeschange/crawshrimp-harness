@@ -1479,8 +1479,17 @@ def _skill_roots() -> list[Path]:
 
 
 def _skill_list_files(root: Path) -> list[dict]:
+    import os
     entries = []
-    for p in sorted(root.rglob("*")):
+    candidates = []
+    for directory, dirs, files in os.walk(root):
+        # Production CLI node_modules contain thousands of files. They are
+        # executable dependencies, not skill documentation; prune before walking.
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".")
+                         and d not in ("node_modules", "__pycache__")
+                         and not (Path(directory) == root and d == "cli"))
+        candidates.extend(Path(directory) / name for name in sorted(files))
+    for p in sorted(candidates):
         if not p.is_file():
             continue
         relative = p.relative_to(root)
@@ -1500,6 +1509,36 @@ def _skill_list_files(root: Path) -> list[dict]:
     return entries
 
 
+def _builtin_cli_catalog() -> dict:
+    import os
+    import sys
+    from core.agent.worker import resolve_harness_root
+    harness = resolve_harness_root()
+    configured = os.environ.get("CRAWSHRIMP_CLI_ROOT", "").strip()
+    cli_root = Path(configured) if configured else harness / "skills" / "cli"
+    if not configured and (harness / "scripts" / "stage-runtime.mjs").is_file():
+        import platform
+        target_os = {"darwin": "darwin", "win32": "win32"}.get(sys.platform, "linux")
+        arch = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x64"
+        staged = harness.parent.parent / "build-staging" / "deepseek-harness" / f"{target_os}-{arch}" / "skills" / "cli"
+        if (staged / "manifest.json").is_file():
+            cli_root = staged
+    cli_root = cli_root.resolve()
+    entries = []
+    try:
+        manifest = json.loads((cli_root / "manifest.json").read_text(encoding="utf-8"))
+        for spec in manifest.get("clis", []):
+            directory = (cli_root / spec["directory"]).resolve()
+            relative = spec.get("windows_entry", spec["entry"]) if sys.platform == "win32" else spec["entry"]
+            entry = (directory / relative).resolve()
+            directory.relative_to(cli_root)
+            entry.relative_to(directory)
+            entries.append({**spec, "path": str(directory), "entry_path": str(entry), "ready": entry.is_file()})
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return {"cli_root": str(cli_root), "clis": entries}
+
+
 def tool_skill_list() -> dict:
     guard = _require_run()
     if guard:
@@ -1511,10 +1550,12 @@ def tool_skill_list() -> dict:
     for root in roots:
         for item in _skill_list_files(root):
             files_by_path.setdefault(item["path"], item)
-    files = sorted(files_by_path.values(), key=lambda item: item["path"])
+    # Put every entrypoint ahead of long reference trees in the bounded list.
+    files = sorted(files_by_path.values(), key=lambda item: (not item["path"].endswith("/SKILL.md"), item["path"]))
     packs = sorted({f["path"].split("/")[0] for f in files})
     primary_root = _skill_root() or roots[0]
-    return _ok({"root": str(primary_root), "packs": packs, "files": files[:200], "total": len(files)})
+    return _ok({"root": str(primary_root), "roots": [str(root) for root in roots],
+                "packs": packs, "files": files[:200], "total": len(files), **_builtin_cli_catalog()})
 
 
 def tool_skill_read(path: str, max_chars: int = 12000) -> dict:
@@ -2942,7 +2983,7 @@ def create_agent_mcp_server() -> MCPServer:
     mcp.add_tool(tool_script_publish, name="script_publish",
                  description="请求把已校验适配包安装到抓虾脚本库；仅在 DSH 原生对话确认后直接安全安装")
     mcp.add_tool(tool_script_test, name="script_test", description="草稿测试(内容校验;完整 dry-run 后续版本)")
-    mcp.add_tool(tool_skill_list, name="skill_list", description="列出打包进项目的抓虾内置技能包,包括网页自动化、适配器编写、CLI、视频转写/抓取、Banner、电商图和命理分析等")
+    mcp.add_tool(tool_skill_list, name="skill_list", description="发现内置技能与 CLI：返回 skill 的 root/roots、SKILL.md 入口，以及 cli_root/clis 的绝对路径、运行入口、运行时、ready 状态和对应 skill。包括 DWS 钉钉、电商 CLI、网页自动化、办公与内容技能")
     mcp.add_tool(tool_skill_read, name="skill_read", description="读取技能包文档/参考内容;返回 absolute_path/root,执行技能内 scripts/tools 前先 cd 到该 skill 目录")
     mcp.add_tool(tool_attachment_read, name="attachment_read", description="读取用户上传的附件(文本/表格预览;图片返回元数据)")
     mcp.add_tool(tool_fs_read, name="fs_read", description="读取本机任意文本文件(用户已授权智能体全盘读取;大文件/二进制受限)")

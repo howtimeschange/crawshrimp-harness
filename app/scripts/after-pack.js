@@ -61,6 +61,13 @@ const REQUIRED_VIDEO_INTEGRATION_FILES = [
 ]
 
 const REQUIRED_DEEPSEEK_HARNESS_FILES = [
+  'worker/builtin-runtime.cjs',
+  'skills/dws/SKILL.md',
+  'skills/dws/LICENSE',
+  'skills/cli/manifest.json',
+  'skills/cli/dws/runtime.json',
+  'skills/cli/dws/LICENSE',
+  'skills/cli/dws/NOTICE',
   'package.json',
   'node_modules/@deepseek-ai/dsh/lib/bin.js',
   'node_modules/@deepseek-ai/dsh-web-app/package.json',
@@ -255,6 +262,13 @@ function requireDeepseekHarnessBundle(resourcesPath, expectedTarget = {}) {
     )
   }
   if (expectedTarget.platform && expectedTarget.arch) {
+    const dwsRoot = path.join(bundleRoot, 'skills', 'cli', 'dws')
+    const dwsBinary = path.join(dwsRoot, 'bin', expectedTarget.platform === 'win32' ? 'dws.exe' : 'dws')
+    if (!fs.existsSync(dwsBinary)) throw new Error(`[after-pack] DWS executable missing: ${dwsBinary}`)
+    const dws = JSON.parse(fs.readFileSync(path.join(dwsRoot, 'runtime.json'), 'utf8'))
+    if (dws.target?.platform !== expectedTarget.platform || dws.target?.arch !== expectedTarget.arch) {
+      throw new Error('[after-pack] DWS target does not match package target')
+    }
     requireNativeRuntimePackages(bundleRoot, expectedTarget)
   }
 }

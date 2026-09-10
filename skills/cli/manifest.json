@@ -1,0 +1,10 @@
+{
+  "clis": [
+    { "name": "dws", "directory": "dws", "runtime": "native", "entry": "bin/dws", "windows_entry": "bin/dws.exe", "skill": "dws/SKILL.md", "executable_env": "CRAWSHRIMP_DWS_EXECUTABLE" },
+    { "name": "bmall", "directory": "bmall-cli", "runtime": "node", "entry": "dist/cli.js", "skill": "cli-bmall/SKILL.md" },
+    { "name": "deepdraw", "directory": "DeepDrawCLI", "runtime": "node", "entry": "dist/cli/main.js", "skill": "cli-deepdraw/SKILL.md" },
+    { "name": "semir-yunpan", "directory": "semir-yunpan-cli", "runtime": "node", "entry": "dist/cli.js", "skill": "cli-semir-yunpan/SKILL.md" },
+    { "name": "tmall", "directory": "tmall-cli", "runtime": "node", "entry": "dist/cli.js", "skill": "cli-tmall/SKILL.md" },
+    { "name": "vipshop-hot-strategy", "directory": "vipshop-hot-strategy-agent", "runtime": "python", "entry": "src/vipshop_hot_strategy_agent/cli.py", "module": "vipshop_hot_strategy_agent.cli", "skill": "cli-vipshop-hot-strategy/SKILL.md" }
+  ]
+}

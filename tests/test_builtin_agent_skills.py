@@ -54,6 +54,7 @@ BUILTIN_GENERAL_SKILLS = {
 }
 
 EXPECTED_TOP_LEVEL_SKILL_PACKS = {
+    "dws",
     *BUILTIN_GENERAL_SKILLS,
     "cli-bmall",
     "cli-deepdraw",
@@ -66,6 +67,40 @@ EXPECTED_TOP_LEVEL_SKILL_PACKS = {
     "dont-stop",
     "web-automation-skill",
 }
+
+
+def test_cli_catalog_reports_relocated_entrypoints_and_missing_binaries(monkeypatch, tmp_path):
+    import json
+    installed = tmp_path / "抓虾 Resources" / "skills"
+    cli = installed / "cli"
+    cli.mkdir(parents=True)
+    shutil.copy(ROOT / "skills/cli/manifest.json", cli / "manifest.json")
+    binary = cli / "dws/bin/dws"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"fixture")
+    (binary.parent / "dws.exe").write_bytes(b"fixture")
+    monkeypatch.setenv("CRAWSHRIMP_CLI_ROOT", str(cli))
+    monkeypatch.setenv("CRAWSHRIMP_SKILL_ROOT", str(SKILLS_ROOT))
+    previous = _with_active_run()
+    try:
+        result = mcp_gateway.tool_skill_list()["data"]
+    finally:
+        mcp_gateway.ctx.active_run = previous
+    assert result["cli_root"] == str(cli)
+    dws = next(item for item in result["clis"] if item["name"] == "dws")
+    assert dws["ready"] is True
+    assert Path(dws["entry_path"]).is_file()
+    assert next(item for item in result["clis"] if item["name"] == "tmall")["ready"] is False
+    assert "dws/SKILL.md" in {item["path"] for item in result["files"]}
+
+
+def test_skill_listing_prunes_cli_dependencies_and_keeps_entrypoints_visible(monkeypatch, tmp_path):
+    for relative in ("dws/SKILL.md", "dws/references/help.md", "cli/node_modules/pkg/README.md", "node_modules/pkg/README.md"):
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("content")
+    paths = {item["path"] for item in mcp_gateway._skill_list_files(tmp_path)}
+    assert paths == {"dws/SKILL.md", "dws/references/help.md"}
 
 
 def _with_active_run():

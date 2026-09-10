@@ -36,6 +36,8 @@
 
 - id: skill-filesystem
   name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    bundledSkillDir: !!js process.env.CRAWSHRIMP_SKILL_ROOT ?? process.env.DSH_BUNDLED_SKILL_DIR
 
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'

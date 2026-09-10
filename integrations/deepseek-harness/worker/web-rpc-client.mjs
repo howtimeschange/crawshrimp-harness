@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import WebSocket from 'ws'
+import builtinRuntime from './builtin-runtime.cjs'
 
 const PROFILE_FILES = ['cordis.yml', 'cordis.patch.yml', 'pnpm-workspace.yaml']
 const PRODUCT_PRESET_FILES = [
@@ -248,8 +249,7 @@ export class DshWebRuntime {
     ], {
       cwd,
       env: {
-        ...process.env,
-        ...env,
+        ...builtinRuntime.builtinRuntimeEnvironment({ runtimeRoot: root, env: { ...process.env, ...env } }),
         ELECTRON_RUN_AS_NODE: '1',
         DSH_HOME: dshHome,
         DSH_TELEMETRY_DISABLED: process.env.DSH_TELEMETRY_DISABLED || '1',
