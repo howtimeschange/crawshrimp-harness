@@ -181,6 +181,26 @@ jobs:
             node scripts/stage-office-runtime.mjs "${target}"
           done
 
+      - name: Verify staged native Office runtime
+        shell: bash
+        env:
+          PYTHON_TARGETS: ${{ matrix.python_target }}
+        run: |
+          python - <<'PYTHON'
+          import os, subprocess
+          from pathlib import Path
+          root = Path.cwd()
+          for target in os.environ["PYTHON_TARGETS"].split(","):
+              executable = root / "app/python-dist" / target / ("python.exe" if target == "win-x64" else "bin/python3")
+              output = root / "build-staging/office-smoke" / target
+              env = dict(os.environ)
+              for key in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "CRAWSHRIMP_RESOURCES_ROOT", "CRAWSHRIMP_OFFICE_CHILD"):
+                  env.pop(key, None)
+              env.update(CRAWSHRIMP_PYTHON_EXECUTABLE=str(executable), CRAWSHRIMP_OFFICE_ROOT=str(root / "build-staging/office" / target),
+                         MPLBACKEND="Agg", MPLCONFIGDIR=str(output / "mpl-cache"), PYTHONUTF8="1", PYTHONNOUSERSITE="1")
+              subprocess.run([str(executable), str(root / "core/office/cli.py"), "smoke", str(output)], env=env, check=True)
+          PYTHON
+
       - name: Prepare Electron dist
         if: matrix.artifact_suffix == 'mac'
         working-directory: app
@@ -472,6 +492,17 @@ jobs:
           printf 'Uploading release assets to %s:\n' "${GITHUB_REF_NAME}"
           printf ' - %s\n' "${release_assets[@]}"
           gh release upload "${GITHUB_REF_NAME}" "${release_assets[@]}" --clobber
+
+      - name: Preserve failed Office smoke evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: office-smoke-${{ matrix.artifact_suffix }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            build-staging/office-smoke/**
+            app/dist/**/office-smoke-*/**
 
   prepare-version-release:
     name: Prepare Versioned GitHub Release

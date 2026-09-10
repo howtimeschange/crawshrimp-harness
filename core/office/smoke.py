@@ -47,7 +47,11 @@ def check(output: Path) -> dict:
             wanted_pages = 5 if source.suffix == ".pptx" else 3
             if (result["validation"]["status"] != "passed" or len(result["pages"]) != wanted_pages
                     or not any("SourceHanSansSC" in font for font in result["fonts"])):
-                raise OfficeError("OFFICE_SMOKE_FAILED", f"{source.name}: content/pages/fonts mismatch")
+                raise OfficeError("OFFICE_SMOKE_FAILED", json.dumps({
+                    "document": source.name, "validation": result["validation"],
+                    "expected_pages": wanted_pages, "actual_pages": len(result["pages"]),
+                    "fonts": result["fonts"], "report": str(output / "report.json"),
+                }, ensure_ascii=False))
         # Exercise shipped design helpers and template fidelity with the copied Python.
         # The rendered starter checks above remain an independent pagination/font gate.
         from .design_samples import generate_samples
