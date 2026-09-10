@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import copy
+import csv
+import io
 import functools
 import inspect
 import json
@@ -1203,12 +1205,17 @@ def _build_text_preview(text: str, filename: str, artifact_id: int) -> dict:
         truncated = True
     else:
         truncated = False
-    lines = text.splitlines()[:PREVIEW_MAX_ROWS]
-    if len(lines) > PREVIEW_MAX_ROWS:
-        truncated = True
-    header = lines[0] if lines else ""
-    cells = header.split(",") if "," in header else []
-    masked = _mask_columns(cells, lines[1:PREVIEW_MAX_ROWS])
+    # Parse records, not physical lines: quoted CSV fields may contain newlines.
+    delimiter = "\t" if filename.lower().endswith(".tsv") else ","
+    records = csv.reader(io.StringIO(text, newline=""), delimiter=delimiter)
+    header = next(records, [])
+    rows = []
+    for row in records:
+        if len(rows) >= PREVIEW_MAX_ROWS:
+            truncated = True
+            break
+        rows.append(row)
+    masked = _mask_columns(header, rows)
     return _ok({
         "artifact_id": artifact_id,
         "filename": filename,
@@ -2808,7 +2815,7 @@ EXPECTED_TOOLS = [
     "data_analyze", "data_export",
     "skill_list", "skill_read",
     "office_runtime_info", "office_run", "office_render", "office_job", "office_validate",
-    "office_preview_read", "office_review_record",
+    "office_preview_read", "office_review_record", "office_deliver",
     "attachment_read",
     "fs_read", "fs_list", "fs_write", "fs_exec",
     "image_generate", "image_assets", "video_generate", "video_assets",

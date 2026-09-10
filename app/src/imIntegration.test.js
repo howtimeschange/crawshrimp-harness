@@ -1153,10 +1153,10 @@ test('worker cancellation and safety budgets use the shared Session cancellation
 test('Crawshrimp automation receipt bridge appends one balanced native DSH turn', async () => {
   const bridgeUrl = pathToFileURL(resolve(harnessRoot, 'crawshrimp-product-bridge/lib/index.js'))
   const bridge = await import(`${bridgeUrl.href}?automation-receipt-merge-test=${Date.now()}`)
-  const events = []
+  const events = [{ type: 'turn/start', data: { turn: 8 } }, { type: 'turn/end', data: { turn: 8 } }]
   const session = {
     id: 'dsh-source',
-    events,
+    snapshotEvents: () => Object.freeze([...events]),
     append(type, data, options = {}) {
       const event = { type, data, ...options }
       events.push(event)
@@ -1179,11 +1179,12 @@ test('Crawshrimp automation receipt bridge appends one balanced native DSH turn'
     text: '本地自动化验收已完成',
   })
 
-  assert.deepEqual(events.map((event) => event.type), [
+  assert.deepEqual(events.slice(2).map((event) => event.type), [
     'turn/start', 'step/start', 'assistant/message', 'step/end', 'turn/end',
   ])
-  assert.equal(events[2].data.message.content[0].text, '本地自动化验收已完成')
-  assert.equal(events[2].data.message.source.provider, 'crawshrimp-automation')
+  assert.equal(events[4].data.message.content[0].text, '本地自动化验收已完成')
+  assert.equal(events[4].data.message.source.provider, 'crawshrimp-automation')
+  assert.equal(events[2].data.turn, 9)
   assert.equal(first.appended, true)
   assert.equal(repeated.appended, false)
 })

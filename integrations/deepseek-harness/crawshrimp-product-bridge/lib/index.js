@@ -563,7 +563,7 @@ function sessionPermissionPayload(ctx, agent) {
   if (!service) {
     return { ok: false, status: 501, error: { code: 'unsupported', message: 'session permission service is unavailable' } }
   }
-  const preset = service.current(agent.session.events)
+  const preset = service.current(agent.session.snapshotEvents())
   return {
     ok: true,
     status: 200,
@@ -608,7 +608,7 @@ export async function setCrawshrimpSessionPermission(ctx, body) {
   if (agent === undefined) {
     return { ok: false, status: 409, error: { code: 'NO_LIVE_AGENT', message: 'No live agent for this session' } }
   }
-  const previous = service.current(agent.session.events)
+  const previous = service.current(agent.session.snapshotEvents())
   if (typeof service.apply === 'function' && typeof ctx?.approval?.setPolicy === 'function') {
     service.apply(agent.session, preset, (policy) => {
       ctx.approval.setPolicy(agent, policy)
@@ -616,7 +616,7 @@ export async function setCrawshrimpSessionPermission(ctx, body) {
   } else {
     service.set(agent.session, preset)
   }
-  const current = service.current(agent.session.events)
+  const current = service.current(agent.session.snapshotEvents())
   if (current !== preset) {
     return {
       ok: false,
@@ -813,7 +813,7 @@ export async function appendCrawshrimpAutomationReceipt(ctx, body) {
         return { ok: false, status: 409, error: { code: 'NO_LIVE_AGENT', message: 'No live or resumable agent for this session' } }
       }
       const session = agent.session
-      const events = Array.isArray(session?.events) ? session.events : []
+      const events = typeof session?.snapshotEvents === 'function' ? session.snapshotEvents() : (Array.isArray(session?.events) ? session.events : [])
       const model = receiptModel(receiptId)
       const existing = events.find((event) => (
         event?.type === 'assistant/message'
@@ -941,6 +941,14 @@ export function apply(ctx) {
         const error = new Error('IM returned files must stay inside the active Crawshrimp workspace.')
         error.code = 'IM_ARTIFACT_OUTSIDE_WORKSPACE'
         throw error
+      }
+      if (!sessionRegistry.has(String(exec.agent?.id || ''))) {
+      const validationLease = await postMcpContext('acquire', { runtime_session_id: String(exec.agent?.id || ''), call_id: String(exec.callId || '') })
+      try {
+        await postMcpContext('validate-return-file', { lease_id: validationLease.lease_id, path: resolve(sessionWorkspace, requestedPath) })
+      } finally {
+        await postMcpContext('release', { lease_id: validationLease.lease_id })
+      }
       }
       const result = await next()
       if (result?.isError) return result

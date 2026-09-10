@@ -26,7 +26,9 @@ function replaceOnce(source, anchor, replacement) {
 }
 
 export function patchReasoningRecoverySource(source) {
-  if (source.includes(REASONING_RECOVERY_MARKER)) return source
+  if (source.includes(REASONING_RECOVERY_MARKER)) return source.replace(
+    'content: [{ type: "text", text: recovery.notice }], source })',
+    'content: [{ type: "text", text: recovery.notice }], source: { provider: "crawshrimp-output-recovery", model: "notice" } })')
   source = replaceOnce(source, '\t\tphase.turn = turn;', '\t\tphase.turn = turn;\n\t\tphase.crawshrimpReasoningRecoveries = 0;')
   source = replaceOnce(source, '\t\t\tconst assembler = new BlockAssembler();', '\t\t\tconst assembler = new BlockAssembler();\n\t\t\tlet crawshrimpSawToolCall = false;')
   source = replaceOnce(source, '\t\t\t\t\tassembler.push(chunk);', `\t\t\t\t\tcrawshrimpSawToolCall ||= chunk.type === "tool-call-delta" || chunk.blockType === "tool-call" || chunk.block?.type === "tool-call";
@@ -44,7 +46,7 @@ export function patchReasoningRecoverySource(source) {
 \t\t\t\t\t}), { surfaceOp: "append" });
 \t\t\t\t\tthis.session.append("assistant/message", {
 \t\t\t\t\t\tturn, step,
-\t\t\t\t\t\tmessage: createAssistantMessage({ content: [{ type: "text", text: recovery.notice }], source })
+\t\t\t\t\t\tmessage: createAssistantMessage({ content: [{ type: "text", text: recovery.notice }], source: { provider: "crawshrimp-output-recovery", model: "notice" } })
 \t\t\t\t\t}, { surfaceOp: "append" });
 \t\t\t\t\tif (recovery.retry) {
 \t\t\t\t\t\tthis.phase.crawshrimpReasoningRecoveries = (this.phase.crawshrimpReasoningRecoveries ?? 0) + 1;

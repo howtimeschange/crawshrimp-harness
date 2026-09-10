@@ -96,6 +96,7 @@ const required = [
   'worker/worker.mjs',
   'worker/native-web-follow-manager.mjs',
   'worker/web-rpc-client.mjs',
+  'worker/repair-automation-receipts.mjs',
   'profiles/web/package.json',
   'profiles/web/cordis.yml',
   'profiles/web/cordis.patch.yml',

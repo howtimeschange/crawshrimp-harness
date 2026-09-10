@@ -9528,7 +9528,8 @@ app.add_middleware(
     allow_origins=_allowed_cors_origins(),
     allow_origin_regex=_allowed_cors_origin_regex(),
     allow_methods=["*"],
-    allow_headers=["Content-Type", "X-Crawshrimp-Token"],
+    allow_headers=["Content-Type", "X-Crawshrimp-Token", "Range"],
+    expose_headers=["Content-Range", "Accept-Ranges"],
 )
 
 

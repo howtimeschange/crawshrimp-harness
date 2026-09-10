@@ -347,3 +347,9 @@
           workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
         office:
           workspace: !!js process.env.CRAWSHRIMP_WORKSPACE_ROOT ?? process.cwd()
+
+# Product history search is an explicit opt-in; initialize only on first search.
+- id: session-query-sqlite
+  config:
+    path: ':memory:'
+    openAt: first-search

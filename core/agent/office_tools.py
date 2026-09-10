@@ -31,10 +31,11 @@ def failed(exc: Exception) -> dict:
     return gateway()._failed(getattr(exc, "code", "OFFICE_FAILED"), str(exc))
 
 
-def publish(data: dict) -> None:
+def publish(data: dict) -> list[str]:
     gw = gateway()
     result = data.get("result") or {}
     files = result.get("files") or ([result["document"]] if result.get("document") else [])
+    registered = []
     for raw in files:
         path = Path(raw)
         if not path.is_file() or not path.resolve().is_relative_to(root().resolve()):
@@ -44,9 +45,12 @@ def publish(data: dict) -> None:
                    "media_kind": "office", "tool_call_id": gw.ctx.current_tool_call_id,
                    "office": {"job_id": data["job_id"], "revision": result.get("revision"),
                               "pdf": result.get("pdf"), "pages": result.get("pages", []),
-                              "validation": result.get("validation"), "visual": result.get("visual")}}
+                              "validation": result.get("validation"), "visual": result.get("visual"),
+                              "delivery": result.get("delivery")}}
         if gw.ctx.emit_event:
             gw.ctx.emit_event("artifact.created", payload)
+            registered.append(payload["artifact_id"])
+    return registered
 
 
 def office_runtime_info() -> dict:
@@ -151,5 +155,42 @@ def office_review_record(job_id: str, revision: str, pages: list[dict]) -> dict:
         return failed(exc)
 
 
+
+def office_deliver(job_id: str, revision: str) -> dict:
+    """Deliver the exact validated, visually reviewed revision; do not return a source copy."""
+    try:
+        data = jobs.read(root(), job_id)
+        result = data.get("result") or {}
+        from core.office.runtime import file_hash
+        document = Path(result.get("document") or "")
+        if (data["state"] != "completed" or result.get("revision") != revision
+                or not document.is_file() or not document.resolve().is_relative_to(jobs.locate(root(), job_id))
+                or file_hash(document) != revision):
+            raise OfficeError("OFFICE_REVISION_MISMATCH", "交付文件与验收版本不一致，请重新渲染检查。")
+        if ((result.get("validation") or {}).get("status") != "passed"
+                or (result.get("validation") or {}).get("revision") != revision
+                or (result.get("visual") or {}).get("status") != "passed"
+                or not result.get("pages")):
+            raise OfficeError("OFFICE_NOT_VERIFIED", "文件尚未通过数据与逐页视觉验收，不能标记为最终交付。")
+        for page in result.get("pages", []):
+            jobs.preview(root(), job_id, revision, page["page"])
+        result["delivery"] = {"status": "final", "path": str(document), "sha256": revision,
+                              "requires_file_return": False}
+        registered = publish(data)
+        if not registered:
+            raise OfficeError("OFFICE_DELIVERY_UNAVAILABLE", "产物未能登记到当前会话。")
+        jobs.save(jobs.locate(root(), job_id), data)
+        return gateway()._ok({**result["delivery"], "artifact_ids": registered})
+    except Exception as exc:
+        return failed(exc)
+
+
+def validate_return_path(path: str) -> None:
+    """Managed Office copies must be delivered through their revision-fenced tool."""
+    document = Path(path).resolve()
+    if document.suffix.lower() in {".xlsx", ".docx", ".pptx"} and document.is_relative_to(root().resolve()):
+        raise OfficeError("OFFICE_DELIVERY_REQUIRED", "办公文件请调用 office_deliver(job_id, revision) 交付已验收版本；不要回传原始或重算前副本。")
+
+
 TOOLS = [office_runtime_info, office_run, office_render, office_job, office_validate,
-         office_preview_read, office_review_record]
+         office_preview_read, office_review_record, office_deliver]

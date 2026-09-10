@@ -87,6 +87,13 @@ const ChatNodeList = (0, react.memo)(function ChatNodeList({ order, nodeStore, .
 }
 
 export function patchConversationSource(source) {
+  if (!source.includes('crawshrimp-idle-todos-v1')) {
+    source = replaceOnce(source, 'function TodoDock({ useProjection, t }) {', '/* crawshrimp-idle-todos-v1 */\nfunction TodoDock({ useProjection, useSession, t }) {')
+    source = replaceOnce(source, 'todos: useProjection("todos") ?? [],', 'running: useSession(s => s.running),\n                todos: useProjection("todos") ?? [],')
+    source = replaceOnce(source, 'function TodoPanel({ todos, t }) {', 'function TodoPanel({ todos, running, t }) {')
+    source = replaceOnce(source, 'children: progressLabel(todos, t)', 'children: !running && todos.some(item => item.status !== "completed") ? "本轮已结束 · 计划尚未收尾（" + progressLabel(todos, t) + "）" : progressLabel(todos, t)')
+    source = replaceOnce(source, 'jsx)(StatusGlyph, { status: item.status })', 'jsx)(StatusGlyph, { status: !running && item.status === "in_progress" ? "pending" : item.status })')
+  }
   if (source.includes(COMPACT_CHAT_MARKER)) return source
   // Resolve old saved trajectory preferences to chat as well as removing the tab strip.
   return replaceOnce(source, 'if (entry.options.id === void 0) continue;',

@@ -1,3 +1,4 @@
+import { repairAutomationReceiptLogs } from './repair-automation-receipts.mjs'
 /**
  * Controlled client for the public DSH Web profile transport.
  *
@@ -236,6 +237,7 @@ export class DshWebRuntime {
     const root = resolve(runtimeRoot)
     const dshBin = join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
     if (!existsSync(dshBin)) throw new Error('DSH CLI entry is missing: ' + dshBin)
+    await repairAutomationReceiptLogs({ runtimeRoot: root, dshHome })
     ensureWebProfile({ runtimeRoot: root, dshHome })
     const requestedPort = Number(port)
     if (!Number.isInteger(requestedPort) || requestedPort < 0 || requestedPort > 65535) {

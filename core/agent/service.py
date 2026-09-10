@@ -2077,7 +2077,14 @@ class AgentService:
         }
         queued = await self.submit_turn(
             session_id,
-            str(prompt or ""),
+            "\n".join([
+                "[后台自动化执行上下文]",
+                "调度器已到点触发本次执行，不需要再次计算或等待触发时间。",
+                "本轮只可调用以下工具：" + ", ".join(normalized_toolset),
+                "不要为准备工作调用未授权的时间、bash、文件或网络工具；不需要额外取时来提交固定验收结果。",
+                "仅执行下列目标，按实际结果提交验收：",
+                str(prompt or ""),
+            ]),
             context_refs=context_refs,
             grant_prefs={"toolset": list(normalized_toolset)},
             automation_policy=policy,

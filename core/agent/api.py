@@ -1136,7 +1136,7 @@ def build_agent_mcp_asgi(token_provider, context_acquirer=None,
                     }, status_code=409)
                 except Exception as exc:  # noqa: BLE001
                     return JSONResponse({"detail": str(exc)}, status_code=500)
-            if path == "/context/return-file" and request.method == "POST":
+            if path in {"/context/return-file", "/context/validate-return-file"} and request.method == "POST":
                 # Private runtime bridge only, after DSH file validation. Bind
                 # the same authenticated lease used by MCP, never a global run.
                 if context_binder is None or context_resetter is None:
@@ -1149,6 +1149,14 @@ def build_agent_mcp_asgi(token_provider, context_acquirer=None,
                     from pathlib import Path
                     import asyncio
                     file_path = str(body.get("path") or "")
+                    from core.agent.office_tools import validate_return_path
+                    from core.office.runtime import OfficeError
+                    try:
+                        validate_return_path(file_path)
+                    except OfficeError as exc:
+                        return JSONResponse({"detail": str(exc), "code": exc.code}, status_code=409)
+                    if path == "/context/validate-return-file":
+                        return JSONResponse({"ok": True})
                     suffix = Path(file_path).suffix.lower()
                     kind = "image" if suffix in {".png", ".jpg", ".jpeg", ".webp", ".gif"} else "file"
                     ids = await asyncio.to_thread(mcp_gateway._broadcast_media_artifacts, [file_path], kind)
@@ -1244,6 +1252,7 @@ async def create_session_page(req: SessionPageRequest) -> dict:
     from core.cdp_bridge import get_bridge
     tab = await asyncio.to_thread(get_bridge().new_tab, "about:blank")
     page = {key: str(tab.get(key) or "") for key in ("id", "url", "title")}
+    db.update_session(session["session_id"], browser_tab_id=page["id"])
     await get_agent_service().broadcast(session["session_id"], 0, "browser.activity",
                                         {"tabs": [page], "active_tab_id": page["id"]})
     return page
@@ -1258,4 +1267,21 @@ async def close_session_page(tab_id: str, runtime_session_id: str) -> dict:
     await asyncio.to_thread(get_bridge().close_tab, tab_id)
     session = db.get_session_by_runtime(runtime_session_id)
     await get_agent_service().broadcast(session["session_id"], 0, "browser.page.closed", {"tab_id": tab_id})
+    return {"ok": True}
+
+
+@router.post("/session-resources/pages/{tab_id}/select")
+async def select_session_page(tab_id: str, req: SessionPageRequest) -> dict:
+    resources = session_resources(req.runtime_session_id)
+    page = next((tab for tab in resources["tabs"] if tab["id"] == tab_id), None)
+    if page is None:
+        raise HTTPException(404, "该页面不属于当前会话")
+    from core.cdp_bridge import get_bridge
+    live = await asyncio.to_thread(get_bridge().get_tabs)
+    if not any(tab.get("id") == tab_id for tab in live):
+        raise HTTPException(409, "页面已关闭，请新建页面")
+    session = db.get_session_by_runtime(req.runtime_session_id)
+    db.update_session(session["session_id"], browser_tab_id=tab_id)
+    await get_agent_service().broadcast(session["session_id"], 0, "browser.activity",
+                                       {"tabs": [page], "active_tab_id": tab_id})
     return {"ok": True}

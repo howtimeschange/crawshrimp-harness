@@ -73,7 +73,7 @@ test('reasoning-only truncation resumes in the next step with durable context an
   const usageEvents = f.events.filter(e => e.type === 'assistant/message' && e.data.usage)
   assert.equal(usageEvents.length, 1)
   assert.equal(usageEvents[0].data.usage.outputTokens, 32768)
-  assert.match(f.events.find(e => e.data.message?.source.plugin === 'crawshrimp-output-recovery').data.message.content[0].text, /自动续接（1\/1）/)
+  assert.match(f.events.find(e => e.data.message?.source.provider === 'crawshrimp-output-recovery').data.message.content[0].text, /自动续接（1\/1）/)
 })
 
 test('a second reasoning cap stops, preserving the latest draft for manual continuation and reload', async () => {
@@ -85,7 +85,7 @@ test('a second reasoning cap stops, preserving the latest draft for manual conti
   const snapshots = restored.filter(e => e.type === 'user/message' && e.data.source.plugin === 'crawshrimp-output-recovery')
   assert.equal(snapshots.length, 2)
   assert.match(snapshots.at(-1).data.content[0].text, /draft two/)
-  assert.match(restored.filter(e => e.data.message?.source.plugin === 'crawshrimp-output-recovery').at(-1).data.message.content[0].text, /已停止自动重试/)
+  assert.match(restored.filter(e => e.data.message?.source.provider === 'crawshrimp-output-recovery').at(-1).data.message.content[0].text, /已停止自动重试/)
 })
 
 test('partial text, empty output, and truncated tool calls never auto-replay', async () => {

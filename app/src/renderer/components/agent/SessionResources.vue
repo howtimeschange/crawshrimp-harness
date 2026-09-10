@@ -58,7 +58,7 @@
         <section><div class="section-heading"><button :aria-expanded="filesExpanded || !!query" @click="filesExpanded = !filesExpanded">{{ filesExpanded || query ? '▾' : '▸' }} 产物 <small>{{ query ? `${filteredArtifacts.length} / ${artifacts.length}` : artifacts.length }}</small></button></div>
           <div v-if="filesExpanded || query" class="section-items file-items" aria-label="产物列表" tabindex="0"><p v-if="!filteredArtifacts.length" class="empty">{{ loading ? '正在加载资源…' : query ? '没有匹配的产物' : '生成的文件会显示在这里' }}</p>
             <div v-for="item in filteredArtifacts" :key="item.path || item.artifact_id" class="resource-row">
-              <button class="resource-main" :title="`${item.filename}\n${size(item.size)} · ${item.path}`" @click="openArtifact(item)"><span class="type-icon">{{ extension(item.filename) }}</span><span class="resource-name">{{ item.filename }}</span><small v-if="artifactAge(item)" class="artifact-age">{{ artifactAge(item) }}</small></button>
+              <button class="resource-main" :title="`${item.filename}\n${size(item.size)} · ${item.path}`" @click="openArtifact(item)"><span class="type-icon">{{ extension(item.filename) }}</span><span class="resource-name">{{ item.filename }}</span><small v-if="item.office?.delivery?.status === 'final'" title="文件哈希与数据、视觉验收记录一致">已验收交付</small><small v-else-if="item.office" title="尚未登记为最终交付">待交付</small><small v-if="artifactAge(item)" class="artifact-age">{{ artifactAge(item) }}</small></button>
               <ResourceMenu label="文件操作"><button @click="fileAction('openFile', item)">系统打开</button><button @click="fileAction('revealFile', item)">在文件夹中定位</button><button @click="copy(item.path)">复制路径</button></ResourceMenu>
             </div>
           </div>
@@ -76,6 +76,7 @@
 </template>
 
 <script setup>
+import { isPartialTextPreview } from '../../utils/textPreview.js'
 import OfficePreview from './OfficePreview.vue'
 import ResourceMenu from './ResourceMenu.vue'
 import { formatArtifactAge, sortArtifactsByUpdated, isOfficeDocument } from '../../utils/artifactTime.js'
@@ -140,7 +141,13 @@ const compactOpen = computed(() => opened.value && !selection.value)
 watch(compactOpen, value => emit('compact-change', value), { immediate: true })
 function togglePanel() { opened.value = !opened.value; if (opened.value && !selection.value) unseen.value = 0 }
 function back() { prepareBrowserTransition(); selection.value = null; maximized.value = false; unseen.value = 0; error.value = ''; previewGeneration++ }
-function openBrowser(id) {
+async function openBrowser(id) {
+  const sessionId = props.sessionId
+  try {
+    await window.cs.agentApi('POST', `/agent/session-resources/pages/${encodeURIComponent(id)}/select`, { runtime_session_id: sessionId })
+    if (sessionId !== props.sessionId) return
+    activeTabId.value = id
+  } catch (e) { error.value = `选择失败：${e.message}`; return }
   prepareBrowserTransition()
   selection.value = { kind: 'browser', id }
   nextTick(() => document.getElementById(`resource-tab-${id}`)?.closest('.browser-tab')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }))
@@ -173,7 +180,7 @@ async function openArtifact(item) {
     if (!kind) return
     const url = await window.cs.agentMediaUrl(item.path, null)
     let text = ''
-    if (kind === 'text') { const response = await fetch(url, { headers: { Range: 'bytes=0-262143' } }); if (!response.ok) throw new Error('文件不存在或无法读取'); text = await response.text(); if (response.status === 206) text += '\n\n预览已截取，完整内容请使用系统打开。' }
+    if (kind === 'text') { const response = await fetch(url, { headers: { Range: 'bytes=0-262143' } }); if (!response.ok) throw new Error('文件不存在或无法读取'); text = await response.text(); if (isPartialTextPreview(response)) text += '\n\n预览已截取，完整内容请使用系统打开。' }
     if (token !== previewGeneration) return
     previewUrl.value = url; previewText.value = text; previewKind.value = kind
   } catch (e) { if (token === previewGeneration) error.value = `预览失败：${e.message}` }
