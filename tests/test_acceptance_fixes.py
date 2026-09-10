@@ -205,7 +205,7 @@ def test_failed_task_exposes_persisted_error_without_scanning_logs():
 
 
 @pytest.mark.parametrize('provider,native,product', [
-    ('crawshrimp-deepseek-official', 'deepseek-v4-flash', 'deepseek-official-v4-flash'),
+    ('crawshrimp-deepseek-official', 'deepseek-v4-flash', 'deepseek-official-flash'),
     ('crawshrimp-deepseek-official', 'deepseek-v4-pro', 'deepseek-official-v4-pro'),
     ('crawshrimp-glm-official', 'glm-5.2', 'glm-official-5.2'),
     ('crawshrimp-domestic-openai', 'deepseek-v4-flash', 'deepseek-v4-flash'),

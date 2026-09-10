@@ -66,7 +66,7 @@ class AiSettingsConfigTests(unittest.TestCase):
         self.assertEqual(llm["domestic_base_url"], "https://ai-aigw.semir.com/bailian-codingplan/v1")
         self.assertEqual(llm["deepseek_base_url"], "https://api.deepseek.com")
         self.assertEqual(llm["glm_base_url"], "https://open.bigmodel.cn/api/paas/v4")
-        self.assertEqual(llm["default_model"], "deepseek-official-v4-flash")
+        self.assertEqual(llm["default_model"], "deepseek-official-flash")
 
     def test_save_config_expands_dotted_settings_keys(self):
         with patch("core.config._config_path") as config_path:
