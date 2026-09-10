@@ -136,12 +136,39 @@ jobs:
           done
           npm ci
 
+      - name: Setup build Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download locked Python wheels
+        working-directory: app
+        shell: bash
+        env:
+          PYTHON_TARGETS: ${{ matrix.python_target }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -r -a targets <<< "${PYTHON_TARGETS}"
+          python scripts/prepare-python-wheels.py "${targets[@]}"
+
       - name: Download bundled Python
         working-directory: app
         shell: bash
         env:
           PYTHON_TARGETS: ${{ matrix.python_target }}
         run: bash scripts/download-python.sh
+
+      - name: Stage native Office runtime
+        working-directory: app
+        shell: bash
+        env:
+          PYTHON_TARGETS: ${{ matrix.python_target }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -r -a targets <<< "${PYTHON_TARGETS}"
+          for target in "${targets[@]}"; do
+            node scripts/stage-office-runtime.mjs "${target}"
+          done
 
       - name: Prepare Electron dist
         if: matrix.artifact_suffix == 'mac'
