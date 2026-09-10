@@ -1,0 +1,518 @@
+TAP version 13
+# Subtest: worker absolute timeout cancels only the active Session and keeps the IM Host alive
+ok 1 - worker absolute timeout cancels only the active Session and keeps the IM Host alive
+  ---
+  duration_ms: 1.249917
+  type: 'test'
+  ...
+# Subtest: worker auto-continues text output budgets without restarting the runtime
+ok 2 - worker auto-continues text output budgets without restarting the runtime
+  ---
+  duration_ms: 0.368292
+  type: 'test'
+  ...
+# Subtest: worker output protection defaults are long-form friendly and pressure-based
+ok 3 - worker output protection defaults are long-form friendly and pressure-based
+  ---
+  duration_ms: 0.57
+  type: 'test'
+  ...
+# Subtest: worker keeps every mutable DSH runtime path under CRAWSHRIMP_DATA
+ok 4 - worker keeps every mutable DSH runtime path under CRAWSHRIMP_DATA
+  ---
+  duration_ms: 0.279333
+  type: 'test'
+  ...
+# Subtest: worker compacts image-heavy user message events before FastAPI notifications
+ok 5 - worker compacts image-heavy user message events before FastAPI notifications
+  ---
+  duration_ms: 0.1305
+  type: 'test'
+  ...
+# Subtest: staged DSH rc.1 runtime applies the small verified 4.11 source overlay after a clean install
+ok 6 - staged DSH rc.1 runtime applies the small verified 4.11 source overlay after a clean install
+  ---
+  duration_ms: 1.404416
+  type: 'test'
+  ...
+# Subtest: dsh-im brief-card patch accepts fresh upstream and already-branded 4.11 approval text
+ok 7 - dsh-im brief-card patch accepts fresh upstream and already-branded 4.11 approval text
+  ---
+  duration_ms: 5.698459
+  type: 'test'
+  ...
+# Subtest: the runtime guard accepts both the source profile layout and the staged profile layout
+ok 8 - the runtime guard accepts both the source profile layout and the staged profile layout
+  ---
+  duration_ms: 172.460417
+  type: 'test'
+  ...
+# Subtest: runtime admits image prompts to the installed Vision bridge only for official DeepSeek Flash and Pro
+ok 9 - runtime admits image prompts to the installed Vision bridge only for official DeepSeek Flash and Pro
+  ---
+  duration_ms: 124.319042
+  type: 'test'
+  ...
+# Subtest: rc.1 Web native approval card exposes allow-all through the current Session command seam
+ok 10 - rc.1 Web native approval card exposes allow-all through the current Session command seam
+  ---
+  duration_ms: 125.045916
+  type: 'test'
+  ...
+# Subtest: DeepSeek Vision preflight audit retains structured fields in logger and stderr
+ok 11 - DeepSeek Vision preflight audit retains structured fields in logger and stderr
+  ---
+  duration_ms: 123.016875
+  type: 'test'
+  ...
+# Subtest: runtime suppresses native web registration even when an upstream preset mounts tool-web
+ok 12 - runtime suppresses native web registration even when an upstream preset mounts tool-web
+  ---
+  duration_ms: 156.291834
+  type: 'test'
+  ...
+# Subtest: session header guard rejects native web tools before a prompt can proceed
+ok 13 - session header guard rejects native web tools before a prompt can proceed
+  ---
+  duration_ms: 12.111167
+  type: 'test'
+  ...
+# Subtest: migration guard retains a real workspace write probe and strict user-image boundary
+ok 14 - migration guard retains a real workspace write probe and strict user-image boundary
+  ---
+  duration_ms: 0.355208
+  type: 'test'
+  ...
+# Subtest: Crawshrimp standard preset owns the effective persona and routes webpage work through the CDP skill
+ok 15 - Crawshrimp standard preset owns the effective persona and routes webpage work through the CDP skill
+  ---
+  duration_ms: 0.618917
+  type: 'test'
+  ...
+# Subtest: standard rc.1 Web profile retains the product operational surface without the parallel generic web route
+ok 16 - standard rc.1 Web profile retains the product operational surface without the parallel generic web route
+  ---
+  duration_ms: 0.938291
+  type: 'test'
+  ...
+# Subtest: rc.1 Web transport keeps image input and session-follow without reviving the old SDK patch
+ok 17 - rc.1 Web transport keeps image input and session-follow without reviving the old SDK patch
+  ---
+  duration_ms: 0.258167
+  type: 'test'
+  ...
+# Subtest: the Vision model is not forced onto a DeepSeek-only reasoning effort
+ok 18 - the Vision model is not forced onto a DeepSeek-only reasoning effort
+  ---
+  duration_ms: 0.134167
+  type: 'test'
+  ...
+# Subtest: rc.1 Session follow projects inner events from live envelopes and snapshot chunk rows
+ok 19 - rc.1 Session follow projects inner events from live envelopes and snapshot chunk rows
+  ---
+  duration_ms: 0.976833
+  type: 'test'
+  ...
+# Subtest: Web RPC reasserts a product session model through the authenticated Session API
+ok 20 - Web RPC reasserts a product session model through the authenticated Session API
+  ---
+  duration_ms: 7.402834
+  type: 'test'
+  ...
+# Subtest: Web startup diagnostics redact every one-time launch URL query parameter
+ok 21 - Web startup diagnostics redact every one-time launch URL query parameter
+  ---
+  duration_ms: 0.736708
+  type: 'test'
+  ...
+# Subtest: desktop dev shell patches DSH runtime dependencies before backend launch
+ok 22 - desktop dev shell patches DSH runtime dependencies before backend launch
+  ---
+  duration_ms: 0.88575
+  type: 'test'
+  ...
+# Subtest: product bridge leases the matching DSH session and honors its approval policy
+ok 23 - product bridge leases the matching DSH session and honors its approval policy
+  ---
+  duration_ms: 0.769084
+  type: 'test'
+  ...
+# Subtest: agent SSE consumers reconnect from the last persisted event id
+ok 24 - agent SSE consumers reconnect from the last persisted event id
+  ---
+  duration_ms: 0.727084
+  type: 'test'
+  ...
+# Subtest: agent views present final output budget interruptions without calling them failures
+ok 25 - agent views present final output budget interruptions without calling them failures
+  ---
+  duration_ms: 0.178708
+  type: 'test'
+  ...
+# Subtest: authenticated Web transport cancels the active Session without restarting the IM Host
+ok 26 - authenticated Web transport cancels the active Session without restarting the IM Host
+  ---
+  duration_ms: 0.159125
+  type: 'test'
+  ...
+# Subtest: automatic continuations use the trusted private Host entry and keep their product event private
+ok 27 - automatic continuations use the trusted private Host entry and keep their product event private
+  ---
+  duration_ms: 0.117042
+  type: 'test'
+  ...
+# Subtest: agent iframe reloads when runtime generation changes on the same web URL
+ok 28 - agent iframe reloads when runtime generation changes on the same web URL
+  ---
+  duration_ms: 0.481542
+  type: 'test'
+  ...
+# Subtest: agent iframe uses the authenticated Web launch URL and never probes a bare origin
+ok 29 - agent iframe uses the authenticated Web launch URL and never probes a bare origin
+  ---
+  duration_ms: 0.1855
+  type: 'test'
+  ...
+# Subtest: agent runtime failures leave the loading screen and expose a retry action
+ok 30 - agent runtime failures leave the loading screen and expose a retry action
+  ---
+  duration_ms: 0.111375
+  type: 'test'
+  ...
+# Subtest: agent runtime missing model keys suppresses upstream onboarding and defers Crawshrimp provider configuration to composer interaction
+ok 31 - agent runtime missing model keys suppresses upstream onboarding and defers Crawshrimp provider configuration to composer interaction
+  ---
+  duration_ms: 2.78525
+  type: 'test'
+  ...
+# Subtest: LLM provider settings save provider rows directly and keep the compact settings page
+ok 32 - LLM provider settings save provider rows directly and keep the compact settings page
+  ---
+  duration_ms: 1.180875
+  type: 'test'
+  ...
+# Subtest: LLM provider Semir logo has transparent outer corners
+ok 33 - LLM provider Semir logo has transparent outer corners
+  ---
+  duration_ms: 6.302916
+  type: 'test'
+  ...
+# Subtest: core status indicator debounces transient backend probe drops
+ok 34 - core status indicator debounces transient backend probe drops
+  ---
+  duration_ms: 0.194416
+  type: 'test'
+  ...
+# Subtest: browser windows are isolated per target and remove closed tabs
+ok 35 - browser windows are isolated per target and remove closed tabs
+  ---
+  duration_ms: 1.324875
+  type: 'test'
+  ...
+# Subtest: DSH attachment bridge sends regular files to Crawshrimp and images into DSH native drafts
+ok 36 - DSH attachment bridge sends regular files to Crawshrimp and images into DSH native drafts
+  ---
+  duration_ms: 2.341125
+  type: 'test'
+  ...
+# Subtest: the Crawshrimp attachment picker accepts images and documents without a native file filter
+ok 37 - the Crawshrimp attachment picker accepts images and documents without a native file filter
+  ---
+  duration_ms: 0.42275
+  type: 'test'
+  ...
+# Subtest: native Web sessions obtain a per-session shadow follow without a latest-run fallback
+ok 38 - native Web sessions obtain a per-session shadow follow without a latest-run fallback
+  ---
+  duration_ms: 1.197917
+  type: 'test'
+  ...
+# Subtest: native Web follow manager is required by development and packaged runtime manifests
+ok 39 - native Web follow manager is required by development and packaged runtime manifests
+  ---
+  duration_ms: 0.450583
+  type: 'test'
+  ...
+# Subtest: browser wait is explicitly local-only and does not request an act approval
+ok 40 - browser wait is explicitly local-only and does not request an act approval
+  ---
+  duration_ms: 0.781958
+  type: 'test'
+  ...
+# Subtest: Crawshrimp running-status branding follows the semantic live region rather than a retired hash class
+ok 41 - Crawshrimp running-status branding follows the semantic live region rather than a retired hash class
+  ---
+  duration_ms: 0.339541
+  type: 'test'
+  ...
+# Subtest: DSH attachment bridge resets and retitles the native file-drop overlay
+ok 42 - DSH attachment bridge resets and retitles the native file-drop overlay
+  ---
+  duration_ms: 0.595583
+  type: 'test'
+  ...
+# Subtest: DSH Crawshrimp brand slots replace the official DeepSeek Harness wordmark
+ok 43 - DSH Crawshrimp brand slots replace the official DeepSeek Harness wordmark
+  ---
+  duration_ms: 0.789625
+  type: 'test'
+  ...
+# Subtest: agent persona introduces itself as Crawshrimp agent
+ok 44 - agent persona introduces itself as Crawshrimp agent
+  ---
+  duration_ms: 0.668208
+  type: 'test'
+  ...
+# Subtest: native DSH Web has one profile source of truth instead of a flat generated configuration
+ok 45 - native DSH Web has one profile source of truth instead of a flat generated configuration
+  ---
+  duration_ms: 0.145458
+  type: 'test'
+  ...
+# Subtest: DSH rc.1 profile graph pins the supported Web and ACP runtime closure
+ok 46 - DSH rc.1 profile graph pins the supported Web and ACP runtime closure
+  ---
+  duration_ms: 2.321291
+  type: 'test'
+  ...
+# Subtest: DSH rc.1 Web profile retains upstream directory selection and Crawshrimp workspace bridge
+ok 47 - DSH rc.1 Web profile retains upstream directory selection and Crawshrimp workspace bridge
+  ---
+  duration_ms: 0.682125
+  type: 'test'
+  ...
+# Subtest: DSH Web profile registers Crawshrimp providers through a persistent official profile
+ok 48 - DSH Web profile registers Crawshrimp providers through a persistent official profile
+  ---
+  duration_ms: 0.297208
+  type: 'test'
+  ...
+# Subtest: native DSH model discovery suppresses the duplicate upstream DeepSeek credential route
+ok 49 - native DSH model discovery suppresses the duplicate upstream DeepSeek credential route
+  ---
+  duration_ms: 0.385583
+  type: 'test'
+  ...
+# Subtest: development bridge never accepts API credentials from URL query
+ok 50 - development bridge never accepts API credentials from URL query
+  ---
+  duration_ms: 0.757708
+  type: 'test'
+  ...
+# (node:27030) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/xingyicheng/Documents/crawshrimp-harness/app/src/renderer/utils/taskProgress.test.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/xingyicheng/Documents/crawshrimp-harness/app/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: task runner constrains long target metadata so it cannot push the progress bar out of alignment
+ok 51 - task runner constrains long target metadata so it cannot push the progress bar out of alignment
+  ---
+  duration_ms: 1.654083
+  type: 'test'
+  ...
+# Subtest: tmall material match-buy uses Semir batch download progress in task runner
+ok 52 - tmall material match-buy uses Semir batch download progress in task runner
+  ---
+  duration_ms: 0.409709
+  type: 'test'
+  ...
+# Subtest: tmall material new 6.24 uses Semir batch download progress in task runner
+ok 53 - tmall material new 6.24 uses Semir batch download progress in task runner
+  ---
+  duration_ms: 0.077417
+  type: 'test'
+  ...
+# Subtest: vipshop package main-image replace shows cloud and upload progress tracks
+ok 54 - vipshop package main-image replace shows cloud and upload progress tracks
+  ---
+  duration_ms: 0.273
+  type: 'test'
+  ...
+# Subtest: vipshop package main-image replace treats terminal done as complete even with stale upload counters
+ok 55 - vipshop package main-image replace treats terminal done as complete even with stale upload counters
+  ---
+  duration_ms: 0.112958
+  type: 'test'
+  ...
+# Subtest: shoe upload package shows independent download and organize progress tracks
+ok 56 - shoe upload package shows independent download and organize progress tracks
+  ---
+  duration_ms: 0.171625
+  type: 'test'
+  ...
+# Subtest: tiktok creator video download uses two-stage progress in task runner
+ok 57 - tiktok creator video download uses two-stage progress in task runner
+  ---
+  duration_ms: 0.656333
+  type: 'test'
+  ...
+# Subtest: tmall ai image test chain uses find-image and generation progress tracks
+ok 58 - tmall ai image test chain uses find-image and generation progress tracks
+  ---
+  duration_ms: 0.34175
+  type: 'test'
+  ...
+# Subtest: tmall ai image test chain keeps generation progress moving from status text fallback
+ok 59 - tmall ai image test chain keeps generation progress moving from status text fallback
+  ---
+  duration_ms: 0.262
+  type: 'test'
+  ...
+# Subtest: tmall ai image test chain shows completed over submitted jobs before completion
+ok 60 - tmall ai image test chain shows completed over submitted jobs before completion
+  ---
+  duration_ms: 0.249583
+  type: 'test'
+  ...
+# Subtest: shein commodity quality uses two-stage list and return detail progress
+ok 61 - shein commodity quality uses two-stage list and return detail progress
+  ---
+  duration_ms: 0.22275
+  type: 'test'
+  ...
+# Subtest: tmall material-test data export exposes enhanced full-run progress
+ok 62 - tmall material-test data export exposes enhanced full-run progress
+  ---
+  duration_ms: 0.14925
+  type: 'test'
+  ...
+# Subtest: amazon reviews full export uses product and current-review two-layer progress
+ok 63 - amazon reviews full export uses product and current-review two-layer progress
+  ---
+  duration_ms: 0.15075
+  type: 'test'
+  ...
+# Subtest: aliexpress cutout download uses enhanced batch progress for long Excel runs
+ok 64 - aliexpress cutout download uses enhanced batch progress for long Excel runs
+  ---
+  duration_ms: 0.052708
+  type: 'test'
+  ...
+# Subtest: doudian mixed fund signup monitor shows activity and product detail progress
+ok 65 - doudian mixed fund signup monitor shows activity and product detail progress
+  ---
+  duration_ms: 0.133625
+  type: 'test'
+  ...
+# Subtest: doudian mixed fund order replay shows signup, order list, and detail progress
+ok 66 - doudian mixed fund order replay shows signup, order list, and detail progress
+  ---
+  duration_ms: 0.147291
+  type: 'test'
+  ...
+# Subtest: temu AI wash label create shows style expansion and SKU progress tracks
+ok 67 - temu AI wash label create shows style expansion and SKU progress tracks
+  ---
+  duration_ms: 0.136208
+  type: 'test'
+  ...
+# Subtest: temu AI wash label create falls back to generic task progress while SKU counter is pending
+ok 68 - temu AI wash label create falls back to generic task progress while SKU counter is pending
+  ---
+  duration_ms: 0.039791
+  type: 'test'
+  ...
+# (node:27031) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/xingyicheng/Documents/crawshrimp-harness/app/src/renderer/utils/taskRunOutput.test.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/xingyicheng/Documents/crawshrimp-harness/app/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: success, no match, stopped and success each use only their run files
+ok 69 - success, no match, stopped and success each use only their run files
+  ---
+  duration_ms: 0.875125
+  type: 'test'
+  ...
+# Subtest: unmatched statistics count distinct codes separately from download rows
+ok 70 - unmatched statistics count distinct codes separately from download rows
+  ---
+  duration_ms: 0.155709
+  type: 'test'
+  ...
+# Subtest: current log view excludes prior targets and completion messages
+ok 71 - current log view excludes prior targets and completion messages
+  ---
+  duration_ms: 0.621917
+  type: 'test'
+  ...
+# (node:27032) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/xingyicheng/Documents/crawshrimp-harness/app/src/renderer/utils/taskRunnerState.test.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/xingyicheng/Documents/crawshrimp-harness/app/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: taskIdentityKey is stable across refreshed copies of the same task
+ok 72 - taskIdentityKey is stable across refreshed copies of the same task
+  ---
+  duration_ms: 0.3
+  type: 'test'
+  ...
+# Subtest: shouldResetTaskValues only resets when the selected task identity changes
+ok 73 - shouldResetTaskValues only resets when the selected task identity changes
+  ---
+  duration_ms: 0.082542
+  type: 'test'
+  ...
+# Subtest: mergeTaskLiveStatus preserves progress fields when status-only events arrive
+ok 74 - mergeTaskLiveStatus preserves progress fields when status-only events arrive
+  ---
+  duration_ms: 0.705833
+  type: 'test'
+  ...
+# Subtest: mergeTaskLiveStatus applies full live progress snapshots for instance runners
+ok 75 - mergeTaskLiveStatus applies full live progress snapshots for instance runners
+  ---
+  duration_ms: 0.07275
+  type: 'test'
+  ...
+# (node:27033) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/xingyicheng/Documents/crawshrimp-harness/app/src/renderer/utils/walkthroughRegression.test.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/xingyicheng/Documents/crawshrimp-harness/app/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: blank prompt rejected before creating a run: ""
+ok 76 - blank prompt rejected before creating a run: ""
+  ---
+  duration_ms: 0.965041
+  type: 'test'
+  ...
+# Subtest: blank prompt rejected before creating a run: "   \\n  "
+ok 77 - blank prompt rejected before creating a run: "   \\n  "
+  ---
+  duration_ms: 0.310166
+  type: 'test'
+  ...
+# Subtest: new run does not inherit old target or 100 percent progress
+ok 78 - new run does not inherit old target or 100 percent progress
+  ---
+  duration_ms: 0.067792
+  type: 'test'
+  ...
+# Subtest: IPC failure reconciles optimistic running from persisted job
+ok 79 - IPC failure reconciles optimistic running from persisted job
+  ---
+  duration_ms: 0.614875
+  type: 'test'
+  ...
+# Subtest: download shows progress, blocks duplicate clicks and reports partial failures
+ok 80 - download shows progress, blocks duplicate clicks and reports partial failures
+  ---
+  duration_ms: 3.096084
+  type: 'test'
+  ...
+# Subtest: autosave only updates draft content, never a local running status
+ok 81 - autosave only updates draft content, never a local running status
+  ---
+  duration_ms: 0.377125
+  type: 'test'
+  ...
+# Subtest: nav clicks use current rail width after expanded-to-collapsed refresh
+ok 82 - nav clicks use current rail width after expanded-to-collapsed refresh
+  ---
+  duration_ms: 1.527666
+  type: 'test'
+  ...
+1..82
+# tests 82
+# suites 0
+# pass 82
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 817.409458

@@ -12,10 +12,12 @@ export function shouldResetTaskValues(previousKey, task, adapterId = '') {
 
 export function mergeTaskLiveStatus(task, status) {
   if (!task || !status || !status.status) return task || null
+  const beginsNewRun = status.phase === 'starting'
+    || (status.run_id != null && String(status.run_id) !== String(task.live?.run_id))
   return {
     ...task,
     live: {
-      ...(task.live || {}),
+      ...(beginsNewRun ? {} : (task.live || {})),
       ...status,
     },
   }

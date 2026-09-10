@@ -557,7 +557,6 @@ window.__ModuleLoader__.load({
     const BOTTOM_NAV_IDS = ['settings']
     const MAIN_VISIBLE_DEFAULT = 3
 
-    let lastMaxRailWidth = 0
     let lastRailMetricsSignature = ''
     let railMetricsQueued = false
     let railMetricsForceQueued = false
@@ -577,7 +576,6 @@ window.__ModuleLoader__.load({
       const target = currentRailTarget()
       if (!target) return 0
       const width = Math.round(target.getBoundingClientRect().width)
-      if (width > lastMaxRailWidth) lastMaxRailWidth = width
       return width
     }
 
@@ -645,8 +643,8 @@ window.__ModuleLoader__.load({
           renderNav(lastNavItems, lastNavActiveId)
           return
         }
-        // 携带 max(当前宽, 历史最大宽):折叠动画中点菜单也不会压到菜单栏
-        const width = Math.max(currentRailWidth(), lastMaxRailWidth)
+        // 点击时使用当前实际宽度；历史展开宽度不能覆盖已折叠的导航。
+        const width = currentRailWidth()
         postToShell({ __crawshrimp: 'nav-click', id: btn.dataset.csNavItemId, railWidth: width })
       })
       return btn

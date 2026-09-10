@@ -1,0 +1,219 @@
+{
+  "database_mode": "read-only",
+  "runs": [
+    {
+      "id": 15,
+      "status": "done",
+      "records_count": 1,
+      "output_files": [
+        "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/森马云盘图片下载结果_20260910-123303.xlsx"
+      ],
+      "sheets": [
+        {
+          "file": "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/森马云盘图片下载结果_20260910-123303.xlsx",
+          "rows": [
+            [
+              "输入编码",
+              "匹配类型",
+              "文件名",
+              "云盘路径",
+              "下载结果",
+              "本地文件",
+              "备注"
+            ],
+            [
+              "000000000000",
+              "款号",
+              null,
+              null,
+              "未匹配到图片",
+              null,
+              "搜索结果 3 条，过滤后 0 条"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "status": "done",
+      "records_count": 2,
+      "output_files": [
+        "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/QA-0910-fix-success.zip",
+        "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/森马云盘图片下载结果_20260910-125339.xlsx"
+      ],
+      "sheets": [
+        {
+          "file": "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/森马云盘图片下载结果_20260910-125339.xlsx",
+          "rows": [
+            [
+              "输入编码",
+              "匹配类型",
+              "文件名",
+              "云盘路径",
+              "下载结果",
+              "本地文件",
+              "备注"
+            ],
+            [
+              "202426107205",
+              "款号",
+              "202426107205-90001.jpg",
+              "巴拉货控/02 产品上新模块/2-2 巴拉产品上新/2026年巴拉冬/平拍原图/全域/5p/中童-已写/202426107205 2-已写/202426107205-90001.jpg",
+              "已下载",
+              "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/runtime/16/202426107205__5584006__202426107205-90001.jpg",
+              null
+            ],
+            [
+              "202426107205",
+              "款号",
+              "202426107205-80821.jpg",
+              "巴拉货控/02 产品上新模块/2-2 巴拉产品上新/2026年巴拉冬/平拍原图/全域/5p/中童-已写/202426107205 2-已写/202426107205-80821.jpg",
+              "已下载",
+              "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/runtime/16/202426107205__5584026__202426107205-80821.jpg",
+              null
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "status": "done",
+      "records_count": 2,
+      "output_files": [
+        "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/QA-0910-fix-success_2.zip",
+        "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/森马云盘图片下载结果_20260910-125421.xlsx"
+      ],
+      "sheets": [
+        {
+          "file": "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/森马云盘图片下载结果_20260910-125421.xlsx",
+          "rows": [
+            [
+              "输入编码",
+              "匹配类型",
+              "文件名",
+              "云盘路径",
+              "下载结果",
+              "本地文件",
+              "备注"
+            ],
+            [
+              "202426107205",
+              "款号",
+              "202426107205-90001.jpg",
+              "巴拉货控/02 产品上新模块/2-2 巴拉产品上新/2026年巴拉冬/平拍原图/全域/5p/中童-已写/202426107205 2-已写/202426107205-90001.jpg",
+              "已下载",
+              "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/runtime/17/202426107205__5584006__202426107205-90001.jpg",
+              null
+            ],
+            [
+              "202426107205",
+              "款号",
+              "202426107205-80821.jpg",
+              "巴拉货控/02 产品上新模块/2-2 巴拉产品上新/2026年巴拉冬/平拍原图/全域/5p/中童-已写/202426107205 2-已写/202426107205-80821.jpg",
+              "已下载",
+              "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/runtime/17/202426107205__5584026__202426107205-80821.jpg",
+              null
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "status": "stopped",
+      "records_count": 0,
+      "output_files": [],
+      "sheets": []
+    },
+    {
+      "id": 19,
+      "status": "done",
+      "records_count": 3,
+      "output_files": [
+        "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/QA-0910-fix-mixed.zip",
+        "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/森马云盘图片下载结果_20260910-125743.xlsx"
+      ],
+      "sheets": [
+        {
+          "file": "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/森马云盘图片下载结果_20260910-125743.xlsx",
+          "rows": [
+            [
+              "输入编码",
+              "匹配类型",
+              "文件名",
+              "云盘路径",
+              "下载结果",
+              "本地文件",
+              "备注"
+            ],
+            [
+              "000000000000",
+              "款号",
+              null,
+              null,
+              "未匹配到图片",
+              null,
+              "搜索结果 3 条，过滤后 0 条"
+            ],
+            [
+              "202426107205",
+              "款号",
+              "202426107205-90001.jpg",
+              "巴拉货控/02 产品上新模块/2-2 巴拉产品上新/2026年巴拉冬/平拍原图/全域/5p/中童-已写/202426107205 2-已写/202426107205-90001.jpg",
+              "已下载",
+              "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/runtime/19/202426107205__5584006__202426107205-90001.jpg",
+              null
+            ],
+            [
+              "202426107205",
+              "款号",
+              "202426107205-80821.jpg",
+              "巴拉货控/02 产品上新模块/2-2 巴拉产品上新/2026年巴拉冬/平拍原图/全域/5p/中童-已写/202426107205 2-已写/202426107205-80821.jpg",
+              "已下载",
+              "/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data/data/semir-cloud-drive/batch_image_download/runtime/19/202426107205__5584026__202426107205-80821.jpg",
+              null
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "jobs": [
+    {
+      "job_uid": "9ef61bca9d6d47d3810ebada8519ead2",
+      "title": "AI 生图任务 3",
+      "status": "draft",
+      "prompt": ""
+    },
+    {
+      "job_uid": "caeffe9b03b74366a44d2933e40685c2",
+      "title": "0-fix-empty",
+      "status": "draft",
+      "prompt": ""
+    }
+  ],
+  "images": [
+    {
+      "file": "/private/tmp/crawshrimp-walkthrough-fix/download-after/result-01-1.png",
+      "bytes": 5718031,
+      "size": [
+        2880,
+        2880
+      ],
+      "decoded": true,
+      "sha256": "566af9f97ff1286d04ea3c6e781cce7b9635c03beda2d5cf8145eb4d33386688"
+    },
+    {
+      "file": "/private/tmp/crawshrimp-walkthrough-fix/download-after/result-01.png",
+      "bytes": 6970676,
+      "size": [
+        2880,
+        2880
+      ],
+      "decoded": true,
+      "sha256": "ca8e3ebf5daea352b11492d9234e1b9c395600f846f7a206bb0c9862fe300742"
+    }
+  ]
+}

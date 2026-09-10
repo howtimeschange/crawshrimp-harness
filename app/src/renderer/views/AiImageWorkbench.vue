@@ -232,8 +232,8 @@
                 <AiwIcon :name="allVisibleSelected ? 'minus-square' : 'check-square'" />{{ allVisibleSelected ? '取消全选' : '全选图片' }}
               </span>
             </button>
-            <button type="button" :disabled="!selectedResultItems.length" @click="saveAs(selectedResultItems)">
-              <span class="aiw-icon-button-content"><AiwIcon name="download" />下载选中</span>
+            <button type="button" :disabled="downloading || !selectedResultItems.length" @click="saveAs(selectedResultItems)">
+              <span class="aiw-icon-button-content"><AiwIcon name="download" />{{ downloading ? '下载中…' : '下载选中' }}</span>
             </button>
             <button
               class="aiw-task-sidebar-toggle"
@@ -246,6 +246,8 @@
             </button>
           </div>
         </div>
+
+        <p v-if="downloadMessage" class="aiw-download-status" role="status" aria-live="polite">{{ downloadMessage }}</p>
 
         <div class="aiw-workspace-body" :class="{ 'history-collapsed': !taskSidebarOpen }">
           <section class="aiw-result-wall">
@@ -354,7 +356,7 @@
                       <button type="button" @click.stop="openLightbox(item, { mode: 'edit' })">
                         <span class="aiw-icon-button-content"><AiwIcon name="edit" />修改</span>
                       </button>
-                      <button type="button" @click.stop="saveAs([item])">
+                      <button type="button" :disabled="downloading" @click.stop="saveAs([item])">
                         <span class="aiw-icon-button-content"><AiwIcon name="download" />下载</span>
                       </button>
                     </div>
@@ -1097,6 +1099,8 @@ const generating = ref(false)
 const generatingJobUid = ref('')
 const generatingSnapshot = ref(null)
 const errorMessage = ref('')
+const downloading = ref(false)
+const downloadMessage = ref('')
 const actionNotice = ref('')
 const retryingRunUids = reactive(new Set())
 const pinningJobUids = reactive(new Set())
@@ -1891,8 +1895,8 @@ async function autosaveCurrentTask(options = {}) {
   if (!options.force && hasGeneratedResults(persistedCurrentJob.value)) return null
   try {
     const payload = buildJobPayload({ silentAdvanced: true })
-    const status = currentJob.value?.status || 'draft'
-    const updated = await window.cs.updateAiImageJob(jobUid, { ...payload, status })
+    // Draft edits must never write an optimistic execution status back to storage.
+    const updated = await window.cs.updateAiImageJob(jobUid, payload)
     if (updated?.job_uid === jobUid) {
       if (activeJobUid.value === jobUid) {
         currentJob.value = {
@@ -2219,6 +2223,10 @@ async function submitBatchGeneration() {
 
 async function generate() {
   errorMessage.value = ''
+  if (!String(form.prompt || '').trim()) {
+    errorMessage.value = '请输入生图提示词后再开始生成'
+    return
+  }
   try {
     assertAdvancedJsonValid()
   } catch (error) {
@@ -2274,6 +2282,20 @@ async function generate() {
     clearResultRevealTracking(generatingJobUid.value)
     errorMessage.value = normalizeGenerateError(error)
     logs.value.push(`生成失败：${errorMessage.value}`)
+    const jobUid = generatingJobUid.value
+    if (jobUid) {
+      // Reconcile an uncertain IPC outcome with the persisted job before clearing busy state.
+      let recovered = null
+      try { recovered = await window.cs.getAiImageJob(jobUid) } catch {
+        errorMessage.value += '；正在核实任务状态，请稍候'
+        startJobPolling(jobUid)
+      }
+      if (recovered) {
+        if (activeJobUid.value === jobUid) currentJob.value = recovered
+        upsertJob(recovered)
+        if (hasActiveRuns(recovered)) startJobPolling(jobUid)
+      }
+    }
   } finally {
     generating.value = false
     generatingJobUid.value = ''
@@ -2284,6 +2306,7 @@ async function generate() {
 function normalizeGenerateError(error) {
   const detail = error?.detail?.message || error?.message || String(error || '')
   const text = String(detail || '').trim()
+  if (/prompt is required/i.test(text)) return '请输入生图提示词后再开始生成'
   if (/^not found$/i.test(text) || /ai image job not found/i.test(text)) {
     return '当前任务记录不存在，请重新新建任务后再生成'
   }
@@ -3136,17 +3159,35 @@ async function materializeResultForInput(item) {
 }
 
 async function saveAs(items) {
-  if (!currentJob.value?.job_uid || !items.length) return
+  const jobUid = currentJob.value?.job_uid
+  const files = [...new Set(items.map(resultKey).filter(Boolean))]
+  if (!jobUid || !files.length || downloading.value) return
+  downloading.value = true
+  errorMessage.value = ''
+  downloadMessage.value = '请选择保存文件夹…'
   try {
     const directory = await chooseDirectory('选择另存文件夹')
-    if (!directory) return
-    await window.cs.saveAsAiImageJob(currentJob.value.job_uid, {
-      directory,
-      files: items.map(resultKey).filter(Boolean),
-    })
-    logs.value.push(`另存 ${items.length} 张图片到 ${directory}`)
+    if (!directory) { downloadMessage.value = ''; return }
+    let completed = 0
+    const failures = []
+    for (const file of files) {
+      downloadMessage.value = `下载中：已完成 ${completed}/${files.length} 张，正在下载第 ${completed + failures.length + 1} 张…`
+      try {
+        const result = await window.cs.saveAsAiImageJob(jobUid, { directory, files: [file] })
+        if (result?.ok === false || !result?.files?.length) throw new Error('未返回已保存文件')
+        completed += 1
+      } catch (error) {
+        failures.push(`${file.split('/').pop().split('?')[0]}：${error?.message || error}`)
+      }
+    }
+    downloadMessage.value = `已下载 ${completed}/${files.length} 张，保存到 ${directory}`
+    if (failures.length) errorMessage.value = `有 ${failures.length} 张下载失败，可重新选择失败图片重试：${failures.join('；')}`
+    logs.value.push(downloadMessage.value)
   } catch (error) {
+    downloadMessage.value = ''
     errorMessage.value = error.message || String(error)
+  } finally {
+    downloading.value = false
   }
 }
 
@@ -5955,4 +5996,5 @@ button.active,
       scroll-behavior: auto !important;
     }
   }
+.aiw-download-status { margin: 0; padding: 10px 16px; color: var(--text-primary, #333); overflow-wrap: anywhere; }
 </style>

@@ -568,7 +568,7 @@
           <span v-if="autoPrecheckFlow" class="action-note">{{ autoPrecheckNote }}</span>
           <span v-if="isRunning" class="reset-link" @click="forceReset">重置</span>
           <span v-if="missingRequired" class="missing-hint">请填写必填项</span>
-          <span v-if="lastResult" :class="['result-badge', lastResult.ok ? 'ok' : 'err']">
+          <span v-if="lastResult" :class="['result-badge', lastResult.warning ? 'warn' : lastResult.ok ? 'ok' : 'err']">
             {{ lastResult.msg }}
           </span>
           <button
@@ -1078,7 +1078,8 @@ import TaskOutputDrawer from './TaskOutputDrawer.vue'
 import { summarizePrecheckRows } from '../utils/precheckSummary'
 import { buildTaskRunnerProgressSummary, resolveTaskProgressConfig } from '../utils/taskProgress'
 import { buildOdpsSyncFile, isOdpsSyncableFile, isOdpsSyncableTask } from '../utils/odpsSyncTasks'
-import { shouldResetTaskValues, taskIdentityKey } from '../utils/taskRunnerState'
+import { mergeTaskLiveStatus, shouldResetTaskValues, taskIdentityKey } from '../utils/taskRunnerState'
+import { currentRunOutput, latestRunLogs, readCloudDriveDownloadSummary } from '../utils/taskRunOutput'
 import { buildEmbeddedCloudApprovalUrl, isTrustedCloudApprovalBoardUrl } from '../utils/cloudApprovalUrl'
 import { collectDownloadedMaterialRows } from '../utils/balaAiVideoWorkflow'
 import {
@@ -1200,6 +1201,7 @@ const dateInputRefs = new Map()
 let pollTimer = null
 let aiChainBatchPollTimer = null
 let aiChainTerminalInstanceUpdateEmitted = false
+let runUiRevision = 0
 let currentRunId = null   // 当前触发的任务 run_id，用于轮询匹配
 let runAbortToken = 0
 let dynamicParamProbeToken = 0
@@ -1608,6 +1610,8 @@ watch(() => [props.adapterId, props.task], ([adapterId, task]) => {
   if (!task) return
   if (!shouldResetTaskValues(activeTaskIdentityKey, task, adapterId)) return
   activeTaskIdentityKey = taskIdentityKey(adapterId, task)
+  const initialRevision = ++runUiRevision
+  currentRunId = null
   ownedInstanceUid.value = ''
   dynamicParamProbeToken += 1
   dynamicParamPatches.value = {}
@@ -1644,8 +1648,10 @@ watch(() => [props.adapterId, props.task], ([adapterId, task]) => {
   nextTick(async () => {
     try {
       const logR = await window.cs.getTaskLogs(props.adapterId, task.task_id, effectiveInstanceUid.value)
-      if (logR.logs) logs.value = logR.logs
+      if (initialRevision !== runUiRevision) return
+      if (logR.logs) logs.value = latestRunLogs(logR.logs)
       const taskStatus = await window.cs.getTaskStatus(props.adapterId, task.task_id, effectiveInstanceUid.value)
+      if (initialRevision !== runUiRevision) return
       const live = taskStatus?.live
       const last = taskStatus?.last_run
       if (live && isTaskActiveStatus(live.status)) {
@@ -1653,6 +1659,10 @@ watch(() => [props.adapterId, props.task], ([adapterId, task]) => {
         isRunning.value = true
         currentRunId = live.run_id ?? last?.id ?? null
         emit('status-change', live)
+      }
+      if (!live || !isTaskActiveStatus(live.status)) {
+        currentRunId = last?.id ?? null
+        localLiveSnapshot.value = { status: last?.status || 'idle', run_id: currentRunId }
       }
       if (isInstanceMode.value || last?.output_files) {
         await refreshOutputFiles()
@@ -1704,10 +1714,7 @@ const autoPrecheckNote = computed(() =>
   props.task?.auto_precheck_note || '执行前会自动做 Excel 预检'
 )
 
-const liveProgress = computed(() => ({
-  ...(props.task?.live || {}),
-  ...(localLiveSnapshot.value || {}),
-}))
+const liveProgress = computed(() => localLiveSnapshot.value || props.task?.live || {})
 const liveStatus = computed(() => liveProgress.value?.status || '')
 const paramsGridClass = computed(() =>
   props.adapterId === 'shopee-webchat-bulk-reply' ? 'params-grid-shopee-bulk' : ''
@@ -2815,6 +2822,9 @@ async function resolveCurrentTabId(params) {
 }
 
 function resetRunUi() {
+  runUiRevision += 1
+  currentRunId = null
+  logs.value = []
   lastResult.value = null
   outputFiles.value = []
   approvalBoardUrl.value = ''
@@ -2827,7 +2837,8 @@ function resetRunUi() {
   balaMaterialDrawerOpen.value = false
   balaReviewBoardUrl.value = ''
   balaReviewDrawerOpen.value = false
-  localLiveSnapshot.value = null
+  localLiveSnapshot.value = { status: 'running', phase: 'starting', run_id: null }
+  emit('status-change', localLiveSnapshot.value)
   if (isTmallAiImageChainTask.value) aiChainActiveStep.value = 'config'
   syncingOdps.value = false
   operatorAlertKeys.clear()
@@ -2835,10 +2846,7 @@ function resetRunUi() {
 
 function applyLocalLiveStatus(status) {
   if (!status?.status) return
-  localLiveSnapshot.value = {
-    ...(localLiveSnapshot.value || props.task?.live || {}),
-    ...status,
-  }
+  localLiveSnapshot.value = mergeTaskLiveStatus({ live: localLiveSnapshot.value || props.task?.live }, status).live
 }
 
 async function pauseCurrentTask() {
@@ -2890,8 +2898,8 @@ async function startTaskRun(params, pendingMessage) {
   })
   if (!r.ok) throw new Error(r.message || JSON.stringify(r))
   logs.value.push(`[${now()}] ${pendingMessage}`)
-  applyLocalLiveStatus({ status: 'running' })
-  emit('status-change', { status: 'running' })
+  applyLocalLiveStatus({ status: 'running', phase: 'starting', run_id: null })
+  emit('status-change', localLiveSnapshot.value)
   await new Promise(res => setTimeout(res, 600))
   const initStatus = await window.cs.getTaskStatus(props.adapterId, props.task.task_id, runInstanceUid)
   currentRunId = initStatus?.live?.run_id ?? initStatus?.last_run?.id ?? null
@@ -2914,11 +2922,15 @@ async function startTaskRun(params, pendingMessage) {
 }
 
 async function pollStatusOnce() {
+  const revision = runUiRevision
   const r = await window.cs.getTaskStatus(props.adapterId, props.task.task_id, effectiveInstanceUid.value)
   const live = r.live
   const logR = await window.cs.getTaskLogs(props.adapterId, props.task.task_id, effectiveInstanceUid.value)
 
-  if (logR.logs) logs.value = logR.logs
+  if (revision !== runUiRevision) return null
+  const responseRunId = live?.run_id ?? r.last_run?.id
+  if (currentRunId && responseRunId && String(responseRunId) !== String(currentRunId)) return null
+  if (logR.logs) logs.value = latestRunLogs(logR.logs)
   const latestLogText = Array.isArray(logR.logs) ? logR.logs.slice(-30).join('\n') : ''
   if (/等待.*登录|登录.*等待|请.*登录|未登录/.test(latestLogText)) {
     showOperatorAttention(
@@ -2961,25 +2973,38 @@ function scrollToBottom() {
   // The reusable output drawer owns log auto-scroll.
 }
 
+async function updateDownloadSummary(files, status) {
+  const revision = runUiRevision
+  if (!['done', 'completed'].includes(status)) return null
+  try {
+    const summary = await readCloudDriveDownloadSummary(props.adapterId, props.task?.task_id, files, file => window.cs.readExcel(file))
+    if (revision !== runUiRevision) return null
+    if (summary) lastResult.value = { ok: !summary.failed, warning: Boolean(summary.unmatched), msg: `完成：${summary.text}` }
+    return summary
+  } catch (error) {
+    logs.value.push(`[${now()}] 读取下载摘要失败：${error?.message || error}`)
+    return null
+  }
+}
+
 async function refreshOutputFiles() {
+  const revision = runUiRevision
   if (isInstanceMode.value) {
     const detail = props.instanceUid
       ? await window.cs.getTaskInstance(props.instanceUid)
       : await window.cs.getTaskInstance(effectiveInstanceUid.value)
-    const artifactFiles = (detail?.artifacts || [])
-      .map(artifact => artifact?.path)
-      .filter(Boolean)
-    const summaryFiles = Array.isArray(detail?.summary?.output_files)
-      ? detail.summary.output_files.map(file => String(file || '').trim()).filter(Boolean)
-      : []
-    const allFiles = Array.from(new Set([...artifactFiles, ...summaryFiles]))
-    const boardUrl = String(detail?.summary?.approval_board_url || '').trim()
-    if (boardUrl) allFiles.push(boardUrl)
+    if (revision !== runUiRevision) return []
+    const output = currentRunOutput(detail, currentRunId)
+    const allFiles = output.files
+    const summary = output.summary
+    const boardUrl = String(summary.approval_board_url || '').trim()
+    if (boardUrl && !allFiles.includes(boardUrl)) allFiles.push(boardUrl)
     outputFiles.value = visibleOutputFiles(allFiles)
-    approvalBoardUrl.value = findApprovalBoardUrl(allFiles, detail?.summary || null)
-    localApprovalBoardUrl.value = findLocalApprovalBoardUrl(allFiles, detail?.summary || null)
+    approvalBoardUrl.value = findApprovalBoardUrl(allFiles, summary)
+    localApprovalBoardUrl.value = findLocalApprovalBoardUrl(allFiles, summary)
     if (!localApprovalBoardUrl.value && isLocalTmallApprovalBoardUrl(approvalBoardUrl.value)) localApprovalBoardUrl.value = approvalBoardUrl.value
     if (!approvalBoardUrl.value && !localApprovalBoardUrl.value) approvalBatch.value = null
+    await updateDownloadSummary(allFiles, detail?.status)
     const preferCreateStep = shouldPreferCreateStepForInstance(detail)
     const currentStep = normalizeAiChainStep(detail?.current_step)
     if (preferCreateStep && currentStep) aiChainActiveStep.value = currentStep
@@ -2988,7 +3013,7 @@ async function refreshOutputFiles() {
   }
 
   const dataR = await window.cs.getData(props.adapterId, props.task.task_id)
-  if (!dataR.runs?.[0]?.output_files) return []
+  if (!dataR.runs?.[0]?.output_files) { outputFiles.value = []; return [] }
   try {
     const files = typeof dataR.runs[0].output_files === 'string'
       ? JSON.parse(dataR.runs[0].output_files)
@@ -3094,10 +3119,7 @@ async function finishRun(result, options = {}) {
   const keepRunning = !!options.keepRunning
   if (!keepRunning) {
     isRunning.value = false
-    currentRunId = null
     runStage.value = ''
-  } else {
-    currentRunId = null
   }
   applyLocalLiveStatus(result)
   emit('status-change', result)
@@ -3110,7 +3132,8 @@ async function finishRun(result, options = {}) {
     if (options.message) {
       lastResult.value = { ok: !!options.ok, msg: options.message }
     } else {
-      lastResult.value = { ok: true, msg: `✓ 完成，共 ${result.records ?? result.records_count ?? 0} 条记录` }
+      const business = await updateDownloadSummary(files, 'done')
+      if (!business) lastResult.value = { ok: true, msg: `✓ 完成，共 ${result.records ?? result.records_count ?? 0} 条记录` }
     }
     await maybeOpenBalaMaterialSelection(files)
     await maybeOpenBalaImageReview(files, result)
@@ -6062,4 +6085,5 @@ onUnmounted(() => {
   }
   .params-grid-shopee-bulk { grid-template-columns: minmax(0, 1fr); }
 }
+.result-badge.warn { color: #925400; background: #fff6db; }
 </style>

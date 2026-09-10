@@ -15,7 +15,8 @@
         <strong>{{ instance.summary?.approval_batch_id || '-' }}</strong>
       </div>
       <div class="tir-readback-item">
-        <span>创建结果</span>
+        <span>本次运行结果</span>
+        <small v-if="instance.runs?.[0]?.run_id">运行 #{{ instance.runs[0].run_id }}</small>
         <strong>{{ createSummaryText }}</strong>
       </div>
       <button
@@ -26,9 +27,9 @@
       >
         审批看板
       </button>
-      <div v-if="instance.artifacts?.length" class="tir-artifacts">
+      <div v-if="runArtifacts.length" class="tir-artifacts">
         <button
-          v-for="artifact in instance.artifacts"
+          v-for="artifact in runArtifacts"
           :key="artifact.id || artifact.path"
           type="button"
           @click="openArtifact(artifact.path)"
@@ -59,6 +60,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import TaskRunner from './TaskRunner.vue'
 import { mergeTaskLiveStatus } from '../utils/taskRunnerState'
+import { currentRunOutput, readCloudDriveDownloadSummary } from '../utils/taskRunOutput'
 
 const props = defineProps({
   instanceUid: { type: String, required: true },
@@ -67,6 +69,8 @@ const props = defineProps({
 defineEmits(['back'])
 
 const instance = ref(null)
+const downloadSummary = ref(null)
+const runArtifacts = computed(() => currentRunOutput(instance.value).files.map(path => ({ path })))
 const task = ref(null)
 const loading = ref(false)
 const error = ref('')
@@ -78,6 +82,7 @@ const preferredApprovalBoardUrl = computed(() => {
   return isLocalTmallApprovalBoardUrl(approval) ? approval : ''
 })
 const createSummaryText = computed(() => {
+  if (downloadSummary.value) return downloadSummary.value.text
   const summary = instance.value?.summary || {}
   const attempted = Number(summary.attempted || 0)
   const succeeded = Number(summary.succeeded || 0)
@@ -98,6 +103,10 @@ async function loadInstance() {
       window.cs.getTasks(),
     ])
     instance.value = detail
+    downloadSummary.value = null
+    if (['completed', 'done'].includes(detail?.status)) {
+      try { downloadSummary.value = await readCloudDriveDownloadSummary(detail.adapter_id, detail.task_id, currentRunOutput(detail).files, file => window.cs.readExcel(file)) } catch {}
+    }
     task.value = (tasks || []).find(item =>
       item.adapter_id === detail.adapter_id &&
       item.task_id === detail.task_id
@@ -112,7 +121,13 @@ async function loadInstance() {
 function handleStatusChange(status) {
   if (!instance.value || !status?.status) return
   task.value = mergeTaskLiveStatus(task.value, status)
-  if (status.status === 'running') instance.value.status = 'running'
+  if (status.status === 'running') {
+    instance.value.status = 'running'
+    if (status.phase === 'starting') {
+      downloadSummary.value = null
+      instance.value = { ...instance.value, summary: {}, runs: [], artifacts: [] }
+    }
+  }
   if (status.status === 'done') instance.value.status = status.approval_board_url ? 'waiting_approval' : (instance.value.status === 'waiting_approval' ? 'waiting_approval' : 'completed')
   if (status.status === 'error') instance.value.status = 'failed'
   if (status.status === 'stopped') instance.value.status = 'stopped'

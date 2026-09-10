@@ -114,6 +114,7 @@ const logBodyEl = ref(null)
 const outputSummary = computed(() => summarizeOutputFiles(props.files))
 const displayOutputEntries = computed(() => buildOutputFileEntries(props.files))
 const latestLogPreview = computed(() => {
+  if (activeTab.value === 'files') return outputSummary.value.label
   const latest = props.logs?.length ? props.logs[props.logs.length - 1] : ''
   return String(latest || '').replace(/\s+/g, ' ').trim()
 })
