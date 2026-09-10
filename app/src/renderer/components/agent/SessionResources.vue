@@ -36,6 +36,7 @@
       <div class="resource-toolbar"><strong :title="selection.path">{{ selection.filename }}</strong><button @click="fileAction('openFile', selection)">{{ extension(selection.filename).toLowerCase() === 'zip' ? '显示文件' : '系统打开' }}</button><button @click="fileAction('revealFile', selection)">定位</button></div>
       <div class="resource-preview">
         <OfficePreview v-if="isOfficeDocument(selection)" :office="selection.office" :path="selection.path" />
+        <DocumentPreview v-else-if="documentKind(selection.filename)" :key="`${sessionId}:${selection.path}:${selection.updated_at || selection.size || 0}`" :path="selection.path" :filename="selection.filename" :kind="documentKind(selection.filename)" :revision="selection.updated_at" />
         <p v-else-if="previewLoading" class="empty">正在加载…</p>
         <img v-else-if="previewKind === 'image'" :src="previewUrl" :alt="selection.filename" @error="error = '文件无法加载，可能已移动或删除'" />
         <video v-else-if="previewKind === 'video'" :src="previewUrl" controls />
@@ -48,7 +49,7 @@
       <div v-if="searching" class="resource-search"><input ref="searchInput" v-model="query" placeholder="搜索文件或页面" aria-label="搜索文件或页面" @keydown.esc.prevent="closeSearch" /><button aria-label="关闭搜索" title="关闭搜索" @click="closeSearch">×</button></div>
       <div class="resource-list">
         <section>
-          <div class="section-heading"><button :aria-expanded="pagesExpanded || !!query" @click="pagesExpanded = !pagesExpanded">{{ pagesExpanded || query ? '▾' : '▸' }} 浏览器页面 <small>{{ query ? `${filteredTabs.length} / ${tabs.length}` : tabs.length }}</small></button><button title="新开页面" aria-label="新开页面" :disabled="busy || !sessionId" @click="newPage">＋</button></div>
+          <div class="section-heading"><button :aria-expanded="pagesExpanded || !!query" @click="pagesExpanded = !pagesExpanded"><span class="section-chevron" :class="{ expanded: pagesExpanded || query }" aria-hidden="true">›</span> 浏览器页面 <small>{{ query ? `${filteredTabs.length} / ${tabs.length}` : tabs.length }}</small></button><button title="新开页面" aria-label="新开页面" :disabled="busy || !sessionId" @click="newPage">＋</button></div>
           <div v-if="pagesExpanded || query" class="section-items page-items" aria-label="浏览器页面列表" tabindex="0"><p v-if="!filteredTabs.length" class="empty">{{ query ? '没有匹配的页面' : '当前会话暂无浏览器页面' }}</p>
             <div v-for="tab in filteredTabs" :key="tab.id" class="resource-row">
               <button class="resource-main" :title="`${tab.title || tab.url}\n${tab.url}`" @click="openBrowser(tab.id)"><span class="type-icon">◎</span><span class="resource-name">{{ tab.title || tab.url || '新页面' }}</span><i v-if="tab.id === activeTabId" title="最近执行的页面" class="activity-dot"></i></button>
@@ -56,7 +57,7 @@
             </div>
           </div>
         </section>
-        <section><div class="section-heading"><button :aria-expanded="filesExpanded || !!query" @click="filesExpanded = !filesExpanded">{{ filesExpanded || query ? '▾' : '▸' }} 产物 <small>{{ query ? `${filteredArtifacts.length} / ${artifacts.length}` : artifacts.length }}</small></button></div>
+        <section><div class="section-heading"><button :aria-expanded="filesExpanded || !!query" @click="filesExpanded = !filesExpanded"><span class="section-chevron" :class="{ expanded: filesExpanded || query }" aria-hidden="true">›</span> 产物 <small>{{ query ? `${filteredArtifacts.length} / ${artifacts.length}` : artifacts.length }}</small></button></div>
           <div v-if="filesExpanded || query" class="section-items file-items" aria-label="产物列表" tabindex="0"><p v-if="!filteredArtifacts.length" class="empty">{{ loading ? '正在加载资源…' : query ? '没有匹配的产物' : '生成的文件会显示在这里' }}</p>
             <div v-for="item in filteredArtifacts" :key="item.path || item.artifact_id" class="resource-row">
               <button class="resource-main" :title="`${item.filename}\n${size(item.size)} · ${item.path}`" @click="openArtifact(item)"><span class="type-icon">{{ extension(item.filename) }}</span><span class="resource-name">{{ item.filename }}</span><small v-if="item.office?.delivery?.status === 'final'" title="文件哈希与数据、视觉验收记录一致">已验收交付</small><small v-else-if="item.office" title="尚未登记为最终交付">待交付</small><small v-if="artifactAge(item)" class="artifact-age">{{ artifactAge(item) }}</small></button>
@@ -80,6 +81,9 @@
 import { liveSessionBrowserPages, isClosedBrowserPageError } from '../../utils/sessionBrowserPages.js'
 import { isPartialTextPreview } from '../../utils/textPreview.js'
 import OfficePreview from './OfficePreview.vue'
+import { defineAsyncComponent } from 'vue'
+const DocumentPreview = defineAsyncComponent(() => import('./resources/DocumentPreview.vue'))
+import { documentKind } from '../../utils/documentPreview.js'
 import ResourceMenu from './ResourceMenu.vue'
 import { formatArtifactAge, sortArtifactsByUpdated, isOfficeDocument } from '../../utils/artifactTime.js'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -199,7 +203,8 @@ async function openArtifact(item) {
   selection.value = { ...item, kind: 'artifact' }; opened.value = true; error.value = ''
   const token = ++previewGeneration; previewKind.value = ''; previewText.value = ''; previewLoading.value = true
   try {
-    const ext = extension(item.filename).toLowerCase()
+    if (isOfficeDocument(item) || documentKind(item.filename)) return
+    const ext = String(item.filename || '').split('.').pop().toLowerCase()
     const kind = /^(png|jpg|jpeg|webp|gif|bmp|svg)$/.test(ext) ? 'image' : /^(mp4|webm|mov)$/.test(ext) ? 'video' : /^(mp3|wav|ogg|m4a)$/.test(ext) ? 'audio' : /^(md|txt|csv|json|js|py|ts|log|yaml|yml|html|css)$/.test(ext) ? 'text' : ''
     if (!kind) return
     const url = await window.cs.agentMediaUrl(item.path, null)
@@ -323,4 +328,26 @@ button,select,input{font:inherit;color:inherit}button{background:none;border:0;c
 .export-log::after{content:attr(data-tooltip);position:absolute;right:0;top:calc(100% + 7px);z-index:40;white-space:nowrap;padding:6px 8px;border-radius:6px;background:var(--tooltip-bg,#292932);color:#f7f7fa;font-size:11px;line-height:1.4;box-shadow:0 4px 14px #0002;opacity:0;pointer-events:none;transition:opacity 120ms}
 .export-log:hover::after,.export-log:focus-visible::after{opacity:1}
 .resource-toolbar button{border:1px solid var(--border);padding:5px 9px;color:var(--text2);font-size:12px}.resource-toolbar button:hover{background:var(--bg2);color:var(--text)}
+/* Localized feedback: the old hover used the same background as the compact card. */
+.session-resources,.session-header-actions{--resource-hover:color-mix(in srgb,var(--text) 8%,transparent);--resource-pressed:color-mix(in srgb,var(--text) 12%,transparent);--resource-ease-out:cubic-bezier(.23,1,.32,1)}
+.resource-row{isolation:isolate}.resource-row::before{content:"";position:absolute;inset:0;border-radius:7px;z-index:-1;background:var(--resource-hover);opacity:0;pointer-events:none;transition:opacity 120ms ease}
+.resource-row:focus-within::before{opacity:1;transition:none}.resource-row:hover,.resource-main:hover{background:transparent}
+.section-heading>button:first-child{flex:1;text-align:left;display:flex;align-items:center;gap:5px;min-height:30px}
+.section-heading>button:first-child small{margin-left:2px}.section-chevron{display:inline-flex;align-items:center;justify-content:center;width:10px;font-size:16px;line-height:1;transform:rotate(0);transition:transform 160ms var(--resource-ease-out)}.section-chevron.expanded{transform:rotate(90deg)}
+.section-heading button:focus-visible .section-chevron{transition:none}
+.section-heading button,header button,.session-header-actions button,.resource-toolbar button{position:relative;isolation:isolate}
+.section-heading button::before,header button::before,.session-header-actions button::before,.resource-toolbar button::before{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--resource-hover);opacity:0;z-index:-1;pointer-events:none;transition:opacity 120ms ease}
+.session-resources button:focus-visible,.session-header-actions button:focus-visible{outline:2px solid var(--orange,#ff6b2b);outline-offset:1px}
+@media(hover:hover) and (pointer:fine){
+  .resource-row:hover::before{opacity:1}
+  .section-heading button:hover:not(:disabled),header button:hover:not(:disabled),.session-header-actions button:hover:not(:disabled),.resource-toolbar button:hover:not(:disabled){background:transparent}
+  .section-heading button:hover:not(:disabled)::before,header button:hover:not(:disabled)::before,.session-header-actions button:hover:not(:disabled)::before,.resource-toolbar button:hover:not(:disabled)::before{opacity:1}
+  .section-heading button,header button,.session-header-actions button,.resource-toolbar button{transition:transform 160ms var(--resource-ease-out)}
+  .section-heading button:active:not(:disabled):not(:focus-visible),header button:active:not(:disabled):not(:focus-visible),.session-header-actions button:active:not(:disabled):not(:focus-visible),.resource-toolbar button:active:not(:disabled):not(:focus-visible){transform:scale(.97)}
+  .resource-row:hover :deep(.menu-trigger){opacity:1}
+}
+@media(prefers-reduced-motion:reduce){
+  .section-chevron,.section-heading button,header button,.session-header-actions button,.resource-toolbar button{transition:none!important}
+  .section-heading button:active,header button:active,.session-header-actions button:active,.resource-toolbar button:active{transform:none!important}
+}
 </style>

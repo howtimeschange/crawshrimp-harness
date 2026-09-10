@@ -1,0 +1,31 @@
+{
+  "upstream": {
+    "tag": "dsh-v0.1.5-rc.1",
+    "commit": "183f08e9c6dde7e36cd2318eaee70b0da08fb35e"
+  },
+  "baseline": {
+    "harness": "205500eead7bf72fa1a9b90df8287c41feed894a",
+    "dsh": "0.1.2-rc.1",
+    "dshIm": "4.11.0"
+  },
+  "patches": [
+    {
+      "id": "C01",
+      "package": "@deepseek-ai/dsh-mcp-client",
+      "version": "0.1.2-rc.1",
+      "before": "8e7a07faa3d75322d98f7939c48ccff52f00a03464ef30337af5de89f6ad4b94",
+      "after": "ad83715a3f1f5724f1d93647ee90de71d7f9ed3187ebf3fc9f28f3eeb6184629",
+      "changed": true,
+      "verified": true
+    },
+    {
+      "id": "C02",
+      "package": "@deepseek-ai/dsh-client-ui-conversation",
+      "version": "0.1.2-rc.1",
+      "before": "75ee952a235c72546e58343cecfb3e2583be48f32e5609803d4f593fb145bbb1",
+      "after": "8620d35c080df191c04127403ca47174c463f23f35ca8f0f497fc16fe6726bd9",
+      "changed": true,
+      "verified": true
+    }
+  ]
+}

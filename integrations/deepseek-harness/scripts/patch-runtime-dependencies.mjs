@@ -1,3 +1,4 @@
+import { prepareCompatibility } from '../compat/apply.mjs'
 import { patchDeepSeekFlash } from './deepseek-flash.mjs'
 /**
  * DSH rc.1 / dsh-im 4.11 clean-install guard.
@@ -2203,6 +2204,7 @@ async function probeWorkspaceDirectoryAccess(directory) {
  */
 export function patchRuntimeDependencies(runtimeRoot) {
   const root = resolve(runtimeRoot)
+  const applyCompatibility = prepareCompatibility(root)
   patchCompactChat(root)
   patchHistorySearch(root)
   const dshManifest = requireText(root, 'node_modules/@deepseek-ai/dsh/package.json', '"0.1.2-rc.1"')
@@ -2249,6 +2251,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const deepseekReadImage = patchDeepSeekReadImage(root, deepseekVisionBridge)
   patchOfficeVision(root, deepseekVisionBridge)
   patchDeepSeekFlash(root)
+  applyCompatibility()
   const profilePackages = assertEffectiveProfileRootClosure(root)
   const standardPreset = assertStandardPresetRootClosure(root)
   const inboundTtl = requireText(

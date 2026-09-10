@@ -23,8 +23,13 @@
   "dependencies": {
     "@tabler/icons-vue": "^3.45.0",
     "@tldraw/assets": "^5.2.3",
+    "css-tree": "3.1.0",
+    "dompurify": "3.4.15",
     "electron-updater": "6.8.9",
+    "highlight.js": "11.11.1",
     "img-fx": "^0.5.1",
+    "markdown-it": "14.3.1",
+    "pdfjs-dist": "5.4.149",
     "portfinder": "^1.0.32",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

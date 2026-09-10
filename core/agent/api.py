@@ -66,6 +66,11 @@ class ArtifactSignRequest(BaseModel):
     entry: str = ""
 
 
+class PreviewResourceRequest(BaseModel):
+    document: str
+    relative: str
+
+
 class SessionModelRequest(BaseModel):
     model_id: str
 
@@ -397,6 +402,12 @@ def get_task_instance_status(instance_uid: str) -> dict:
 _MEDIA_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 _MEDIA_VIDEO_EXT = {".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv"}
 _MEDIA_AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg"}
+
+
+@router.post("/artifacts/preview-resource")
+def preview_resource(req: PreviewResourceRequest) -> dict:
+    from core.agent.preview_resources import read_preview_resource
+    return read_preview_resource(req.document, req.relative)
 
 
 @router.post("/artifacts/sign")

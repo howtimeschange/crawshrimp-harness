@@ -1,9 +1,17 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import path from 'path'
+import { cpSync, mkdirSync } from 'node:fs'
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), {
+    name: 'local-pdf-resources',
+    buildStart() {
+      const target = path.resolve(__dirname, 'src/renderer/public/pdfjs')
+      mkdirSync(target, { recursive: true })
+      for (const name of ['cmaps', 'standard_fonts', 'wasm', 'LICENSE']) cpSync(path.resolve(__dirname, 'node_modules/pdfjs-dist', name), path.join(target, name), { recursive: true })
+    },
+  }],
   root: 'src/renderer',
   base: './',
   build: {

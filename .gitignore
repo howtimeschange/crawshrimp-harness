@@ -55,3 +55,7 @@ integrations/deepseek-harness/crawshrimp-slots/lib/image-generation-effect.js
 
 # Built-in editable Office templates
 !integrations/deepseek-harness/skills/office-excel/templates/starter.xlsx
+
+# Generated compatibility verification receipt
+integrations/deepseek-harness/compat-report.json
+app/src/renderer/public/pdfjs/

@@ -1,5 +1,5 @@
 <template>
-  <button ref="trigger" class="menu-trigger" type="button" :aria-label="label" aria-haspopup="menu" :aria-expanded="opened" @click="toggle" @keydown.down.prevent="show">⋯</button>
+  <button ref="trigger" class="menu-trigger" type="button" :aria-label="label" :title="label" aria-haspopup="menu" :aria-expanded="opened" @click="toggle" @keydown.down.prevent="show">⋯</button>
   <div ref="menu" class="resource-menu" popover="auto" role="menu" :aria-label="label" @toggle="onToggle" @click="onAction" @keydown="onKeydown">
     <slot />
   </div>
@@ -45,4 +45,10 @@ onUnmounted(() => { window.removeEventListener('resize', hide); window.removeEve
 .resource-menu::backdrop{background:transparent}
 .resource-menu :slotted(button){display:block;width:100%;padding:8px 10px;border:0;border-radius:5px;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer}
 .resource-menu :slotted(button:hover),.resource-menu :slotted(button:focus-visible){background:var(--bg);outline:none}
+.menu-trigger{position:relative;isolation:isolate;opacity:.65;transition:opacity 120ms ease,transform 160ms cubic-bezier(.23,1,.32,1)}
+.menu-trigger::before{content:"";position:absolute;inset:0;border-radius:inherit;z-index:-1;background:color-mix(in srgb,var(--text) 12%,transparent);opacity:0;transition:opacity 120ms ease;pointer-events:none}
+.menu-trigger[aria-expanded=true],.menu-trigger:focus-visible{opacity:1}.menu-trigger[aria-expanded=true]::before,.menu-trigger:focus-visible::before{opacity:1}
+.menu-trigger:hover,.menu-trigger[aria-expanded=true]{background:transparent}
+@media(hover:hover) and (pointer:fine){.menu-trigger:hover{opacity:1}.menu-trigger:hover::before{opacity:1}.menu-trigger:active:not(:focus-visible){transform:scale(.97)}}
+@media(prefers-reduced-motion:reduce){.menu-trigger{transition:opacity 120ms ease}.menu-trigger:active{transform:none}}
 </style>

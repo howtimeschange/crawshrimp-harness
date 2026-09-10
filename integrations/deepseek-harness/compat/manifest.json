@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "baseline": {
+    "harness": "205500eead7bf72fa1a9b90df8287c41feed894a",
+    "dsh": "0.1.2-rc.1",
+    "dshIm": "4.11.0"
+  },
+  "upstream": {
+    "tag": "dsh-v0.1.5-rc.1",
+    "commit": "183f08e9c6dde7e36cd2318eaee70b0da08fb35e"
+  },
+  "patches": [
+    {
+      "id": "C01",
+      "package": "@deepseek-ai/dsh-mcp-client",
+      "version": "0.1.2-rc.1",
+      "file": "lib/index.js",
+      "upstreamSource": "packages/mcp/mcp-client/src/tools.ts",
+      "behavior": "Reject repeated nextCursor before disposing previous generation",
+      "precondition": "exact version and unique source anchors",
+      "postcondition": "guard/dispatch present and idempotent",
+      "order": "after historical product patches",
+      "tests": "node --test compat/compat.test.mjs",
+      "persistenceImpact": "none",
+      "removeWhen": "integrated runtime supplies equivalent behavior and product regressions pass"
+    },
+    {
+      "id": "C02",
+      "package": "@deepseek-ai/dsh-client-ui-conversation",
+      "version": "0.1.2-rc.1",
+      "file": "lib/client.js",
+      "upstreamSource": "packages/client/ui-conversation/src/client/skeleton/InputBar.tsx",
+      "behavior": "Resolve button through the existing Enter policy and keyboard command machine",
+      "precondition": "exact version and unique source anchors",
+      "postcondition": "guard/dispatch present and idempotent",
+      "order": "after historical product patches",
+      "tests": "node --test compat/compat.test.mjs",
+      "persistenceImpact": "none",
+      "removeWhen": "integrated runtime supplies equivalent behavior and product regressions pass"
+    }
+  ]
+}

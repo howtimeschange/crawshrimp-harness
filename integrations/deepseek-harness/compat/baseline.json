@@ -1,0 +1,65 @@
+{
+  "commit": "205500eead7bf72fa1a9b90df8287c41feed894a",
+  "files": [
+    {
+      "path": "integrations/deepseek-harness/package-lock.json",
+      "sha256": "dda824a0f502a5b493fb667b829cda5cc3be7af0fe2fb1ee2596dcd5621ca5d9"
+    },
+    {
+      "path": "integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs",
+      "sha256": "ef21c7d5c392cb4f28317cef5e98142f2bbcce8fabd0ab0e14a742b3ef4cad80"
+    },
+    {
+      "path": "integrations/deepseek-harness/scripts/compact-chat.mjs",
+      "sha256": "18217e2aac5b3beedc3db77a7143c5c31b9f73f20a60436f78e7b226f5fc01f6"
+    },
+    {
+      "path": "integrations/deepseek-harness/scripts/history-search.mjs",
+      "sha256": "9f8f870ee4f5110065a04f983308cf8da42ad8839290a6a667471c0209f4776c"
+    },
+    {
+      "path": "integrations/deepseek-harness/scripts/currency-math.mjs",
+      "sha256": "283fc9943956766dd679f12682b49c82444a5289c660ab5c80bbfc2559ecfd0a"
+    },
+    {
+      "path": "integrations/deepseek-harness/scripts/reasoning-recovery.mjs",
+      "sha256": "7b21e1f5e6c605da4a51d9d8fb6bf867a2025adbab93a64c4b250ee671d6b99d"
+    },
+    {
+      "path": "integrations/deepseek-harness/scripts/office-vision.mjs",
+      "sha256": "00bee8f39e6c8bca34093d4865fb415d99f82129ec84ef112260fb093d9a1cff"
+    },
+    {
+      "path": "integrations/deepseek-harness/scripts/configured-model-catalog.mjs",
+      "sha256": "e6657e950297333eefece119e735e68d76e7f849fbb47a2f5805c8cfe0321d89"
+    },
+    {
+      "path": "integrations/deepseek-harness/scripts/deepseek-flash.mjs",
+      "sha256": "c75f401e05fce33b2dbb197c4877b403d15fd5fb5a0915b3a199894951c64b62"
+    },
+    {
+      "path": "integrations/deepseek-harness/worker/web-rpc-client.mjs",
+      "sha256": "56d979f7ef3a598423331746d25f82a3d44a823175793d1e6d813e1f708dd9dc"
+    },
+    {
+      "path": "integrations/deepseek-harness/worker/native-web-follow-manager.mjs",
+      "sha256": "f835c677844183ce4e55753f47c4e87771fd8246983386a1c753b196ea6683a6"
+    },
+    {
+      "path": "integrations/deepseek-harness/crawshrimp-product-bridge/lib/index.js",
+      "sha256": "ec642a453057c1fc1bbb254ca2567ecd2b55e6be0e4c82ced07f642e0cbf563f"
+    },
+    {
+      "path": "app/src/renderer/components/agent/OfficePreview.vue",
+      "sha256": "b1218519033668d9545d37a6b3e750760e24b623231f9f1e31ead24ca02fe9a2"
+    },
+    {
+      "path": "app/src/renderer/components/agent/SessionResources.vue",
+      "sha256": "5077e937f53229defa7391d15706c35cbe3ea415c17418395b113026c71d25d6"
+    },
+    {
+      "path": "app/src/preload.js",
+      "sha256": "5e5d1bc8fa2fa9888a124a4aa1ad9f9765d0194ddf1bd66e15ae2c73ed531c45"
+    }
+  ]
+}

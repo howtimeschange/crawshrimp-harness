@@ -2,6 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
+import { liveSessionBrowserPages, isClosedBrowserPageError } from './renderer/utils/sessionBrowserPages.js'
+import { documentKind } from './renderer/utils/documentPreview.js'
 import { formatArtifactAge, sortArtifactsByUpdated, isOfficeDocument } from './renderer/utils/artifactTime.js'
 
 const source = readFileSync(new URL('./renderer/components/agent/SessionResources.vue', import.meta.url), 'utf8')
@@ -11,7 +13,8 @@ function harness({ sessionId = 'a', storage = new Map() } = {}) {
   const pointerEvents = new Map()
   const props = { sessionId, conversationPhase: 'active' }
   const context = {
-    formatArtifactAge, sortArtifactsByUpdated, isOfficeDocument,
+    formatArtifactAge, sortArtifactsByUpdated, isOfficeDocument, documentKind, liveSessionBrowserPages, isClosedBrowserPageError,
+    defineAsyncComponent: () => ({}),
     document: { getElementById: () => null },
     nextTick: fn => Promise.resolve().then(fn),
     defineProps: () => props, defineEmits: () => {}, defineExpose: () => {},
@@ -20,7 +23,7 @@ function harness({ sessionId = 'a', storage = new Map() } = {}) {
     setInterval: () => 1, clearInterval() {}, setTimeout, clearTimeout,
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     window: { innerWidth: 1600, innerHeight: 960, addEventListener: (name, fn) => pointerEvents.set(name, fn), removeEventListener: name => pointerEvents.delete(name), cs: {
-      agentApi: () => new Promise(resolve => requests.push(resolve)),
+      agentApi: method => method === 'POST' ? Promise.resolve({}) : new Promise(resolve => requests.push(resolve)),
       listAgentBrowserTabs: async () => ({ ok: true, tabs: [{ id: 'one' }, { id: 'two' }] }),
     } },
   }
@@ -143,7 +146,7 @@ test('first new artifact after an empty baseline marks the collapsed panel witho
 })
 test('browser activity updates both pages while preserving the page the user chose', async () => {
   const h = harness()
-  h.openBrowser('one')
+  h.tabs.value = [{ id: 'one' }, { id: 'two' }]; await h.openBrowser('one')
   const request = h.refresh()
   h.requests[0]({ artifacts: [], tabs: [{ id: 'one' }, { id: 'two' }], activeTabId: 'two' })
   await request
@@ -155,16 +158,16 @@ test('browser activity updates both pages while preserving the page the user cho
 })
 
 
-test('browser tab changes and compact mode preserve the user resized half-screen width', () => {
+test('browser tab changes and compact mode preserve the user resized half-screen width', async () => {
   const h = harness()
-  h.openBrowser('one')
+  h.tabs.value = [{ id: 'one' }, { id: 'two' }]; await h.openBrowser('one')
   h.adjustWidth(-120)
   const width = h.width.value
-  h.openBrowser('two')
+  await h.openBrowser('two')
   assert.equal(h.width.value, width)
   h.back()
   assert.equal(h.width.value, width)
-  h.openBrowser('one')
+  h.tabs.value = [{ id: 'one' }, { id: 'two' }]; await h.openBrowser('one')
   assert.equal(h.width.value, width)
 })
 
@@ -196,9 +199,9 @@ test('half-screen dragging keeps pointer capture across the chat iframe and clea
 })
 
 
-test('shrinking to a small window collapses resources, and growing does not force them open', () => {
+test('shrinking to a small window collapses resources, and growing does not force them open', async () => {
   const h = harness()
-  h.openBrowser('one')
+  h.tabs.value = [{ id: 'one' }, { id: 'two' }]; await h.openBrowser('one')
   h.viewport.innerWidth = 1100
   h.onViewportResize()
   assert.equal(h.opened.value, false)
@@ -227,9 +230,7 @@ test('short windows collapse too, while manual reopening at the same size stays 
 
 test('switching browser presentation unmounts the old stream before starting the replacement', async () => {
   const h = harness()
-  h.openBrowser('one')
-  assert.equal(h.browserReady.value, false)
-  await Promise.resolve()
+  h.tabs.value = [{ id: 'one' }, { id: 'two' }]; await h.openBrowser('one')
   assert.equal(h.browserReady.value, true)
   h.back()
   assert.equal(h.browserReady.value, false)
@@ -238,13 +239,13 @@ test('switching browser presentation unmounts the old stream before starting the
 })
 
 
-test('compact layout reserves chat space only while the resource card is visible', () => {
+test('compact layout reserves chat space only while the resource card is visible', async () => {
   const h = harness()
   assert.equal(h.opened.value, false)
   assert.equal(h.compactOpen.value, false)
   h.togglePanel()
   assert.equal(h.compactOpen.value, true)
-  h.openBrowser('one')
+  h.tabs.value = [{ id: 'one' }, { id: 'two' }]; await h.openBrowser('one')
   assert.equal(h.compactOpen.value, false)
   h.back()
   assert.equal(h.compactOpen.value, true)

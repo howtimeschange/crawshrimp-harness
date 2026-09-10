@@ -279,6 +279,8 @@ await buildImageGenerationEffect()
 const hashInputs = [
   readFileSync(join(sourceRoot, 'package-lock.json')),
   hashTree(join(sourceRoot, 'worker')),
+  hashTree(join(sourceRoot, 'compat')),
+  hashTree(here),
   hashTree(join(sourceRoot, 'skills')),
   hashTree(join(sourceRoot, 'crawshrimp-product-bridge')),
   hashTree(join(sourceRoot, 'crawshrimp-slots')),
