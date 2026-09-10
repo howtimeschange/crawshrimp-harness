@@ -35,7 +35,7 @@ test('desktop backend switches away from an occupied non-compatible API port bef
   assert.match(main, /async function prepareBackendEndpoint\(\)/)
   assert.match(main, /const availablePort = await findAvailableApiPort\(apiPort\)/)
   assert.match(main, /port \$\{apiPort\} is occupied but no compatible backend responded/)
-  assert.match(main, /async function startBackend\(\) \{\s*await prepareBackendEndpoint\(\)\s*await backendController\.ensureReady\(\)\s*\}/)
+  assert.match(main, /async function startBackend\(\) \{\s*await browserLaunchBridge\.start\(\)\s*await automationPermissionBridge\.start\(\)\s*await prepareBackendEndpoint\(\)\s*await backendController\.ensureReady\(\)\s*\}/)
 })
 
 test('desktop backend compatibility requires the current Electron launch identity', () => {
@@ -209,10 +209,10 @@ test('desktop renderer exposes backend repair and structured runtime diagnostics
   assert.match(appShell, /await window\.cs\.restartBackend\(\)/)
   assert.match(appShell, /provide\('repairCoreService', repairCoreService\)/)
   assert.match(settings, /修复核心服务/)
-  assert.match(settings, /修复 Chrome 连接/)
+  assert.match(settings, /@click="doLaunchChrome"/)
   assert.match(settings, /打开诊断日志/)
   assert.match(settings, /props\.status\?\.apiDiagnostic\?\.lastError/)
-  assert.match(settings, /props\.status\?\.chromeDiagnostic\?\.message/)
+  assert.match(settings, /props\.status\.chromeDiagnostic\.message/)
   assert.match(settings, /props\.status\?\.dataDirRecovery\?\.recovered/)
   assert.match(scriptList, /const repairCoreService = inject\('repairCoreService'\)/)
   assert.match(scriptList, /@click="repairAndLoad"/)

@@ -76,6 +76,7 @@ test('preload falls back to local API when cloud prompt IPC handlers are missing
   storage.set('crawshrimp.apiToken', 'local-api-token')
 
   const sandbox = {
+    process: { platform: process.platform },
     require: (specifier) => {
       if (specifier === './apiConnection') {
         return appRequire(path.join(ROOT, 'app/src/apiConnection.js'))

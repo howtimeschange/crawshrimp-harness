@@ -142,10 +142,10 @@ test('TaskRunner reads output files from task instance artifacts in instance mod
   const view = fs.readFileSync('app/src/renderer/views/TaskRunner.vue', 'utf8')
   assert.match(view, /const isInstanceMode = computed/)
   assert.match(view, /window\.cs\.getTaskInstance\(props\.instanceUid\)/)
-  assert.match(view, /detail\?\.artifacts/)
-  assert.match(view, /detail\?\.summary\?\.approval_board_url/)
+  assert.match(view, /currentRunOutput\(detail, currentRunId\)/)
+  assert.match(view, /summary\.approval_board_url/)
   assert.match(view, /const localApprovalBoardUrl = ref\(''\)/)
-  assert.match(view, /findLocalApprovalBoardUrl\(allFiles,\s*detail\?\.summary \|\| null\)/)
+  assert.match(view, /findLocalApprovalBoardUrl\(allFiles,\s*summary\)/)
   assert.match(view, /parseLocalTmallApprovalBoardUrl\(localApprovalBoardUrl\.value \|\| approvalBoardUrl\.value\)/)
 })
 

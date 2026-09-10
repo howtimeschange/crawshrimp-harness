@@ -1,2 +1,5 @@
 # CI-only test runner; do not bundle this into the desktop Python runtime.
 pytest>=8.0.0
+
+# Exercise the same Office libraries shipped in the desktop runtime.
+-r ../core/requirements-office.in
