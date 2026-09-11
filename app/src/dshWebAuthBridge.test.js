@@ -103,3 +103,35 @@ test('exchanges a real HTTP redirect without following it, and rejects invalid r
   url.search = '?token=bad'
   await assert.rejects(exchangeLaunchCookie(url), /认证失败/)
 })
+
+test('exports an authenticated descendant ZIP and preserves existing files on HTTP failure', async () => {
+  const fs = require('node:fs/promises')
+  const path = require('node:path')
+  const dir = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'session-export-'))
+  let fail = false
+  const server = http.createServer((req, res) => {
+    assert.equal(req.headers.cookie, 'dsh-auth-test=credential')
+    const url = new URL(req.url, 'http://localhost')
+    assert.equal(url.pathname, '/api/session.export')
+    assert.equal(url.searchParams.get('sessionId'), 'session-a')
+    assert.equal(url.searchParams.get('includeDescendants'), 'true')
+    res.writeHead(fail ? 401 : 200, { 'Content-Type': 'application/zip' })
+    res.end(fail ? 'unauthorized' : Buffer.from('504b0506000000000000000000000000000000000000', 'hex'))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const f = fixture()
+  try {
+    await f.bridge.prepare({ state: 'ready', web_launch_url: `http://127.0.0.1:${server.address().port}/?token=test` })
+    const destination = path.join(dir, '日志.zip')
+    assert.equal((await f.bridge.exportSessionLog('session-a', destination)).size, 22)
+    assert.equal((await fs.readFile(destination)).subarray(0, 2).toString(), 'PK')
+    fail = true
+    await assert.rejects(f.bridge.exportSessionLog('session-a', destination), /401/)
+    assert.equal((await fs.stat(destination)).size, 22)
+    assert.deepEqual(await fs.readdir(dir), ['日志.zip'])
+  } finally {
+    f.bridge.dispose()
+    await new Promise(resolve => server.close(resolve))
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})

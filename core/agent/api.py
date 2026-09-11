@@ -1228,6 +1228,7 @@ def build_agent_mcp_asgi(token_provider, context_acquirer=None,
 
 @router.get("/session-resources")
 def session_resources(runtime_session_id: str) -> dict:
+    from pathlib import Path
     artifacts, tabs = {}, {}
     active = ""
     for row in db.list_session_resource_events(runtime_session_id):
@@ -1245,7 +1246,21 @@ def session_resources(runtime_session_id: str) -> dict:
                 if tab.get("id"):
                     tabs[tab["id"]] = tab
             active = data.get("active_tab_id") or active
-    return {"artifacts": list(reversed(list(artifacts.values()))),
+    # Office render jobs freeze a new copy in a different job directory. Present
+    # those revisions as one document, preferring the latest usable preview.
+    documents = {}
+    for item in artifacts.values():
+        office = item.get("office")
+        path = Path(item.get("path") or "")
+        managed = office and path.parent.name == "editable" and path.parent.parent.name == office.get("job_id")
+        key = (str(path.parent.parent.parent), item.get("filename")) if managed else item.get("path") or item.get("artifact_id")
+        previous = documents.get(key)
+        if previous and managed:
+            rank = lambda value: (2 if (value.get("office", {}).get("delivery") or {}).get("status") == "final" else 1 if value.get("office", {}).get("pages") else 0)
+            if rank(previous) > rank(item):
+                continue
+        documents[key] = item
+    return {"artifacts": list(reversed(list(documents.values()))),
             "tabs": list(tabs.values()), "activeTabId": active}
 
 

@@ -2816,6 +2816,20 @@ secureHandle('account:action', (_, action, input = {}) => desktopAccountAuth().r
 app.on('before-quit', () => accountAuth?.dispose())
 
 secureHandle('get-status', async () => getDesktopStatus())
+secureHandle('agent:export-session-log', async (_, sessionId) => {
+  if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 200) throw new Error('会话标识无效')
+  if (!dshWebAuthBridge) throw new Error('智能体窗口已关闭')
+  await dshWebAuthBridge.prepare(await apiCall('GET', '/agent/runtime'))
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: '导出会话日志',
+    defaultPath: path.join(app.getPath('downloads'), `dsh-session-${sessionId.replace(/[^A-Za-z0-9_-]/g, '_')}.zip`),
+    filters: [{ name: '会话日志 ZIP', extensions: ['zip'] }],
+  })
+  if (result.canceled || !result.filePath) return { ok: false, canceled: true }
+  const saved = await dshWebAuthBridge.exportSessionLog(sessionId, result.filePath)
+  shell.showItemInFolder(saved.dest)
+  return saved
+})
 secureHandle('agent:api', async (_, method, requestPath, body) => {
   const request = normalizeAgentApiRequest(method, requestPath)
   await waitForServiceReadiness({

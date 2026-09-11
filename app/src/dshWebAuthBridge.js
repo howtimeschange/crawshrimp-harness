@@ -84,6 +84,33 @@ function createDshWebAuthBridge({ session, getWebContents, isTrustedRendererUrl,
   session.webRequest.onBeforeSendHeaders({ urls: ['http://127.0.0.1/*', 'ws://127.0.0.1/*'] }, listener)
 
   return {
+    async exportSessionLog(sessionId, destination) {
+      if (!current || disposed || current.expiresAt <= Date.now()) throw new Error('智能体认证已过期，请重新连接后导出')
+      if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 200) throw new Error('会话标识无效')
+      const { createWriteStream } = require('node:fs')
+      const { rename, rm, stat } = require('node:fs/promises')
+      const { pipeline } = require('node:stream/promises')
+      const temporary = `${destination}.${require('node:crypto').randomUUID()}.tmp`
+      const url = new URL('/api/session.export', current.origin)
+      url.searchParams.set('sessionId', sessionId)
+      url.searchParams.set('includeDescendants', 'true')
+      try {
+        const response = await new Promise((resolve, reject) => {
+          const request = http.get(url, { headers: { Cookie: current.cookie } }, resolve)
+          request.setTimeout(120000, () => request.destroy(new Error('会话日志导出超时')))
+          request.on('error', () => reject(new Error('无法连接会话日志服务')))
+        })
+        if (response.statusCode !== 200) {
+          response.resume()
+          throw new Error(`会话日志导出失败：HTTP ${response.statusCode}`)
+        }
+        await pipeline(response, createWriteStream(temporary, { flags: 'wx', mode: 0o600 }))
+        const info = await stat(temporary)
+        if (!info.size) throw new Error('会话日志为空，未保存')
+        await rename(temporary, destination)
+        return { ok: true, dest: destination, size: info.size }
+      } finally { await rm(temporary, { force: true }).catch(() => {}) }
+    },
     async prepare(snapshot) {
       if (disposed) throw new Error('智能体窗口已关闭')
       const value = snapshot?.state === 'ready' ? snapshot.web_launch_url : ''

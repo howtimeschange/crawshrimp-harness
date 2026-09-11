@@ -55,3 +55,26 @@ def test_artifact_creation_time_survives_later_preview_updates(monkeypatch):
     assert item['created_at'] == '2026-09-01T01:00:00Z'
     assert item['updated_at'] == '2026-09-09T01:00:00Z'
     assert item['office'] == {'visual': 'passed'}
+
+
+@pytest.mark.parametrize('extension', ['pptx', 'docx', 'xlsx'])
+def test_office_job_copies_collapse_without_losing_preview_or_other_files(resource_db, extension):
+    filename = f'report.{extension}'
+
+    def publish(job, pages, filename=filename, delivery=None):
+        db.append_event('a', None, 'artifact.created', {
+            'path': f'/outputs/office/session/{job}/editable/{filename}',
+            'filename': filename, 'office': {'job_id': job, 'pages': pages, 'delivery': delivery},
+        })
+    publish('run1', [])
+    publish('render1', [{'path': '/page1.png'}])
+    publish('run2', [])
+    publish('other', [], f'other.{extension}')
+    items = api.session_resources('runtime-a')['artifacts']
+    assert len(items) == 2
+    assert next(i for i in items if i['filename'] == filename)['office']['job_id'] == 'render1'
+    publish('render2', [{'path': '/page2.png'}], delivery={'status': 'final'})
+    publish('late-poll', [])
+    items = api.session_resources('runtime-a')['artifacts']
+    assert len(items) == 2
+    assert next(i for i in items if i['filename'] == filename)['office']['job_id'] == 'render2'

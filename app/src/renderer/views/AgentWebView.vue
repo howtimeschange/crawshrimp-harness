@@ -79,7 +79,7 @@
           </section>
         </div>
       </div>
-      <SessionResources v-if="frameReady" ref="resourcesPanel" @compact-change="resourcesCompact = $event" :session-id="activeRuntimeSessionId" :conversation-phase="activeConversationPhase" :revision="props.resourceRevision" @download-log="postToFrame({ __crawshrimp: 'download-session-log', runtimeSessionId: activeRuntimeSessionId })" />
+      <SessionResources v-if="frameReady" ref="resourcesPanel" @compact-change="resourcesCompact = $event" :session-id="activeRuntimeSessionId" :conversation-phase="activeConversationPhase" :revision="props.resourceRevision" @download-log="exportSessionLog" />
       <div v-if="fileDropOverlay" class="resource-drop-overlay" :style="fileDropOverlay" aria-hidden="true" />
     </div>
     <Teleport to="body">
@@ -255,6 +255,18 @@ function syncRuntimeModelConfiguration(result) {
     inlineLlmModalOpen.value = false
   }
   if (changed) pushRuntimeModelConfiguration()
+}
+
+const exportingLogs = new Set()
+async function exportSessionLog() {
+  const sessionId = activeRuntimeSessionId.value
+  if (!sessionId || exportingLogs.has(sessionId)) return
+  exportingLogs.add(sessionId)
+  try {
+    await window.cs.exportSessionLog(sessionId)
+  } catch (error) {
+    if (sessionId === activeRuntimeSessionId.value) resourcesPanel.value?.showError(`会话日志导出失败：${error.message}`)
+  } finally { exportingLogs.delete(sessionId) }
 }
 
 function postToFrame(message) {

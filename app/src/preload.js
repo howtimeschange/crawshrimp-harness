@@ -545,6 +545,7 @@ contextBridge.exposeInMainWorld('cs', {
   },
 
   agentApi: (method, path, body) => agentApi(method, path, body),
+  exportSessionLog: (sessionId) => ipcRenderer.invoke('agent:export-session-log', sessionId),
   agentMediaUrl: (path, entry) => agentMediaUrl(path, entry),
   streamAgentEvents: (sessionId, afterSeq, handlers) => streamAgentEvents(sessionId, afterSeq, handlers),
   streamGlobalAgentEvents: (afterSeq, handlers) => streamGlobalAgentEvents(afterSeq, handlers),

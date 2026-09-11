@@ -2,7 +2,7 @@
   <div class="office-preview">
     <div class="office-controls">
       <button class="page-button" type="button" :disabled="page <= 1" @click="page--" aria-label="上一页">上一页</button>
-      <span class="page-count" aria-live="polite">{{ page }} / {{ pages.length }} 页</span>
+      <span class="page-count" aria-live="polite">{{ pages.length ? `${page} / ${pages.length} 页` : '预览准备中' }}</span>
       <button class="page-button" type="button" :disabled="page >= pages.length" @click="page++" aria-label="下一页">下一页</button>
       <button v-if="documentPath" class="open-document" type="button" @click="openDocument">打开 {{ documentType }}</button>
     </div>
@@ -10,7 +10,7 @@
     <p v-if="error" role="alert">{{ error }}</p>
     <p v-else-if="loading">正在加载第 {{ page }} 页…</p>
     <img v-else-if="url" :src="url" :alt="`文档第 ${page} 页`" @error="error = '预览文件无法加载，请重新生成预览。'" />
-    <p v-else>尚未生成逐页预览。</p>
+    <p v-else>文档正在制作，尚未生成逐页预览。这不代表文件为空，可点击上方按钮打开原件。</p>
   </div>
 </template>
 
