@@ -14566,6 +14566,10 @@ def _write_settings(cfg: dict) -> dict:
     result = {"ok": True}
     if reload_llm_runtime:
         result.update(_reload_agent_runtime_after_llm_settings())
+        from core.llm_gateway import any_llm_api_key_configured
+        if any_llm_api_key_configured(load_config()):
+            from core.product_analytics import emit
+            emit('model_configured', feature='settings')
     return result
 
 

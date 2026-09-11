@@ -743,6 +743,8 @@ contextBridge.exposeInMainWorld('cs', {
     () => apiCall('POST', `/bala-ai-video-review/api/${encodePathPart(batchId)}/regenerate?token=${encodePathPart(token)}`, payload || {})),
   exportBalaVideoInput: (batchId, token, payload) => invokeWithApiFallback('export-bala-video-input', [batchId, token, payload || {}],
     () => apiCall('POST', `/bala-ai-video-review/api/${encodePathPart(batchId)}/export-video-input?token=${encodePathPart(token)}`, payload || {})),
+  analyticsFeature: feature => ipcRenderer.invoke('analytics:feature', feature),
+  analyticsPreferences: enabled => ipcRenderer.invoke('analytics:preferences', enabled),
   accountAction: (action, input = {}) => ipcRenderer.invoke('account:action', action, input),
   onAccountChanged: (callback) => {
     const listener = () => callback()
@@ -813,3 +815,11 @@ contextBridge.exposeInMainWorld('cs', {
   offLog:   ()   => ipcRenderer.removeAllListeners('log'),
   offStatus:()   => ipcRenderer.removeAllListeners('status'),
 })
+
+// Record a throttled active-use signal, never key values, coordinates or text.
+let analyticsLastInteraction = 0
+for (const name of ['pointerdown', 'keydown']) window.addEventListener(name, event => {
+  if (!event.isTrusted || Date.now() - analyticsLastInteraction < 60000) return
+  analyticsLastInteraction = Date.now()
+  ipcRenderer.invoke('analytics:activity').catch(() => {})
+}, {capture:true, passive:true})

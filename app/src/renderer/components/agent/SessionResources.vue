@@ -175,6 +175,7 @@ async function openBrowser(id) {
     return
   }
   if (!tabs.value.some(tab => tab.id === id)) return
+  window.cs?.analyticsFeature?.('browser')?.catch(() => {})
   activeTabId.value = id
   prepareBrowserTransition()
   selection.value = { kind: 'browser', id }
@@ -200,6 +201,7 @@ function adjustWidth(delta) { width.value = Math.max(320, Math.min(900, window.i
 async function fileAction(action, item) { if (action === 'openFile' && extension(item.filename).toLowerCase() === 'zip') action = 'revealFile'; try { const result = await window.cs[action](item.path); if (result?.ok === false || typeof result === 'string' && result) throw new Error(result.error || result) } catch (e) { error.value = `操作失败：${e.message}` } }
 async function copy(value) { try { await navigator.clipboard.writeText(value || '') } catch (e) { error.value = `复制失败：${e.message}` } }
 async function openArtifact(item) {
+  window.cs?.analyticsFeature?.('file_preview')?.catch(() => {})
   selection.value = { ...item, kind: 'artifact' }; opened.value = true; error.value = ''
   const token = ++previewGeneration; previewKind.value = ''; previewText.value = ''; previewLoading.value = true
   try {

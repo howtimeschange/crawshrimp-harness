@@ -565,7 +565,28 @@ def _anthropic_endpoint(base_url: str) -> str:
     return f"{base}/v1/messages"
 
 
-def _post_json(
+def _post_json(url, payload, headers, timeout=120, total_timeout=None):
+    from core.product_analytics import emit, current_user
+    import uuid
+    owner = current_user()
+    event_key = 'gateway:' + str(uuid.uuid4())
+    if owner:
+        emit('model_call', key=event_key, expected_user=owner, model=payload.get('model'))
+    try:
+        result = _post_json_request(url, payload, headers, timeout, total_timeout)
+    except Exception:
+        if owner:
+            emit('app_error', expected_user=owner, feature='app', error_code='model_request_failed')
+        raise
+    if owner:
+        usage = result.get('usage') or {}
+        emit('model_call', key=event_key, expected_user=owner, model=payload.get('model'),
+             input_tokens=usage.get('prompt_tokens', usage.get('input_tokens')),
+             output_tokens=usage.get('completion_tokens', usage.get('output_tokens')))
+    return result
+
+
+def _post_json_request(
     url: str,
     payload: dict,
     headers: dict[str, str],

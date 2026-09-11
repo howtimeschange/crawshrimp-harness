@@ -3106,6 +3106,8 @@ class AgentService:
         data = event.get("data") or {}
         dsh_seq = int(event.get("seq") or 0)
         run_id = run["run_id"]
+        from core.product_analytics import runtime_event
+        runtime_event(run, event)
 
         if dsh_seq:
             db.update_run(run_id, dsh_end_seq=max(int(run.get("dsh_end_seq") or 0), dsh_seq))

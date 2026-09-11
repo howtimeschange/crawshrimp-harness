@@ -259,6 +259,12 @@ function createAccountAuth({ config, directory, safeStorage, openExternal, creat
   }
   return {
     run: (action, input) => serialize(() => perform(action, input)),
+    async analyticsSession() {
+      if (!validateConfig(config) || pending || recovery) return null
+      const { data, error } = await getClient().auth.getSession()
+      if (error) throw authError(error)
+      return data.session
+    },
     dispose() { closeCallback(); client?.auth.stopAutoRefresh() },
   }
 }

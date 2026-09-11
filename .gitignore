@@ -59,3 +59,6 @@ integrations/deepseek-harness/crawshrimp-slots/lib/image-generation-effect.js
 # Generated compatibility verification receipt
 integrations/deepseek-harness/compat-report.json
 app/src/renderer/public/pdfjs/
+
+# Admin dashboard is a separate local-only Git repository.
+/cloud/harness-analytics/

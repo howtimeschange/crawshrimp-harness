@@ -68,6 +68,13 @@
         </template>
       </template>
     </template>
+    <div v-if="!auth" class="analytics-preference">
+      <label class="analytics-preference-row">
+        <span class="analytics-preference-title">分享使用统计，帮助改进抓虾</span>
+        <input class="analytics-preference-switch" type="checkbox" role="switch" :aria-describedby="`${headingId}-analytics-description`" :checked="analyticsEnabled" @change="setAnalytics($event.target.checked)">
+      </label>
+      <p :id="`${headingId}-analytics-description`">登录后仅上报功能使用、任务结果、耗时、模型用量和版本信息。不上传聊天、文件内容或密钥；关闭后清除待上报记录。</p>
+    </div>
     <div v-if="error" role="alert">
       <p class="account-error">{{ error }}</p>
       <button v-if="available && !state.recovery && !state.pending" type="button" :disabled="busy" @click="error = ''; refresh()">重试</button>
@@ -89,6 +96,9 @@ import { accountIdentity } from '../utils/desktopAccountMenu.js'
 function accountErrorMessage(error) {
   return String(error?.message || '账号操作失败，请稍后重试').replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '')
 }
+const analyticsEnabled = ref(true)
+onMounted(async () => { try { analyticsEnabled.value = (await window.cs?.analyticsPreferences?.()).enabled } catch {} })
+async function setAnalytics(enabled) { try { analyticsEnabled.value = (await window.cs.analyticsPreferences(enabled)).enabled } catch { error.value = '统计设置保存失败，请重试' } }
 const props = defineProps({ auth: Boolean })
 const emit = defineEmits(['login', 'authenticated'])
 const headingId = `account-heading-${useId()}`
@@ -207,4 +217,15 @@ small { color: var(--text2, #999); line-height: 1.6; }
 .signout-button:hover { background:color-mix(in srgb,var(--red) 8%,transparent); color:var(--red); border-color:color-mix(in srgb,var(--red) 35%,transparent); }
 .profile-panel .account-note { padding:0 24px 16px; }
 @media(max-width:600px) { .profile-hero { padding:18px; gap:12px; }.profile-details { padding:0 18px; }.profile-signout { padding:18px; flex-wrap:wrap; }.profile-detail { gap:12px; }.profile-avatar { width:42px; height:42px; }.profile-heading strong { font-size:15px; } }
+/* Keep the preference separate from auth-form grid and input styles. */
+.analytics-preference { margin-top:16px; padding:16px 24px; border:1px solid var(--border); border-radius:10px; background:var(--bg2); }
+.analytics-preference-row { display:flex; align-items:center; justify-content:space-between; gap:20px; min-height:44px; cursor:pointer; }
+.analytics-preference-title { min-width:0; font-size:13px; font-weight:500; line-height:1.6; color:var(--text); }
+.analytics-preference-switch { appearance:none; -webkit-appearance:none; position:relative; flex:0 0 36px; width:36px; height:20px; min-height:0; padding:0; margin:0; border:1px solid var(--border-strong); border-radius:10px; background:var(--bg3); cursor:pointer; transition:background-color .16s ease-out,border-color .16s ease-out; }
+.analytics-preference-switch::before { content:''; position:absolute; top:3px; left:3px; width:12px; height:12px; border-radius:50%; background:var(--text2); transition:transform .16s ease-out; }
+.analytics-preference-switch:checked { background:var(--orange); border-color:var(--orange); }
+.analytics-preference-switch:checked::before { transform:translateX(16px); background:var(--on-orange); }
+.analytics-preference p { margin:4px 0 0; font-size:12px; line-height:1.7; color:var(--text2); }
+@media(max-width:600px) { .analytics-preference { padding:14px 18px; }.analytics-preference-row { gap:16px; } }
+@media(prefers-reduced-motion:reduce) { .analytics-preference-switch,.analytics-preference-switch::before { transition:none; } }
 </style>

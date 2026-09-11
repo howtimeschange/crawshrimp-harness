@@ -401,6 +401,11 @@ def update_run(run_id: str, **fields: Any) -> None:
         try:
             conn.execute(f"UPDATE agent_runs SET {sets} WHERE run_id = ?", (*updates.values(), run_id))
             conn.commit()
+            if "status" in updates:
+                from core.product_analytics import run_transition
+                snapshot = _row(conn.execute("SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)).fetchone())
+                if snapshot:
+                    run_transition(snapshot, updates["status"])
         finally:
             conn.close()
 

@@ -2830,7 +2830,11 @@ def update_agent_automation_run(run_uid: str, **fields) -> dict:
             [*updates.values(), uid],
         )
         conn.commit()
-    return get_agent_automation_run(uid)
+    result = get_agent_automation_run(uid)
+    if updates.get('status') == 'running':
+        from core.product_analytics import emit
+        emit('feature_used', key=f"automation:{uid}:{result.get('attempt', 0)}", feature='automation')
+    return result
 
 
 def list_agent_automation_dispatch_runs(*, include_retries: bool = False) -> list[dict]:
@@ -2953,6 +2957,16 @@ def list_agent_automation_run_links(run_uid: str) -> list[dict]:
     return details
 
 
+def _record_product_task(conn, run_id, status):
+    try:
+        from core.product_analytics import run_transition
+        row = conn.execute("SELECT * FROM task_runs WHERE id=?", (run_id,)).fetchone()
+        if row:
+            run_transition(dict(row), status, feature='skill')
+    except Exception:
+        pass
+
+
 def begin_run(adapter_id: str, task_id: str) -> int:
     """Record a task run start, return run_id"""
     now = datetime.now().isoformat()
@@ -2962,6 +2976,7 @@ def begin_run(adapter_id: str, task_id: str) -> int:
             VALUES (?, ?, 'running', ?, ?, '', 0)
         """, (adapter_id, task_id, now, now))
         conn.commit()
+        _record_product_task(conn, cur.lastrowid, 'running')
         return cur.lastrowid
 
 
@@ -2999,6 +3014,7 @@ def finish_run(run_id: int, records_count: int, output_files: List[str]):
             WHERE id=?
         """, (now, now, records_count, json.dumps(output_files), run_id))
         conn.commit()
+        _record_product_task(conn, run_id, 'completed')
 
 
 def fail_run(run_id: int, error: str, records_count: int = 0, output_files: Optional[List[str]] = None):
@@ -3017,6 +3033,7 @@ def fail_run(run_id: int, error: str, records_count: int = 0, output_files: Opti
             run_id,
         ))
         conn.commit()
+        _record_product_task(conn, run_id, 'failed')
 
 
 def stop_run(run_id: int, records_count: int, output_files: List[str], error: str = ""):
@@ -3028,6 +3045,7 @@ def stop_run(run_id: int, records_count: int, output_files: List[str], error: st
             WHERE id=?
         """, (now, now, records_count, json.dumps(output_files), error, run_id))
         conn.commit()
+        _record_product_task(conn, run_id, 'canceled')
 
 
 def stop_orphaned_active_runs(error: str = "任务运行时后端已重启，已自动标记为停止") -> int:

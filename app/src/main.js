@@ -1150,7 +1150,16 @@ function trustedIpcHandler(handler) {
 }
 
 function secureHandle(channel, handler) {
-  ipcMain.handle(channel, trustedIpcHandler(handler))
+  ipcMain.handle(channel, trustedIpcHandler(async (event, ...args) => {
+    try {
+      const result = await handler(event, ...args)
+      try { observeProductAction(channel, args, result) } catch {}
+      return result
+    } catch (error) {
+      if (productAnalytics && !channel.startsWith('analytics:') && channel !== 'account:action') productAnalytics.record('app_error', { feature: 'app', error_code: 'ipc_request_failed' })
+      throw error
+    }
+  }))
 }
 
 function hideNativeAppMenu() {
@@ -2750,6 +2759,37 @@ secureHandle('automation-permission:manage', async event => {
 secureHandle('automation-permission:list', event => desktopAutomationPermissions(event).list())
 secureHandle('automation-permission:check', (event, bundleId) => desktopAutomationPermissions(event).check(bundleId))
 secureHandle('automation-permission:request', (event, bundleId) => desktopAutomationPermissions(event).request(bundleId))
+let productAnalytics = null
+function desktopAnalytics() {
+  if (!productAnalytics) {
+    productAnalytics = require('./productAnalytics').createProductAnalytics({
+      directory: path.join(app.getPath('userData'), 'analytics'),
+      getDataDirectory: getCrawshrimpDataDir,
+      getSession: () => desktopAccountAuth().analyticsSession(),
+      version: app.getVersion(), environment: app.isPackaged ? 'production' : 'development',
+    })
+    productAnalytics.start()
+  }
+  return productAnalytics
+}
+function observeProductAction(channel, args, result) {
+  if (!app.isReady() || channel.startsWith('analytics:') || result?.ok === false) return
+  const a = desktopAnalytics()
+  const features = {
+    'agent:browser:navigate': 'browser', 'agent:browser:stream:start': 'browser',
+    'open-file': 'file_preview',
+    'create-automation': 'automation', 'run-automation-now': 'automation', 'create-task-schedule': 'automation',
+    'run-task-schedule-now': 'automation', 'install-adapter': 'skill',
+  }
+  if (features[channel]) { a.activity(); a.record('feature_used', { feature: features[channel] }) }
+  if (channel === 'account:action') void a.sync().catch(() => {})
+}
+secureHandle('analytics:activity', () => desktopAnalytics().activity())
+secureHandle('analytics:feature', (_, feature) => { if (['file_preview', 'browser'].includes(feature)) { desktopAnalytics().activity(); desktopAnalytics().record('feature_used', {feature}) } })
+secureHandle('analytics:preferences', (_, enabled) => enabled === undefined ? desktopAnalytics().status() : desktopAnalytics().setEnabled(enabled))
+app.on('before-quit', () => productAnalytics?.stop())
+app.on('render-process-gone', () => productAnalytics?.record('app_error', {feature:'app',error_code:'renderer_process_gone'}))
+app.on('child-process-gone', () => productAnalytics?.record('app_error', {feature:'app',error_code:'child_process_gone'}))
 let accountAuth = null
 function desktopAccountAuth() {
   if (!accountAuth) {
@@ -2766,6 +2806,7 @@ function desktopAccountAuth() {
       createClient: require('@supabase/supabase-js').createClient,
       notify: () => {
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('account:changed')
+        setImmediate(() => { try { void desktopAnalytics().sync().catch(() => {}) } catch {} })
       },
     })
   }
