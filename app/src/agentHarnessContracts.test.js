@@ -618,10 +618,11 @@ test('agent iframe reloads when runtime generation changes on the same web URL',
   assert.match(webView, /webUrl\.value !== runtimeUrl/)
 })
 
-test('agent iframe uses the authenticated Web launch URL and never probes a bare origin', () => {
+test('agent iframe receives its URL through the main-process authentication bridge', () => {
   const webView = readFileSync(resolve(appRoot, 'src/renderer/views/AgentWebView.vue'), 'utf8')
   assert.match(webView, /result\?\.web_launch_url \|\| ''/)
-  assert.match(webView, /never rendered as text or probed with a[\s\S]*bare fetch/)
+  const main = readFileSync(resolve(appRoot, 'src/main.js'), 'utf8')
+  assert.match(main, /return dshWebAuthBridge\.prepare\(result\)/)
   assert.doesNotMatch(webView, /web_candidate_url|web_url \|\|/)
 })
 

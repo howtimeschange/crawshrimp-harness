@@ -274,9 +274,8 @@ function applyRuntimeSnapshot(result) {
     workspaceRoot.value = result.workspace_root
     pushWorkspace()
   }
-  // rc.1 Web Host requires a one-time authenticated launch URL.  It is only
-  // assigned to this trusted iframe (never rendered as text or probed with a
-  // bare fetch); the DSH redirect exchanges it for this renderer's cookie.
+  // The main process authenticates this iframe before returning the clean URL.
+  // Packaged file:// pages cannot rely on DSH's SameSite=Strict browser cookie.
   return result?.web_launch_url || ''
 }
 

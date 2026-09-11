@@ -24,6 +24,7 @@ const { createBrowserLaunchBridge } = require('./browserLaunchBridge')
 const { createAutomationPermissionBridge } = require('./automationPermissionBridge')
 const { waitForServiceReadiness } = require('./serviceReadiness')
 const { normalizeAgentApiRequest } = require('./agentApiBridge')
+const { createDshWebAuthBridge } = require('./dshWebAuthBridge')
 const {
   requestBackendApi,
   resolveAiVideoCapabilityPath,
@@ -1157,6 +1158,8 @@ function hideNativeAppMenu() {
   Menu.setApplicationMenu(null)
 }
 
+let dshWebAuthBridge = null
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -1173,6 +1176,11 @@ function createWindow() {
     },
   })
   guardRendererNavigation(mainWindow)
+  dshWebAuthBridge = createDshWebAuthBridge({
+    session: mainWindow.webContents.session,
+    getWebContents: () => mainWindow?.webContents,
+    isTrustedRendererUrl,
+  })
   if (process.platform !== 'darwin') {
     mainWindow.setMenuBarVisibility(false)
   }
@@ -1185,7 +1193,11 @@ function createWindow() {
     mainWindow.loadFile(getRendererIndexPath())
   }
 
-  mainWindow.on('closed', () => { mainWindow = null })
+  mainWindow.on('closed', () => {
+    dshWebAuthBridge?.dispose()
+    dshWebAuthBridge = null
+    mainWindow = null
+  })
 }
 
 // ── FastAPI backend ────────────────────────────────────────────────────────────
@@ -2770,7 +2782,12 @@ secureHandle('agent:api', async (_, method, requestPath, body) => {
     startupPromise: desktopServicesStartupPromise,
     ensureServices: ensureDesktopServicesStarted,
   })
-  return apiCall(request.method, request.path, body)
+  const result = await apiCall(request.method, request.path, body)
+  if (request.method === 'GET' && request.path === '/agent/runtime') {
+    if (!dshWebAuthBridge) throw new Error('智能体窗口已关闭')
+    return dshWebAuthBridge.prepare(result)
+  }
+  return result
 })
 
 secureHandle('show-operator-alert', async (_, payload = {}) => {
