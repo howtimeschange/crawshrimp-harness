@@ -56,6 +56,8 @@ const CLI_NODE_SKILL_RUNTIMES = [
 ]
 
 const REQUIRED_SKILL_SOURCE_FILES = [
+  [sourceRoot, 'skills/crawshrimp-market/SKILL.md'],
+  [sourceRoot, 'skills/crawshrimp-market/scripts/market.cjs'],
   [sourceRoot, 'skills/dws/SKILL.md'],
   [sourceRoot, 'skills/dws/LICENSE'],
   [repoRoot, 'skills/cli/manifest.json'],
@@ -73,6 +75,8 @@ const REQUIRED_SKILL_SOURCE_FILES = [
 ]
 const required = [
   'worker/builtin-runtime.cjs',
+  'skills/crawshrimp-market/SKILL.md',
+  'skills/crawshrimp-market/scripts/market.cjs',
   'skills/dws/SKILL.md',
   'skills/dws/UPSTREAM.md',
   'skills/cli/manifest.json',

@@ -16,6 +16,7 @@ export function buildScriptGroups(tasks = []) {
         adapter_id: task.adapter_id,
         adapter_name: task.adapter_name,
         adapter_version: task.adapter_version || '',
+        icon: task.adapter_icon || '',
         enabled: task.enabled,
         tasks: [],
       }

@@ -747,6 +747,12 @@ contextBridge.exposeInMainWorld('cs', {
   analyticsFeature: feature => ipcRenderer.invoke('analytics:feature', feature),
   analyticsPreferences: enabled => ipcRenderer.invoke('analytics:preferences', enabled),
   accountAction: (action, input = {}) => ipcRenderer.invoke('account:action', action, input),
+  marketAction: (action, input = {}) => ipcRenderer.invoke('market:action', action, input),
+  onMarketProgress: callback => {
+    const handler = (_, progress) => callback(progress)
+    ipcRenderer.on('market:progress', handler)
+    return () => ipcRenderer.removeListener('market:progress', handler)
+  },
   onAccountChanged: (callback) => {
     const listener = () => callback()
     ipcRenderer.on('account:changed', listener)

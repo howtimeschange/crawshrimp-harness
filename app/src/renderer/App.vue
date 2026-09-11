@@ -33,7 +33,7 @@
           ← 我的脚本
         </button>
         <div class="script-title">
-          <span class="icon">{{ activeScript.icon || '📄' }}</span>
+          <PackageIcon :src="activeScript.icon" />
           {{ activeScript.adapter_name }}
         </div>
         <div class="task-list">
@@ -103,6 +103,7 @@
       >
         <div class="embed-overlay-body">
           <!-- 我的脚本：脚本列表 -->
+          <MarketPage v-if="currentView === 'market'" @login="openAccount" @scripts="currentView = 'scripts'" @installed="loadScriptGroups" @open-script="openMarketScript" />
           <ScriptList
             v-if="currentView === 'scripts' && !activeScript"
             @open-script="openScript"
@@ -203,6 +204,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, provide, ref } from 'vue'
 import ScriptList  from './views/ScriptList.vue'
+import MarketPage from './views/MarketPage.vue'
 import TaskRunner  from './views/TaskRunner.vue'
 import TaskCenter  from './views/TaskCenter.vue'
 import TaskInstanceRunner from './views/TaskInstanceRunner.vue'
@@ -218,6 +220,7 @@ import AgentProductLayer from './components/agent/AgentProductLayer.vue'
 import UpdateChangelogModal from './components/UpdateChangelogModal.vue'
 import AccountDialog from './components/AccountDialog.vue'
 import DesktopStatusFooter from './components/DesktopStatusFooter.vue'
+import PackageIcon from './components/PackageIcon.vue'
 import { buildScriptGroups } from './utils/scriptGroups'
 import { buildTaskOverviewProgress, isTaskLiveActive, resolveTaskProgressConfig } from './utils/taskProgress'
 import { readSidebarCollapsed, writeSidebarCollapsed } from './utils/sidebarState.js'
@@ -300,6 +303,7 @@ const updateActionRunner = createUpdateActionRunner({
 const navItems = [
   { id: 'agent',  icon: '🤖', label: '智能体' },
   { id: 'scripts',  icon: '📄', label: '我的脚本' },
+  { id: 'market', icon: '🏪', label: '开放市场' },
   { id: 'task_center', icon: '📋', label: '任务中心' },
   { id: 'ai_image', icon: '🎨', label: 'AI 生图' },
   { id: 'ai_video_generation', icon: '🎬', label: 'AI 生视频' },
@@ -419,6 +423,13 @@ async function loadScriptGroups(options = {}) {
     }
   }
   return scriptGroups.value
+}
+
+async function openMarketScript(adapterId) {
+  const groups = await loadScriptGroups()
+  const group = groups.find(item => item.adapter_id === adapterId)
+  if (group) openScript(group)
+  else currentView.value = 'scripts'
 }
 
 function openScript(group) {

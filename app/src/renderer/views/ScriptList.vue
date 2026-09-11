@@ -63,7 +63,7 @@
                   <IconBookmark class="favorite-icon" :size="17" :stroke-width="2" aria-hidden="true" />
                 </button>
                 <div class="card-top">
-                  <span class="card-icon">🦐</span>
+                  <PackageIcon :src="entry.group.icon" />
                   <div class="card-info">
                     <div class="card-title-row">
                       <strong>{{ entry.group.adapter_name }}</strong>
@@ -198,6 +198,7 @@
 </template>
 
 <script setup>
+import PackageIcon from '../components/PackageIcon.vue'
 import { computed, ref, inject, onMounted, onUnmounted } from 'vue'
 import { IconBookmark, IconSearch, IconX } from '@tabler/icons-vue'
 import { getScriptCardTaskPreviewMeta } from '../utils/scriptCardPreview'

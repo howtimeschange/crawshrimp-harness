@@ -5,7 +5,7 @@
       <h2>数据文件</h2>
       <div class="df-header-actions">
         <button class="btn-ghost-sm" @click="showDirSetting = !showDirSetting">📁 保存目录</button>
-        <button class="btn-ghost-sm" @click="load">刷新</button>
+        <button class="btn-ghost-sm" :disabled="loading" @click="load">{{ loading ? '刷新中…' : '刷新' }}</button>
       </div>
     </header>
 
@@ -136,12 +136,14 @@ const dirMsg         = ref('')
 const dirOk          = ref(true)
 const deleting       = ref(false)
 const syncing        = ref(false)
+const loading        = ref(false)
 const showDeleteConfirm = ref(false)
 const deleteTargets   = ref([])
 const selectedPaths   = ref([])
 const noticeMsg       = ref('')
 const noticeType      = ref('ok')
 let noticeTimer       = null
+let loadSeq           = 0
 
 const allFiles = computed(() => groups.value.flatMap(g => g.files || []))
 const visiblePaths = computed(() => [...new Set(allFiles.value.map(f => f.path).filter(Boolean))])
@@ -162,45 +164,102 @@ const allSelected = computed(() => visiblePaths.value.length > 0 && selectedCoun
 const syncableSelectedFiles = computed(() => selectedFiles.value.filter(isSyncableFile))
 const syncableSelectedCount = computed(() => syncableSelectedFiles.value.length)
 
-async function load() {
-  try {
-    const settings = await window.cs.getSettings()
-    dataDir.value = settings['data_dir'] || ''
-  } catch (_) {}
+async function mapLimit(items, limit, worker) {
+  const result = new Array(items.length)
+  let next = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++
+      result[index] = await worker(items[index], index)
+    }
+  })
+  await Promise.all(workers)
+  return result
+}
 
-  const adapters = await window.cs.getAdapters()
-  const result = []
-  const allTasks = (await window.cs.getTasks()).map(formatTaskForDisplay)
-  for (const a of adapters) {
-    for (const t of allTasks.filter(x => x.adapter_id === a.id)) {
-      const data = await window.cs.getData(a.id, t.task_id)
-      const files = []
-      for (const run of (data.runs || [])) {
-        let paths = []
-        try { paths = typeof run.output_files === 'string' ? JSON.parse(run.output_files) : (run.output_files || []) } catch {}
-        for (const p of paths) {
-          let size = '', ctime = ''
-          try {
-            const stat = await window.cs.statFile(p)
-            if (!stat?.isFile) continue
-            size  = stat.size  ? formatSize(stat.size)  : ''
-            ctime = stat.ctime ? formatDate(stat.ctime) : ''
-          } catch (_) {}
-          files.push({
-            path: p,
-            name: p.split('/').pop().split('\\').pop(),
-            size,
-            ctime,
-            adapter_id: a.id,
-            task_id: t.task_id,
-          })
+function parseOutputFiles(run) {
+  try {
+    const files = typeof run?.output_files === 'string' ? JSON.parse(run.output_files) : run?.output_files
+    return Array.isArray(files) ? files.filter(Boolean) : []
+  } catch {
+    return []
+  }
+}
+
+async function load() {
+  const seq = ++loadSeq
+  loading.value = true
+  try {
+    const [settingsResult, adapters, allTasks] = await Promise.all([
+      window.cs.getSettings().catch(() => null),
+      window.cs.getAdapters(),
+      window.cs.getTasks().then(tasks => tasks.map(formatTaskForDisplay)),
+    ])
+    if (seq !== loadSeq) return
+    if (settingsResult) dataDir.value = settingsResult['data_dir'] || ''
+
+    const adapterById = new Map(adapters.map(adapter => [adapter.id, adapter]))
+    const taskTargets = allTasks
+      .filter(task => adapterById.has(task.adapter_id))
+      .map(task => ({ adapter: adapterById.get(task.adapter_id), task }))
+
+    const dataResults = await mapLimit(taskTargets, 4, async ({ adapter, task }) => {
+      try {
+        const data = await window.cs.getData(adapter.id, task.task_id)
+        return { adapter, task, runs: data?.runs || [] }
+      } catch (error) {
+        return { adapter, task, runs: [], error }
+      }
+    })
+    if (seq !== loadSeq) return
+
+    const pendingFiles = []
+    for (const item of dataResults) {
+      for (const run of item.runs) {
+        for (const path of parseOutputFiles(run)) {
+          pendingFiles.push({ path, adapter: item.adapter, task: item.task })
         }
       }
-      if (files.length) result.push({ key: a.id + t.task_id, adapter: a.name, task: t.task_name, files })
     }
+
+    const uniquePaths = [...new Set(pendingFiles.map(file => file.path))]
+    const stats = new Map()
+    await mapLimit(uniquePaths, 4, async path => {
+      try {
+        const stat = await window.cs.statFile(path)
+        if (stat?.isFile) stats.set(path, stat)
+      } catch (_) {}
+    })
+    if (seq !== loadSeq) return
+
+    const grouped = new Map()
+    for (const file of pendingFiles) {
+      const stat = stats.get(file.path)
+      if (!stat) continue
+      const key = file.adapter.id + file.task.task_id
+      if (!grouped.has(key)) {
+        grouped.set(key, { key, adapter: file.adapter.name, task: file.task.task_name, files: [] })
+      }
+      grouped.get(key).files.push({
+        path: file.path,
+        name: file.path.split('/').pop().split('\\').pop(),
+        size: stat.size ? formatSize(stat.size) : '',
+        ctime: stat.ctime ? formatDate(stat.ctime) : '',
+        adapter_id: file.adapter.id,
+        task_id: file.task.task_id,
+      })
+    }
+
+    groups.value = [...grouped.values()]
+    syncSelection()
+
+    const failedCount = dataResults.filter(item => item.error).length
+    if (failedCount) setNotice(`部分数据加载失败：${failedCount} 个任务暂不可用`, 'warn', 3600)
+  } catch (error) {
+    if (seq === loadSeq) setNotice('数据文件加载失败：' + (error?.message || error), 'err', 4200)
+  } finally {
+    if (seq === loadSeq) loading.value = false
   }
-  groups.value = result
-  syncSelection()
 }
 
 function formatSize(bytes) {
@@ -382,7 +441,10 @@ async function saveDir() {
 }
 
 onMounted(load)
-onUnmounted(clearNoticeTimer)
+onUnmounted(() => {
+  loadSeq += 1
+  clearNoticeTimer()
+})
 </script>
 
 <style scoped>

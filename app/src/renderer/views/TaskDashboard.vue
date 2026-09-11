@@ -4,6 +4,7 @@
       <h2>Tasks</h2>
       <button class="btn btn-sm" @click="loadTasks">Refresh</button>
     </header>
+    <div v-if="taskError" class="notice error">{{ taskError }}</div>
     <div class="tasks-list">
       <div v-if="loading" class="placeholder">Loading...</div>
       <div v-else-if="!tasks.length" class="placeholder">No tasks. Enable a platform adapter first.</div>
@@ -47,32 +48,59 @@ import { formatTaskForDisplay } from '../utils/taskDisplay'
 const tasks = ref([]); const loading = ref(true)
 const logsTask = ref(null); const taskLogs = ref([]); const logsEl = ref(null)
 let pollTimer = null; let logsTimer = null
-async function loadTasks() {
+let taskLoadSeq = 0; let logsSeq = 0
+const taskError = ref('')
+async function loadTasks({ silent = false } = {}) {
+  if (loading.value && silent) return
+  const seq = ++taskLoadSeq
   loading.value = true
-  tasks.value = (await window.cs.getTasks()).map(formatTaskForDisplay)
-  loading.value = false
+  taskError.value = ''
+  try {
+    const result = (await window.cs.getTasks()).map(formatTaskForDisplay)
+    if (seq === taskLoadSeq) tasks.value = result
+  } catch (error) {
+    if (seq === taskLoadSeq) taskError.value = '任务列表加载失败：' + (error?.message || error)
+  } finally {
+    if (seq === taskLoadSeq) loading.value = false
+  }
 }
-async function runTask(t) { await window.cs.runTask(t.adapter_id, t.task_id); await loadTasks() }
+async function runTask(t) {
+  try {
+    await window.cs.runTask(t.adapter_id, t.task_id)
+    await loadTasks()
+  } catch (error) {
+    taskError.value = '任务启动失败：' + (error?.message || error)
+  }
+}
 function isActiveStatus(status) { return ['running', 'pausing', 'paused', 'stopping'].includes(status) }
 async function openLogs(t) {
-  logsTask.value = t; taskLogs.value = []; await pollLogs()
+  logsTask.value = t; taskLogs.value = []; logsSeq += 1; await pollLogs()
   clearInterval(logsTimer); logsTimer = setInterval(pollLogs, 1500)
 }
 async function pollLogs() {
   if (!logsTask.value) return
-  const r = await window.cs.getTaskLogs(logsTask.value.adapter_id, logsTask.value.task_id)
-  taskLogs.value = r.logs || []
-  nextTick(() => { if (logsEl.value) logsEl.value.scrollTop = logsEl.value.scrollHeight })
+  const current = logsTask.value
+  const seq = logsSeq
+  try {
+    const r = await window.cs.getTaskLogs(current.adapter_id, current.task_id)
+    if (seq !== logsSeq || logsTask.value !== current) return
+    taskLogs.value = r.logs || []
+    nextTick(() => { if (logsEl.value) logsEl.value.scrollTop = logsEl.value.scrollHeight })
+  } catch (error) {
+    if (seq === logsSeq && logsTask.value === current) taskLogs.value = [`日志加载失败：${error?.message || error}`]
+  }
 }
 function formatTime(iso) { if (!iso) return ''; return new Date(iso).toLocaleString('zh-CN', { hour12: false }).replace(',', '') }
-onMounted(() => { loadTasks(); pollTimer = setInterval(loadTasks, 5000) })
-onUnmounted(() => { clearInterval(pollTimer); clearInterval(logsTimer) })
+onMounted(() => { loadTasks(); pollTimer = setInterval(() => loadTasks({ silent: true }), 5000) })
+onUnmounted(() => { taskLoadSeq += 1; logsSeq += 1; clearInterval(pollTimer); clearInterval(logsTimer) })
 </script>
 <style scoped>
 .view { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 .view-header { display: flex; align-items: center; gap: 12px; padding: 20px 24px 12px; border-bottom: 1px solid var(--bg3); }
 .view-header h2 { font-size: 18px; font-weight: 700; color: var(--text); flex: 1; }
 .tasks-list { flex: 1; overflow-y: auto; padding: 8px 0; }
+.notice { margin: 12px 24px 0; padding: 8px 10px; border-radius: 8px; font-size: 12px; }
+.notice.error { color: var(--red); background: rgba(248, 113, 113, 0.08); border: 1px solid rgba(248, 113, 113, 0.25); }
 .placeholder { color: var(--text3); text-align: center; padding: 40px; font-size: 14px; }
 .task-row { display: flex; align-items: center; padding: 14px 24px; border-bottom: 1px solid var(--bg3); gap: 12px; transition: background 0.1s; }
 .task-row:hover { background: var(--bg2); }

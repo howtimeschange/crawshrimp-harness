@@ -34,9 +34,12 @@
     "portfinder": "^1.0.32",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "semver": "7.7.2",
     "tesseract.js": "^5.1.1",
     "three": "^0.185.1",
-    "tldraw": "^5.2.3"
+    "tldraw": "^5.2.3",
+    "yaml": "2.8.1",
+    "yauzl": "3.2.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.7",

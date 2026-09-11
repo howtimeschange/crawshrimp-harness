@@ -100,7 +100,7 @@ function createAccountAuth({ config, directory, safeStorage, openExternal, creat
     storage = createEncryptedStorage({ file: path.join(directory, `account-${project}.enc`), safeStorage })
     client = createClient(settings.url, settings.publishableKey, {
       auth: { storage, storageKey: `harness-${project}`, flowType: 'pkce', persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
-      global: { fetch: (url, options) => fetch(url, { ...options, signal: AbortSignal.timeout(20000) }) },
+      global: { fetch: (url, options) => fetch(url, { ...options, cache: 'no-store', signal: options?.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000) }) },
     })
     client.auth.onAuthStateChange((event) => {
       if (event === 'PASSWORD_RECOVERY') recovery = true
@@ -258,6 +258,8 @@ function createAccountAuth({ config, directory, safeStorage, openExternal, creat
     }
   }
   return {
+    // Main-process services share the encrypted session; never expose this over IPC.
+    getClient,
     run: (action, input) => serialize(() => perform(action, input)),
     async analyticsSession() {
       if (!validateConfig(config) || pending || recovery) return null

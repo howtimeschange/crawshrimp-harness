@@ -4,6 +4,7 @@
       <h2>Platforms</h2>
       <button class="btn btn-sm" @click="showInstallModal = true">+ Install Adapter</button>
     </header>
+    <div v-if="loadError" class="notice error">{{ loadError }}</div>
     <div class="adapter-grid">
       <div v-if="loading" class="placeholder">Loading...</div>
       <div v-else-if="!adapters.length" class="placeholder">No adapters installed. Click "Install Adapter" to add a platform.</div>
@@ -45,27 +46,70 @@
   </div>
 </template>
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 const adapters = ref([]); const loading = ref(true)
 const showInstallModal = ref(false); const installPath = ref('')
 const installMsg = ref(''); const installErr = ref(false)
-async function loadAdapters() { loading.value = true; adapters.value = await window.cs.getAdapters(); loading.value = false }
-async function toggleAdapter(id, enabled) { await window.cs.enableAdapter(id, enabled); await loadAdapters() }
-async function uninstall(id) { if (!confirm(`Remove "${id}"?`)) return; await window.cs.uninstallAdapter(id); await loadAdapters() }
+const loadError = ref('')
+let loadSeq = 0
+async function loadAdapters() {
+  const seq = ++loadSeq
+  loading.value = true
+  loadError.value = ''
+  try {
+    const result = await window.cs.getAdapters()
+    if (seq === loadSeq) adapters.value = result
+  } catch (error) {
+    if (seq === loadSeq) loadError.value = '平台列表加载失败：' + (error?.message || error)
+  } finally {
+    if (seq === loadSeq) loading.value = false
+  }
+}
+async function toggleAdapter(id, enabled) {
+  installMsg.value = ''
+  installErr.value = false
+  try {
+    await window.cs.enableAdapter(id, enabled)
+    await loadAdapters()
+  } catch (error) {
+    installMsg.value = error?.message || String(error)
+    installErr.value = true
+  }
+}
+async function uninstall(id) {
+  if (!confirm(`Remove "${id}"?`)) return
+  installMsg.value = ''
+  installErr.value = false
+  try {
+    await window.cs.uninstallAdapter(id)
+    await loadAdapters()
+  } catch (error) {
+    installMsg.value = error?.message || String(error)
+    installErr.value = true
+  }
+}
 async function browsePath() { const p = await window.cs.browseFile({ directory: true }); if (p) installPath.value = p }
 async function installAdapter() {
   installMsg.value = ''; installErr.value = false
-  const r = await window.cs.installAdapter({ path: installPath.value })
-  if (r.ok) { installMsg.value = `Installed: ${r.adapter?.name || installPath.value}`; installPath.value = ''; await loadAdapters() }
-  else { installMsg.value = r.detail || r.error || 'Install failed'; installErr.value = true }
+  try {
+    const r = await window.cs.installAdapter({ path: installPath.value })
+    if (r.ok) { installMsg.value = `Installed: ${r.adapter?.name || installPath.value}`; installPath.value = ''; await loadAdapters() }
+    else { installMsg.value = r.detail || r.error || 'Install failed'; installErr.value = true }
+  } catch (error) {
+    installMsg.value = error?.message || String(error)
+    installErr.value = true
+  }
 }
 onMounted(loadAdapters)
+onUnmounted(() => { loadSeq += 1 })
 </script>
 <style scoped>
 .view { height: 100%; display: flex; flex-direction: column; }
 .view-header { display: flex; align-items: center; padding: 20px 24px 12px; border-bottom: 1px solid var(--bg3); gap: 12px; }
 .view-header h2 { font-size: 18px; font-weight: 700; color: var(--text); flex: 1; }
 .adapter-grid { flex: 1; overflow-y: auto; padding: 16px 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; align-content: start; }
+.notice { margin: 12px 24px 0; padding: 8px 10px; border-radius: 8px; font-size: 12px; }
+.notice.error { color: var(--red); background: rgba(248, 113, 113, 0.08); border: 1px solid rgba(248, 113, 113, 0.25); }
 .placeholder { color: var(--text3); font-size: 14px; grid-column: 1/-1; padding: 40px 0; text-align: center; }
 .adapter-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 10px; transition: border-color 0.15s; }
 .adapter-card:hover { border-color: var(--orange); }

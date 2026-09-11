@@ -1281,6 +1281,7 @@ function spawnBackendProcess() {
       CRAWSHRIMP_CDP_URL: loopbackCdpUrl(CDP_PORT),
       ...browserLaunchBridge.environment(),
       ...automationPermissionBridge.environment(),
+      ...marketplaceBridge.environment(),
       CRAWSHRIMP_DATA: resolvedCrawshrimpDataDir,
       CRAWSHRIMP_ALLOW_DATA_FALLBACK: '1',
       CRAWSHRIMP_API_TOKEN: apiToken,
@@ -2385,6 +2386,7 @@ const restartBackend = createSingleFlightRecovery(async () => {
 async function startBackend() {
   await browserLaunchBridge.start()
   await automationPermissionBridge.start()
+  await marketplaceBridge.start()
   await prepareBackendEndpoint()
   await backendController.ensureReady()
 }
@@ -2813,6 +2815,31 @@ function desktopAccountAuth() {
   return accountAuth
 }
 secureHandle('account:action', (_, action, input = {}) => desktopAccountAuth().run(action, input))
+const marketplace = require('./marketplace').createMarketplace({
+  getClient: () => desktopAccountAuth().getClient(),
+  accountState: () => desktopAccountAuth().run('status'),
+  version: app.getVersion(),
+  installZip: bytes => apiCall('POST', '/adapters/install', {zip_base64:bytes.toString('base64'),install_mode:'copy'}),
+  getInstalled: () => apiCall('GET', '/adapters', null, BACKEND_STARTUP_RETRY_OPTIONS),
+  readInstalls: () => {
+    try { return JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'market-installs.json'), 'utf8')) } catch { return {} }
+  },
+  writeInstalls: receipts => atomicWriteJsonSync(path.join(app.getPath('userData'), 'market-installs.json'), receipts),
+  notify: progress => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('market:progress', progress) },
+  chooseZip: async () => {
+    const result = await dialog.showOpenDialog(mainWindow, { title: '选择完整 ZIP 适配包并提交审核', properties: ['openFile'], filters: [{ name: 'ZIP 适配包', extensions: ['zip'] }] })
+    return result.canceled ? null : result.filePaths[0]
+  },
+  saveZip: async (bytes, filename) => {
+    const result = await dialog.showSaveDialog(mainWindow, { title: '下载适配包', defaultPath: path.join(app.getPath('downloads'), filename), filters: [{ name: 'ZIP 适配包', extensions: ['zip'] }] })
+    if (result.canceled || !result.filePath) return { canceled: true }
+    await fs.promises.writeFile(result.filePath, bytes)
+    shell.showItemInFolder(result.filePath)
+    return { path: result.filePath }
+  },
+})
+const marketplaceBridge = require('./marketplaceBridge').createMarketplaceBridge({run:(action,input)=>marketplace.run(action,input)})
+secureHandle('market:action', (_, action, input = {}) => marketplace.run(action, input))
 app.on('before-quit', () => accountAuth?.dispose())
 
 secureHandle('get-status', async () => getDesktopStatus())
@@ -3058,7 +3085,12 @@ secureHandle('install-adapter', async (_, payload) => {
   return { ok: false, error: 'No path or file provided' }
 })
 
-secureHandle('get-tasks',       async () => apiCall('GET', '/tasks', null, BACKEND_STARTUP_RETRY_OPTIONS))
+secureHandle('get-tasks', async () => {
+  const tasks=await apiCall('GET','/tasks',null,BACKEND_STARTUP_RETRY_OPTIONS)
+  let receipts=[]
+  try { receipts=Object.values(JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'market-installs.json'),'utf8'))) } catch {}
+  return tasks.map(task=>({...task,adapter_icon:receipts.find(r=>r.adapterId===task.adapter_id && r.version===task.adapter_version)?.icon||''}))
+})
 secureHandle('list-task-instances', async (_, query = {}) =>
   apiCall('GET', `/task-instances?${new URLSearchParams(query || {})}`))
 secureHandle('create-task-instance', async (_, payload) =>
