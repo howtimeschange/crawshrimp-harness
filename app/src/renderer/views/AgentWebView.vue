@@ -80,6 +80,7 @@
         </div>
       </div>
       <SessionResources v-if="frameReady" ref="resourcesPanel" @compact-change="resourcesCompact = $event" :session-id="activeRuntimeSessionId" :conversation-phase="activeConversationPhase" :revision="props.resourceRevision" @download-log="postToFrame({ __crawshrimp: 'download-session-log', runtimeSessionId: activeRuntimeSessionId })" />
+      <div v-if="fileDropOverlay" class="resource-drop-overlay" :style="fileDropOverlay" aria-hidden="true" />
     </div>
     <Teleport to="body">
       <div v-if="inlineLlmModalOpen" class="inline-llm-modal-backdrop" @click.self="closeInlineLlmModal">
@@ -190,6 +191,7 @@ const recoverAttempts = ref(0)
 const workspaceRoot = ref('')
 const runtimeGeneration = ref(0)
 const frameEl = ref(null)
+const fileDropOverlay = ref(null)
 const activeRuntimeSessionId = ref('')
 const activeConversationPhase = ref('hero')
 const lastRuntimeState = ref('')
@@ -450,6 +452,7 @@ function openDeepSeekPlatform() {
 }
 
 function onFrameLoad() {
+  fileDropOverlay.value = null
   // iframe 加载后同步主题、菜单、版本号与默认工作区
   pushTheme()
   pushNav()
@@ -547,7 +550,14 @@ function onWindowMessage(event) {
   // 仅接受智能体会话 iframe 的消息(防其他内嵌页面冒用特权通道)
   const sessionWin = frameEl.value?.contentWindow
   if (!sessionWin || event.source !== sessionWin || event.origin !== frameOrigin.value) return
-  if (data.__crawshrimp === 'nav-click') {
+  if (data.__crawshrimp === 'file-drop-overlay') {
+    const frame = frameEl.value.getBoundingClientRect()
+    const shell = frameEl.value.closest('.agent-web-view').getBoundingClientRect()
+    fileDropOverlay.value = data.active ? {
+      left: `${frame.right - shell.left}px`,
+      backgroundColor: data.background,
+    } : null
+  } else if (data.__crawshrimp === 'nav-click') {
     if (Number(data.railWidth) > 0) emit('rail-metrics', { width: data.railWidth, collapsed: false })
     // 菜单切换时最小化实时浏览器窗口,避免浮动窗口盖住界面拦截点击
     emit('nav-select', data.id)
@@ -822,6 +832,7 @@ watch(() => props.appVersion, () => {
 
 // A runtime URL alone does not mean the embedded conversation UI is ready.
 watch(frameSrc, () => {
+  fileDropOverlay.value = null
   frameReady.value = false
   resourcesCompact.value = false
 }, { flush: 'sync' })
@@ -852,6 +863,14 @@ watch(showFallbackNav, (visible) => {
   min-height: 0;
   min-width: 0;
   display: flex;
+}
+
+.resource-drop-overlay {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 1000;
+  pointer-events: none;
+  backdrop-filter: blur(10px);
 }
 
 .web-frame-wrap {

@@ -1269,6 +1269,7 @@ window.__ModuleLoader__.load({
     const FILE_LIMIT_ZH = '文件最大 200MB'
     const FILE_LIMIT_EN = 'files up to 200MB'
     let dropOverlayCopyQueued = false
+    let lastDropOverlayState = null
 
     function resetNativeDropOverlay() {
       if (typeof window === 'undefined') return
@@ -1293,6 +1294,15 @@ window.__ModuleLoader__.load({
 
     function updateNativeDropOverlayCopy(root = document) {
       if (!root?.querySelectorAll) return
+      // The resource sidebar lives outside this iframe. Mirror the native mask
+      // lifecycle, including removal, so the shell can cover that area too.
+      const mask = root.querySelectorAll('.BInVoG_mask')[0]
+      const background = mask ? window.getComputedStyle(mask).backgroundColor : ''
+      const state = JSON.stringify([!!mask, background])
+      if (state !== lastDropOverlayState) {
+        lastDropOverlayState = state
+        window.parent.postMessage({ __crawshrimp: 'file-drop-overlay', active: !!mask, background }, '*')
+      }
       for (const title of root.querySelectorAll('.BInVoG_title')) {
         const text = String(title.textContent || '').trim()
         if (text === '图片拖动到此处即可添加') title.textContent = DROP_TITLE_ZH
@@ -1330,7 +1340,7 @@ window.__ModuleLoader__.load({
         return text.includes('图片拖动到此处') || text.includes('Drag images here')
       }
       if (target?.nodeType === 1 && target.closest?.('.BInVoG_mask, .BInVoG_title, .BInVoG_desc')) return true
-      for (const node of mutation.addedNodes || []) {
+      for (const node of [...(mutation.addedNodes || []), ...(mutation.removedNodes || [])]) {
         if (node?.nodeType !== 1) continue
         if (node.matches?.('.BInVoG_mask, .BInVoG_title, .BInVoG_desc')) return true
         if (node.querySelector?.('.BInVoG_mask, .BInVoG_title, .BInVoG_desc')) return true
