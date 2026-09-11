@@ -35,7 +35,7 @@ test('desktop backend switches away from an occupied non-compatible API port bef
   assert.match(main, /async function prepareBackendEndpoint\(\)/)
   assert.match(main, /const availablePort = await findAvailableApiPort\(apiPort\)/)
   assert.match(main, /port \$\{apiPort\} is occupied but no compatible backend responded/)
-  assert.match(main, /async function startBackend\(\) \{\s*await browserLaunchBridge\.start\(\)\s*await automationPermissionBridge\.start\(\)\s*await prepareBackendEndpoint\(\)\s*await backendController\.ensureReady\(\)\s*\}/)
+  assert.match(main, /async function startBackend\(\) \{\s*await browserLaunchBridge\.start\(\)\s*await automationPermissionBridge\.start\(\)\s*await marketplaceBridge\.start\(\)\s*await prepareBackendEndpoint\(\)\s*await backendController\.ensureReady\(\)\s*\}/)
 })
 
 test('desktop backend compatibility requires the current Electron launch identity', () => {

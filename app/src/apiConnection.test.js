@@ -145,6 +145,7 @@ test('preload trusts the validated status port even when isolated-world URL stor
       }
     },
     window: {
+      addEventListener: () => {},
       location: { search: '' },
       localStorage: {
         getItem: () => { throw new Error('storage unavailable') },

@@ -155,10 +155,8 @@ test('prompt and material picker surfaces do not reintroduce fixed dark panels',
 
 test('light theme neutral badges use semantic text colors instead of fixed pale text', () => {
   const promptSource = readRendererFile('views/LocalPromptLibrary.vue')
-  const cloudSource = readRendererFile('views/CloudApprovalFrame.vue')
 
   assert.match(cssRule(promptSource, '.lpl-source-badge'), /color:\s*var\(--text2\);/)
-  assert.match(cssRule(cloudSource, '.pill.neutral'), /color:\s*var\(--text2\);/)
 })
 
 test('collapsed update tooltip keeps readable contrast in both themes', () => {

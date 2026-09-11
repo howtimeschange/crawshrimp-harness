@@ -487,7 +487,7 @@ test('Tmall AI image task config can use local Prompt libraries when cloud login
   assert.match(runner, /本地 Prompt 库无需登录即可使用/)
 })
 
-test('Tmall generation confirmation board can pick prompts from local and cloud libraries', () => {
+test('Tmall generation confirmation board can pick local prompts without the retired cloud service', () => {
   const drawer = fs.readFileSync('app/src/renderer/views/TmallAiApprovalDrawer.vue', 'utf8')
   const promptPicker = fs.readFileSync('app/src/renderer/components/PromptLibraryPickerModal.vue', 'utf8')
 
@@ -498,7 +498,7 @@ test('Tmall generation confirmation board can pick prompts from local and cloud 
   assert.match(drawer, /selectPromptLibraryTemplate/)
   assert.match(promptPicker, /buildPromptLibraryPickerLibraries/)
   assert.match(promptPicker, /window\.cs\.listLocalPromptLibraries\(\)/)
-  assert.match(promptPicker, /window\.cs\.listCloudPromptLibraries/)
+  assert.doesNotMatch(promptPicker, /window\.cs\.listCloudPromptLibraries/)
   assert.doesNotMatch(promptPicker, /window\.cs\.resolveCloudPromptTemplates/)
   assert.match(promptPicker, /library\.source_label/)
   assert.match(promptPicker, /selectedLibrary\.templates/)

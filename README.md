@@ -6,7 +6,7 @@ Crawshrimp Harness 把抓虾桌面应用与 DeepSeek Harness（DSH）组合成�
 
 ## 个人账号与云端边界
 
-Harness 面向个人本地使用：本地功能免登录，设置中的个人账号独立接入 Supabase Auth，不上传本地数据或授予远程执行权限。旧云审批和任务机已弃用，旧配置不能重新启动；本地 DSH 权限审批保持有效。配置与验证说明见 [个人账号文档](docs/crawshrimp-harness/16-personal-account.md)。
+Harness 面向个人本地使用：本地功能免登录，设置中的个人账号独立接入 Supabase Auth，不授予远程执行权限。登录后可使用脚本市场；使用统计默认开启，可在个人账号中关闭，不采集聊天正文、文件内容、路径或密钥。旧云审批和任务机已弃用，旧配置不能重新启动；本地 DSH 权限审批保持有效。配置与验证说明见 [个人账号文档](docs/crawshrimp-harness/16-personal-account.md)。
 
 ## 当前形态
 
@@ -21,6 +21,10 @@ Harness 面向个人本地使用：本地功能免登录，设置中的个人账
 
 ### v0.2.0
 
+- 新增个人账号与使用统计偏好，保留本地功能免登录；停用旧云审批和任务机，继续使用本地 DSH 权限审批。
+- 上线脚本市场：支持 ZIP 发布、元数据提取、自定义图标、审核、评分评论和一键安装，补齐版本管理、覆盖确认与包完整性校验。
+- 优化市场、数据、平台和任务页面加载，支持请求超时与取消，改善刷新时的内容保留和异常恢复。
+- 修复打包客户端内嵌 DSH 鉴权、会话资源区拖放遮罩，统一 Office 预览并支持原生保存会话日志。
 - 新增自动化中心，支持通过智能体创建定时、循环和条件任务，补齐权限检查、状态恢复和取消处理。
 - 内置 Word、PowerPoint、Excel 运行时与设计技能，支持可编辑文档生成、模板填充、公式重算、预览和逐页视觉审查。
 - 统一会话文件与浏览器资源，浏览器按需启动；改善图片、Office 和 ZIP 预览，避免重复解压并及时移除已关闭页面。
@@ -277,6 +281,8 @@ npm --prefix app run build:win
 ## 桌面自动更新
 
 独立仓库 `howtimeschange/crawshrimp-harness` 的正式客户端使用 GitHub Release 元数据用于应用内更新。本仓构建不发布到 `https://updates.crawshrimp.com/`，也不刷新主项目的 `desktop-latest`。
+
+本次保持 `v0.2.0` 版本号重新构建；已安装同版本的客户端不会按更高版本自动升级，请从 [v0.2.0 Release](https://github.com/howtimeschange/crawshrimp-harness/releases/tag/v0.2.0) 下载新安装包覆盖安装。
 
 升级不需要卸载旧版：
 

@@ -103,6 +103,7 @@ test('preload falls back to local API when cloud prompt IPC handlers are missing
       }
     },
     window: {
+      addEventListener: () => {},
       location: { search: '' },
       localStorage: {
         getItem: (key) => storage.get(key) || '',
