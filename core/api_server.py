@@ -9440,10 +9440,6 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.exception("scheduler startup failed; continuing without scheduled jobs")
         try:
-            _start_cloud_machine_if_enabled()
-        except Exception:
-            logger.exception("cloud approval machine auto-start failed; continuing without cloud machine loop")
-        try:
             ai_video_generation_service.ensure_worker_started()
         except Exception:
             logger.exception("ai video generation recovery failed; continuing without active video recovery")
@@ -14137,28 +14133,7 @@ class CloudMachineLoopController:
             return False
 
     def start(self, agent: CloudMachineAgent) -> bool:
-        with self._lock:
-            if self._thread and self._thread.is_alive():
-                return False
-            stop_event = threading.Event()
-            self._stop_event = stop_event
-            self.last_health = "running"
-            self.last_error = ""
-
-            def run_loop():
-                try:
-                    agent.run_forever(stop_event)
-                except Exception as exc:
-                    logger.exception("cloud approval machine loop stopped with error")
-                    self.last_health = "error"
-                    self.last_error = str(exc)
-                finally:
-                    if stop_event.is_set() and self.last_health != "error":
-                        self.last_health = "stopped"
-
-            self._thread = threading.Thread(target=run_loop, name="cloud-approval-machine", daemon=True)
-            self._thread.start()
-            return True
+        raise RuntimeError("Cloud task machines are retired in Harness")
 
     def stop(self) -> bool:
         with self._lock:
@@ -14212,13 +14187,7 @@ def _cloud_capabilities(*sources) -> list[str]:
 
 
 def _build_cloud_client() -> CloudApprovalClient:
-    resolution = _cloud_approval_resolution()
-    saved = data_sink.get_cloud_machine_credentials() or {}
-    return CloudApprovalClient(
-        base_url=resolution.base_url,
-        machine_token=str(saved.get("machine_token") or ""),
-        on_transport_error=invalidate_cloud_approval_url_cache,
-    )
+    raise HTTPException(410, "Cloud approval and remote task machines are retired in Harness")
 
 
 def _cloud_prompt_libraries(client: CloudApprovalClient | None = None) -> dict:
@@ -14289,26 +14258,10 @@ def _safe_cloud_enrollment_response(response: dict) -> dict:
 
 
 def _cloud_approval_status(*, refresh: bool = False) -> dict:
-    cloud = _cloud_approval_config()
-    resolution = _cloud_approval_resolution(refresh=refresh)
-    saved = data_sink.get_cloud_machine_credentials() or {}
-    machine_name = str(cloud.get("machine_name") or saved.get("machine_name") or "").strip()
-    machine_id = str(saved.get("machine_id") or "").strip()
-    token_present = bool(str(saved.get("machine_token") or "").strip())
-    running = cloud_machine_controller.is_running()
-    health = "running" if running and cloud_machine_controller.last_health == "stopped" else cloud_machine_controller.last_health
-    return {
-        **resolution.status_fields(),
-        "running": running,
-        "auth": "enrolled" if token_present else "missing_token",
-        "health": health or ("running" if running else "stopped"),
-        "machine_name": machine_name,
-        "machine_id": machine_id,
-        "token_present": token_present,
-        "machine_enabled": bool(cloud.get("machine_enabled")),
-        "capabilities": _cloud_capabilities(saved, cloud),
-        "last_error": cloud_machine_controller.last_error,
-    }
+    # Compatibility readback without URL discovery, credentials or network traffic.
+    return {"deprecated": True, "configured": False, "base_url": "",
+            "service_reachable": False, "running": False, "machine_enabled": False,
+            "token_present": False, "health": "retired", "capabilities": []}
 
 
 @app.get("/cloud-approval/status")
@@ -14318,117 +14271,47 @@ def get_cloud_approval_status(refresh: bool = False):
 
 @app.post("/cloud-approval/config")
 def configure_cloud_approval(req: CloudApprovalConfigRequest):
-    patch_config({
-        "cloud_approval": {
-            **_cloud_approval_config(),
-            "registration_token": str(req.registration_token or "").strip(),
-            "machine_name": str(req.machine_name or "").strip(),
-            "machine_enabled": bool(req.machine_enabled),
-            "capabilities": _cloud_capabilities(req.capabilities),
-        },
-    })
-    return {"ok": True, "status": _cloud_approval_status()}
+    raise HTTPException(410, "Cloud approval and remote task machines are retired in Harness")
 
 
 @app.post("/cloud-approval/enroll-machine")
 def enroll_cloud_machine(req: CloudApprovalEnrollRequest):
-    cloud = _cloud_approval_config()
-    resolution = _cloud_approval_resolution(refresh=True)
-    if not resolution.configured:
-        raise HTTPException(400, f"cloud approval address is invalid: {resolution.service_error}")
-    if not resolution.service_reachable:
-        raise HTTPException(502, f"cloud approval service is unavailable: {resolution.service_error}")
-    registration_token = str(req.registration_token or cloud.get("registration_token") or "").strip()
-    if not registration_token:
-        raise HTTPException(400, "registration token is required")
-    machine_name = str(req.machine_name or cloud.get("machine_name") or "").strip()
-    if not machine_name:
-        raise HTTPException(400, "machine name is required")
-    capabilities = _cloud_capabilities(req.capabilities, cloud)
-    client = CloudApprovalClient(
-        base_url=resolution.base_url,
-        on_transport_error=invalidate_cloud_approval_url_cache,
-    )
-    try:
-        response = _cloud_machine_agent(client).enroll(registration_token, machine_name, capabilities)
-    except CloudApprovalError as exc:
-        raise HTTPException(502, str(exc)) from exc
-    patch_config({
-        "cloud_approval": {
-            **cloud,
-            "registration_token": "",
-            "machine_name": machine_name,
-            "capabilities": capabilities,
-        },
-    })
-    return {**_safe_cloud_enrollment_response(response), "status": _cloud_approval_status()}
+    raise HTTPException(410, "Cloud approval and remote task machines are retired in Harness")
 
 
 @app.post("/cloud-approval/sync-batch")
 def sync_cloud_approval_batch(req: CloudApprovalSyncBatchRequest):
-    batch = _load_tmall_approval_batch(req.batch_id)
-    _validate_tmall_approval_token(batch, req.token)
-    try:
-        result = sync_local_approval_batch(batch, _build_cloud_client())
-    except (CloudApprovalError, ValueError) as exc:
-        raise HTTPException(502, str(exc)) from exc
-    return {"ok": True, "result": result}
+    raise HTTPException(410, "Cloud approval and remote task machines are retired in Harness")
 
 
 @app.get("/cloud-approval/prompt-libraries")
 def get_cloud_prompt_libraries():
-    try:
-        return _cloud_prompt_libraries()
-    except CloudApprovalError as exc:
-        raise HTTPException(502, str(exc)) from exc
+    raise HTTPException(410, "Cloud approval and remote task machines are retired in Harness")
 
 
 @app.get("/cloud-approval/prompt-libraries/{library_id}/resolved")
 def get_cloud_prompt_templates(library_id: str, category: str = "", gender: str = "", limit: int = 200):
-    try:
-        return _cloud_prompt_templates(library_id, category=category, gender=gender, limit=limit)
-    except CloudApprovalError as exc:
-        raise HTTPException(502, str(exc)) from exc
+    raise HTTPException(410, "Cloud approval and remote task machines are retired in Harness")
 
 
 @app.get("/cloud-approval/prompt-libraries/{library_id}/export")
 def get_cloud_prompt_library_export(library_id: str):
-    try:
-        return _cloud_prompt_library_export(library_id)
-    except CloudApprovalError as exc:
-        raise HTTPException(502, str(exc)) from exc
+    raise HTTPException(410, "Cloud approval and remote task machines are retired in Harness")
 
 
 @app.post("/cloud-approval/machine/start")
 def start_cloud_machine():
-    status = _cloud_approval_status()
-    if not status["configured"]:
-        raise HTTPException(400, "cloud approval base_url is required")
-    if not status["service_reachable"]:
-        raise HTTPException(502, f"cloud approval service is unavailable: {status['service_error']}")
-    if not status["token_present"]:
-        raise HTTPException(400, "machine enrollment is required before start")
-    client = _build_cloud_client()
-    cloud_machine_controller.start(_cloud_machine_agent(client))
-    patch_config({"cloud_approval": {**_cloud_approval_config(), "machine_enabled": True}})
-    return {"ok": True, "status": _cloud_approval_status()}
+    raise HTTPException(410, "Cloud approval and remote task machines are retired in Harness")
 
 
 def _start_cloud_machine_if_enabled() -> bool:
-    cloud = _cloud_approval_config()
-    if not bool(cloud.get("machine_enabled")):
-        return False
-    status = _cloud_approval_status()
-    if not status["configured"] or not status["service_reachable"] or not status["token_present"]:
-        logger.warning("Cloud approval machine is enabled but not configured or enrolled; skip auto-start")
-        return False
-    return cloud_machine_controller.start(_cloud_machine_agent(_build_cloud_client()))
+    # Ignore legacy machine_enabled settings; personal Harness never claims cloud jobs.
+    return False
 
 
 @app.post("/cloud-approval/machine/stop")
 def stop_cloud_machine():
     cloud_machine_controller.stop()
-    patch_config({"cloud_approval": {**_cloud_approval_config(), "machine_enabled": False}})
     return {"ok": True, "status": _cloud_approval_status()}
 
 
@@ -14523,6 +14406,7 @@ def _public_settings() -> dict:
     """Return renderer-safe settings without provider credentials or routing data."""
     saved = load_config()
     public = json.loads(json.dumps(saved, ensure_ascii=False))
+    public.pop("cloud_approval", None)  # Retired credentials never reach the renderer.
     ai = public.get("ai") if isinstance(public.get("ai"), dict) else {}
     source_ai = saved.get("ai") if isinstance(saved.get("ai"), dict) else {}
     source_video = source_ai.get("video") if isinstance(source_ai.get("video"), dict) else {}
@@ -14561,6 +14445,9 @@ def _public_settings() -> dict:
 def _safe_settings_write_patch(cfg: dict) -> dict:
     """Treat blank write-only AI-video fields as unchanged, never as secret erasure."""
     patch = json.loads(json.dumps(cfg if isinstance(cfg, dict) else {}, ensure_ascii=False))
+    for key in list(patch):
+        if key == "cloud_approval" or key.startswith("cloud_approval."):
+            patch.pop(key)
     source_llm = (((load_config().get("ai") or {}).get("llm") or {}))
     for field in _AI_VIDEO_PRIVATE_SETTING_FIELDS:
         dotted = f"ai.video.{field}"

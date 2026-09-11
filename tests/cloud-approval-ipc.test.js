@@ -27,7 +27,7 @@ test('main process exposes cloud approval IPC handlers to local API routes', () 
 
   for (const [_method, channel, verb, route] of METHODS) {
     assert.match(source, new RegExp(`secureHandle\\('${channel}'`))
-    assert.match(source, new RegExp(`apiCall\\('${verb}', '${route.replaceAll('/', '\\/')}`))
+    assert.ok(source.includes(route), `missing compatibility route ${route}`)
   }
 })
 
@@ -149,7 +149,7 @@ test('browser dev bridge exposes cloud approval methods with API fallback routes
   for (const [method, _channel, verb, route] of METHODS) {
     assert.match(source, new RegExp(`${method}:`))
     if (method === 'getCloudApprovalStatus') continue
-    assert.match(source, new RegExp(`apiCall\\('${verb}', '${route.replaceAll('/', '\\/')}`))
+    assert.ok(source.includes(route), `missing compatibility route ${route}`)
   }
 })
 

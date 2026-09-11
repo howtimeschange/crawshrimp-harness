@@ -4,6 +4,10 @@ Crawshrimp Harness 把抓虾桌面应用与 DeepSeek Harness（DSH）组合成�
 
 本仓库是独立的 Harness 开发线，不是上游 `crawshrimp` 发布仓的 README 镜像。DSH 依赖族精确锁定在 `@deepseek-ai/dsh@0.1.2-rc.1` 与 `@xmanrui/dsh-im@4.11.0`；升级时必须重新验证 Web Profile/RPC、插件和 hash 类名。
 
+## 个人账号与云端边界
+
+Harness 面向个人本地使用：本地功能免登录，设置中的个人账号独立接入 Supabase Auth，不上传本地数据或授予远程执行权限。旧云审批和任务机已弃用，旧配置不能重新启动；本地 DSH 权限审批保持有效。配置与验证说明见 [个人账号文档](docs/crawshrimp-harness/16-personal-account.md)。
+
 ## 当前形态
 
 - Electron 43.1.0 主进程启动 FastAPI、托管 Chrome 和 Node Worker。

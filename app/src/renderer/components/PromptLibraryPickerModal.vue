@@ -156,7 +156,7 @@ async function loadPromptLibraries() {
     if (!window?.cs) throw new Error('本地 Prompt 库服务未就绪')
     const sources = await loadPromptLibraryPickerSources({
       listLocalLibraries: () => window.cs.listLocalPromptLibraries(),
-      listCloudLibraries: () => window.cs.listCloudPromptLibraries(),
+      listCloudLibraries: async () => ({ libraries: [] }),
       onLocal: async (localState) => {
         if (!promptLibraryListRequestGuard.isCurrent(requestToken, requestKey)) return
         await applyPromptLibrarySources(localState)

@@ -18,6 +18,9 @@
       :presentation="desktopUpdate"
       :collapsed="!activeScript && railWidth < 100"
       :busy="updateActionBusy"
+      :context-key="`${currentView}:${activeScript?.adapter_id || ''}`"
+      @account="openAccount"
+      @update-details="openSettingsPanel('application-update')"
       @settings="openSettingsPanel('appearance-theme')"
       @services="openSettingsPanel('connection-overview')"
       @update="onDesktopUpdateAction"
@@ -166,6 +169,7 @@
             v-show="currentView === 'settings'"
             :status="status"
             :focus-panel-id="focusSettingsPanelId"
+            :focus-request-id="focusSettingsRequestId"
             :update-status="updateStatus"
             :update-action-busy="updateActionBusy"
             :theme-preference="themePreference"
@@ -173,6 +177,7 @@
             @runtime-refresh="refreshRuntimeStatus"
             @check-update="retryUpdateCheck"
             @theme-change="setThemePreference"
+            @login="authDialogOpen = true"
           />
         </div>
       </div>
@@ -183,6 +188,7 @@
         @resources-changed="resourceRevision += 1"
       />
     </main>
+    <AccountDialog v-if="authDialogOpen" @close="authDialogOpen = false" />
     <!-- 更新日志弹窗:更新前查看版本内容并确认「去更新」 -->
     <UpdateChangelogModal
       :open="changelogOpen"
@@ -210,6 +216,7 @@ import SettingsPage from './views/SettingsPage.vue'
 import AgentWebView from './views/AgentWebView.vue'
 import AgentProductLayer from './components/agent/AgentProductLayer.vue'
 import UpdateChangelogModal from './components/UpdateChangelogModal.vue'
+import AccountDialog from './components/AccountDialog.vue'
 import DesktopStatusFooter from './components/DesktopStatusFooter.vue'
 import { buildScriptGroups } from './utils/scriptGroups'
 import { buildTaskOverviewProgress, isTaskLiveActive, resolveTaskProgressConfig } from './utils/taskProgress'
@@ -224,6 +231,11 @@ import {
   writeThemePreference,
 } from './utils/theme.mjs'
 
+const authDialogOpen = ref(false)
+function openAccount(authenticated) {
+  if (authenticated) openSettingsPanel('account')
+  else authDialogOpen.value = true
+}
 const currentView = ref('agent')
 const status = ref({
   api: false,
@@ -245,6 +257,7 @@ const taskRunnerHandoffParams = ref({})
 const taskRunnerHandoffKey = ref(0)
 const scriptGroups = ref([])
 const focusSettingsPanelId = ref('')
+const focusSettingsRequestId = ref(0)
 const settingsMountedOnce = ref(currentView.value === 'settings')
 const sidebarCollapsed = ref(readSidebarCollapsed(window.localStorage))
 const effectiveSidebarCollapsed = computed(() => !activeScript.value && sidebarCollapsed.value)
@@ -376,6 +389,7 @@ function openSettingsPanel(target) {
     : target
   settingsMountedOnce.value = true
   focusSettingsPanelId.value = panelId
+  focusSettingsRequestId.value += 1
   currentView.value = 'settings'
   activeScript.value = null
   activeTaskId.value = null

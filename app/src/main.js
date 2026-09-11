@@ -4,7 +4,8 @@
 delete process.env.ELECTRON_RUN_AS_NODE
 
 const { app, BrowserWindow, Menu, ipcMain, shell, dialog, session, powerMonitor, protocol, nativeImage } = require('electron')
-const { Notification } = require('electron')
+const { Notification, safeStorage } = require('electron')
+const { createAccountAuth } = require('./accountAuth')
 const { autoUpdater } = require('electron-updater')
 const path   = require('path')
 const fs     = require('fs')
@@ -2082,76 +2083,15 @@ function cloudErrorMessage(status, payload) {
 }
 
 async function cloudApprovalUserApiCall(baseUrl, method, apiPath, body = null) {
-  const base = String(baseUrl || '').replace(/\/+$/, '')
-  if (!base) throw new Error('请先配置云端审批地址')
-  const cookie = await cloudApprovalCookieHeader(base)
-  const target = new URL(apiPath, `${base}/`)
-  const data = body === null || body === undefined
-    ? null
-    : Buffer.from(JSON.stringify(body), 'utf8')
-  const client = target.protocol === 'https:' ? https : http
-  return new Promise((resolve, reject) => {
-    const req = client.request({
-      protocol: target.protocol,
-      hostname: target.hostname,
-      port: target.port,
-      path: `${target.pathname}${target.search}`,
-      method,
-      timeout: 30000,
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'CrawshrimpDesktop/1.0',
-        Cookie: cookie,
-        ...(data ? { 'Content-Type': 'application/json', 'Content-Length': data.length } : {}),
-      },
-    }, (res) => {
-      const chunks = []
-      res.on('data', chunk => chunks.push(chunk))
-      res.on('end', () => {
-        const text = Buffer.concat(chunks).toString('utf8')
-        const payload = parseJsonBody(text)
-        if (Number(res.statusCode || 0) >= 400) {
-          reject(new Error(cloudErrorMessage(Number(res.statusCode || 0), payload)))
-          return
-        }
-        resolve(payload)
-      })
-    })
-    req.on('error', reject)
-    req.on('timeout', () => {
-      req.destroy(new Error('云端提示词库同步超时'))
-    })
-    if (data) req.write(data)
-    req.end()
-  })
+  throw new Error("云端审批与任务机已弃用，提示词库仅保存在本地")
 }
 
 async function syncLocalPromptLibraryToCloud(libraryUid) {
-  const { state, library } = localPromptLibraryForSync(libraryUid)
-  const payload = cloudPromptPayloadForLibrary(library)
-  const status = await apiCall('GET', '/cloud-approval/status')
-  const baseUrl = String(status?.base_url || '').trim()
-  if (!baseUrl) throw new Error('请先在设置里配置云端审批地址')
-  const cloud = await cloudApprovalUserApiCall(baseUrl, 'POST', '/api/prompt-libraries/import', payload)
-  const now = localPromptNow()
-  const next = normalizeLocalPromptLibrary({
-    ...library,
-    status: 'synced',
-    cloud_library_id: cloud?.library?.id ?? library.cloud_library_id ?? null,
-    cloud_synced_at: now,
-    updated_at: now,
-  })
-  const index = state.libraries.findIndex(item => item.library_uid === library.library_uid)
-  if (index >= 0) state.libraries[index] = next
-  writeLocalPromptLibraryState(state)
-  return { ok: true, library: next, cloud }
+  throw new Error("云端审批与任务机已弃用，提示词库仅保存在本地")
 }
 
 async function cloudApprovalBaseUrlForDesktop() {
-  const status = await apiCall('GET', '/cloud-approval/status')
-  const baseUrl = String(status?.base_url || '').trim()
-  if (!baseUrl) throw new Error('请先在设置里配置云端审批地址')
-  return baseUrl
+  throw new Error("云端审批与任务机已弃用，提示词库仅保存在本地")
 }
 
 async function listCloudPromptLibrariesForDesktop() {
@@ -2798,6 +2738,30 @@ secureHandle('automation-permission:manage', async event => {
 secureHandle('automation-permission:list', event => desktopAutomationPermissions(event).list())
 secureHandle('automation-permission:check', (event, bundleId) => desktopAutomationPermissions(event).check(bundleId))
 secureHandle('automation-permission:request', (event, bundleId) => desktopAutomationPermissions(event).request(bundleId))
+let accountAuth = null
+function desktopAccountAuth() {
+  if (!accountAuth) {
+    const defaults = require('./accountConfig.json')
+    accountAuth = createAccountAuth({
+      config: {
+        ...defaults,
+        url: process.env.CRAWSHRIMP_SUPABASE_URL || defaults.url,
+        publishableKey: process.env.CRAWSHRIMP_SUPABASE_PUBLISHABLE_KEY || defaults.publishableKey,
+      },
+      directory: path.join(app.getPath('userData'), 'account'),
+      safeStorage,
+      openExternal: url => shell.openExternal(url),
+      createClient: require('@supabase/supabase-js').createClient,
+      notify: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('account:changed')
+      },
+    })
+  }
+  return accountAuth
+}
+secureHandle('account:action', (_, action, input = {}) => desktopAccountAuth().run(action, input))
+app.on('before-quit', () => accountAuth?.dispose())
+
 secureHandle('get-status', async () => getDesktopStatus())
 secureHandle('agent:api', async (_, method, requestPath, body) => {
   const request = normalizeAgentApiRequest(method, requestPath)

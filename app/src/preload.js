@@ -743,6 +743,12 @@ contextBridge.exposeInMainWorld('cs', {
     () => apiCall('POST', `/bala-ai-video-review/api/${encodePathPart(batchId)}/regenerate?token=${encodePathPart(token)}`, payload || {})),
   exportBalaVideoInput: (batchId, token, payload) => invokeWithApiFallback('export-bala-video-input', [batchId, token, payload || {}],
     () => apiCall('POST', `/bala-ai-video-review/api/${encodePathPart(batchId)}/export-video-input?token=${encodePathPart(token)}`, payload || {})),
+  accountAction: (action, input = {}) => ipcRenderer.invoke('account:action', action, input),
+  onAccountChanged: (callback) => {
+    const listener = () => callback()
+    ipcRenderer.on('account:changed', listener)
+    return () => ipcRenderer.removeListener('account:changed', listener)
+  },
   getCloudApprovalStatus: (options = {}) => ipcRenderer.invoke('get-cloud-approval-status', options || {}),
   saveCloudApprovalConfig: (payload) => ipcRenderer.invoke('save-cloud-approval-config', payload),
   enrollCloudMachine: (payload) => ipcRenderer.invoke('enroll-cloud-machine', payload),

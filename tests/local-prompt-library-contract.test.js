@@ -22,12 +22,12 @@ test('App registers local prompt library menu below AI image and before data fil
   assert.doesNotMatch(app, /@open-cloud-approval="currentView = 'cloud_approval'"/)
 })
 
-test('LocalPromptLibrary view supports import update, manual edit, and cloud sync', () => {
+test('LocalPromptLibrary view supports local import and edit without cloud sync controls', () => {
   const view = read('app/src/renderer/views/LocalPromptLibrary.vue')
 
   assert.match(view, /导入更新/)
   assert.match(view, /保存编辑/)
-  assert.match(view, /同步到线上/)
+  assert.doesNotMatch(view, /同步到线上/)
   assert.match(view, /browseFile\(\{[\s\S]*excel:\s*true/)
   assert.match(view, /PROMPT_IMPORT_HEADER_ROWS/)
   assert.match(view, /readPromptWorkbookTemplates/)
@@ -38,36 +38,20 @@ test('LocalPromptLibrary view supports import update, manual edit, and cloud syn
   assert.match(view, /syncLocalPromptLibraryToCloud/)
 })
 
-test('LocalPromptLibrary view combines local and cloud prompt libraries with source-aware actions', () => {
+test('LocalPromptLibrary does not expose or load the retired cloud service', () => {
   const view = read('app/src/renderer/views/LocalPromptLibrary.vue')
-
-  assert.doesNotMatch(view, /登录云端审批平台/)
-  assert.doesNotMatch(view, /defineEmits\(\['open-cloud-approval'\]\)/)
-  assert.doesNotMatch(view, /openCloudApprovalLogin/)
-  assert.match(view, /刷新线上/)
-  assert.match(view, /打开云端 Prompt 管理/)
-  assert.match(view, /保存为本地副本/)
-  assert.match(view, /getCloudApprovalStatus/)
-  assert.match(view, /listCloudPromptLibraries/)
-  assert.doesNotMatch(view, /resolveCloudPromptTemplates/)
-  assert.match(view, /selectedCloudLibrary\.value\.templates/)
-  assert.match(view, /const localLibraries = ref\(\[\]\)/)
-  assert.match(view, /const cloudLibraries = ref\(\[\]\)/)
-  assert.match(view, /const libraries = computed/)
-  assert.match(view, /selectedLocalLibrary/)
-  assert.match(view, /selectedCloudLibrary/)
-  assert.match(view, /librarySourceLabel/)
-  assert.match(view, /source_type/)
-  assert.match(view, /cloudPromptLibraryNotice\(err, options\)/)
-  assert.match(view, /cloudError\.value = options\.silent \? ''/)
+  assert.doesNotMatch(view, /刷新线上|打开云端 Prompt 管理/)
+  assert.match(view, /async function loadCloudLibraries\(\) \{\s*cloudLibraries.value = \[\]/)
+  assert.match(view, /保存编辑/)
+  assert.match(view, /const localLibraries = ref/)
 })
 
-test('Shared Prompt picker reads draft cloud templates from the library list payload', () => {
+test('Shared Prompt picker keeps cloud refresh disabled', () => {
   const picker = read('app/src/renderer/components/PromptLibraryPickerModal.vue')
 
   assert.match(picker, /buildPromptLibraryPickerLibraries/)
   assert.match(picker, /loadPromptLibraryPickerSources/)
-  assert.match(picker, /window\.cs\.listCloudPromptLibraries/)
+  assert.doesNotMatch(picker, /window\.cs\.listCloudPromptLibraries/)
   assert.doesNotMatch(picker, /window\.cs\.resolveCloudPromptTemplates/)
   assert.match(picker, /selectedLibrary\.templates/)
 })
@@ -201,7 +185,7 @@ test('Electron bridges expose local prompt library persistence and cloud sync IP
   }
   assert.match(main, /local-prompt-libraries\.json/)
   assert.match(main, /session\.defaultSession\.cookies\.get/)
-  assert.match(main, /\/api\/prompt-libraries\/import/)
+  assert.match(main, /async function syncLocalPromptLibraryToCloud\([^)]*\) \{\s*throw new Error/)
 })
 
 test('Preload local prompt library APIs tolerate a renderer updated before main process restart', () => {

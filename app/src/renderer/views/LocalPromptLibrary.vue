@@ -3,13 +3,9 @@
     <header class="lpl-head">
       <div>
         <h2>提示词库</h2>
-        <p>本地和线上 Prompt 模板，支持同步、预览和云端管理</p>
+        <p>保存在本机的 Prompt 模板，支持编辑、导入和预览</p>
       </div>
       <div class="lpl-head-actions">
-        <button type="button" class="lpl-secondary" :disabled="cloudLoading" @click="loadCloudLibraries">
-          {{ cloudLoading ? '读取线上...' : '刷新线上' }}
-        </button>
-        <button type="button" class="lpl-secondary" :disabled="!cloudPromptManageUrl" @click="openCloudPromptManager">打开云端 Prompt 管理</button>
         <template v-if="isListView">
           <button type="button" class="lpl-primary" :disabled="busy" @click="createLibrary">新建库</button>
         </template>
@@ -19,9 +15,7 @@
             {{ importing ? '导入中...' : '导入更新' }}
           </button>
           <button type="button" class="lpl-secondary" :disabled="busy || !selectedLocalLibrary" @click="saveLocalEdits">保存编辑</button>
-          <button type="button" class="lpl-primary" :disabled="busy || !selectedLocalLibrary" @click="syncSelectedLibrary">
-            {{ syncing ? '同步中...' : '同步到线上' }}
-          </button>
+
         </template>
       </div>
     </header>
@@ -34,7 +28,7 @@
       <div class="lpl-library-list-head">
         <div>
           <h3>提示词库列表</h3>
-          <p>{{ libraries.length }} 个库，本地 {{ localLibraries.length }} 个，线上 {{ cloudLibraries.length }} 个</p>
+          <p>{{ localLibraries.length }} 个本地库</p>
         </div>
         <button type="button" class="lpl-primary" :disabled="busy" @click="createLibrary">新建库</button>
       </div>
@@ -297,44 +291,8 @@ async function refreshCloudApprovalStatus() {
   }
 }
 
-async function loadCloudLibraries(options = {}) {
-  cloudLoading.value = true
-  if (!options.silent) {
-    cloudError.value = ''
-    message.value = ''
-  }
-  try {
-    await refreshCloudApprovalStatus()
-    if (!componentMounted.value) return
-    if (!cloudBaseUrl.value) {
-      cloudLibraries.value = []
-      cloudError.value = options.silent ? '' : cloudPromptLibraryNotice(new Error('尚未配置云端审批地址'))
-      return
-    }
-    const payload = await window.cs.listCloudPromptLibraries()
-    if (!componentMounted.value) return
-    cloudLibraries.value = (Array.isArray(payload?.libraries) ? payload.libraries : [])
-      .map(library => normalizePromptLibrary({ ...library, source_type: 'cloud' }))
-    cloudError.value = ''
-    if (!options.silent) message.value = `已读取 ${cloudLibraries.value.length} 个线上提示词库`
-  } catch (err) {
-    if (!componentMounted.value) return
-    cloudLibraries.value = []
-    cloudError.value = cloudPromptLibraryNotice(err, options)
-  } finally {
-    if (componentMounted.value) {
-      cloudLoading.value = false
-      ensureSelectedLibrary()
-      syncLibraryDraft()
-    }
-  }
-}
-
-function ensureSelectedLibrary() {
-  if (selectedLibraryUid.value && !libraries.value.some(library => library.library_uid === selectedLibraryUid.value)) {
-    selectedLibraryUid.value = ''
-    viewMode.value = 'list'
-  }
+async function loadCloudLibraries() {
+  cloudLibraries.value = []
 }
 
 async function createLibrary() {
