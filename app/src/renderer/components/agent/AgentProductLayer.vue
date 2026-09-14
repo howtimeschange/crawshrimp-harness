@@ -361,6 +361,7 @@ async function pushArtifactToSession(data, runtimeSessionId) {
     runtimeSessionId,
     artifact: {
       toolCallId: data?.tool_call_id || '',
+      imageGeneration: data?.media_kind === 'image' && imageGenerations.has(String(data?.tool_call_id || '')),
       filename: data?.filename || '',
       path,
       size: data?.size || 0,

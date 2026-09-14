@@ -1182,7 +1182,7 @@ window.__ModuleLoader__.load({
         // Non-generation archives retain their existing inline placement.
         if ([...document.querySelectorAll('.cs-artifact-block')].some(b => b.dataset.artifactPath === String(artifact.path))) return
         const column = messageColumn()
-        if (!column || (generationKey && !generation)) {
+        if (!column || (artifact.imageGeneration && generationKey && !generation)) {
           const retries = Number(data.__retries || 0)
           if (retries < 6) setTimeout(() => renderArtifactShow({ ...data, __retries: retries + 1 }), 2500)
           return

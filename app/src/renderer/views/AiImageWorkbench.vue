@@ -3347,6 +3347,7 @@ async function chooseLightboxEditReferences() {
       try {
         const item = await window.cs.importAiImageInput({ path })
         if (lightboxEditSessionKey.value !== sessionKey) return
+        const alreadyPresent = lightboxEditReferencePaths.value.includes(item.path)
         const references = appendUniquePaths([...lightboxEditReferencePaths.value, item.path])
         assertImageInputCount('result-main', appendUniquePaths([
           ...filterGeneratedAnnotationReferences(form.referenceImagePaths), ...references,

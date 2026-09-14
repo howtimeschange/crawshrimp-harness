@@ -12,7 +12,7 @@ export interface OneXmImageInput {
 }
 
 export type OneXmImageTaskResult =
-  | { status: 'completed'; dataUrls: string[]; task: unknown }
+  | { status: 'completed'; dataUrls: string[]; task: unknown; partialSuccess?: boolean; warning?: string }
   | { status: 'running'; task: unknown; taskStatus: string; nextPollAfterMs: number; error?: string }
 
 const DEFAULT_BASE_URL = 'https://api.1xm.ai/v1'
@@ -83,22 +83,40 @@ async function createCompatibleImage(env: Env, input: OneXmImageInput): Promise<
   // Gemini returns one image per call. Honor count with bounded explicit calls.
   const calls = gemini ? normalizeCount(input.count) : 1
   for (let index = 0; index < calls; index += 1) {
-    const { response, result } = await submitCompatibleImage(url, headers, body)
-    if (!response.ok || result.error) throw oneXmError(`Upstream ${response.status}: ${formatUpstreamError(result)}`.replaceAll(key, '[redacted]'), response.ok ? 502 : response.status)
-    if (gemini) {
-      for (const candidate of result.candidates || []) {
-        for (const part of candidate.content?.parts || []) {
-          const inline = part.inlineData || part.inline_data
-          if (inline?.data) dataUrls.push(`data:${inline.mimeType || inline.mime_type || 'image/png'};base64,${inline.data}`)
+    let receiptUnknown = true
+    try {
+      const { response, result } = await submitCompatibleImage(url, headers, body)
+      receiptUnknown = [502, 504].includes(response.status)
+      if (!response.ok || result.error) throw oneXmError(`Upstream ${response.status}: ${formatUpstreamError(result)}`.replaceAll(key, '[redacted]'), response.ok ? 502 : response.status)
+      const previousCount = dataUrls.length
+      if (gemini) {
+        for (const candidate of result.candidates || []) {
+          for (const part of candidate.content?.parts || []) {
+            const inline = part.inlineData || part.inline_data
+            if (inline?.data) dataUrls.push(`data:${inline.mimeType || inline.mime_type || 'image/png'};base64,${inline.data}`)
+          }
         }
+      } else {
+        // Honor the provider output MIME for Base64 responses.
+        for (const item of result.data || []) if (item.b64_json) {
+          item.url = `data:image/${input.outputFormat === 'jpg' ? 'jpeg' : input.outputFormat || 'png'};base64,${item.b64_json}`
+          delete item.b64_json
+        }
+        dataUrls.push(...await extractImageDataUrls(result, DEFAULT_FETCH_TIMEOUT_MS))
       }
-    } else {
-      // Honor the provider output MIME for Base64 responses.
-      for (const item of result.data || []) if (item.b64_json) {
-        item.url = `data:image/${input.outputFormat === 'jpg' ? 'jpeg' : input.outputFormat || 'png'};base64,${item.b64_json}`
-        delete item.b64_json
-      }
-      dataUrls.push(...await extractImageDataUrls(result, DEFAULT_FETCH_TIMEOUT_MS))
+      if (dataUrls.length === previousCount) throw oneXmError('Model returned no image.', 502)
+    } catch (error) {
+      if (!dataUrls.length) throw error
+      // Keep already paid-for images when a later call fails. Do not submit
+      // the remaining calls or replay successful calls to fill the batch.
+      const detail = String(error instanceof Error ? error.message : error).replaceAll(key, '[redacted]').slice(0, 500)
+      const skipped = calls - index - 1
+      const warning = `部分成功：已保存 ${dataUrls.length}/${normalizeCount(input.count)} 张；第 ${index + 1} 张${receiptUnknown ? '回执未知，请先核实供应商记录' : '失败'}：${detail}${skipped ? `；另有 ${skipped} 张未提交` : ''}`
+      return { status: 'completed', dataUrls, partialSuccess: true, warning, task: {
+        status: 'completed', model: input.model, partial_success: true,
+        requested_count: normalizeCount(input.count), returned_count: dataUrls.length, skipped_count: skipped,
+        failures: [{ image_index: index + 1, error: detail, receipt_unknown: receiptUnknown }],
+      } }
     }
   }
   if (!dataUrls.length) throw oneXmError('Model returned no image.', 502)

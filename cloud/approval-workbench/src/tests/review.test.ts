@@ -163,6 +163,7 @@ class FakeD1Statement {
     if (sql.includes('from ai_image_assets')) return { results: this.state.assets.filter((row) => row.batch_uid === String(this.params[0])) as T[] }
     if (sql.includes('from approval_events')) return { results: this.state.approvalEvents.filter((row) => row.batch_uid === String(this.params[0])) as T[] }
     if (sql.includes('from dispatch_jobs') && sql.includes('batch_uid = ?')) return { results: this.state.dispatchJobs.filter((row) => row.batch_uid === String(this.params[0])) as T[] }
+    if (sql.includes('from ai_generation_requests') && sql.includes('batch_uid = ?')) return { results: this.state.generationRequests.filter((row) => row.batch_uid === String(this.params[0])) as T[] }
     return { results: [] }
   }
   async run(): Promise<D1Result> {
@@ -970,6 +971,42 @@ describe('review routes', () => {
     expect(response.status).toBe(201)
     expect(JSON.parse(state.dispatchJobs[0].payload_json).prompt_text).toBe('manual override prompt')
     expect(state.generationRequests[0].prompt_text).toBe('manual override prompt')
+  })
+
+  it('persists partial Gemini images and failure details and reads them back without resubmission', async () => {
+    const { state, reviewerCookie } = await baseState()
+    const originalFetch = globalThis.fetch
+    let calls = 0
+    globalThis.fetch = async () => {
+      calls++
+      return calls === 1
+        ? Response.json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'Z2VuZXJhdGVkLWltYWdl' } }] } }] })
+        : Response.json({ error: { code: 'insufficient_quota', message: 'quota exhausted' } }, { status: 429 })
+    }
+    try {
+      const env = { ...fakeEnv(state), SEMIR_IMAGE_GEMINI_API_KEY: 'test-key' }
+      const response = await fetchWorker(new Request('https://example.test/api/ai-image-batches/batch-1/generate-direct', {
+        method: 'POST', headers: { cookie: reviewerCookie },
+        body: JSON.stringify({ style_id: 1, source_asset_uid: 'asset-source-1', prompt_text: 'partial review', model: 'semir/gemini-3-pro-image-preview', size: '1:1', count: 3 }),
+      }), env)
+      const body = await response.json() as { status: string; partial_success: boolean; warning: string; request_uid: string; assets: Array<{ asset_uid: string }> }
+      expect(response.status).toBe(201)
+      expect(body).toMatchObject({ status: 'completed', partial_success: true, warning: expect.stringContaining('quota exhausted') })
+      expect(body.assets).toHaveLength(1)
+      const generated = state.assets.find(asset => asset.asset_uid === body.assets[0].asset_uid)!
+      expect(generated).toMatchObject({ status: 'pending', kind: 'ai', generation_job_id: body.request_uid })
+      expect((env.ASSETS as unknown as FakeR2Bucket).objects.has(generated.object_key)).toBe(true)
+      expect(state.generationRequests[0].error_message).toBe(body.warning)
+      expect(JSON.parse(state.generationRequests[0].upstream_task_json || '{}')).toMatchObject({ partial_success: true, skipped_count: 1, failures: [{ image_index: 2 }] })
+      const polled = await fetchWorker(new Request(`https://example.test/api/ai-image-batches/batch-1/generation-requests/${body.request_uid}/poll`, {
+        method: 'POST', headers: { cookie: reviewerCookie },
+      }), env)
+      expect(await polled.json()).toMatchObject({ status: 'completed', partial_success: true, warning: body.warning, assets: body.assets })
+      const reloaded = await fetchWorker(new Request('https://example.test/api/ai-image-batches/batch-1', { headers: { cookie: reviewerCookie } }), env)
+      expect(await reloaded.json()).toMatchObject({ batch: { generation_requests: [expect.objectContaining({ request_uid: body.request_uid, partial_success: true, error_message: body.warning })] } })
+      expect(calls).toBe(2)
+      expect(state.dispatchJobs).toHaveLength(0)
+    } finally { globalThis.fetch = originalFetch }
   })
 
   it('direct cloud generation calls 1XM and appends AI assets without dispatching a task-machine job', async () => {

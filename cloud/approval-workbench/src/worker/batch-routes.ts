@@ -687,11 +687,12 @@ export async function createDirectGeneration(request: Request, env: Env): Promis
       outputFormat,
       dataUrls: result.dataUrls.slice(0, count),
       upstreamTask: result.task,
+      warning: result.warning,
       userId: actor.user.id,
       now: nowIso(),
     })
     await recordAudit(env, { userId: actor.user.id }, 'jobs.generate_ai_image.direct_complete', 'ai_generation_request', requestUid, { batch_uid: batchUid, style_id: styleId, asset_count: storedAssets.length, model }, request)
-    return json({ status: 'completed', request_uid: requestUid, assets: storedAssets }, { status: 201 })
+    return json({ status: 'completed', request_uid: requestUid, assets: storedAssets, ...partialGenerationDetails(result.task, result.warning) }, { status: 201 })
   } catch (error) {
     const status = error && typeof error === 'object' && typeof (error as { status?: unknown }).status === 'number' ? (error as { status: number }).status : 502
     const message = String(error instanceof Error ? error.message : 'Cloud generation failed')
@@ -723,6 +724,7 @@ export async function pollDirectGeneration(request: Request, env: Env): Promise<
       status: 'completed',
       request_uid: requestUid,
       assets: await directGenerationResultAssets(env, generationRequest),
+      ...partialGenerationDetails(fromJsonObject(generationRequest.upstream_task_json), generationRequest.error_message),
     })
   }
   if (generationRequest.status === 'finalizing') {
@@ -1347,11 +1349,18 @@ function safeJobResponse(job: DispatchJobRow): Record<string, unknown> {
 function safeGenerationRequestResponse(row: GenerationRequestRow): Record<string, unknown> {
   return {
     ...row,
+    ...partialGenerationDetails(fromJsonObject(row.upstream_task_json), row.error_message),
     reference_asset_uids: parseArray(row.reference_asset_uids_json),
     request_meta: redactSensitiveJson(fromJsonObject(row.request_meta_json)),
     upstream_task: redactSensitiveJson(fromJsonObject(row.upstream_task_json)),
     result_asset_uids: parseArray(row.result_asset_uids_json || '[]'),
   }
+}
+
+function partialGenerationDetails(task: unknown, warning = ''): { partial_success?: boolean; warning?: string } {
+  return task && typeof task === 'object' && (task as Record<string, unknown>).partial_success === true
+    ? { partial_success: true, warning }
+    : {}
 }
 
 async function insertDirectGenerationRequest(env: Env, request: {
@@ -1465,11 +1474,12 @@ async function completeDirectGenerationRequest(env: Env, details: {
   outputFormat: string
   dataUrls: string[]
   upstreamTask: unknown
+  warning?: string
   userId: number
   now: string
 }): Promise<Array<{ asset_uid: string; object_key: string; filename: string; status: string }>> {
   const storedAssets = await storeDirectGenerationAssets(env, details)
-  await updateDirectGenerationRequest(env, details.requestUid, 'completed', details.upstreamTask, storedAssets.map((asset) => asset.asset_uid), '')
+  await updateDirectGenerationRequest(env, details.requestUid, 'completed', details.upstreamTask, storedAssets.map((asset) => asset.asset_uid), details.warning || '')
   await appendApprovalEvent(env, details.batchUid, details.style.id, null, 'asset.cloud_generate', details.userId, {
     request_uid: details.requestUid,
     asset_uids: storedAssets.map((asset) => asset.asset_uid),

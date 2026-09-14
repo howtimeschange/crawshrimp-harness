@@ -35,8 +35,29 @@ function fixture() {
   const generation = (id, turn) => context.renderImageGeneration({ runtimeSessionId: 'A', tool_call_id: id, dsh_call_id: id, turn, state: 'completed' })
   const image = (id, name, url = '/signed/' + name) => context.renderArtifactShow({ runtimeSessionId: 'A', artifact: { toolCallId: id, path: '/tmp/' + name, filename: name, mediaKind: 'image' }, urls: { file: url } })
   const entries = () => vm.runInContext('[...generationGroups.values()]', context)
-  return { context, column, body, row, generation, image, entries, messages }
+  return { context, column, body, row, generation, image, entries, messages, timers }
 }
+
+for (const mediaKind of ['image', 'zip']) test(`${mediaKind} previews from other tools display without an image generation group`, () => {
+  const f = fixture(); f.row('video-call', 1)
+  const data = { runtimeSessionId: 'A', artifact: { toolCallId: 'video-call', path: '/tmp/poster.' + mediaKind, filename: 'poster.' + mediaKind, mediaKind, zipImages: ['poster.png'] }, urls: { file: '/signed/poster', entries: ['/signed/poster-entry'] } }
+  f.context.renderArtifactShow(data)
+  assert.equal(f.body.querySelectorAll('.cs-artifact-block').length, 1)
+  assert.equal(f.timers.length, 0)
+  f.context.renderArtifactShow(data)
+  assert.equal(f.body.querySelectorAll('.cs-artifact-block').length, 1)
+})
+
+test('explicit image generation delivery waits for its group before replay', () => {
+  const f = fixture(); f.row('image-call', 1); f.row('answer', 1, true)
+  f.context.renderArtifactShow({ runtimeSessionId: 'A', artifact: { imageGeneration: true, toolCallId: 'image-call', path: '/tmp/generated.png', filename: 'generated.png', mediaKind: 'image' }, urls: { file: '/signed/generated' } })
+  assert.equal(f.body.querySelectorAll('.cs-artifact-block').length, 0)
+  assert.equal(f.timers.length, 1)
+  f.generation('image-call', 1)
+  f.timers.shift()()
+  assert.equal(f.entries()[0].delivery.childElementCount, 1)
+  assert.equal(f.timers.length, 0)
+})
 
 test('image results sit outside tool folding and are delivered only with the same turn final answer', () => {
   const f = fixture(); const tool = f.row('call-a', 1)

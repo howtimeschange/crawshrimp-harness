@@ -26,12 +26,15 @@ interface GenerationRequest {
   request_meta?: Record<string, unknown>
   result_asset_uids?: string[]
   error_message?: string
+  partial_success?: boolean
 }
 interface DirectGenerationResponse {
   status: string
   request_uid: string
   assets?: Array<{ asset_uid: string }>
   next_poll_after_ms?: number
+  partial_success?: boolean
+  warning?: string
 }
 interface BatchDetail { batch_uid: string; title: string; status: string; styles: StyleRow[]; generation_requests?: GenerationRequest[] }
 interface PromptLibrary { id: number; name: string; status: string }
@@ -299,7 +302,8 @@ async function submitGeneration() {
       output_format: outputFormat.value,
       count: Math.max(1, Math.min(8, Number(count.value) || 1)),
     })
-    message.value = result.status === 'completed'
+    message.value = result.partial_success ? result.warning || '部分图片生成成功，请检查生成历史'
+      : result.status === 'completed'
       ? `云端直接生成完成，新增 ${result.assets?.length ?? 0} 张 AI 图`
       : '云端正在生成，完成后会自动追加到当前款式'
     await loadBatch()
@@ -342,7 +346,7 @@ async function pollGenerationRequest(requestUid: string) {
   try {
     const result = await apiPost<DirectGenerationResponse>(`/api/ai-image-batches/${encodeURIComponent(batch.value.batch_uid)}/generation-requests/${encodeURIComponent(requestUid)}/poll`)
     if (result.status === 'completed') {
-      message.value = `云端直接生成完成，新增 ${result.assets?.length ?? 0} 张 AI 图`
+      message.value = result.partial_success ? result.warning || '部分图片生成成功，请检查生成历史' : `云端直接生成完成，新增 ${result.assets?.length ?? 0} 张 AI 图`
       await loadBatch()
       return
     }
@@ -544,11 +548,12 @@ onUnmounted(() => {
         </div>
         <article v-for="item in generationRequests" :key="item.request_uid" class="cloud-aiw-history-item">
           <div>
-            <strong>{{ statusLabel(item.status) }}</strong>
+            <strong>{{ item.partial_success ? '部分成功' : statusLabel(item.status) }}</strong>
             <span>{{ generationRequestSummary(item) }}</span>
           </div>
           <small>{{ item.request_uid }}</small>
           <p>款式 {{ item.style_id || '-' }} · {{ item.result_asset_uids?.length ? `已生成 ${item.result_asset_uids.length} 张` : item.error_message || '云端直接生成' }}</p>
+          <p v-if="item.partial_success && item.error_message">{{ item.error_message }}</p>
         </article>
         <p v-if="generationRequests.length === 0" class="cloud-aiw-empty">暂无云端生成记录。</p>
       </aside>

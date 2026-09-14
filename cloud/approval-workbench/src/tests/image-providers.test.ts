@@ -6,6 +6,24 @@ const image = 'data:image/png;base64,aW1hZ2U='
 const input = { model: 'woka/gpt-image-2', prompt: 'product', imageDataUrls: [image], size: '1:1', quality: 'high', outputFormat: 'png', count: 1 }
 afterEach(() => vi.unstubAllGlobals())
 
+test.each(['quota', 'disconnect', 'empty'])('cloud Gemini retains successful images after a later %s failure', async (failure) => {
+  let calls = 0
+  vi.stubGlobal('fetch', vi.fn(async () => {
+    calls++
+    if (calls === 1) return Response.json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'aW1hZ2U=' } }] } }] })
+    if (failure === 'disconnect') throw new Error('connection lost')
+    if (failure === 'empty') return Response.json({ candidates: [] })
+    return Response.json({ error: { code: 'insufficient_quota', message: 'quota exhausted test-key' } }, { status: 429 })
+  }))
+  const result = await createAndPollOneXmImageTask({ SEMIR_IMAGE_GEMINI_API_KEY: 'test-key' } as Env, { ...input, model: 'semir/gemini-3-pro-image-preview', count: 3 })
+  expect(calls).toBe(2)
+  expect(result).toMatchObject({ status: 'completed', partialSuccess: true, dataUrls: [image], task: {
+    partial_success: true, requested_count: 3, returned_count: 1, skipped_count: 1,
+    failures: [{ image_index: 2, receipt_unknown: failure === 'disconnect' }],
+  } })
+  expect(JSON.stringify(result)).not.toContain('test-key')
+})
+
 test('cloud Woka uses authenticated multipart edits and materializes the response', async () => {
   const fetch = vi.fn(async (_url: string, init: RequestInit) => {
     expect(init.headers).toEqual({ Authorization: 'Bearer woka-key' })

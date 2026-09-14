@@ -56,6 +56,31 @@ function handler(name) {
   return tail.slice(0, end + 2)
 }
 
+test('lightbox reference import counts duplicates and failures without skipping previews', async () => {
+  const { assertImageInputCount, materialKey } = await import('../app/src/renderer/utils/aiImageInputs.mjs')
+  const errors = [], previews = [], remembered = []
+  const context = vm.createContext({
+    inputImportBusy: { value: false }, lightboxEditBusy: { value: false }, lightboxEditSessionKey: { value: 'edit-1' },
+    lightboxEditReferencePaths: { value: [] }, form: { referenceImagePaths: [] },
+    choosePath: async () => ['/first.png', '/duplicate.png', '/bad.png'],
+    window: { cs: {
+      importAiImageInput: async ({ path }) => { if (path === '/bad.png') throw new Error('图片损坏'); return { path: '/cached.png', name: 'first.png' } },
+      rememberImageInputDirectory: async (role, path) => remembered.push([role, path]),
+    } },
+    assertImageInputCount, materialKey, appendUniquePaths: paths => [...new Set(paths)], filterGeneratedAnnotationReferences: paths => paths,
+    pathLabel: value => value.split('/').pop(), inputImportError: error => errors.push(error.message), clearGenerateError() {},
+    refreshImagePreview: async path => previews.push(path),
+  })
+  vm.runInContext(handler('inputMeta') + '\n' + handler('chooseLightboxEditReferences'), context)
+  await context.chooseLightboxEditReferences()
+  assert.deepEqual(Array.from(context.lightboxEditReferencePaths.value), ['/cached.png'])
+  assert.deepEqual(previews, ['/cached.png', '/cached.png'])
+  assert.deepEqual(remembered, [['reference', '/first.png'], ['reference', '/duplicate.png']])
+  assert.equal(errors.length, 1)
+  assert.match(errors[0], /已导入 1 张，1 张未导入.*bad.png.*图片损坏/)
+  assert.equal(context.inputImportBusy.value, false)
+})
+
 test('Finder drop and clipboard File use atomic import and keep inputs on validation failure', async () => {
   const { mergeImageInputs, assertImageFiles, materialKey, mainPaths } = await import('../app/src/renderer/utils/aiImageInputs.mjs')
   const { inputDropCapacity, isInputSortTransfer } = await import('../app/src/renderer/utils/aiImageDrag.mjs')
