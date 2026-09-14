@@ -123,11 +123,19 @@
         api: openai-completions
         baseURL: !!js process.env.CRAWSHRIMP_DOMESTIC_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/bailian-codingplan/v1'
         models:
+          - id: qwen3.8-max
+            contextWindow: 256000
+            maxTokens: 32768
+            input: [text]
           - id: qwen3.8-max-preview
             contextWindow: 256000
             maxTokens: 32768
             input: [text]
           - id: qwen3.7-plus
+            contextWindow: 256000
+            maxTokens: 32768
+            input: [text]
+          - id: deepseek-v4.1-flash
             contextWindow: 256000
             maxTokens: 32768
             input: [text]

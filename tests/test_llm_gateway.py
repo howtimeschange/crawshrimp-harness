@@ -673,3 +673,15 @@ def test_custom_provider_budget_defaults_and_explicit_values_reach_runtime():
     profiles, _ = llm_gateway.custom_providers_runtime_payload(cfg)
     assert [(m["contextWindow"], m["maxTokens"]) for m in profiles[0]["models"]] == [
         (256000, 32768), (512000, 48000), (128000, 16000)]
+
+
+def test_new_domestic_models_keep_gateway_wire_ids_and_credentials():
+    from core.agent.cordis_config import resolve_session_model_selection
+    cfg = {"ai": {"llm": {"domestic_api_key": "domestic-unit", "deepseek_api_key": "official-unit"}}}
+    with patch.dict(os.environ, {}, clear=True):
+        for model in ("qwen3.8-max", "deepseek-v4.1-flash"):
+            route = llm_gateway.route_for_model(model, cfg)
+            assert route.model_id == model
+            assert route.api_key == "domestic-unit"
+            assert route.base_url == llm_gateway.DOMESTIC_OPENAI_BASE_URL
+            assert resolve_session_model_selection("crawshrimp-domestic-openai", model, cfg) == (model, "crawshrimp-domestic-openai")

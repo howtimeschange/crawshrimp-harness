@@ -89,8 +89,10 @@ OVERSEAS_ANTHROPIC_MODELS = (
     "claude-sonnet-5",
 )
 DOMESTIC_OPENAI_MODELS = (
+    "qwen3.8-max",
     "qwen3.8-max-preview",
     "qwen3.7-plus",
+    "deepseek-v4.1-flash",
     "deepseek-v4-flash",
     "deepseek-v4-pro",
     "glm-5.2",

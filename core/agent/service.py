@@ -2904,7 +2904,13 @@ class AgentService:
                     envelope = _json.loads(envelope)
                 except ValueError:
                     continue
-            evidence = (envelope or {}).get("evidence") or {}
+            # Shell output may be valid JSON scalars (e.g. "442") or arrays.
+            # Only structured tool envelopes can carry artifact evidence.
+            if not isinstance(envelope, dict):
+                continue
+            evidence = envelope.get("evidence")
+            if not isinstance(evidence, dict):
+                continue
             uid = evidence.get("task_instance_uid")
             if not uid or uid in seen:
                 continue

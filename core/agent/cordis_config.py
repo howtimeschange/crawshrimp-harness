@@ -33,8 +33,10 @@ MODEL_CAPABILITIES: dict[str, dict[str, Any]] = {
     "gemini-3.5-flash": {"context_window": 1000000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
     "claude-opus-4-8": {"context_window": 256000, "max_output_tokens": 64000, "supports_tools": True, "input_modalities": ["text", "image"]},
     "claude-sonnet-5": {"context_window": 256000, "max_output_tokens": 64000, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "qwen3.8-max": {"context_window": 256000, "max_output_tokens": 32768, "supports_tools": True},
     "qwen3.8-max-preview": {"context_window": 256000, "max_output_tokens": 32768, "supports_tools": True},
     "qwen3.7-plus": {"context_window": 256000, "max_output_tokens": 32768, "supports_tools": True},
+    "deepseek-v4.1-flash": {"context_window": 256000, "max_output_tokens": 32768, "supports_tools": True},
     "deepseek-v4-flash": {"context_window": 256000, "max_output_tokens": 32768, "supports_tools": True},
     "deepseek-v4-pro": {"context_window": 256000, "max_output_tokens": 32768, "supports_tools": True},
     # DeepSeek 原生接入(官方 API,产品内 ID 加 official 前缀与网关模型区分)

@@ -3306,3 +3306,16 @@ def test_deepseek_flash_legacy_selection_migration_retains_explicit_thinking_off
     selected = yaml.safe_load(settings_path.read_text())["agent-default-model"]
     assert selected["model"] == "deepseek-flash"
     assert selected["reasoningEffort"] == "off"
+
+
+@pytest.mark.parametrize('text', ['442\n', 'true', 'null', '[1, 2]', '"plain text"', '{"evidence": 442}'])
+def test_artifact_collection_ignores_non_object_shell_output(monkeypatch, tmp_path, text):
+    agent_db = _init_temp_agent_db(monkeypatch, tmp_path)
+    tool = agent_db.upsert_tool_call('numeric-result-run', 'call-shell', 'bash', {'command': 'expr 173 + 269'})
+    agent_db.update_tool_call(tool['tool_call_id'], status='succeeded', result_json={'text': text})
+    valid = agent_db.upsert_tool_call('numeric-result-run', 'call-artifact', 'mcp-tool', {})
+    agent_db.update_tool_call(valid['tool_call_id'], status='succeeded', result_json={'text': json.dumps({'evidence': {'task_instance_uid': 'task-valid'}})})
+    artifacts = Mock(return_value=[])
+    monkeypatch.setattr(mcp_gateway.ctx, 'list_task_artifacts', artifacts)
+    assert AgentService._collect_run_artifacts('numeric-result-run') == []
+    artifacts.assert_called_once_with('task-valid')
