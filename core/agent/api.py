@@ -1229,7 +1229,7 @@ def build_agent_mcp_asgi(token_provider, context_acquirer=None,
 @router.get("/session-resources")
 def session_resources(runtime_session_id: str) -> dict:
     from pathlib import Path
-    artifacts, tabs = {}, {}
+    artifacts, tabs, image_calls = {}, {}, {}
     active = ""
     for row in db.list_session_resource_events(runtime_session_id):
         data = json.loads(row["payload_json"])
@@ -1239,6 +1239,14 @@ def session_resources(runtime_session_id: str) -> dict:
                 previous = artifacts.pop(key, None)
                 created_at = previous["created_at"] if previous else row["created_at"]
                 artifacts[key] = {**data, "created_at": created_at, "updated_at": row["created_at"]}
+        elif row["event_type"] == "tool.requested":
+            if str(data.get("tool_name") or "").endswith("image_generate"):
+                call_id = str(data.get("tool_call_id") or "")
+                if call_id:
+                    # Only public placement metadata; never replay arguments or results.
+                    image_calls[call_id] = {"tool_call_id": call_id,
+                                            "dsh_call_id": data.get("dsh_call_id") or "",
+                                            "turn": data.get("turn"), "state": "finished"}
         elif row["event_type"] == "browser.page.closed":
             tabs.pop(data.get("tab_id"), None)
         else:
@@ -1260,7 +1268,9 @@ def session_resources(runtime_session_id: str) -> dict:
             if rank(previous) > rank(item):
                 continue
         documents[key] = item
+    delivered_calls = {item.get("tool_call_id") for item in artifacts.values() if item.get("media_kind") == "image"}
     return {"artifacts": list(reversed(list(documents.values()))),
+            "imageGenerations": [value for key, value in image_calls.items() if key in delivered_calls],
             "tabs": list(tabs.values()), "activeTabId": active}
 
 

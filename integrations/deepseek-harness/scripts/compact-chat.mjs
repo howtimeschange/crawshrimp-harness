@@ -68,6 +68,15 @@ function replaceOnce(source, anchor, replacement) {
 }
 
 export function patchCompactChatSource(source) {
+  // Stable final-answer marker, independent of whether process disclosure is open.
+  if (!source.includes('"data-chat-final-answer"')) {
+    source = replaceOnce(source, '"data-turn-process-answer": compactAnswer || void 0,',
+      '"data-turn-process-answer": compactAnswer || void 0,\n                "data-chat-final-answer": processAnswer || void 0,')
+  }
+  if (!source.includes('"data-chat-call-id"')) {
+    source = replaceOnce(source, '"data-chat-anchor-key": routedNode.key,',
+      '"data-chat-anchor-key": routedNode.key,\n                "data-chat-call-id": routedNode.kind === "tool-call" ? routedNode.data.root.callId : void 0,')
+  }
   if (source.includes(COMPACT_CHAT_MARKER)) return source
   const start = source.indexOf('\t\tconst ChatNodeList =')
   const end = source.indexOf('\n\t\t/**', start)

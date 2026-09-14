@@ -38,6 +38,30 @@ test('failed queue cards expose retry context and preserve operator recovery act
   assert.match(functionBody(workbench, 'retryFailedRun', 'copyFailedPrompt'), /startJobPolling\(jobUid\)/)
 })
 
+test('stale generation errors clear on input changes and task cards surface failed run reasons', () => {
+  const clearBody = functionBody(workbench, 'clearGenerateError', 'buildJobPayload')
+  const chooseMainBody = functionBody(workbench, 'chooseMainImage', 'chooseReferenceImages')
+  const chooseReferenceBody = functionBody(workbench, 'chooseReferenceImages', 'chooseOutputFolder')
+  const chooseOutputBody = functionBody(workbench, 'chooseOutputFolder', 'chooseDirectory')
+  const taskResultBody = functionBody(workbench, 'taskResultLine', 'taskPreviewItems')
+  const taskPreviewBody = functionBody(workbench, 'taskPreviewItems', 'queueMetaLine')
+
+  assert.match(workbench, /form\.modelId[\s\S]*form\.referenceImagePaths\.join\('\\n'\)[\s\S]*clearGenerateError\(\)/)
+  assert.match(clearBody, /if \(errorMessage\.value\) errorMessage\.value = ''/)
+  assert.match(clearBody, /if \(batchGenerationDialog\.error\) batchGenerationDialog\.error = ''/)
+  assert.match(chooseMainBody, /importInputSelection\('main'/)
+  assert.match(chooseReferenceBody, /importInputSelection\('reference'/)
+  assert.match(workbench, /Object\.assign\(state, mergeImageInputs[\s\S]*else clearGenerateError\(\)/)
+  assert.match(chooseOutputBody, /clearGenerateError\(\)[\s\S]*form\.output_dir = directory/)
+  assert.match(workbench, /function latestTaskFailure/)
+  assert.match(workbench, /function compactTaskFailureText/)
+  assert.match(taskResultBody, /collectResultCards\(job\)\.length/)
+  assert.match(taskResultBody, /latestTaskFailure\(job\)/)
+  assert.match(taskResultBody, /compactTaskFailureText\(failure\)/)
+  assert.match(taskPreviewBody, /collectResultCards\(job\)\.slice\(0, 4\)/)
+  assert.match(workbench, /<small :title="taskResultLine\(job\)">\{\{ taskResultLine\(job\) \}\}<\/small>/)
+})
+
 test('Prompt library converts infrastructure failures into operator-facing recovery copy', () => {
   assert.match(promptPicker, /import \{ promptLibraryFailureMessage \} from '\.\.\/utils\/aiImageOperatorMessages\.mjs'/)
   assert.match(promptPicker, /const operatorError = computed/)

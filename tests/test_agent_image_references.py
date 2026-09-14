@@ -96,3 +96,21 @@ def test_invalid_reference_is_rejected_before_provider_or_job(image_context, mon
     result = mcp_gateway.tool_image_generate("改背景", reference_image_paths=refs)
     assert not result["ok"]
     assert result["error"]["code"] == "BAD_PARAMS"
+
+
+def test_video_tool_routes_first_frame_and_reports_missing_config(monkeypatch, tmp_path):
+    from core import ai_video_generation_service as video
+    from core.agent import mcp_gateway
+    image = tmp_path / 'frame.png'
+    image.write_bytes(b'frame')
+    monkeypatch.setattr(mcp_gateway.ctx, 'active_run', {'run_id': 'video-qa'})
+    monkeypatch.setattr(video, 'provider_status', lambda: {'seedance': {'configured': False}, 'happyhorse': {'configured': True}})
+    captured = []
+    monkeypatch.setattr(video, 'create_job_trusted', lambda payload: captured.append(payload) or {'data': {'job': {'id': 'pending-video', 'status': 'needs_config'}}})
+    monkeypatch.setattr(video, 'wait_video_job', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('must not wait on missing config')))
+    result = mcp_gateway.tool_video_generate('Slow camera movement', str(image))
+    assert captured[0]['provider'] == 'happyhorse'
+    assert captured[0]['model'] == 'happyhorse-1.1-i2v'
+    assert captured[0]['assets'] == [{'localPath': str(image), 'role': 'first_frame'}]
+    assert result['error']['code'] == 'MISSING_CONFIG'
+    assert result['error']['job_id'] == 'pending-video'

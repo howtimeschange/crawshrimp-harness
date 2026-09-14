@@ -63,7 +63,7 @@
       <section v-if="(!collapsed || embedded) && showSubmitProgress" class="approval-submit-progress">
         <div class="submit-progress-head">
           <div>
-            <strong>提交测图任务</strong>
+            <strong>{{ createStartedStatuses.has(effectiveStatus) ? '提交测图任务' : '生成图片' }}</strong>
             <span>{{ submitProgressText }}</span>
           </div>
           <span class="submit-progress-percent">{{ submitProgressPercent }}%</span>
@@ -74,7 +74,7 @@
         <div class="submit-progress-meta">
           <span>已处理 {{ submitProgressCompleted }} / {{ submitProgressTotal }} 个提交项</span>
           <span>本次AI图 {{ submitProgressImageCount }} 张</span>
-          <span>成功 {{ createSummary.succeeded }} / 失败 {{ createSummary.failed }}</span>
+          <span>成功 {{ submitProgress.succeeded ?? createSummary.succeeded }} / 失败 {{ submitProgress.failed ?? createSummary.failed }}</span>
           <span v-if="submitProgress.current_style">当前 {{ submitProgress.current_style }}</span>
         </div>
       </section>
@@ -141,6 +141,7 @@
                   <span>·</span>
                   SKC {{ item.skc_code || '-' }}
                 </p>
+                <p v-if="Object.keys(item.workflow?.custom_fields || {}).length">匹配条件：{{ Object.entries(item.workflow.custom_fields).map(([name, value]) => `${name}=${value}`).join('；') }}</p>
               </div>
               <div class="style-actions">
                 <span class="style-mode">参考图 {{ item.reference_mode || '-' }}</span>
@@ -181,11 +182,12 @@
                         {{ asset.status === 'approved' ? '✓ 已确认' : '× 已舍弃' }}
                       </span>
                       <span class="asset-label">{{ asset.label || asset.filename }}</span>
-                      <span class="asset-file">{{ asset.filename || asset.path || (isGeneratingAsset(asset) ? '等待 1XM 返回图片' : '') }}</span>
+                      <span class="asset-file">{{ asset.filename || asset.path || (isGeneratingAsset(asset) ? '等待供应商返回图片' : '') }}</span>
                       <span class="asset-status">{{ statusLabel(asset) }}</span>
                       <span v-if="assetAlreadySubmitted(item, asset)" class="asset-submit-mark">已提交过</span>
                     </button>
                     <div v-if="!isGeneratingAsset(asset)" class="asset-card-actions">
+                      <button v-if="asset.path" type="button" class="asset-action" :disabled="faceSwap.busy || submitting || saving" @click.stop="openFaceSwap(item, asset)">换脸</button>
                       <button type="button" class="asset-action ok" @click.stop="setAssetStatus(item, asset, 'approved')">确认</button>
                       <button type="button" class="asset-action danger" @click.stop="setAssetStatus(item, asset, 'rejected')">舍弃</button>
                     </div>
@@ -453,6 +455,11 @@
         </section>
       </div>
 
+      <TmallFaceSwapDialog :open="faceSwap.open" :busy="faceSwap.busy" :error="faceSwap.error"
+        :title="`${faceSwap.item?.style_code || ''} · ${faceSwap.asset?.label || 'AI 图'}`"
+        :source-url="faceSwap.asset ? imageUrlWithVersion(faceSwap.asset) : ''"
+        :result-url="faceSwap.result ? imageUrlWithVersion(faceSwap.result) : ''"
+        @close="faceSwap.open = false" @submit="submitFaceSwap" />
       <div v-if="toast" class="approval-toast" :class="{ error: toastError }">{{ toast }}</div>
     </aside>
   </div>
@@ -461,6 +468,9 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import PromptLibraryPickerModal from '../components/PromptLibraryPickerModal.vue'
+import TmallFaceSwapDialog from '../components/TmallFaceSwapDialog.vue'
+import { approvalDecisionSnapshot, changedApprovalDecisions, applyApprovalDecisions } from '../utils/tmallApprovalDecisions.mjs'
+let savedDecisionBaseline = {}
 import {
   applyCustomReferenceDefaults,
   markPromptReferenceSelection,
@@ -489,6 +499,7 @@ const generationSubmitting = ref(false)
 const regenerating = ref(false)
 const regeneratingRejected = ref(false)
 const manualGenerating = ref(false)
+const faceSwap = ref({ open: false, busy: false, item: null, asset: null, error: '', result: null })
 const error = ref('')
 const toast = ref('')
 const toastError = ref(false)
@@ -798,6 +809,9 @@ async function reload(preferredAssetId = '', options = {}) {
     const payload = await window.cs.getTmallApprovalBatch(ref.batchId, ref.token)
     if (payload?.detail) throw new Error(payload.detail)
     prepareEditableBatch(payload)
+    const changes = options.preserveDecisions ? decisionsPayload() : {}
+    savedDecisionBaseline = approvalDecisionSnapshot(payload)
+    applyApprovalDecisions(payload, changes)
     batch.value = payload
     emit('batch-updated', payload)
     const preferredId = String(preferredAssetId || selectedAsset.value?.id || '').trim()
@@ -1095,27 +1109,17 @@ function markAllPending(status) {
 
 function decisionsPayload() {
   prepareEditableBatch(batch.value)
-  const decisions = {}
-  for (const item of batch.value?.items || []) {
-    for (const asset of item.assets || []) {
-      if (asset.kind !== 'ai') continue
-      decisions[asset.id] = {
-        status: String(asset.status || 'pending'),
-        custom_prompt: String(asset.custom_prompt || ''),
-        reference_paths: plainStringArray(asset.reference_paths),
-        review_note: String(asset.review_note || ''),
-      }
-    }
-  }
-  return decisions
+  return changedApprovalDecisions(approvalDecisionSnapshot(batch.value), savedDecisionBaseline)
 }
 
 async function saveDecisions(options = {}) {
   const ref = approvalRef.value
   saving.value = true
   try {
-    const result = await window.cs.saveTmallApprovalDecisions(ref.batchId, ref.token, decisionsPayload())
+    const changes = decisionsPayload()
+    const result = await window.cs.saveTmallApprovalDecisions(ref.batchId, ref.token, changes)
     if (result?.detail || result?.error) throw new Error(result.detail || result.error)
+    for (const [id, fields] of Object.entries(changes)) savedDecisionBaseline[id] = { ...savedDecisionBaseline[id], ...fields }
     if (!options.silent) showToast('审批状态已保存')
     return true
   } catch (err) {
@@ -1254,7 +1258,7 @@ function localGenerationPlaceholderAssets(item, payloadItem, itemIndex, now) {
         custom_prompt: String(prompt.custom_prompt || prompt.prompt || ''),
         reference_paths: plainStringArray(prompt.reference_paths),
         placeholder_preview_path: mainPath,
-        filename: '等待 1XM 返回图片',
+        filename: '等待供应商返回图片',
         path: '',
         created_at: now,
       }
@@ -1763,6 +1767,29 @@ async function submitManualGenerate() {
   } finally {
     manualGenerating.value = false
   }
+}
+
+function openFaceSwap(item, asset) {
+  if (faceSwap.value.busy || !asset?.path || asset.kind !== 'ai') return
+  faceSwap.value = { open: true, busy: false, item, asset, error: '', result: null }
+}
+
+async function submitFaceSwap(payload) {
+  const current = faceSwap.value
+  if (current.busy || !current.asset?.id || !payload.model_id) return
+  const ref = { ...approvalRef.value }
+  current.busy = true
+  current.error = ''
+  try {
+    if (!window.cs?.faceSwapTmallApprovalAsset) throw new Error('当前客户端尚未载入换脸能力，请更新客户端后重试')
+    const result = await window.cs.faceSwapTmallApprovalAsset(ref.batchId, ref.token, { asset_id: current.asset.id, ...payload })
+    if (result?.detail || result?.error || !result?.asset?.id) throw new Error(result?.detail || result?.error || '换脸没有返回结果图片')
+    if (ref.batchId !== approvalRef.value.batchId) return
+    current.result = result.asset
+    await reload(result.asset.id, { silent: true, preserveDecisions: true })
+    showToast('换脸完成，新图已加入待审批；原图保留')
+  } catch (err) { current.error = err?.message || String(err) }
+  finally { current.busy = false }
 }
 
 async function regenerateSelected() {

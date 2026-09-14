@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
@@ -273,6 +275,15 @@ if (!args.prompt || !args.out) {
 }
 
 const timeoutMs = Math.max(1_000, Number(args['timeout-ms'] || DEFAULT_TIMEOUT_MS))
+// Harness routes every configured provider through the shared local service.
+if (process.env.CRAWSHRIMP_API_TOKEN || String(args.model || '').includes('/')) {
+  const helper = fileURLToPath(new URL('../../image-generation/scripts/generate.py', import.meta.url))
+  const argv = [helper, '--prompt', path.resolve(args.prompt), '--out', path.resolve(args.out), '--model', args.model || DEFAULT_MODEL, '--size', args.size || DEFAULT_SIZE, '--quality', args.quality || DEFAULT_QUALITY]
+  for (const ref of args.reference) argv.push('--reference', path.resolve(ref))
+  const result = spawnSync(process.env.CRAWSHRIMP_PYTHON_EXECUTABLE || 'python3', argv, { stdio: 'inherit' })
+  if (result.error) throw result.error
+  process.exit(result.status ?? 1)
+}
 const { apiKey, baseUrl, group } = resolveCredentials(args)
 const prompt = fs.readFileSync(path.resolve(args.prompt), 'utf8')
 const payload = {

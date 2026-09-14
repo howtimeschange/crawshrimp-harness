@@ -41,12 +41,13 @@ test('Settings page accepts focus panel id and exposes 1XM image model keys', ()
 
   assert.match(settings, /focusPanelId/)
   assert.match(settings, /watch\(\(\) => \[props\.focusPanelId, props\.focusRequestId\]/)
-  assert.match(settings, /1XM 图片模型/)
+  assert.match(settings, /图片模型供应商/)
   assert.doesNotMatch(settings, /1XM GPT-Image-2/)
   assert.match(settings, /ai\.1xm\.gemini_3_1_flash_image_preview_key/)
   assert.match(settings, /ai\.1xm\.gemini_3_pro_image_preview_key/)
-  assert.match(settings, /Gemini 3\.1 Flash Image Preview Key/)
-  assert.match(settings, /Gemini 3 Pro Image Preview Key/)
+  const editor = read("app/src/renderer/components/ImageProviderSettings.vue")
+  assert.match(editor, /Nano Banana 2 API Key/)
+  assert.match(editor, /Nano Banana Pro API Key/)
 })
 
 test('Settings page marks the AI menu configured when any image-model key is present', () => {
@@ -107,7 +108,7 @@ test('AI image workbench uses picker interactions and hides canvas entry for now
   assert.match(workbench, /chooseReferenceImages/)
   assert.match(workbench, /chooseOutputFolder/)
   assert.match(workbench, /readLocalImagePreview/)
-  assert.match(workbench, /imagePreviewSrc\(form\.mainImagePath\)/)
+  assert.match(workbench, /imagePreviewSrc\(path\)/)
   assert.match(workbench, /aiw-preview-fallback/)
   assert.match(workbench, /visibleResultCards/)
   assert.match(workbench, /aiw-loading-preview/)
@@ -122,7 +123,7 @@ test('AI image workbench uses picker interactions and hides canvas entry for now
   const generateBody = workbench.slice(generateStart, generateEnd)
   assert.doesNotMatch(generateBody, /currentJob\.value = null/)
   assert.match(workbench, /main_image_path: form\.mainImagePath/)
-  assert.match(workbench, /reference_image_paths: \[\.\.\.form\.referenceImagePaths\]/)
+  assert.match(workbench, /\.\.\.serializeInputs\(form\)/)
   assert.match(workbench, /return item\?\.url \|\| item\?\.path \|\| ''/)
   assert.match(workbench, /本地 AI 生图服务未就绪，请重启抓虾客户端后再试/)
   assert.match(workbench, /runResult && runResult\.ok === false/)
@@ -144,7 +145,7 @@ test('AI image task records show latest generation time without mixed settings m
   const metaBody = workbench.slice(metaStart, metaEnd)
 
   assert.match(sidebarBody, /<span>\{\{ taskMetaLine\(job\) \}\}<\/span>/)
-  assert.match(sidebarBody, /<small>\{\{ taskResultLine\(job\) \}\}<\/small>/)
+  assert.match(sidebarBody, /<small[^>]*>\{\{ taskResultLine\(job\) \}\}<\/small>/)
   assert.notEqual(latestStart, -1, 'latestTaskGenerationAt should exist')
   assert.match(latestBody, /summary\.runs/)
   assert.match(latestBody, /created_at/)
@@ -155,43 +156,21 @@ test('AI image task records show latest generation time without mixed settings m
   assert.doesNotMatch(metaBody, /model_key|params\.size|params\.ratio|params\.n|job\.status|张/)
 })
 
-test('AI image workbench clears submitted prompt and input images after generation starts', () => {
+test('AI image workbench retains submitted inputs without overwriting newer edits', () => {
   const workbench = read('app/src/renderer/views/AiImageWorkbench.vue')
-  const generateStart = workbench.indexOf('async function generate()')
-  const generateEnd = workbench.indexOf('function normalizeGenerateError', generateStart)
-  const generateBody = workbench.slice(generateStart, generateEnd)
-  const editStart = workbench.indexOf('async function runLightboxEditGeneration')
-  const editEnd = workbench.indexOf('function removeReferencePath', editStart)
-  const editBody = workbench.slice(editStart, editEnd)
-  const helperStart = workbench.indexOf('function clearSubmittedTaskInputs')
-  const helperEnd = workbench.indexOf('async function generate()', helperStart)
-  const helperBody = workbench.slice(helperStart, helperEnd)
-  const restoreStart = workbench.indexOf('async function restoreJob(job, options = {})')
-  const restoreEnd = workbench.indexOf('function toggleTaskSidebar', restoreStart)
-  const restoreBody = workbench.slice(restoreStart, restoreEnd)
-
-  assert.notEqual(helperStart, -1, 'submitted-input clearing helper should exist')
-  assert.match(helperBody, /prompt: ''/)
-  assert.match(helperBody, /mainImagePath: ''/)
-  assert.match(helperBody, /referenceImagePaths: \[\]/)
-  assert.match(helperBody, /submittedInputsCleared: true/)
-  assert.match(generateBody, /clearSubmittedTaskInputs\(submittedSnapshot, jobUid\)/)
-  assert.ok(
-    generateBody.indexOf('clearSubmittedTaskInputs(submittedSnapshot, jobUid)') < generateBody.indexOf('await window.cs.runAiImageJob(jobUid)'),
-    'the submitted form inputs should clear as soon as the generation task is accepted',
-  )
-  assert.match(editBody, /let submittedInputsCleared = false/)
-  assert.match(editBody, /submittedInputsCleared = true/)
-  assert.match(editBody, /clearSubmittedTaskInputs\(snapshot, jobUid\)/)
-  assert.ok(
-    editBody.indexOf('clearSubmittedTaskInputs(snapshot, jobUid)') < editBody.indexOf('await window.cs.runAiImageJob(jobUid)'),
-    'lightbox edit inputs should clear as soon as the edit task is accepted',
-  )
-  assert.match(helperBody, /targetJobUid && targetJobUid !== activeJobUid\.value/)
-  assert.match(helperBody, /taskDrafts\[targetJobUid\]/)
-  assert.match(restoreBody, /const submittedInputsCleared = Boolean/)
-  assert.match(restoreBody, /!submittedInputsCleared[\s\S]*mainAsset/)
-  assert.match(restoreBody, /!submittedInputsCleared[\s\S]*asset\.kind === 'reference'/)
+  const helperStart = workbench.indexOf('function retainSubmittedTaskInputs')
+  const helperEnd = workbench.indexOf('function saveDraftForCurrentTask', helperStart)
+  const helper = workbench.slice(helperStart, helperEnd)
+  assert.notEqual(helperStart, -1)
+  assert.doesNotMatch(helper, /prompt: ''|mainImagePath: ''|referenceImagePaths: \[\]/)
+  assert.match(helper, /targetJobUid !== activeJobUid\.value/)
+  assert.match(helper, /taskDrafts\[targetJobUid\]/)
+  assert.match(helper, /saveDraftForCurrentTask\(\)/)
+  assert.doesNotMatch(helper, /applyFormSnapshot/)
+  assert.doesNotMatch(workbench, /clearSubmittedTaskInputs|submittedInputsCleared: true/)
+  assert.match(workbench, /const draft = savedDraft\.submittedInputsCleared \? \{\} : savedDraft/)
+  assert.match(workbench, /retainSubmittedTaskInputs\(submittedSnapshot, jobUid\)/)
+  assert.match(workbench, /retainSubmittedTaskInputs\(formSnapshot\(\), jobUid\)/)
 })
 
 test('AI image workbench offers batch generation with shared prompt library picking', () => {
@@ -245,7 +224,7 @@ test('AI image workbench offers batch generation with shared prompt library pick
   assert.match(submitBody, /window\.cs\.batchRunAiImageJob\(jobUid,/)
   assert.match(submitBody, /count: normalizeBatchPromptCount\(card\.count, \{ forceSingle: batchNanoBanana\.value \}\)/)
   assert.match(submitBody, /if \(!batchResult\?\.accepted\)/)
-  assert.match(submitBody, /clearSubmittedTaskInputs\(snapshot, jobUid\)/)
+  assert.match(submitBody, /retainSubmittedTaskInputs\(snapshot, jobUid\)/)
   assert.match(submitBody, /if \(hasActiveRuns\(currentJob\.value\)\) startJobPolling\(jobUid\)/)
 })
 
@@ -269,7 +248,7 @@ test('AI image workbench only sends the current annotation during lightbox edits
   const editEnd = workbench.indexOf('function removeReferencePath', editStart)
   const editBody = workbench.slice(editStart, editEnd)
   const helperStart = workbench.indexOf('function filterGeneratedAnnotationReferences')
-  const helperEnd = workbench.indexOf('function clearSubmittedTaskInputs', helperStart)
+  const helperEnd = workbench.indexOf('function retainSubmittedTaskInputs', helperStart)
   const helperBody = workbench.slice(helperStart, helperEnd)
   const applyStart = workbench.indexOf('function applyFormSnapshot')
   const applyEnd = workbench.indexOf('function isGeneratedAnnotationReferencePath', applyStart)
@@ -481,7 +460,7 @@ test('AI image workbench keeps edit generations inside the lightbox with a one-i
   )
   assert.ok(
     submitBody.indexOf('activateLightboxEditPlaceholder(placeholder)')
-      < submitBody.indexOf('const mainPath = await materializeResultForInput(sourceItem)'),
+      < submitBody.indexOf('const sourcePath = await materializeResultForInput(sourceItem)'),
     'the loading placeholder should become active before source materialization begins',
   )
   assert.match(submitBody, /placeholder,/)
@@ -501,7 +480,7 @@ test('AI image workbench keeps edit generations inside the lightbox with a one-i
   assert.match(editBody, /activateLightboxEditPlaceholder\(placeholder\)/)
   assert.match(editBody, /n: 1/)
   assert.match(editBody, /form\.count = 1/)
-  assert.match(editBody, /window\.cs\.runAiImageJob\(jobUid\)/)
+  assert.match(editBody, /window\.cs\.runAiImageJob\(jobUid, payload\)/)
   assert.match(editBody, /applyLightboxEditResult\(placeholder, completedJob, runResult\?\.summary\?\.run_uid \|\| ''\)/)
 })
 
@@ -572,7 +551,7 @@ test('AI image workbench isolates loading and completion state to the originatin
   assert.doesNotMatch(editBody, /generating\.value\s*=/)
   assert.doesNotMatch(editBody, /generatingJobUid\.value\s*=/)
   assert.doesNotMatch(editBody, /generatingSnapshot\.value\s*=/)
-  assert.match(editBody, /if \(!submittedInputsCleared && activeJobUid\.value === jobUid\)/)
+  assert.match(editBody, /if \(!editInputsRetained && activeJobUid\.value === jobUid\)/)
   assert.match(overlayBody, /justify-items: center/)
   assert.match(overlayBody, /text-align: center/)
 })

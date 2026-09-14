@@ -520,7 +520,7 @@ function itemTimeLabel(item) {
 
 function hasActiveInstances() {
   return items.value.some(item =>
-    ['queued', 'running', 'generating', 'creating', 'waiting_approval'].includes(String(item?.status || '').trim())
+    ['queued', 'running', 'generating', 'creating', 'waiting_generation_confirmation', 'waiting_approval'].includes(String(item?.status || '').trim())
   )
 }
 
@@ -638,6 +638,7 @@ function statusLabel(status) {
     queued: '排队中',
     running: '运行中',
     generating: '生图中',
+    waiting_generation_confirmation: '待确认生图',
     waiting_approval: '待审批',
     creating: '创建中',
     completed: '已完成',
@@ -654,7 +655,7 @@ function statusTone(status) {
   const value = String(status || '').trim()
   if (['failed', 'create_failed', 'partial_failed'].includes(value)) return 'error'
   if (['completed', 'archived'].includes(value)) return 'done'
-  if (['waiting_approval'].includes(value)) return 'pending'
+  if (['waiting_generation_confirmation', 'waiting_approval'].includes(value)) return 'pending'
   if (['running', 'generating', 'creating', 'queued'].includes(value)) return 'active'
   return 'neutral'
 }

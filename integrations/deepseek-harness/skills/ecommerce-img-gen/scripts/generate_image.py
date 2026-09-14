@@ -11,7 +11,6 @@ Environment:
 """
 
 import json, base64, os, time, re, sys
-import urllib3
 
 # API key MUST be provided via environment variable. No hardcoded key.
 # Set: export 1XM_API_KEY=your_key_here
@@ -145,6 +144,22 @@ def generate(prompt, ref_image_path=None, model=None, save_path=None, size=None)
     Returns:
         bytes: PNG image data, or None on failure
     """
+    if os.environ.get("CRAWSHRIMP_API_TOKEN") or "/" in (model or ""):
+        import importlib.util
+        from pathlib import Path
+        helper = Path(__file__).resolve().parents[2] / "image-generation/scripts/generate.py"
+        spec = importlib.util.spec_from_file_location("harness_image_generation", helper)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        selected = model or DEFAULT_USER_MODEL
+        if "/" in selected:
+            provider, canonical = selected.split("/", 1)
+            selected = provider + "/" + resolve_model(canonical)[0]
+        else:
+            selected = resolve_model(selected)[0]
+        result = module.generate(prompt, selected, [ref_image_path] if ref_image_path else [], size or "2K", "auto", save_path)
+        return Path(result["out"]).read_bytes()
+    import urllib3  # Only the standalone legacy client requires urllib3.
     api_key = get_api_key()
 
     # Resolve user model → API model

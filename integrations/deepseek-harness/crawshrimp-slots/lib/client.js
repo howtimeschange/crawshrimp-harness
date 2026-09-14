@@ -785,10 +785,31 @@ window.__ModuleLoader__.load({
       '.cs-generation-group { position: relative; flex: none; width: min(100%, 420px); margin: 12px 0; align-self: flex-start; }',
       '.cs-generation-preview { position: relative; width: 100%; aspect-ratio: 1; overflow: hidden; border-radius: 12px; background: #000; border: 1px solid #39302b; }',
       '.cs-generation-effect, .cs-generation-effect > *, .cs-generation-effect .aiw-image-generation-effect, .cs-generation-effect .aiw-image-generation-surface, .cs-generation-effect .aiw-image-generation-fallback { width: 100%; height: 100%; position: absolute; inset: 0; }',
-      '.cs-generation-caption { position: absolute; bottom: 16px; left: 16px; right: 16px; border: 1px solid #303038; border-radius: 12px; background: #101116e8; color: #eee; padding: 14px; font-size: 14px; font-weight: 600; }',
+      '.cs-generation-caption { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; pointer-events: none; color: #eee; font-size: 14px; font-weight: 600; text-shadow: 0 1px 8px #000; }',
       '.cs-generation-caption-text { display: inline-block; background: linear-gradient(90deg, #ddd 0%, #ddd 40%, #fff 50%, #ddd 60%, #ddd 100%); color: transparent; -webkit-text-fill-color: transparent; background-position: 100% 0; background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; animation: 1.8s linear infinite cs-running-status-shimmer; }',
       '@media (prefers-reduced-motion: reduce) { .cs-generation-caption-text { animation: none; background: none; color: #eee; -webkit-text-fill-color: #eee; } }',
       '.cs-artifact-block { margin: 10px 0; border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-1); padding: 10px 12px; max-width: 560px; align-self: flex-start; }',
+      '.cs-artifact-block.cs-image-card { position: relative; width: fit-content; max-width: 100%; padding: 0; border: 0; background: transparent; margin: 0; border-radius: 16px; overflow: hidden; }',
+      '.cs-image-preview { display: block; border: 0; padding: 0; background: transparent; cursor: zoom-in; border-radius: inherit; overflow: hidden; max-width: 100%; }',
+      '.cs-image-preview img { display: block; width: auto; height: auto; max-width: 100%; max-height: 480px; object-fit: contain; }',
+      '.cs-image-actions { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 6px; opacity: 0; transition: opacity 120ms ease; }',
+      '.cs-image-card:hover .cs-image-actions, .cs-image-card:focus-within .cs-image-actions { opacity: 1; }',
+      '.cs-image-action { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid #ffffff30; border-radius: 9px; background: #202124dd; color: white; cursor: pointer; }',
+      '.cs-image-action svg, .cs-image-process summary svg { width: 16px; height: 16px; flex: none; }',
+      '.cs-image-action:focus-visible, .cs-image-preview:focus-visible, .cs-image-process summary:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: -2px; }',
+      '.cs-image-process { color: var(--dsw-alias-label-secondary); font-size: 13px; margin: 8px 0; }',
+      '.cs-image-process summary { display: flex; align-items: center; gap: 7px; cursor: pointer; list-style: none; width: fit-content; padding: 4px 0; }',
+      '.cs-image-process summary::-webkit-details-marker { display: none; }',
+      '.cs-image-process summary::after { content: "›"; margin-left: 2px; transition: transform 120ms ease; }',
+      '.cs-image-process[open] summary::after { transform: rotate(90deg); }',
+      '.cs-image-process-items, .cs-image-delivery { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; max-width: 100%; }',
+      '.cs-image-process-items .cs-image-preview img { width: 80px; height: 80px; object-fit: cover; }',
+      '.cs-image-process-items .cs-image-card { border-radius: 10px; }',
+      '.cs-image-process-items .cs-image-actions { display: none; }',
+      '.cs-image-delivery { margin: 12px 0; }',
+      '.cs-image-delivery .cs-image-card { max-width: min(100%, 480px); }',
+      '@media (hover: none) { .cs-image-actions { opacity: 1; } }',
+      '@media (prefers-reduced-motion: reduce) { .cs-image-actions, .cs-image-process summary::after { transition: none; } }',
       '.cs-artifact-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }',
       '.cs-artifact-icon { width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex: none; background: var(--dsw-alias-state-business-tertiary); }',
       '.cs-artifact-name { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
@@ -803,6 +824,10 @@ window.__ModuleLoader__.load({
       '.cs-artifact-video { display: block; width: 100%; max-width: 480px; max-height: 340px; border-radius: 8px; margin-top: 8px; background: #000; }',
       '.cs-artifact-audio { display: block; width: 100%; margin-top: 8px; }',
       '.cs-artifact-image-dialog { width: fit-content; max-width: 90vw; max-height: 90vh; padding: 16px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); }',
+      '.cs-artifact-image-close { display: grid; place-items: center; width: 32px; height: 32px; margin-left: auto; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; }',
+      '.cs-artifact-image-close svg { width: 18px; height: 18px; }',
+      '.cs-artifact-image-close:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }',
+      '.cs-artifact-image-close:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }',
       '.cs-artifact-image-dialog::backdrop { background: #000b; }',
       '.cs-artifact-image-dialog > img { display: block; max-width: 85vw; max-height: 78vh; object-fit: contain; margin-top: 12px; }',
       '.cs-artifact-zip-hint { margin-top: 8px; font-size: 12px; color: var(--dsw-alias-label-secondary); }',
@@ -829,7 +854,7 @@ window.__ModuleLoader__.load({
     }
 
     function artifactIconFor(mediaKind, filename) {
-      if (mediaKind === 'image') return '🖼️'
+      if (mediaKind === 'image') return 'IMG'
       if (mediaKind === 'video') return '🎬'
       if (mediaKind === 'audio') return '🎧'
       if (mediaKind === 'zip') return '📦'
@@ -844,8 +869,10 @@ window.__ModuleLoader__.load({
       dialog.setAttribute('aria-label', filename || '图片预览')
       const close = document.createElement('button')
       close.type = 'button'
-      close.className = 'cs-artifact-open'
-      close.textContent = '关闭'
+      close.className = 'cs-artifact-image-close'
+      close.setAttribute('aria-label', '关闭图片预览')
+      close.title = '关闭'
+      close.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>'
       close.addEventListener('click', () => dialog.close())
       const img = document.createElement('img')
       img.src = url
@@ -865,6 +892,37 @@ window.__ModuleLoader__.load({
       const isZip = artifact.mediaKind === 'zip' || /\.zip$/i.test(artifact.path || artifact.filename || '')
       const open = () => {
         if (artifact.path) postToShell({ __crawshrimp: isZip ? 'reveal-file' : 'open-file', path: artifact.path })
+      }
+
+      if (artifact.mediaKind === 'image' && urls.file) {
+        block.className += ' cs-image-card'
+        const preview = document.createElement('button')
+        preview.type = 'button'
+        preview.className = 'cs-image-preview'
+        preview.setAttribute('aria-label', '查看大图：' + (artifact.filename || '生成图片'))
+        const img = document.createElement('img')
+        img.src = urls.file
+        img.alt = artifact.filename || '生成图片'
+        img.decoding = 'async'
+        preview.appendChild(img)
+        preview.addEventListener('click', () => previewArchiveImage(urls.file, artifact.filename))
+        const actions = document.createElement('div')
+        actions.className = 'cs-image-actions'
+        for (const [label, glyph, action] of [
+          ['打开原图', '<path d="M14 3h7v7M21 3l-9 9"/><path d="M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"/>', open],
+          ['在文件夹中显示', '<path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>', () => postToShell({ __crawshrimp: 'reveal-file', path: artifact.path })],
+        ]) {
+          const button = document.createElement('button')
+          button.type = 'button'
+          button.className = 'cs-image-action'
+          button.title = label
+          button.setAttribute('aria-label', label)
+          button.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + glyph + '</svg>'
+          button.addEventListener('click', action)
+          actions.appendChild(button)
+        }
+        block.append(preview, actions)
+        return block
       }
 
       const head = document.createElement('div')
@@ -975,24 +1033,42 @@ window.__ModuleLoader__.load({
       if (entry.sessionId && entry.sessionId !== activeRuntimeSessionId()) {
         stopGenerationLoader(entry)
         entry.block.remove()
+        entry.delivery?.remove()
         return
       }
       const column = messageColumn()
       if (!column) return
       const rows = [...column.querySelectorAll('[data-chat-anchor-key]')]
-      let anchor = rows.find(row => row.dataset.chatAnchorKey === entry.anchorKey)
-      if (!anchor && !entry.anchorKey) {
-        anchor = rows.find(row => entry.callId && row.dataset.chatAnchorKey.includes(entry.callId))
-          || rows.filter(row => !row.hidden && (!entry.turn || row.dataset.chatTurn === String(entry.turn))).at(-1)
-        if (anchor) entry.anchorKey = anchor.dataset.chatAnchorKey
+      let anchor = rows.find(row => entry.callId && row.dataset.chatCallId === entry.callId)
+        || rows.find(row => entry.anchorKey && row.dataset.chatAnchorKey === entry.anchorKey)
+      if (!anchor && !entry.callId && !entry.anchorKey) {
+        anchor = rows.filter(row => !row.hidden && entry.turn != null && row.dataset.chatTurn === String(entry.turn)).at(-1)
       }
-      if (!anchor) return // History not mounted yet; observer retries without pinning to the bottom.
-      let preceding = anchor
+      if (anchor) entry.anchorKey = anchor.dataset.chatAnchorKey
+      if (!anchor) { entry.block.remove(); entry.delivery?.remove(); return } // History not mounted yet; observer retries without pinning to the bottom.
+      // Image results are independent flow items, never children of tool/history disclosures.
+      let flowAnchor = anchor
+      while (flowAnchor.parentNode && flowAnchor.parentNode !== column) flowAnchor = flowAnchor.parentNode
+      if (flowAnchor.parentNode !== column) return
+      entry.flowAnchor = flowAnchor
+      let processPreceding = flowAnchor
       for (const other of generationGroups.values()) {
         if (other === entry) break
-        if (other.sessionId === entry.sessionId && other.anchorKey === entry.anchorKey && other.block.isConnected) preceding = other.block
+        if (other.sessionId === entry.sessionId && other.flowAnchor === flowAnchor && other.block.isConnected) processPreceding = other.block
       }
-      if (preceding.nextSibling !== entry.block) preceding.after(entry.block)
+      if (processPreceding.nextSibling !== entry.block) processPreceding.after(entry.block)
+      const turn = anchor.dataset.chatTurn
+      const answer = rows.find(row => row.dataset.chatTurn === turn && row.dataset.chatFinalAnswer === 'true')
+      if (!entry.delivery) return
+      if (!answer || !entry.delivery.childElementCount) { entry.delivery.remove(); return }
+      let preceding = answer === flowAnchor ? entry.block : answer
+      for (const other of generationGroups.values()) {
+        if (other === entry) break
+        if (other.sessionId === entry.sessionId && other.delivery?.isConnected
+          && other.delivery.dataset.chatTurn === turn) preceding = other.delivery
+      }
+      if (entry.delivery.dataset.chatTurn !== turn) entry.delivery.dataset.chatTurn = turn
+      if (preceding.nextSibling !== entry.delivery) preceding.after(entry.delivery)
     }
 
     function stopGenerationLoader(entry) {
@@ -1052,10 +1128,14 @@ window.__ModuleLoader__.load({
 
     // React may insert subsequent messages before foreign DOM nodes. Keep each
     // task next to its stable message anchor, never in the composer or tail slot.
+    const generationObservation = { childList: true, subtree: true, attributes: true, attributeFilter: ['data-chat-final-answer', 'data-chat-turn', 'data-chat-call-id'] }
     const generationObserver = new MutationObserver(() => {
-      for (const entry of generationGroups.values()) placeGenerationGroup(entry)
+      // Our own insertions must not recursively schedule another reconciliation.
+      generationObserver.disconnect()
+      try { for (const entry of generationGroups.values()) placeGenerationGroup(entry) }
+      finally { generationObserver.observe(document.body, generationObservation) }
     })
-    generationObserver.observe(document.body, { childList: true, subtree: true })
+    generationObserver.observe(document.body, generationObservation)
 
     function renderArtifactShow(data) {
       if (data.runtimeSessionId && data.runtimeSessionId !== activeRuntimeSessionId()) return
@@ -1065,33 +1145,52 @@ window.__ModuleLoader__.load({
         || (artifact.mediaKind === 'zip' && Array.isArray(data.urls?.entries) && data.urls.entries.some(Boolean))
       if (!hasImages) return
       injectArtifactCss()
-      // 去重以 DOM 为准(页面重载后内存 set 失效会造成「有记忆无块」)
-      const existing = [...document.querySelectorAll('.cs-artifact-block')]
-        .some((b) => b.dataset.artifactPath === String(artifact.path))
-      if (existing) return
-      // 插入消息列表内(最后一条消息之后),像一条消息出现在信息流里;
-      // 不能挂 scrollBody 末尾——那是输入框(composerSeat)之后,会挤压对话框。
-      const column = messageColumn()
-      if (!column) {
-        // 有限重试:最多 6 次,避免定时器无限累积
-        const retries = Number(data.__retries || 0)
-        if (retries < 6) {
-          setTimeout(() => renderArtifactShow({ ...data, __retries: retries + 1 }), 2500)
-        }
-        return
-      }
-      const block = makeArtifactBlock(artifact, data.urls || {})
-      const generation = generationGroups.get(String(artifact.toolCallId || ''))
-      if (generation) {
+      const generationKey = String(artifact.toolCallId || '')
+      const generation = generationGroups.get(generationKey)
+      if (generation && artifact.mediaKind === 'image') {
         stopGenerationLoader(generation)
         generation.finished = true
-        generation.block.appendChild(block)
+        if (!generation.images) generation.images = new Map()
+        // Replay refreshes signed URLs without adding a second copy.
+        const previous = generation.images.get(artifact.path)
+        if (previous?.url === data.urls?.file) { placeGenerationGroup(generation); return }
+        previous?.process.remove()
+        previous?.final.remove()
+        if (!generation.process) {
+          const details = document.createElement('details')
+          details.className = 'cs-image-process'
+          const summary = document.createElement('summary')
+          summary.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/></svg>'
+          generation.countLabel = document.createElement('span')
+          summary.appendChild(generation.countLabel)
+          generation.process = document.createElement('div')
+          generation.process.className = 'cs-image-process-items'
+          details.append(summary, generation.process)
+          generation.block.appendChild(details)
+          generation.delivery = document.createElement('section')
+          generation.delivery.className = 'cs-image-delivery'
+          generation.delivery.setAttribute('aria-label', '本轮生成的图片')
+        }
+        const process = makeArtifactBlock(artifact, data.urls || {})
+        const final = makeArtifactBlock(artifact, data.urls || {})
+        generation.process.appendChild(process)
+        generation.delivery.appendChild(final)
+        generation.images.set(artifact.path, { process, final, url: data.urls?.file })
+        generation.countLabel.textContent = '已生成 ' + generation.images.size + ' 张图片'
         placeGenerationGroup(generation)
       } else {
+        // Non-generation archives retain their existing inline placement.
+        if ([...document.querySelectorAll('.cs-artifact-block')].some(b => b.dataset.artifactPath === String(artifact.path))) return
+        const column = messageColumn()
+        if (!column || (generationKey && !generation)) {
+          const retries = Number(data.__retries || 0)
+          if (retries < 6) setTimeout(() => renderArtifactShow({ ...data, __retries: retries + 1 }), 2500)
+          return
+        }
+        const block = makeArtifactBlock(artifact, data.urls || {})
         const rows = column.querySelectorAll('[data-chat-anchor-key]')
         const anchor = rows[rows.length - 1]
         if (anchor) anchor.after(block)
-        else column.appendChild(block)
       }
       // 滚动到底,让新「消息」立即可见
       const scrollEl = document.querySelector('.wSkVaW_scrollBody')

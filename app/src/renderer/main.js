@@ -1,3 +1,4 @@
+import { refreshAiImageProviders } from './utils/aiImageModels.js'
 import { createApp } from 'vue'
 import App from './App.vue'
 import { installDevCsBridge } from './utils/devCsBridge'
@@ -12,3 +13,5 @@ applyTheme(readThemePreference(window.localStorage), {
 })
 
 createApp(App).mount('#app')
+
+if (window.cs?.getSettings) void refreshAiImageProviders(() => window.cs.getSettings()).catch(() => {})

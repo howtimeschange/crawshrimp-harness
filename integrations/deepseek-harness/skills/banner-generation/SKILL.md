@@ -3,6 +3,11 @@ name: banner-generation
 description: Use when generating, remaking, or codifying promotional banners, ecommerce operation covers, product intro cards, social media headers, or Chinese/English marketing graphics that need a 1xm image-model visual base plus crisp local text overlays and exact PNG dimensions.
 ---
 
+## Harness 多供应商配置
+
+在 Harness 中优先使用 `image_models` / `image_generate`。现有脚本会自动复用 Harness 后端，支持沃卡、森马和自定义模型；无需额外设置供应商 Key。模型 ID 用 `woka/gpt-image-2`、`semir/gemini-3.1-flash-image-preview` 等，完整列表见 `image-generation/SKILL.md`。下文独立 1XM Key 配置仅适用于脱离 Harness 单独运行。
+
+
 # Banner Generation
 
 ## Goal

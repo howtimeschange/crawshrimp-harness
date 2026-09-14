@@ -4,6 +4,11 @@ title: 跨境电商图片生成工具
 description: 跨境电商图片生成工具。根据产品图生成各平台（Amazon / Shopee / TikTok Shop / Lazada / AliExpress / Temu / SHEIN）主图、详情页长图、生活场景图。内置6种视觉风格路由、6层合规审查（意图/品牌/版权/文化/平台/授权）。支持模型切换：nano-banana-2（快速，默认2K）和 nano-banana-pro（高质量，支持4K终稿）。触发场景：(1) 用户发产品图要求"做电商图"、"生成主图"、"详情页"；(2) 用户提到具体平台+主图或详情页；(3) 用户要求"全套图"、"多平台图"；(4) 用户发产品图后指定品牌和目标市场。
 ---
 
+## Harness 多供应商配置
+
+在 Harness 中优先使用 `image_models` / `image_generate`。现有脚本会自动复用 Harness 后端，支持沃卡、森马和自定义模型；无需额外设置供应商 Key。模型 ID 用 `woka/gpt-image-2`、`semir/gemini-3.1-flash-image-preview` 等，完整列表见 `image-generation/SKILL.md`。下文独立 1XM Key 配置仅适用于脱离 Harness 单独运行。
+
+
 # ecommerce-img-gen 技能
 
 端到端设计：从产品图 → 6平台合规主图 → 详情页长图。

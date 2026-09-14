@@ -1,5 +1,5 @@
 'use strict'
-const { contextBridge, ipcRenderer } = require('electron')
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 // Electron sandboxed preloads can require Electron and Node built-ins, but not
 // sibling application modules. Keep this tiny connection gate inline so the
@@ -166,7 +166,9 @@ async function requestApi(method, requestPath, body) {
     options.body = JSON.stringify(body)  }
   // 长操作单独给足时间；超时文案明确提示后台可能仍在收尾，避免用户盲目重试造成双执行。
   const longOperation = /^\/agent\/(?:runtime\/restart|data\/clear|script-revisions\/)/.test(String(requestPath || ''))
-  const timeoutMs = longOperation ? 5 * 60 * 1000 : 60 * 1000
+  const imageOperation = /^\/ai-image\/jobs\/[^/]+\/(?:run|batch-run|runs\/[^/]+\/retry)(?:\?|$)/.test(String(requestPath || ''))
+    || /^\/tmall-ai-image-approval\/api\/[^/]+\/face-swap(?:\?|$)/.test(String(requestPath || ''))
+  const timeoutMs = imageOperation ? 20 * 60 * 1000 : longOperation ? 5 * 60 * 1000 : 60 * 1000
   const controller = typeof globalThis.AbortController === 'function' ? new globalThis.AbortController() : null
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null
   try {
@@ -624,8 +626,8 @@ contextBridge.exposeInMainWorld('cs', {
     () => apiCall('PATCH', `/ai-image/jobs/${encodePathPart(uid)}/pin`, { pinned: Boolean(pinned) })),
   deleteAiImageJob: (uid) => invokeWithApiFallback('delete-ai-image-job', [uid],
     () => apiCall('DELETE', `/ai-image/jobs/${encodePathPart(uid)}`)),
-  runAiImageJob: (uid) => invokeWithApiFallback('run-ai-image-job', [uid],
-    () => apiCall('POST', `/ai-image/jobs/${encodePathPart(uid)}/run`, {})),
+  runAiImageJob: (uid, snapshot) => invokeWithApiFallback('run-ai-image-job', [uid, snapshot],
+    () => apiCall('POST', `/ai-image/jobs/${encodePathPart(uid)}/run`, snapshot || null)),
   batchRunAiImageJob: (uid, payload) => invokeWithApiFallback('batch-run-ai-image-job', [uid, payload],
     () => apiCall('POST', `/ai-image/jobs/${encodePathPart(uid)}/batch-run`, payload || {})),
   retryAiImageRun: (uid, runUid) => invokeWithApiFallback('retry-ai-image-run', [uid, runUid],
@@ -694,6 +696,7 @@ contextBridge.exposeInMainWorld('cs', {
   saveTmallApprovalDecisions: (batchId, token, decisions) => ipcRenderer.invoke('save-tmall-approval-decisions', batchId, token, decisions),
   importTmallApprovalReferenceFiles: (batchId, token, paths) => ipcRenderer.invoke('import-tmall-approval-reference-files', batchId, token, paths),
   regenerateTmallApprovalAsset: (batchId, token, payload) => ipcRenderer.invoke('regenerate-tmall-approval-asset', batchId, token, payload),
+  faceSwapTmallApprovalAsset: (batchId, token, payload) => invokeWithApiFallback('face-swap-tmall-approval-asset', [batchId, token, payload || {}], () => apiCall('POST', `/tmall-ai-image-approval/api/${encodePathPart(batchId)}/face-swap?token=${encodePathPart(token)}`, payload || {})),
   generateTmallApprovalAsset: (batchId, token, payload) => ipcRenderer.invoke('generate-tmall-approval-asset', batchId, token, payload),
   submitTmallApprovalGeneration: (batchId, token, payload) => ipcRenderer.invoke('submit-tmall-approval-generation', batchId, token, payload),
   submitTmallApprovalBatch: (batchId, token) => ipcRenderer.invoke('submit-tmall-approval-batch', batchId, token),
@@ -788,6 +791,12 @@ contextBridge.exposeInMainWorld('cs', {
   saveSettings:    (cfg) => ipcRenderer.invoke('save-settings', cfg),
   patchSettings:   (cfg) => invokeWithApiFallback('patch-settings', [cfg],
     () => apiCall('PATCH', '/settings', cfg || {})),
+  checkImageConnection: (payload) => apiCall('POST', '/ai-image/connections/check', payload),
+  imageCallHistory: (provider = '') => apiCall('GET', '/ai-image/call-history?provider=' + encodeURIComponent(provider)),
+  rememberImageInputDirectory: (role, path) => ipcRenderer.invoke('remember-image-input-directory', role, path),
+  getLocalImageFilePath: (file) => webUtils.getPathForFile(file),
+  importAiImageInput: (input) => ipcRenderer.invoke('import-ai-image-input', input),
+  pasteAiImageInput: () => ipcRenderer.invoke('paste-ai-image-input'),
   browseFile:      (opts) => ipcRenderer.invoke('browse-file', opts),
   selectBalaWorkspace: (opts) => ipcRenderer.invoke('select-bala-workspace', opts || {}),
   deleteBalaWorkspaceImage: (workspaceRoot, filePath) => ipcRenderer.invoke('delete-bala-workspace-image', workspaceRoot, filePath),

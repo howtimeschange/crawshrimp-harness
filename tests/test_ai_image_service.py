@@ -101,6 +101,20 @@ class AiImageServiceTests(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.config_id, "ai.1xm.gemini_3_pro_image_preview_key")
 
+    def test_preview_edit_preserves_inline_and_remote_image_references(self):
+        for model in ("woka/gemini-3.1-flash-image-preview", "semir/gpt-image-2"):
+            inline = "data:image/png;base64,aGVsbG8="
+            remote = "https://example.com/reference.png"
+            converted = []
+            payload = ai_image_service.build_one_xm_payload(
+                {"model_key": model, "prompt": "edit background", "params": {
+                    "main_image_path": inline, "reference_image_paths": [remote, "/tmp/garment.png"],
+                }},
+                file_to_data_url_fn=lambda path: converted.append(path) or "data:image/png;base64,ZmlsZQ==",
+            )
+            self.assertEqual(payload["image"][:2], [inline, remote])
+            self.assertEqual(converted, ["/tmp/garment.png"])
+
     def test_build_payload_orders_reference_images_and_uses_file_to_data_url(self):
         job = {
             "prompt": "make a hero image",

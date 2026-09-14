@@ -78,3 +78,25 @@ def test_office_job_copies_collapse_without_losing_preview_or_other_files(resour
     items = api.session_resources('runtime-a')['artifacts']
     assert len(items) == 2
     assert next(i for i in items if i['filename'] == filename)['office']['job_id'] == 'render2'
+
+
+def test_image_delivery_restores_only_owned_completed_image_calls_without_arguments(resource_db):
+    db.append_event('a', None, 'tool.requested', {
+        'tool_call_id': 'run:img', 'tool_name': 'mcp__crawshrimp__image_generate',
+        'dsh_call_id': 'img', 'turn': 3, 'arguments': {'private': 'not-public'},
+    })
+    db.append_event('a', None, 'tool.requested', {
+        'tool_call_id': 'run:failed', 'tool_name': 'image_generate', 'turn': 4,
+    })
+    db.append_event('b', None, 'tool.requested', {
+        'tool_call_id': 'other', 'tool_name': 'image_generate', 'turn': 3,
+    })
+    db.append_event('a', None, 'artifact.created', {
+        'path': '/image.png', 'media_kind': 'image', 'tool_call_id': 'run:img',
+    })
+    result = api.session_resources('runtime-a')
+    assert result['imageGenerations'] == [{
+        'tool_call_id': 'run:img', 'dsh_call_id': 'img', 'turn': 3, 'state': 'finished',
+    }]
+    assert api.session_resources('runtime-b')['imageGenerations'] == []
+    assert api.session_resources('missing')['imageGenerations'] == []

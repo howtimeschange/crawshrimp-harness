@@ -26,6 +26,10 @@ class OneXMImageError(RuntimeError):
     """Base error for 1XM image calls."""
 
 
+class RejectedOneXMImageError(OneXMImageError):
+    """Provider explicitly rejected submission; no generation is pending."""
+
+
 class RetryableOneXMImageError(OneXMImageError):
     """Network or upstream errors that can be retried safely."""
 

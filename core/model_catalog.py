@@ -133,7 +133,7 @@ def _llm_models(config: Mapping[str, Any]) -> list[dict]:
 
 
 def _image_models(config: Mapping[str, Any]) -> list[dict]:
-    return [
+    models = [
         {
             **spec,
             "type": "ai-image",
@@ -142,6 +142,22 @@ def _image_models(config: Mapping[str, Any]) -> list[dict]:
         }
         for spec in AI_IMAGE_MODEL_SPECS
     ]
+    from core.image_providers import PROVIDERS, config_id, provider_settings
+    import os
+    settings = provider_settings(config, os.environ)
+    for provider, info in PROVIDERS.items():
+        for model, label in [("gpt-image-2", "GPT Image 2"), ("gemini-3.1-flash-image-preview", "Nano Banana 2"), ("gemini-3-pro-image-preview", "Nano Banana Pro")]:
+            key = provider + "/" + model
+            models.append({"id": key, "model": key, "label": info["label"] + " · " + label,
+                           "provider": provider, "provider_label": info["label"], "type": "ai-image",
+                           "config_id": config_id(provider, model), "configured": bool(settings.get(config_id(provider, model))), "supports_switch": False})
+    for custom in settings.get("ai.image.custom_providers", []):
+        for model in custom.get("models", []):
+            key = custom["id"] + "/" + model
+            models.append({"id": key, "model": key, "label": custom.get("name", custom["id"]) + " · " + model,
+                           "provider": custom["id"], "provider_label": custom.get("name", custom["id"]),
+                           "type": "ai-image", "configured": bool(custom.get("api_key")), "supports_switch": False})
+    return models
 
 
 def _video_models() -> list[dict]:

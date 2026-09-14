@@ -1950,8 +1950,8 @@ def list_task_instances(
 ) -> list[dict]:
     """Return task instances filtered by status group and metadata."""
     status_groups = {
-        "current": ("draft", "queued", "running", "generating", "creating", "waiting_approval"),
-        "pending": ("waiting_approval", "failed", "create_failed", "partial_failed"),
+        "current": ("draft", "queued", "running", "generating", "creating", "waiting_generation_confirmation", "waiting_approval"),
+        "pending": ("waiting_generation_confirmation", "waiting_approval", "failed", "create_failed", "partial_failed"),
         "history": ("completed", "stopped", "archived"),
     }
     clauses = []

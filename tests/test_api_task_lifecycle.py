@@ -332,6 +332,14 @@ class ApiTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["n"], 3)
 
     async def test_tmall_ai_chain_model_id_maps_to_execution_model_and_key_tier(self):
+        for provider in ("woka", "semir", "custom-acceptance"):
+            for model in ("gpt-image-2", "gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"):
+                qualified = f"{provider}/{model}"
+                for field in ("model_id", "model"):
+                    self.assertEqual(
+                        api_server._tmall_ai_model_params({field: qualified, "one_xm_key_tier": "4k"}),
+                        (qualified, qualified, "auto"),
+                    )
         self.assertEqual(
             api_server._tmall_ai_model_params({"model_id": "gpt-image-4k"}),
             ("gpt-image-4k", "gpt-image-2", "4k"),

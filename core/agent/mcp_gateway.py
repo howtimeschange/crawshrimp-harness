@@ -1837,6 +1837,12 @@ def _agent_image_job(settings: dict, params: dict) -> dict:
     })
 
 
+def tool_image_models() -> dict:
+    """List configured image models without exposing credentials."""
+    from core.api_server import image_models
+    return image_models()
+
+
 def tool_image_generate(
     prompt: str,
     count: int = 1,
@@ -1849,7 +1855,7 @@ def tool_image_generate(
     reference_image_paths: Optional[list[str]] = None,
     reference_attachment_ids: Optional[list[str]] = None,
 ) -> dict:
-    """调用抓虾 AI 生图(1XM):支持自定义尺寸/质量与 2K/4K key 档位。"""
+    """调用抓虾多供应商生图：1XM、沃卡、森马网关及自定义模型。"""
     guard = _require_run()
     if guard:
         return guard
@@ -1977,7 +1983,14 @@ def tool_image_assets(limit: int = 20) -> dict:
     return _ok({"assets": items, "count": len(items)})
 
 
-def tool_video_generate(prompt: str, first_frame_image: str = "", duration: str = "") -> dict:
+def tool_video_models() -> dict:
+    """Expose the same video catalog and configuration status as the workbench."""
+    from core import ai_video_generation_service as video_service
+    config = video_service.get_config().get("data") or {}
+    return _ok({"models": config.get("models") or []})
+
+
+def tool_video_generate(prompt: str, first_frame_image: str = "", duration: str = "", provider: str = "", model: str = "") -> dict:
     """调用抓虾 AI 生视频(Seedance 等):提交提示词(可选首帧图路径),等待生成完成。"""
     guard = _require_run()
     if guard:
@@ -1997,8 +2010,18 @@ def tool_video_generate(prompt: str, first_frame_image: str = "", duration: str 
     parameters = {}
     if str(duration or "").strip():
         parameters["duration"] = str(duration).strip()
+    provider_text = str(provider or "").strip()
+    model_text = str(model or "").strip()
+    if not provider_text:
+        statuses = video_service.provider_status()
+        provider_text = "happyhorse" if statuses.get("happyhorse", {}).get("configured") and not statuses.get("seedance", {}).get("configured") else "seedance"
+    if not model_text:
+        model_text = (video_service.SEEDANCE_MODEL if provider_text == "seedance"
+                      else "happyhorse-1.1-i2v" if image_path else "happyhorse-1.1-t2v")
     try:
         created = video_service.create_job_trusted({
+            "provider": provider_text,
+            "model": model_text,
             "prompt": prompt_text,
             "assets": assets,
             "parameters": parameters,
@@ -2010,6 +2033,10 @@ def tool_video_generate(prompt: str, first_frame_image: str = "", duration: str 
     job_id = (created.get("data") or {}).get("job", {}).get("id")
     if not job_id:
         return _failed("GENERATION_FAILED", "生视频任务未创建")
+    if (created.get("data") or {}).get("job", {}).get("status") == "needs_config":
+        failure = _failed("MISSING_CONFIG", f"请在设置中配置视频供应商 {provider_text}；首帧与参数已校验，未提交供应商")
+        failure["error"]["job_id"] = job_id
+        return failure
     waited = video_service.wait_video_job(job_id, poll_timeout_seconds=1800)
     if not waited.get("ok"):
         return _failed("GENERATION_FAILED", waited.get("error") or f"生视频失败({waited.get('status')})")
@@ -2859,7 +2886,7 @@ EXPECTED_TOOLS = [
     "office_preview_read", "office_review_record", "office_deliver",
     "attachment_read",
     "fs_read", "fs_list", "fs_write", "fs_exec",
-    "image_generate", "image_assets", "video_generate", "video_assets",
+    "image_models", "image_generate", "image_assets", "video_models", "video_generate", "video_assets",
     "repo_install", "repo_update", "repo_list", "repo_learn",
     "automation_list", "automation_get", "automation_create", "automation_update",
     "automation_current_time",
@@ -2991,10 +3018,13 @@ def create_agent_mcp_server() -> MCPServer:
     mcp.add_tool(tool_fs_write, name="fs_write", description="写本机文件(全面开放;写操作经审批卡授权,审计保留)")
     mcp.add_tool(tool_fs_exec, name="fs_exec", description="执行本机命令(用户已授权全局访问;经审批卡授权,审计保留)")
 
+    mcp.add_tool(tool_image_models, name="image_models", description="列出图片供应商、模型ID与已配置状态，不返回密钥；生图前用此工具选择模型。")
     mcp.add_tool(tool_image_generate, name="image_generate",
-                 description="调用抓虾 AI 生图/参考图改图:生成图片(1-4 张)。reference_image_paths 接收聊天图片提供的 Normalized copy 只读本地路径（支持无扩展名），reference_attachment_ids 接收当前会话的抓虾附件 id（不是原生 sha256 标识）；合计最多10张PNG/JPEG/WebP、每张20MB。按路径列表再附件id列表的顺序输入参考图。纯文生图省略两项。未指定 key_tier 时自动选择已配置且支持尺寸的 Key，显式档位不会切换。Harness 自动将产物提交到当前会话展示；delivery.requires_file_return=false 时直接总结，不要重复调用 dsh_im_return_file 或复制文件。配置错误会返回各档位配置状态，无需读取配置文件")
+                 description="调用抓虾 AI 生图/参考图改图:生成图片(1-4 张)。model 可选 woka/gpt-image-2、semir/gpt-image-2、woka/gemini-3.1-flash-image-preview、semir/gemini-3-pro-image-preview 等（两家均支持 GPT Image 2、Nano Banana 2/Pro）；自定义模型使用 custom-供应商ID/原始模型ID，先调用 image_models 获取可用配置。无前缀模型沿用 1XM。reference_image_paths 接收聊天图片提供的 Normalized copy 只读本地路径（支持无扩展名），reference_attachment_ids 接收当前会话的抓虾附件 id（不是原生 sha256 标识）；合计最多10张PNG/JPEG/WebP、每张20MB。按路径列表再附件id列表的顺序输入参考图。纯文生图省略两项。未指定 key_tier 时自动选择已配置且支持尺寸的 Key，显式档位不会切换。Harness 自动将产物提交到当前会话展示；delivery.requires_file_return=false 时直接总结，不要重复调用 dsh_im_return_file 或复制文件。配置错误会返回各档位配置状态，无需读取配置文件")
     mcp.add_tool(tool_image_assets, name="image_assets",
                  description="列出智能体生成过的生图产物(本地文件路径)")
+    mcp.add_tool(tool_video_models, name="video_models",
+                 description="列出视频模型和配置状态，不返回密钥。生视频前先检查可用模型，选择对应 provider 和 model。")
     mcp.add_tool(tool_video_generate, name="video_generate",
                  description="调用抓虾 AI 生视频:按提示词(可选首帧图路径)生成视频,等待完成后返回本地产物路径")
     mcp.add_tool(tool_video_assets, name="video_assets",

@@ -9,6 +9,7 @@ HARNESS_ROOT = ROOT / "integrations" / "deepseek-harness"
 SKILLS_ROOT = HARNESS_ROOT / "skills"
 
 BUILTIN_GENERAL_SKILLS = {
+    "image-generation": ["SKILL.md", "scripts/generate.py"],
     "crawshrimp-computer-use": ["SKILL.md", "UPSTREAM.md", "scripts/computer_use.py", "scripts/native/mac.swift", "scripts/native/mac_feedback.swift", "scripts/cu/windows.py", "references/protocol.md"],
     "office-design-taste": [
         "SKILL.md",

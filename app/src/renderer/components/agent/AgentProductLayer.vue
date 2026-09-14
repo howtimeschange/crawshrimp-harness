@@ -311,6 +311,31 @@ function rememberArtifact(data, runtimeSessionId) {
   artifactsByRuntime.set(runtimeSessionId, next.slice(-12))
 }
 
+// Restore durable image ownership after app/backend restarts, not only iframe reloads.
+let imageReplayEpoch = 0
+async function restoreSessionImages(runtimeSessionId) {
+  const epoch = ++imageReplayEpoch
+  if (!runtimeSessionId) return
+  try {
+    const resources = await window.cs.agentApi('GET', `/agent/session-resources?runtime_session_id=${encodeURIComponent(runtimeSessionId)}`)
+    if (epoch !== imageReplayEpoch || runtimeSessionId !== props.activeRuntimeSessionId) return
+    for (const data of resources?.imageGenerations || []) {
+      const generation = { ...data, runtimeSessionId }
+      imageGenerations.set(String(data.tool_call_id), generation)
+      postToSession({ __crawshrimp: 'image-generation', ...generation })
+    }
+    const restoredCalls = new Set((resources?.imageGenerations || []).map(item => String(item.tool_call_id)))
+    for (const artifact of [...(resources?.artifacts || [])].reverse()) {
+      if (artifact.media_kind !== 'image' || !restoredCalls.has(String(artifact.tool_call_id))) continue
+      rememberArtifact(artifact, runtimeSessionId)
+      await pushArtifactToSession(artifact, runtimeSessionId)
+      if (epoch !== imageReplayEpoch || runtimeSessionId !== props.activeRuntimeSessionId) return
+    }
+  } catch (error) {
+    console.warn('[agent] 图片交付恢复失败:', error?.message)
+  }
+}
+
 async function pushArtifactToSession(data, runtimeSessionId) {
   if (!runtimeSessionId || runtimeSessionId !== props.activeRuntimeSessionId) return
   // Document navigation belongs to native message links and Session Resources.
@@ -375,6 +400,7 @@ function onSessionMessage(event) {
     // iframe(会话界面)重载后请求重放:把最近的产物媒体消息重发一遍
     const requested = String(data.runtimeSessionId || props.activeRuntimeSessionId || '')
     if (requested !== props.activeRuntimeSessionId) return
+    void restoreSessionImages(requested)
     for (const generation of imageGenerations.values()) {
       if (generation.runtimeSessionId === requested) postToSession({ __crawshrimp: 'image-generation', ...generation })
     }
@@ -428,10 +454,11 @@ onMounted(() => {
 })
 watch(() => props.activeRuntimeSessionId, (runtimeSessionId) => {
   emit('browser-open-tabs', { tabs: [], activeTabId: '' })
+  void restoreSessionImages(String(runtimeSessionId || ''))
   for (const artifact of artifactsByRuntime.get(String(runtimeSessionId || '')) || []) {
     void pushArtifactToSession(artifact, String(runtimeSessionId || ''))
   }
-})
+}, { immediate: true })
 onUnmounted(() => {
   stopEvents?.()
   window.removeEventListener('message', onSessionMessage)
