@@ -23,27 +23,29 @@ from core.llm_gateway import (
 
 # 模型能力登记(服务端共享能力表,方案 §12.2)
 MODEL_CAPABILITIES: dict[str, dict[str, Any]] = {
-    "gpt-5.6-terra": {"context_window": 200000, "max_output_tokens": 32000, "supports_tools": True, "input_modalities": ["text", "image"]},
-    "gpt-5.6-sol": {"context_window": 200000, "max_output_tokens": 32000, "supports_tools": True, "input_modalities": ["text", "image"]},
-    "gpt-5.6-luna": {"context_window": 200000, "max_output_tokens": 32000, "supports_tools": True, "input_modalities": ["text", "image"]},
-    "gpt-5.5": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True, "input_modalities": ["text", "image"]},
+    # Conservative local budgets, not the gateway's advertised maximum limits.
+    "gpt-6-astra": {"context_window": 256000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "gpt-5.6-terra": {"context_window": 256000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "gpt-5.6-sol": {"context_window": 256000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "gpt-5.6-luna": {"context_window": 256000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "gpt-5.5": {"context_window": 256000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
     "gemini-3.1-pro-preview": {"context_window": 1000000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
     "gemini-3.5-flash": {"context_window": 1000000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
-    "claude-opus-4-8": {"context_window": 200000, "max_output_tokens": 32000, "supports_tools": True, "input_modalities": ["text", "image"]},
-    "claude-sonnet-5": {"context_window": 200000, "max_output_tokens": 32000, "supports_tools": True, "input_modalities": ["text", "image"]},
-    "qwen3.8-max-preview": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
-    "qwen3.7-plus": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
-    "deepseek-v4-flash": {"context_window": 128000, "max_output_tokens": 8192, "supports_tools": True},
-    "deepseek-v4-pro": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
+    "claude-opus-4-8": {"context_window": 256000, "max_output_tokens": 64000, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "claude-sonnet-5": {"context_window": 256000, "max_output_tokens": 64000, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "qwen3.8-max-preview": {"context_window": 256000, "max_output_tokens": 32768, "supports_tools": True},
+    "qwen3.7-plus": {"context_window": 256000, "max_output_tokens": 32768, "supports_tools": True},
+    "deepseek-v4-flash": {"context_window": 256000, "max_output_tokens": 32768, "supports_tools": True},
+    "deepseek-v4-pro": {"context_window": 256000, "max_output_tokens": 32768, "supports_tools": True},
     # DeepSeek 原生接入(官方 API,产品内 ID 加 official 前缀与网关模型区分)
     "deepseek-official-flash": {"context_window": 1000000, "max_output_tokens": 393216, "supports_tools": True, "input_modalities": ["text", "image"]},
     "deepseek-official-v4-pro": {"context_window": 1000000, "max_output_tokens": 393216, "supports_tools": True},
     "glm-official-5.3-flash": {"context_window": 128000, "max_output_tokens": 8192, "supports_tools": True, "input_modalities": ["text", "image"]},
     "glm-official-5.3": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
     "glm-official-5.2": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
-    "glm-5.2": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
-    "kimi-k3": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
-    "kimi-k2.7-code": {"context_window": 128000, "max_output_tokens": 16384, "supports_tools": True},
+    "glm-5.2": {"context_window": 256000, "max_output_tokens": 32768, "supports_tools": True},
+    "kimi-k3": {"context_window": 256000, "max_output_tokens": 32768, "supports_tools": True},
+    "kimi-k2.7-code": {"context_window": 256000, "max_output_tokens": 32768, "supports_tools": True},
 }
 
 AGENT_MODEL_DISPLAY_ORDER = (

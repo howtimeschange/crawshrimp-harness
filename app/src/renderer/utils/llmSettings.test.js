@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { reactive } from 'vue'
 
 import {
+  mergeCustomLlmModelDraft,
+  customLlmBudgetError,
   LLM_API_KEY_FIELD,
   DEEPSEEK_API_KEY_FIELD,
   DEEPSEEK_OFFICIAL_MODELS_UI,
@@ -31,7 +33,7 @@ test('LLM settings expose all configured gateway defaults and supported model id
   assert.equal(LLM_DEFAULTS['ai.llm.deepseek_base_url'], 'https://api.deepseek.com')
   assert.equal(LLM_DEFAULTS['ai.llm.glm_base_url'], GLM_OFFICIAL_BASE_URL_DEFAULT)
   assert.equal(DEEPSEEK_PLATFORM_URL, 'https://platform.deepseek.com/')
-  assert.equal(LLM_MODELS.length, 20)
+  assert.equal(LLM_MODELS.length, 21)
   assert.deepEqual(
     LLM_MODELS.map(item => item.value),
     [
@@ -40,6 +42,7 @@ test('LLM settings expose all configured gateway defaults and supported model id
       'glm-official-5.3-flash',
       'glm-official-5.3',
       'glm-official-5.2',
+      'gpt-6-astra',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',
@@ -189,4 +192,19 @@ test('saved official Flash defaults migrate without renaming gateway models', as
   assert.equal(normalizeDeepSeekModelId('deepseek-official-v4-flash'), 'deepseek-official-flash')
   assert.equal(normalizeDeepSeekModelId('deepseek-official-v4-flash-vision-exp'), 'deepseek-official-flash')
   assert.equal(normalizeDeepSeekModelId('deepseek-v4-flash'), 'deepseek-v4-flash')
+})
+
+
+test('custom models default to 256K/32K and preserve edited budgets and capabilities', () => {
+  const defaults = mergeCustomLlmModelDraft('example-model')
+  assert.equal(defaults[0].context_window, 256000)
+  assert.equal(defaults[0].max_output_tokens, 32768)
+  const edited = [{ ...defaults[0], context_window: 512000, max_output_tokens: 48000, input_modalities: ['text', 'image'] }]
+  const saved = mergeCustomLlmModelDraft('example-model\nsecond-model', edited)
+  assert.deepEqual(saved[0], edited[0])
+  assert.equal(saved[1].max_output_tokens, 32768)
+  assert.equal(customLlmBudgetError(saved), '')
+  for (const value of [0, -1, 1.5, Infinity, '', 512000]) {
+    assert.ok(customLlmBudgetError([{ ...edited[0], max_output_tokens: value }]))
+  }
 })

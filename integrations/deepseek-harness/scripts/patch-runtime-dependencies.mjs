@@ -1,5 +1,6 @@
 import { prepareCompatibility } from '../compat/apply.mjs'
 import { patchDeepSeekFlash } from './deepseek-flash.mjs'
+import { patchSemirAnthropicAuth } from './semir-anthropic-auth.mjs'
 /**
  * DSH rc.1 / dsh-im 4.11 clean-install guard.
  *
@@ -2251,6 +2252,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const deepseekReadImage = patchDeepSeekReadImage(root, deepseekVisionBridge)
   patchOfficeVision(root, deepseekVisionBridge)
   patchDeepSeekFlash(root)
+  patchSemirAnthropicAuth(root)
   applyCompatibility()
   const profilePackages = assertEffectiveProfileRootClosure(root)
   const standardPreset = assertStandardPresetRootClosure(root)

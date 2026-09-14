@@ -2944,6 +2944,7 @@ def test_dsh_settings_sync_writes_runtime_provider_profiles_without_secrets(tmp_
     }
     assert "deepseek-flash" in [item["id"] for item in providers["crawshrimp-deepseek-official"]["models"]]
     assert "glm-5.3-flash" in [item["id"] for item in providers["crawshrimp-glm-official"]["models"]]
+    assert "gpt-6-astra" in [item["id"] for item in providers["crawshrimp-overseas-openai"]["models"]]
     assert "deepseek-v4-flash" in [item["id"] for item in providers["crawshrimp-domestic-openai"]["models"]]
     assert "kimi-k3" in [item["id"] for item in providers["crawshrimp-domestic-openai"]["models"]]
     assert providers["custom-1xm"]["apiKeyEnv"] == "CRAWSHRIMP_CUSTOM_LLM_KEY_CUSTOM_1XM"
@@ -2951,6 +2952,33 @@ def test_dsh_settings_sync_writes_runtime_provider_profiles_without_secrets(tmp_
     assert "glm-unit-key" not in text
     assert "legacy-gateway-key" not in text
     assert "custom-secret-key" not in text
+
+
+def test_gateway_budgets_match_packaged_profile_and_persisted_runtime(tmp_path):
+    import yaml
+    from core.agent import service as service_mod
+    from core.agent.cordis_config import model_capabilities
+    from core.llm_gateway import BUILTIN_LLM_PROVIDERS
+
+    # Parse only budget rows: the profile also contains Cordis !!js tags.
+    profile = (Path(__file__).parents[1] / "integrations/deepseek-harness/profile/web/cordis.patch.yml").read_text()
+    service_mod._sync_dsh_default_model_settings(
+        tmp_path, "crawshrimp-domestic-openai", "deepseek-v4-pro", {}, [],
+    )
+    runtime = yaml.safe_load((tmp_path / "dsh-home/settings.yaml").read_text())["llm-pi-ai"]["providers"]
+    for provider in BUILTIN_LLM_PROVIDERS:
+        if not provider.get("legacy_gateway"):
+            continue
+        block = profile.split(f"      {provider['id']}:", 1)[1]
+        block = re.split(r"\n      [\w-]+:", block, maxsplit=1)[0]
+        packaged = {mid: (int(ctx), int(out)) for mid, ctx, out in re.findall(
+            r"- id: ([\w.-]+)\n\s+contextWindow: (\d+)\n\s+maxTokens: (\d+)", block,
+        )}
+        for model in runtime[provider["id"]]["models"]:
+            cap = model_capabilities(model["id"])
+            assert (model["contextWindow"], model["maxTokens"]) == packaged[model["id"]]
+            assert packaged[model["id"]] == (cap["context_window"], cap["max_output_tokens"])
+            assert 0 < model["maxTokens"] < model["contextWindow"]
 
 
 def test_dsh_settings_sync_preserves_reasoning_effort_for_flash_images(tmp_path):
@@ -3036,7 +3064,7 @@ def test_agent_start_generation_uses_custom_provider_for_duplicate_builtin_model
                 "protocol": "openai",
                 "base_url": "https://api.1xm.ai/v1",
                 "api_key": "custom-key",
-                "models": [{"id": "gpt-5.6-luna"}],
+                "models": [{"id": "gpt-5.6-luna", "context_window": 512000, "max_output_tokens": 24000}],
             }],
         }}},
     )
@@ -3049,6 +3077,7 @@ def test_agent_start_generation_uses_custom_provider_for_duplicate_builtin_model
     assert service.runtime_error == ""
     assert calls["worker.start_generation"]["params"]["provider"] == "custom-1xm"
     assert calls["worker.start_generation"]["params"]["model"] == "gpt-5.6-luna"
+    assert calls["worker.start_generation"]["params"]["maxTokens"] == 24000
     runtime_env = calls["worker_kwargs"]["runtime_env"]
     assert runtime_env["CRAWSHRIMP_AGENT_PROVIDER"] == "custom-1xm"
     assert runtime_env["CRAWSHRIMP_AGENT_MODEL"] == "gpt-5.6-luna"

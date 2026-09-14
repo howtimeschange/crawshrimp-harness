@@ -2677,7 +2677,11 @@ class AgentService:
                 "provider": provider_id,
                 # DeepSeek 官方模型:产品内 ID → runtime 真实模型名
                 "model": runtime_model_id,
-                "maxTokens": model_capabilities(model_id).get("max_output_tokens", 8192),
+                "maxTokens": next((
+                    model["maxTokens"]
+                    for profile in custom_providers if profile["id"] == provider_id
+                    for model in profile["models"] if model["id"] == runtime_model_id
+                ), model_capabilities(model_id).get("max_output_tokens", 8192)),
                 # Keep the DSH session and Web profile on the same product
                 # workspace so native Web can discover it and render approvals.
                 "cwd": str(agent_dir / "workspace"),

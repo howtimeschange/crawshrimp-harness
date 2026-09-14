@@ -76,6 +76,7 @@ def official_real_model(model_id: str) -> str:
 
 
 OVERSEAS_OPENAI_MODELS = (
+    "gpt-6-astra",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
@@ -353,8 +354,8 @@ def _normalize_custom_models(value: Any) -> list[dict[str, Any]]:
         models.append({
             "id": model_id,
             "label": _compact(model.get("label") or model.get("name")) or model_id,
-            "context_window": int(model.get("context_window") or model.get("contextWindow") or 64000),
-            "max_output_tokens": int(model.get("max_output_tokens") or model.get("maxTokens") or 8192),
+            "context_window": int(model.get("context_window") or model.get("contextWindow") or 256000),
+            "max_output_tokens": int(model.get("max_output_tokens") or model.get("maxTokens") or 32768),
             "supports_tools": bool(model.get("supports_tools", model.get("supportsTools", True))),
             "input_modalities": list(model.get("input_modalities") or model.get("input") or ["text"]),
         })
@@ -431,8 +432,8 @@ def custom_providers_runtime_payload(config: dict | None = None) -> tuple[list[d
             "models": [
                 {
                     "id": model["id"],
-                    "contextWindow": int(model.get("context_window") or 64000),
-                    "maxTokens": int(model.get("max_output_tokens") or 8192),
+                    "contextWindow": int(model.get("context_window") or 256000),
+                    "maxTokens": int(model.get("max_output_tokens") or 32768),
                     "input": list(model.get("input_modalities") or ["text"]),
                 }
                 for model in provider.get("models") or []

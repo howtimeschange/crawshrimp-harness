@@ -78,6 +78,20 @@ class LlmGatewayTests(unittest.TestCase):
                 self.assertEqual(route.base_url, "https://domestic.example/v1")
                 self.assertEqual(route.api_key, "unit-key")
 
+    def test_astra_uses_overseas_openai_credentials_and_preserves_wire_id(self):
+        from core.agent.cordis_config import resolve_session_model_selection
+        cfg = {"ai": {"llm": {"overseas_openai_api_key": "astra-unit-key"}}}
+        with patch.dict(os.environ, {}, clear=True):
+            route = llm_gateway.route_for_model("gpt-6-astra", cfg)
+            self.assertEqual(route.model_id, "gpt-6-astra")
+            self.assertEqual(route.protocol, "openai")
+            self.assertEqual(route.base_url, llm_gateway.OVERSEAS_OPENAI_BASE_URL)
+            self.assertEqual(route.api_key, "astra-unit-key")
+            self.assertEqual(resolve_session_model_selection("crawshrimp-overseas-openai", "gpt-6-astra", cfg),
+                             ("gpt-6-astra", "crawshrimp-overseas-openai"))
+            with self.assertRaises(ValueError):
+                resolve_session_model_selection("crawshrimp-domestic-openai", "gpt-6-astra", cfg)
+
     def test_deepseek_official_routes_use_dedicated_key_and_real_model_names(self):
         config = self.config()
         config["ai"]["llm"]["deepseek_api_key"] = "sk-ds-official-unit"
@@ -645,3 +659,17 @@ class TmallVideoCopyPostProcessTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_custom_provider_budget_defaults_and_explicit_values_reach_runtime():
+    cfg = {"ai": {"llm": {"custom_providers": [{
+        "id": "custom-budget", "name": "Budget", "api_key": "test-only",
+        "base_url": "https://example.test/v1", "models": [
+            {"id": "default-model"},
+            {"id": "configured-model", "context_window": 512000, "max_output_tokens": 48000},
+            {"id": "alias-model", "contextWindow": 128000, "maxTokens": 16000},
+        ],
+    }]}}}
+    profiles, _ = llm_gateway.custom_providers_runtime_payload(cfg)
+    assert [(m["contextWindow"], m["maxTokens"]) for m in profiles[0]["models"]] == [
+        (256000, 32768), (512000, 48000), (128000, 16000)]

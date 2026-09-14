@@ -28,6 +28,7 @@ export const LLM_DEFAULTS = Object.freeze({
 })
 
 const OVERSEAS_OPENAI_MODELS = Object.freeze([
+  { value: 'gpt-6-astra', label: '海外 · GPT-6 Astra' },
   { value: 'gpt-5.6-sol', label: '海外 · GPT-5.6 Sol' },
   { value: 'gpt-5.6-terra', label: '海外 · GPT-5.6 Terra' },
   { value: 'gpt-5.6-luna', label: '海外 · GPT-5.6 Luna' },
@@ -195,13 +196,30 @@ function normalizeModelEntries(models = []) {
     normalized.push({
       id,
       label: String(model.label || model.name || id).trim(),
-      context_window: Number(model.context_window || model.contextWindow || 64000) || 64000,
-      max_output_tokens: Number(model.max_output_tokens || model.maxTokens || 8192) || 8192,
+      context_window: Number(model.context_window || model.contextWindow || 256000) || 256000,
+      max_output_tokens: Number(model.max_output_tokens || model.maxTokens || 32768) || 32768,
       supports_tools: model.supports_tools !== false && model.supportsTools !== false,
       input_modalities: normalizedInputModalities.length ? normalizedInputModalities : ['text'],
     })
   }
   return normalized
+}
+
+// Preserve per-model capabilities when editing a provider's name, key or model list.
+export function mergeCustomLlmModelDraft(text, existing = []) {
+  const previous = new Map(existing.map(model => [model.id, model]))
+  return normalizeModelEntries(parseLlmModelsText(text).map(model => previous.get(model.id) || model))
+}
+
+export function customLlmBudgetError(models) {
+  for (const model of models) {
+    const context = Number(model.context_window)
+    const output = Number(model.max_output_tokens)
+    if (!Number.isSafeInteger(context) || !Number.isSafeInteger(output) || context <= 0 || output <= 0 || output >= context) {
+      return `${model.id}：上下文和输出上限须为正整数，且输出上限须小于上下文。`
+    }
+  }
+  return ''
 }
 
 export function normalizeCustomLlmProviders(value = []) {

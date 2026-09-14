@@ -899,10 +899,19 @@
               <textarea
                 v-model="llmProviderDraft.modelsText"
                 class="textarea"
-                rows="7"
+                rows="3"
                 placeholder="每行一个模型 ID，例如：&#10;gpt-5.5&#10;claude-sonnet-5"
               ></textarea>
-              <p class="field-hint">自定义模型默认按“支持工具 + 文本输入”的保守能力注册；需要视觉能力时后续可继续扩展这里。</p>
+              <p class="field-hint">新模型默认上下文 256,000、输出上限 32,768 tokens，可按供应商支持的额度分别调整。</p>
+              <div v-for="model in llmProviderDraft.models" :key="model.id" class="custom-model-budget">
+                <strong>{{ model.id }}</strong>
+                <label>上下文（tokens）
+                  <input v-model.number="model.context_window" class="input" type="number" min="1" step="1" :aria-label="`${model.id} 上下文 tokens`" />
+                </label>
+                <label>输出上限（tokens）
+                  <input v-model.number="model.max_output_tokens" class="input" type="number" min="1" step="1" :aria-label="`${model.id} 输出上限 tokens`" />
+                </label>
+              </div>
             </div>
 
             <section
@@ -969,7 +978,8 @@ import {
   llmProviderConfigured,
   normalizeCustomLlmProviders,
   normalizeLlmProtocol,
-  parseLlmModelsText,
+  mergeCustomLlmModelDraft,
+  customLlmBudgetError,
 } from '../utils/llmSettings.mjs'
 // Keep provider branding available even when a running renderer outlives a build's asset files.
 import deepseekLogoUrl from '../assets/llm-providers/deepseek-logo.png?inline'
@@ -1138,8 +1148,15 @@ const llmProviderDraft = reactive({
   baseUrl: '',
   apiKey: '',
   modelsText: '',
+  models: [],
   modelIds: [],
   configured: false,
+})
+
+watch(() => llmProviderDraft.modelsText, (text) => {
+  if (!llmProviderModal.isBuiltin) {
+    llmProviderDraft.models = mergeCustomLlmModelDraft(text, llmProviderDraft.models)
+  }
 })
 
 const saveState = reactive({})
@@ -1425,6 +1442,7 @@ function openLlmProviderModal(providerId = '') {
   if (custom) {
     const modelIds = llmProviderModelIds(custom)
     Object.assign(llmProviderDraft, {
+      models: custom.models.map(model => ({ ...model })),
       id: custom.id,
       name: custom.name,
       protocol: normalizeLlmProtocol(custom.protocol),
@@ -1437,6 +1455,7 @@ function openLlmProviderModal(providerId = '') {
     return
   }
   Object.assign(llmProviderDraft, {
+    models: [],
     id: '',
     name: '',
     protocol: 'openai',
@@ -1479,7 +1498,12 @@ async function applyLlmProviderDraft() {
     return
   }
 
-  const models = parseLlmModelsText(llmProviderDraft.modelsText)
+  const budgetError = customLlmBudgetError(llmProviderDraft.models)
+  if (budgetError) {
+    llmProviderModal.error = budgetError
+    return
+  }
+  const models = mergeCustomLlmModelDraft(llmProviderDraft.modelsText, llmProviderDraft.models)
   if (!models.length) {
     llmProviderModal.error = '请至少填写一个模型 ID。'
     return
@@ -1903,6 +1927,11 @@ watch(imSettingsUrl, () => {
 
 <style scoped src="./settingsPanel.css"></style>
 <style scoped>
+.custom-model-budget { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px 0; }
+.custom-model-budget > strong { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.custom-model-budget label { min-width: 0; }
+.custom-model-budget input { margin-top: 6px; }
+
 .view {
   height: 100%;
   display: flex;
