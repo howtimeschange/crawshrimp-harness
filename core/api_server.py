@@ -37,9 +37,10 @@ from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from core.run_logs import RunLogRegistry, buffer_for
 from core import runtime_paths
 from core import script_favorites
 from core import bala_ai_model_library
@@ -105,7 +106,7 @@ PUBLIC_API_PREFIXES = (
 )
 
 # In-memory task run state for live status / logs
-_run_logs: dict = {}   # job_id -> list[str]
+_run_logs: dict = RunLogRegistry()   # bounded live tails, full logs persisted on disk
 _run_status: dict = {} # job_id -> {'status', 'run_id', 'records'}
 _run_controls: dict = {}  # job_id -> {'task', 'pause_requested', 'stop_requested', 'resume_event', ...}
 _task_locks: dict[str, asyncio.Lock] = {}
@@ -458,7 +459,7 @@ def _merge_live_status(jids: list[str], patch: dict) -> None:
 def _append_run_log(jids: list[str], message: str) -> None:
     for job_id in jids:
         if job_id:
-            _run_logs.setdefault(job_id, []).append(message)
+            buffer_for(_run_logs, job_id).append(message)
 
 
 def _latest_instance_run(instance_uid: str) -> Optional[dict]:
@@ -7955,11 +7956,7 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
     from datetime import datetime as _dt
     _sep = f"─── 新运行 {_dt.now().strftime('%m-%d %H:%M:%S')} ───────────────────────"
     for job_id in live_jids:
-        if job_id not in _run_logs:
-            _run_logs[job_id] = []
-        else:
-            _run_logs[job_id].append('')
-            _run_logs[job_id].append(_sep)
+        buffer_for(_run_logs, job_id).append(_sep)
     _set_live_status(live_jids, {
         'status': 'running',
         'run_id': None,
@@ -12526,8 +12523,11 @@ def enable_adapter(adapter_id: str, req: EnableRequest):
 
 @app.get("/tasks")
 def list_tasks():
-    adapter_loader.scan_all()
     result = []
+    latest_runs = data_sink.get_latest_runs(
+        (m.id, task.id) for m in adapter_loader.scan_all()
+        for task in m.tasks if not getattr(task, "hidden", False)
+    )
     scheduled = {j['job_id']: j for j in sched_module.list_jobs()}
     for item in adapter_loader.list_all():
         m = adapter_loader.get_adapter(item['id'])
@@ -12537,7 +12537,7 @@ def list_tasks():
             if getattr(task, "hidden", False):
                 continue
             jid = f"{m.id}::{task.id}"
-            last_run = data_sink.get_latest_run(m.id, task.id)
+            last_run = latest_runs.get((m.id, task.id))
             result.append({
                 "adapter_id": m.id,
                 "adapter_name": m.name,
@@ -13684,7 +13684,7 @@ async def _run_task_background(
                 'queued_request_id': queued_request_id or live.get('queued_request_id') or '',
                 'queued_enqueued_at': queued_enqueued_at or live.get('queued_enqueued_at') or '',
             }
-        _run_logs.setdefault(jid, []).append(f"[{adapter_id}/{task_id}] FATAL: {exc}")
+        buffer_for(_run_logs, jid).append(f"[{adapter_id}/{task_id}] FATAL: {exc}")
         logger.exception("Background task crashed before cleanup: %s", jid)
     finally:
         for control_jid in control_jids:
@@ -13759,7 +13759,7 @@ def _start_next_queued_task(task_jid: str) -> bool:
         return True
     except Exception as exc:
         logger.exception("Failed to start queued task %s: %s", request_id or task_jid, exc)
-        _run_logs.setdefault(task_jid, []).append(f"[queue] 排队任务启动失败: {exc}")
+        buffer_for(_run_logs, task_jid).append(f"[queue] 排队任务启动失败: {exc}")
         _start_next_queued_task(task_jid)
         return False
 
@@ -14018,28 +14018,41 @@ def task_instance_run_status(instance_uid: str):
 
 
 @app.get("/tasks/{adapter_id}/{task_id}/logs")
-def task_logs(adapter_id: str, task_id: str):
+def task_logs(adapter_id: str, task_id: str, cursor: Optional[int] = None, epoch: str = ""):
     jid = _task_jid(adapter_id, task_id)
-    return {"logs": _run_logs.get(jid, [])}
+    return buffer_for(_run_logs, jid).read(cursor, epoch)
 
 
 @app.get("/task-instances/{instance_uid}/logs")
-def task_instance_logs(instance_uid: str):
+def task_instance_logs(instance_uid: str, cursor: Optional[int] = None, epoch: str = ""):
     _get_task_instance_or_404(instance_uid)
-    return {"logs": _run_logs.get(_instance_jid(instance_uid), [])}
+    return buffer_for(_run_logs, _instance_jid(instance_uid)).read(cursor, epoch)
+
+
+@app.get("/tasks/{adapter_id}/{task_id}/logs/download")
+def download_task_logs(adapter_id: str, task_id: str):
+    return StreamingResponse(buffer_for(_run_logs, _task_jid(adapter_id, task_id)).stream_text(),
+                             media_type="text/plain; charset=utf-8")
+
+
+@app.get("/task-instances/{instance_uid}/logs/download")
+def download_instance_logs(instance_uid: str):
+    _get_task_instance_or_404(instance_uid)
+    return StreamingResponse(buffer_for(_run_logs, _instance_jid(instance_uid)).stream_text(),
+                             media_type="text/plain; charset=utf-8")
 
 
 @app.delete("/tasks/{adapter_id}/{task_id}/logs")
 def clear_task_logs(adapter_id: str, task_id: str):
     jid = _task_jid(adapter_id, task_id)
-    _run_logs[jid] = []
+    buffer_for(_run_logs, jid).clear()
     return {"ok": True}
 
 
 @app.delete("/task-instances/{instance_uid}/logs")
 def clear_task_instance_logs(instance_uid: str):
     _get_task_instance_or_404(instance_uid)
-    _run_logs[_instance_jid(instance_uid)] = []
+    buffer_for(_run_logs, _instance_jid(instance_uid)).clear()
     return {"ok": True}
 
 

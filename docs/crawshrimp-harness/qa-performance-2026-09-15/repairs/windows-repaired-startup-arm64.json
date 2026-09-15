@@ -1,0 +1,21 @@
+{
+  "platform": "win32",
+  "arch": "arm64",
+  "electron": "43.1.0",
+  "rows": [
+    {
+      "iteration": 0,
+      "elapsedMs": 3334.710875,
+      "maxTimerGapMs": 45.00100000000009,
+      "ticks": 194,
+      "errors": 0
+    },
+    {
+      "iteration": 1,
+      "elapsedMs": 854.8057079999999,
+      "maxTimerGapMs": 25.60570800000005,
+      "ticks": 51,
+      "errors": 0
+    }
+  ]
+}

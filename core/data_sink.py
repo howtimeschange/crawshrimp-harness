@@ -3079,6 +3079,29 @@ def list_active_runs(statuses: Optional[Iterable[str]] = None) -> List[dict]:
         return [dict(row) for row in rows]
 
 
+def get_latest_runs(task_keys: Iterable[tuple[str, str]]) -> dict[tuple[str, str], dict]:
+    """Fetch visible tasks' latest runs using one connection and indexed lookups."""
+    keys = list(dict.fromkeys(task_keys))
+    if not keys:
+        return {}
+    result = {}
+    with _get_conn() as conn:
+        for offset in range(0, len(keys), 400):
+            chunk = keys[offset:offset + 400]
+            placeholders = ",".join("(?,?)" for _ in chunk)
+            rows = conn.execute(f"""
+                WITH requested(adapter_id, task_id) AS (VALUES {placeholders})
+                SELECT * FROM task_runs WHERE id IN (
+                    SELECT (SELECT id FROM task_runs
+                            WHERE adapter_id=requested.adapter_id AND task_id=requested.task_id
+                            ORDER BY id DESC LIMIT 1) FROM requested
+                )
+            """, [value for key in chunk for value in key]).fetchall()
+            for row in rows:
+                result[(row["adapter_id"], row["task_id"])] = dict(row)
+    return result
+
+
 def get_latest_run(adapter_id: str, task_id: str) -> Optional[dict]:
     with _get_conn() as conn:
         row = conn.execute("""

@@ -223,7 +223,7 @@ const runtimeNeedsAttention = computed(() => {
   return Boolean(error.value)
 })
 const showFallbackNav = computed(() => Boolean(isRuntimeNeedsConfiguration.value && !webUrl.value && props.navItems?.length))
-const expandedFallbackNavGroupIds = ref(new Set(['ai_workflows']))
+const expandedFallbackNavGroupIds = ref(new Set())
 const placeholderIcon = computed(() => {
   if (isRuntimeNeedsConfiguration.value) return '钥'
   return runtimeNeedsAttention.value ? '!' : '…'

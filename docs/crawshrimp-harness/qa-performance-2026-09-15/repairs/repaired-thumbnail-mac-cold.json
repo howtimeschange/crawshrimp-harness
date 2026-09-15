@@ -1,0 +1,27 @@
+{
+  "platform": "darwin",
+  "arch": "arm64",
+  "rows": [
+    {
+      "count": 1,
+      "elapsedMs": 156.078208,
+      "maxTimerGapMs": 11.842165999999992,
+      "ticks": 14,
+      "bytes": 2317
+    },
+    {
+      "count": 6,
+      "elapsedMs": 819.9094170000001,
+      "maxTimerGapMs": 11.187417000000096,
+      "ticks": 75,
+      "bytes": 13902
+    },
+    {
+      "count": 12,
+      "elapsedMs": 1581.546458,
+      "maxTimerGapMs": 11.345250000000078,
+      "ticks": 145,
+      "bytes": 27804
+    }
+  ]
+}

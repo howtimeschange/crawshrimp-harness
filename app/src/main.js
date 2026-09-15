@@ -21,6 +21,7 @@ const { createBackendController } = require('./backendController')
 const { createLifecycleController } = require('./lifecycleController')
 const { stopManagedChrome: stopManagedChromeFromState } = require('./managedChrome')
 const { startDesktopServices } = require('./startupServices')
+const { prepareDesktopDataDirectoryAsync } = require('./desktopDataDirectory')
 const { createBrowserLaunchBridge } = require('./browserLaunchBridge')
 const { createAutomationPermissionBridge } = require('./automationPermissionBridge')
 const { waitForServiceReadiness } = require('./serviceReadiness')
@@ -623,47 +624,29 @@ function resolveCrawshrimpDataDir() {
   return path.join(app.getPath('home'), '.crawshrimp')
 }
 
-function prepareCrawshrimpDataDir() {
-  const candidates = collectCrawshrimpDataDirCandidates({
-    primaryDataDir: resolveCrawshrimpDataDir(),
-    platform: process.platform,
-    legacyDataDir: path.join(app.getPath('home'), '.crawshrimp'),
-    windowsLocalDataDir: getWindowsLocalCrawshrimpDataDir(),
-    macLocalDataDir: getMacLocalCrawshrimpDataDir(),
-  })
-
-  const seen = new Set()
-  const errors = []
-  const primary = candidates[0] ? path.resolve(candidates[0]) : ''
-  for (const candidate of candidates) {
-    const dirPath = path.resolve(candidate)
-    const key = dirPath.toLowerCase()
-    if (seen.has(key)) continue
-    seen.add(key)
-    try {
-      const writable = ensureWritableDataDir(dirPath)
-      process.env.CRAWSHRIMP_DATA = writable
-      writeDesktopConfig({ data_dir: writable })
-      dataDirRecoveryInfo = {
-        recovered: Boolean(errors.length || (primary && !sameRuntimePath(primary, writable))),
-        from: errors.length ? primary : '',
-        to: writable,
-        errors: [...errors],
-      }
-      return writable
-    } catch (error) {
-      errors.push(`${dirPath}: ${error.message}`)
-      console.log(`[data] ${dirPath} is not writable: ${error.message}`)
-    }
+let dataDirectoryReady = null
+function initializeDataDirectory() {
+  if (resolvedCrawshrimpDataDir) return Promise.resolve()
+  if (!dataDirectoryReady) {
+    const primary = resolveCrawshrimpDataDir()
+    const candidates = collectCrawshrimpDataDirCandidates({
+      primaryDataDir: primary, platform: process.platform,
+      legacyDataDir: path.join(app.getPath('home'), '.crawshrimp'),
+      windowsLocalDataDir: getWindowsLocalCrawshrimpDataDir(), macLocalDataDir: getMacLocalCrawshrimpDataDir(),
+    })
+    dataDirectoryReady = prepareDesktopDataDirectoryAsync({ candidates, homeDir: app.getPath('home') })
+      .then(({ root, token, errors }) => {
+        resolvedCrawshrimpDataDir = root
+        process.env.CRAWSHRIMP_DATA = root
+        process.env.CRAWSHRIMP_API_TOKEN = token
+        writeDesktopConfig({ data_dir: root })
+        dataDirRecoveryInfo = { recovered: Boolean(errors.length || !sameRuntimePath(primary, root)), from: errors.length ? primary : '', to: root, errors }
+      }).catch(error => { dataDirectoryReady = null; throw error })
   }
-
-  throw new Error(`No writable CRAWSHRIMP_DATA directory. ${errors.join(' | ')}`)
+  return dataDirectoryReady
 }
-
 function getCrawshrimpDataDir() {
-  if (!resolvedCrawshrimpDataDir) {
-    resolvedCrawshrimpDataDir = prepareCrawshrimpDataDir()
-  }
+  if (!resolvedCrawshrimpDataDir) throw new Error('数据目录正在准备，请稍候')
   return resolvedCrawshrimpDataDir
 }
 
@@ -888,91 +871,13 @@ function readLocalImageDataUrl(rawPath = '') {
 
 /**
  * Resize local images for grid thumbnails. Avoids loading multi‑MB originals as data URLs.
- * Prefer Electron nativeImage; fall back to macOS sips.
+ * Decode in a bounded subprocess queue so large images do not block Electron.
  */
-function readLocalImageThumbnail(rawPath = '', opts = {}) {
+const thumbnailReader = require('./imageThumbnail').createThumbnailReader(getPythonBin)
+async function readLocalImageThumbnail(rawPath = '', opts = {}) {
   const imagePath = resolveLocalImagePath(rawPath)
-  const mime = imageMimeForPath(imagePath)
-  if (!imagePath || !mime) throw new Error('请选择 PNG、JPG、WEBP 或 GIF 图片')
-  const stat = fs.statSync(imagePath)
-  if (!stat.isFile()) throw new Error('图片文件不存在')
-  // Thumbnails can still be generated for larger sources than full preview.
-  if (stat.size > 80 * 1024 * 1024) throw new Error('图片超过 80MB，无法生成缩略图')
-
-  const maxEdge = Math.max(64, Math.min(Number(opts.maxEdge || opts.max_edge || 320) || 320, 1280))
-  const qualityPct = Math.round(Math.max(0.4, Math.min(Number(opts.quality || 0.72) || 0.72, 0.95)) * 100)
-
-  // Fast path: already tiny enough — return original bytes when small.
-  if (stat.size <= 120 * 1024) {
-    try {
-      return readLocalImageDataUrl(imagePath)
-    } catch {
-      // continue to resize path
-    }
-  }
-
-  try {
-    let image = nativeImage.createFromPath(imagePath)
-    if (!image.isEmpty()) {
-      const size = image.getSize()
-      const longEdge = Math.max(size.width || 0, size.height || 0)
-      if (longEdge > maxEdge && longEdge > 0) {
-        const scale = maxEdge / longEdge
-        image = image.resize({
-          width: Math.max(1, Math.round((size.width || maxEdge) * scale)),
-          height: Math.max(1, Math.round((size.height || maxEdge) * scale)),
-          quality: 'good',
-        })
-      }
-      const jpeg = image.toJPEG(qualityPct)
-      if (jpeg && jpeg.length) {
-        const outSize = image.getSize()
-        return {
-          ok: true,
-          path: imagePath,
-          data_url: `data:image/jpeg;base64,${jpeg.toString('base64')}`,
-          width: outSize.width,
-          height: outSize.height,
-          bytes: jpeg.length,
-          thumbnail: true,
-        }
-      }
-    }
-  } catch {
-    // fall through to sips
-  }
-
-  // macOS sips fallback for formats/sizes nativeImage struggles with
-  if (process.platform === 'darwin') {
-    const sipsBin = '/usr/bin/sips'
-    if (fs.existsSync(sipsBin)) {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crawshrimp-thumb-'))
-      const tmpOut = path.join(tmpDir, 'thumb.jpg')
-      try {
-        execFileSync(sipsBin, ['-s', 'format', 'jpeg', '-Z', String(maxEdge), imagePath, '--out', tmpOut], {
-          stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: 20000,
-        })
-        if (fs.existsSync(tmpOut)) {
-          const raw = fs.readFileSync(tmpOut)
-          return {
-            ok: true,
-            path: imagePath,
-            data_url: `data:image/jpeg;base64,${raw.toString('base64')}`,
-            bytes: raw.length,
-            thumbnail: true,
-          }
-        }
-      } catch {
-        // fall through
-      } finally {
-        try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch { /* ignore */ }
-      }
-    }
-  }
-
-  // Last resort: full file if under the preview size cap
-  return readLocalImageDataUrl(imagePath)
+  if (!imagePath || !imageMimeForPath(imagePath)) throw new Error('请选择 PNG、JPG、WEBP 或 GIF 图片')
+  return thumbnailReader(imagePath, opts)
 }
 
 function renderPdfPreviewWithPyMuPDF(pdfPath, outputDir) {
@@ -1153,6 +1058,7 @@ function trustedIpcHandler(handler) {
 function secureHandle(channel, handler) {
   ipcMain.handle(channel, trustedIpcHandler(async (event, ...args) => {
     try {
+      await initializeDataDirectory()
       const result = await handler(event, ...args)
       try { observeProductAction(channel, args, result) } catch {}
       return result
@@ -1829,10 +1735,10 @@ function readAiVideoImagePreview(fileToken) {
   return stripLocalPath(readLocalImageDataUrl(media.path))
 }
 
-function readAiVideoImageThumbnail(fileToken, opts = {}) {
+async function readAiVideoImageThumbnail(fileToken, opts = {}) {
   const media = getAiVideoCapabilityMediaFile(fileToken)
   if (!String(media.mime || '').startsWith('image/')) throw new Error('该授权不是图片')
-  return stripLocalPath(readLocalImageThumbnail(media.path, opts || {}))
+  return stripLocalPath(await readLocalImageThumbnail(media.path, opts || {}))
 }
 
 function normalizeUpdaterApiError(error) {
@@ -2361,6 +2267,8 @@ const restartBackend = createSingleFlightRecovery(async () => {
     // 旧实例已确定退出后优先回到默认端口；确有占用时仍按 +1..+100 回退。
     apiPort = DEFAULT_API_PORT
     resolvedCrawshrimpDataDir = ''
+    dataDirectoryReady = null
+    await initializeDataDirectory()
     await prepareBackendEndpoint()
     await backendController.ensureReady()
     const health = await getBackendHealth(1500)
@@ -2542,6 +2450,7 @@ async function restoreWindowAfterQuitCanceled() {
 }
 
 async function ensureDesktopServicesStarted() {
+  await initializeDataDirectory()
   if (!desktopServicesStartupPromise) {
     desktopServicesStartupPromise = startDesktopServices({
       startBackend,
@@ -2667,8 +2576,9 @@ configureSingleInstance({
       hideNativeAppMenu()
       protocol.handle(BALA_WORKSPACE_MEDIA_PROTOCOL, handleBalaWorkspaceMediaRequest)
       protocol.handle(LOCAL_MEDIA_PROTOCOL, handleLocalMediaRequest)
-      ensureDefaultLocalMediaRoots()
       createWindow()
+      await initializeDataDirectory()
+      ensureDefaultLocalMediaRoots()
       app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow()
         ensureDesktopServicesStarted()
@@ -2676,6 +2586,9 @@ configureSingleInstance({
 
       scheduleInitialUpdateCheck()
       await ensureDesktopServicesStarted()
+    }).catch(error => {
+      log(`[startup] ${error.message}`)
+      dialog.showErrorBox('启动失败', error.message)
     })
 
     app.on('browser-window-focus', () => {
@@ -3249,13 +3162,22 @@ secureHandle('get-task-status', async (_, aid, tid, instanceUid = '') => {
   ensureReady: false,
   })
 })
-secureHandle('get-task-logs', async (_, aid, tid, instanceUid = '') => {
+secureHandle('get-task-logs', async (_, aid, tid, instanceUid = '', query = {}) => {
   const uid = String(instanceUid || '').trim()
-  return apiCall('GET', uid
+  const suffix = `?${new URLSearchParams({ ...(Number.isSafeInteger(query.cursor) ? { cursor: query.cursor } : {}), epoch: String(query.epoch || '') })}`
+  return apiCall('GET', (uid
     ? `/task-instances/${encodeURIComponent(uid)}/logs`
-    : `/tasks/${aid}/${tid}/logs`, null, {
+    : `/tasks/${aid}/${tid}/logs`) + suffix, null, {
   ensureReady: false,
   })
+})
+secureHandle('download-task-logs', async (_, aid, tid, instanceUid = '') => {
+  const result = await dialog.showSaveDialog(mainWindow, { title: '下载完整运行日志', defaultPath: 'task.log' })
+  if (result.canceled || !result.filePath) return { canceled: true }
+  const uid = String(instanceUid || '').trim()
+  return require('./taskLogDownload').downloadTaskLog({ port: apiPort, token: getApiToken(), tokenHeader: API_TOKEN_HEADER,
+    urlPath: uid ? `/task-instances/${encodeURIComponent(uid)}/logs/download` : `/tasks/${encodeURIComponent(aid)}/${encodeURIComponent(tid)}/logs/download`,
+    filePath: result.filePath })
 })
 secureHandle('clear-task-logs', async (_, aid, tid, instanceUid = '') => {
   const uid = String(instanceUid || '').trim()

@@ -1,0 +1,14 @@
+{
+  "app/src/main.js": "0e497399256702ea76f06e185735646d5bb74917d60f3319d13524cc45bdfac3",
+  "app/src/desktopDataDirectory.js": "69eb61939feeebd3dc00e6a02e9f83aa9e56b33583fc054bc114ac3a10d5d8dd",
+  "app/src/imageThumbnail.js": "dd89127cc20ebbfa936c5558234a9915fd282ecbaf793670048b6b4db6ba5b39",
+  "app/src/taskLogDownload.js": "ea91696850d646101c1e0abc5052866d8608914052a7632825c621743e157e12",
+  "app/src/windowsAcl.js": "5b4fe47b75ca46130b06a492dfde560e5d24534cee4b7fb019154ce53715feaa",
+  "app/src/renderer/App.vue": "1cf0b73f787071d7c23533867ce834072a468212de054e898a9b84fafa857d6f",
+  "app/src/renderer/views/TaskRunner.vue": "9f225e6341ef86eb39a4c51e7b52d462b85209776dea14272eae9c616884060a",
+  "app/src/renderer/views/TaskOutputDrawer.vue": "ca2544a60807f7716593e9fbbab9f3229c074f5cd317c98b15eba43969ee046b",
+  "core/run_logs.py": "f74b5d0863ec160b7b6e41c4b64c6e241f6c4ee8ae41025a86db3942fc91bd26",
+  "core/data_sink.py": "6908d7947d958c5b279dc1f261a3a46d49faeae2bc90eb9aff163ea909b38748",
+  "core/adapter_loader.py": "e2971f295940e9b04f8a4aae7b59f99f56d87eccbcf1e03bcfc39687f5df984d",
+  "core/api_server.py": "a7584690c98c69446af949c100fed9e1af79bf66f4d9d6b23473e3111dd2c00b"
+}

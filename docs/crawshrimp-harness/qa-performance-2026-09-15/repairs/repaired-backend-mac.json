@@ -1,0 +1,34 @@
+{
+  "platform": "macOS-26.5.2-arm64-arm-64bit",
+  "scenarios": [
+    {
+      "name": "old-300-connections",
+      "timesMs": [
+        176.37691600248218,
+        143.1645000120625,
+        144.1078329226002,
+        154.46562494616956,
+        153.22762506548315
+      ]
+    },
+    {
+      "name": "new-batch-300",
+      "timesMs": [
+        1.9770419457927346,
+        1.2097080470994115,
+        1.4058329397812486,
+        1.2912920210510492,
+        1.3828339288011193
+      ]
+    },
+    {
+      "name": "logs-50000",
+      "appendMs": 1148.6971249105409,
+      "retainedLines": 2000,
+      "retainedBytes": 528000,
+      "initialResponseBytes": 134141,
+      "incrementalEmptyBytes": 145,
+      "downloadLines": 50000
+    }
+  ]
+}

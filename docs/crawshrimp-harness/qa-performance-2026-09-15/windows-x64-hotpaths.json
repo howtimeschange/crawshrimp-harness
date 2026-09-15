@@ -1,0 +1,5081 @@
+{
+  "startedAt": "2026-09-15T02:06:54.814Z",
+  "componentOnly": true,
+  "platform": "win32",
+  "arch": "x64",
+  "electron": "43.1.0",
+  "cpu": "virt-10.0",
+  "logicalCpus": 4,
+  "totalMemory": 8580235264,
+  "scenarios": [
+    {
+      "name": "idle-first-20s",
+      "durationMs": 20071.161458,
+      "mainCpuMs": 204,
+      "firstTimerDelayMs": 0.5771670000000313,
+      "mainLoopMaxMs": 27.115519,
+      "mainLoopP99Ms": 20.414463,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 128,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 116.67413381123059,
+            "cpuSeconds": 0.4375,
+            "workingSetKB": 152144,
+            "privateKB": 72036
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 119.53029375764994,
+            "cpuSeconds": 0.140625,
+            "workingSetKB": 83736,
+            "privateKB": 35908
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.09375,
+            "workingSetKB": 71468,
+            "privateKB": 31580
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.453125,
+            "workingSetKB": 134904,
+            "privateKB": 72304
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 128,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 0.5356854677134096,
+            "cpuSeconds": 0.94951,
+            "workingSetKB": 153000,
+            "privateKB": 72612
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.2315588710669174,
+            "cpuSeconds": 1.876169,
+            "workingSetKB": 86632,
+            "privateKB": 36712
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 1.0687260925511965,
+            "cpuSeconds": 1.536286,
+            "workingSetKB": 142800,
+            "privateKB": 73808
+          }
+        ]
+      },
+      "ipcCalls": {
+        "agentApi": 8,
+        "getStatus": 4,
+        "getTasks": 4
+      }
+    },
+    {
+      "name": "view-scripts",
+      "durationMs": 1122.854875000001,
+      "mainCpuMs": 47,
+      "firstTimerDelayMs": 3.741875000003347,
+      "mainLoopMaxMs": 20.299775,
+      "mainLoopP99Ms": 20.250623,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 128,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 11.29111038749593,
+            "cpuSeconds": 0.956445,
+            "workingSetKB": 153316,
+            "privateKB": 72844
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.3483988782364833,
+            "cpuSeconds": 1.876996,
+            "workingSetKB": 86632,
+            "privateKB": 36712
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 4.175312939286432,
+            "cpuSeconds": 1.538781,
+            "workingSetKB": 142892,
+            "privateKB": 73820
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 142,
+          "images": 0,
+          "body": 195
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 1.6720436778756669,
+            "cpuSeconds": 0.981031,
+            "workingSetKB": 153356,
+            "privateKB": 72876
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 0.9766352240287949,
+            "cpuSeconds": 1.961219,
+            "workingSetKB": 92716,
+            "privateKB": 36928
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 1.2726962880337114,
+            "cpuSeconds": 1.647009,
+            "workingSetKB": 151124,
+            "privateKB": 75536
+          }
+        ]
+      },
+      "detail": {
+        "paintMs": 51.399999998509884,
+        "raf": true,
+        "view": "scripts",
+        "text": "🏪\n开放市场\n📋\n任务中心\n🎨\nAI 生图\n🎬\nAI 生视频\n🤖\nAI 工作流\n›\n🎞️\nAI 视频工作流\n🛍️\nAI 买家秀工作流\n💬\n提示词库\n📁\n数据文件\n钥\n智能体待配置\n请先配置任一可用的大模型供应商。\n等待模型配置\n我的脚本\n+ 导入脚本\n还没有脚本。点击「导入脚本」安装你的第一个适配包。",
+        "dom": 142
+      },
+      "ipcCalls": {
+        "getTasks": 1,
+        "getScriptFavorites": 1
+      }
+    },
+    {
+      "name": "view-task_center",
+      "durationMs": 1134.354292,
+      "mainCpuMs": 16,
+      "firstTimerDelayMs": 0.7232909999984258,
+      "mainLoopMaxMs": 103.153663,
+      "mainLoopP99Ms": 50.003967,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 142,
+          "images": 0,
+          "body": 195
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 10.749046429041169,
+            "cpuSeconds": 0.9843,
+            "workingSetKB": 153544,
+            "privateKB": 73028
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 0,
+            "cpuSeconds": 1.961219,
+            "workingSetKB": 92716,
+            "privateKB": 36928
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 1.751761733811993,
+            "cpuSeconds": 1.647536,
+            "workingSetKB": 151132,
+            "privateKB": 75540
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 149,
+          "images": 0,
+          "body": 278
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 0.9105405467865314,
+            "cpuSeconds": 1.033481,
+            "workingSetKB": 153792,
+            "privateKB": 73436
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 0.9729971956402325,
+            "cpuSeconds": 2.016503,
+            "workingSetKB": 92844,
+            "privateKB": 36968
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 0.8015006821282401,
+            "cpuSeconds": 1.768263,
+            "workingSetKB": 158568,
+            "privateKB": 80472
+          }
+        ]
+      },
+      "detail": {
+        "paintMs": 74.20000000298023,
+        "raf": true,
+        "view": "task_center",
+        "text": "\udcc1\n数据文件\n钥\n智能体待配置\n请先配置任一可用的大模型供应商。\n等待模型配置\n任务中心\n\n实例化管理脚本任务、审批状态、历史结果和定时运行\n\n新增数据抓取定时任务\n新增 AI 测图任务\n当前任务\n待处理\n历史任务\n自动化\n刷新\nwindow.cs.listTaskSchedules is not a function",
+        "dom": 149
+      },
+      "ipcCalls": {
+        "listTaskInstances": 1
+      }
+    },
+    {
+      "name": "view-ai_image",
+      "durationMs": 1128.0817909999969,
+      "mainCpuMs": 16,
+      "firstTimerDelayMs": 17.70275000000038,
+      "mainLoopMaxMs": 26.689535,
+      "mainLoopP99Ms": 26.427391,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 149,
+          "images": 0,
+          "body": 278
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 35.41167066346922,
+            "cpuSeconds": 1.038797,
+            "workingSetKB": 154620,
+            "privateKB": 73852
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 0,
+            "cpuSeconds": 2.016503,
+            "workingSetKB": 92844,
+            "privateKB": 36968
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 3.2198523379819526,
+            "cpuSeconds": 1.768734,
+            "workingSetKB": 158572,
+            "privateKB": 80476
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 320,
+          "images": 0,
+          "body": 924
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 1.0573661014726337,
+            "cpuSeconds": 1.062054,
+            "workingSetKB": 154016,
+            "privateKB": 73224
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.264395170051838,
+            "cpuSeconds": 2.068704,
+            "workingSetKB": 93248,
+            "privateKB": 36992
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 1.0298393133824273,
+            "cpuSeconds": 1.880162,
+            "workingSetKB": 165628,
+            "privateKB": 85612
+          }
+        ]
+      },
+      "detail": {
+        "paintMs": 59.5,
+        "raf": true,
+        "view": "ai_image",
+        "text": "件夹\n选择文件夹\nAI生图\n~/Downloads/抓虾导出/AI生图\n高级 JSON\n未配置 Key，暂时无法生成\n去配置\n任务：AI 生图任务\n未选择图片\n全选图片\n下载选中\n任务\n等待生成结果\n选择已有任务或新建任务后，输出图会保留在对应任务里。\n任务记录\n暂无任务\n点击新建任务后，可以在这里切换每一次生图记录。",
+        "dom": 320
+      },
+      "ipcCalls": {
+        "getSettings": 2
+      }
+    },
+    {
+      "name": "view-ai_video_generation",
+      "durationMs": 1204.304916000001,
+      "mainCpuMs": 16,
+      "firstTimerDelayMs": 0.7541249999994761,
+      "mainLoopMaxMs": 24.821759,
+      "mainLoopP99Ms": 24.805375,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 320,
+          "images": 0,
+          "body": 924
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 12.619179600886918,
+            "cpuSeconds": 1.07116,
+            "workingSetKB": 154268,
+            "privateKB": 73472
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.2908659156174067,
+            "cpuSeconds": 2.069639,
+            "workingSetKB": 93248,
+            "privateKB": 36992
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 5.196340174648201,
+            "cpuSeconds": 1.883899,
+            "workingSetKB": 165740,
+            "privateKB": 85616
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 285,
+          "images": 1,
+          "body": 1032
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 0.2557905398438874,
+            "cpuSeconds": 1.096614,
+            "workingSetKB": 154316,
+            "privateKB": 73484
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 0.696544669426834,
+            "cpuSeconds": 2.120592,
+            "workingSetKB": 95008,
+            "privateKB": 37020
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 0.5051403437137417,
+            "cpuSeconds": 2.040486,
+            "workingSetKB": 174060,
+            "privateKB": 89980
+          }
+        ]
+      },
+      "detail": {
+        "paintMs": 122.60000000149012,
+        "raf": true,
+        "view": "ai_video_generation",
+        "text": "dance 2.0\n任务 0\n生成中 0\n完成 0\n失败 0\n全部\n排队\n生成中\n下载归档\n已完成\n待配置\n失败\n已取消\n已过期\n历史\n视频任务\n所有任务同级平铺 · 点击任意卡片查看详情\n当前筛选下没有任务。切换状态筛选，或在左侧填写 Prompt 后点击「生成视频」。\n历史记录\n最近生成与失败任务，支持复用参数\n×",
+        "dom": 285
+      },
+      "ipcCalls": {}
+    },
+    {
+      "name": "view-ai_video",
+      "durationMs": 1138.3579160000008,
+      "mainCpuMs": 16,
+      "firstTimerDelayMs": 0.2049169999991136,
+      "mainLoopMaxMs": 22.593535,
+      "mainLoopP99Ms": 22.331391,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 285,
+          "images": 1,
+          "body": 1032
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 8.87815750371471,
+            "cpuSeconds": 1.099721,
+            "workingSetKB": 154452,
+            "privateKB": 73604
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.3592124398702317,
+            "cpuSeconds": 2.121078,
+            "workingSetKB": 95008,
+            "privateKB": 37020
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 3.863686902379364,
+            "cpuSeconds": 2.041876,
+            "workingSetKB": 174064,
+            "privateKB": 89984
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 231,
+          "images": 0,
+          "body": 654
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 0.5099880363945472,
+            "cpuSeconds": 1.135609,
+            "workingSetKB": 154536,
+            "privateKB": 73648
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.2024816286435736,
+            "cpuSeconds": 2.177233,
+            "workingSetKB": 95948,
+            "privateKB": 37028
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 1.2002200462443395,
+            "cpuSeconds": 2.209927,
+            "workingSetKB": 184876,
+            "privateKB": 98912
+          }
+        ]
+      },
+      "detail": {
+        "paintMs": 69.10000000149012,
+        "raf": true,
+        "view": "ai_video",
+        "text": " / 0 张\n重试找图\n开始找图并回显\n默认启用最新文件夹、Hash 去重和 10MB 压缩阈值\n素材回显\n按款号分组选择进入 AI 改图的模拍图和细节图\n0\n款号\n0\n已回显素材\n0\n已选择\n\n找图失败，可查看提示后重试。\n\n清空所有\n输入款号后点击“开始找图并回显”，这里会按款号显示真实下载素材。\n进入 AI 改图",
+        "dom": 231
+      },
+      "ipcCalls": {
+        "agentApi": 2,
+        "getSettings": 2,
+        "getStatus": 1,
+        "getTasks": 1,
+        "readBalaWorkspaceManifest": 1,
+        "listBalaWorkspaceImages": 1,
+        "writeBalaWorkspaceManifest": 1
+      }
+    },
+    {
+      "name": "view-buyer_show_workflow",
+      "durationMs": 1094.2275000000009,
+      "mainCpuMs": 15,
+      "firstTimerDelayMs": 0.9283749999995052,
+      "mainLoopMaxMs": 18.497535,
+      "mainLoopP99Ms": 17.612799,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 231,
+          "images": 0,
+          "body": 654
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 14.899058791433639,
+            "cpuSeconds": 1.139978,
+            "workingSetKB": 153936,
+            "privateKB": 73008
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 2.8645116918844566,
+            "cpuSeconds": 2.178066,
+            "workingSetKB": 95948,
+            "privateKB": 37028
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 6.679389312977099,
+            "cpuSeconds": 2.211887,
+            "workingSetKB": 184884,
+            "privateKB": 98912
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 222,
+          "images": 0,
+          "body": 737
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 0.5612532816448709,
+            "cpuSeconds": 1.170392,
+            "workingSetKB": 154268,
+            "privateKB": 73120
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.2921510657119764,
+            "cpuSeconds": 2.237826,
+            "workingSetKB": 96164,
+            "privateKB": 36952
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 0.8698772419094976,
+            "cpuSeconds": 2.295815,
+            "workingSetKB": 189008,
+            "privateKB": 101484
+          }
+        ]
+      },
+      "detail": {
+        "paintMs": 31.799999997019768,
+        "raf": true,
+        "view": "buyer_show_workflow",
+        "text": "Banana 2\n森马网关 · Nano Banana Pro\n自定义 Prompt\n补充约束\n等待选择 Excel 后开始找图\n0 行 Excel · 0 条结果\n找图 0/0\n下载 0/0\n生图 0/0\n开始 Excel 找图并生图\nExcel 解析预览\n等待选择 Excel\n选择 Excel 后会显示前几行数据。",
+        "dom": 222
+      },
+      "ipcCalls": {}
+    },
+    {
+      "name": "view-local_prompt_library",
+      "durationMs": 1106.9143750000003,
+      "mainCpuMs": 16,
+      "firstTimerDelayMs": 15.861000000000786,
+      "mainLoopMaxMs": 25.001983,
+      "mainLoopP99Ms": 21.135359,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 222,
+          "images": 0,
+          "body": 737
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 17.991466498103666,
+            "cpuSeconds": 1.172669,
+            "workingSetKB": 154424,
+            "privateKB": 73272
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 0,
+            "cpuSeconds": 2.237826,
+            "workingSetKB": 96164,
+            "privateKB": 36952
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 3.632,
+            "cpuSeconds": 2.296269,
+            "workingSetKB": 189012,
+            "privateKB": 101488
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 157,
+          "images": 0,
+          "body": 313
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 0.24497895616299298,
+            "cpuSeconds": 1.187067,
+            "workingSetKB": 154432,
+            "privateKB": 73272
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 0.8467577622977897,
+            "cpuSeconds": 2.279604,
+            "workingSetKB": 96268,
+            "privateKB": 37004
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 0.5730570073120302,
+            "cpuSeconds": 2.34762,
+            "workingSetKB": 189544,
+            "privateKB": 101772
+          }
+        ]
+      },
+      "detail": {
+        "paintMs": 30.299999997019768,
+        "raf": true,
+        "view": "local_prompt_library",
+        "text": "模型配置\n提示词库\n\n保存在本机的 Prompt 模板，支持编辑、导入和预览\n\n新建库\n\nwindow.cs.listLocalPromptLibraries is not a function\n\n提示词库列表\n\n0 个本地库\n\n新建库\n提示词库名称\n当前 Prompt 数量\n创建时间\n来源\n操作\n暂无提示词库\n新建库",
+        "dom": 157
+      },
+      "ipcCalls": {}
+    },
+    {
+      "name": "view-files",
+      "durationMs": 1091.2584579999966,
+      "mainCpuMs": 15,
+      "firstTimerDelayMs": 0.9078750000007858,
+      "mainLoopMaxMs": 19.660799,
+      "mainLoopP99Ms": 18.399231,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 157,
+          "images": 0,
+          "body": 313
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 17.707106399685905,
+            "cpuSeconds": 1.190675,
+            "workingSetKB": 154464,
+            "privateKB": 73288
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 0,
+            "cpuSeconds": 2.279604,
+            "workingSetKB": 96268,
+            "privateKB": 37004
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 3.7088183073584533,
+            "cpuSeconds": 2.348372,
+            "workingSetKB": 189548,
+            "privateKB": 101776
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 140,
+          "images": 0,
+          "body": 200
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 0.4876207680419684,
+            "cpuSeconds": 1.212775,
+            "workingSetKB": 154636,
+            "privateKB": 73468
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.2747562416540585,
+            "cpuSeconds": 2.337225,
+            "workingSetKB": 96208,
+            "privateKB": 36944
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 0.8624816294526578,
+            "cpuSeconds": 2.407005,
+            "workingSetKB": 189620,
+            "privateKB": 102120
+          }
+        ]
+      },
+      "detail": {
+        "paintMs": 31.19999999552965,
+        "raf": true,
+        "view": "files",
+        "text": "市场\n📋\n任务中心\n🎨\nAI 生图\n🎬\nAI 生视频\n🤖\nAI 工作流\n›\n🎞️\nAI 视频工作流\n🛍️\nAI 买家秀工作流\n💬\n提示词库\n📁\n数据文件\n钥\n智能体待配置\n请先配置任一可用的大模型供应商。\n等待模型配置\n数据文件\n📁 保存目录\n刷新\n还没有输出文件。执行一个抓取任务后文件会出现在这里。",
+        "dom": 140
+      },
+      "ipcCalls": {
+        "getSettings": 1,
+        "getTasks": 1,
+        "listBalaWorkspaceImages": 1,
+        "getAdapters": 1
+      }
+    },
+    {
+      "name": "view-settings",
+      "durationMs": 1107.4377920000006,
+      "mainCpuMs": 16,
+      "firstTimerDelayMs": 1.1383749999986321,
+      "mainLoopMaxMs": 18.956287,
+      "mainLoopP99Ms": 17.924095,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 140,
+          "images": 0,
+          "body": 200
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 20.255404629806772,
+            "cpuSeconds": 1.21701,
+            "workingSetKB": 154652,
+            "privateKB": 73468
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 0,
+            "cpuSeconds": 2.337225,
+            "workingSetKB": 96208,
+            "privateKB": 36944
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122219,
+            "workingSetKB": 71624,
+            "privateKB": 31592
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 2.3407704042715483,
+            "cpuSeconds": 2.407496,
+            "workingSetKB": 189624,
+            "privateKB": 102124
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 516
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 4.301172079622839,
+            "cpuSeconds": 1.28272,
+            "workingSetKB": 155448,
+            "privateKB": 72764
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 0.994397300219521,
+            "cpuSeconds": 2.392938,
+            "workingSetKB": 96468,
+            "privateKB": 37344
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122594,
+            "workingSetKB": 71628,
+            "privateKB": 31596
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 1.1810830277632267,
+            "cpuSeconds": 2.598672,
+            "workingSetKB": 188396,
+            "privateKB": 98840
+          }
+        ]
+      },
+      "detail": {
+        "paintMs": 45.5,
+        "raf": true,
+        "view": "settings",
+        "text": "\n当前为浅色\n选择抓虾的界面主题\n\n主题会立即应用并保存在当前设备。选择“系统”后，抓虾会跟随操作系统外观自动切换，支持 macOS 与 Windows。\n\n系统\n跟随 macOS / Windows\n✓\n浅色\n明亮、清晰\n✓\n深色\n低光、专注\n✓\n品牌橙色、状态色和功能布局保持不变，仅调整背景、文字、边框和浮层层级。",
+        "dom": 245
+      },
+      "ipcCalls": {
+        "agentApi": 2,
+        "getSettings": 1,
+        "getStatus": 1,
+        "getTasks": 1
+      }
+    },
+    {
+      "name": "view-agent",
+      "durationMs": 1105.2481670000016,
+      "mainCpuMs": 0,
+      "firstTimerDelayMs": 15.052749999998923,
+      "mainLoopMaxMs": 26.378239,
+      "mainLoopP99Ms": 23.789567,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 516
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 18.82547218495201,
+            "cpuSeconds": 1.290016,
+            "workingSetKB": 154912,
+            "privateKB": 72128
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 0.1472715998346424,
+            "cpuSeconds": 2.392995,
+            "workingSetKB": 96468,
+            "privateKB": 37344
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122594,
+            "workingSetKB": 71628,
+            "privateKB": 31596
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 1.1336515513126493,
+            "cpuSeconds": 2.599109,
+            "workingSetKB": 188396,
+            "privateKB": 98840
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 1.9762632557427044,
+            "cpuSeconds": 1.313022,
+            "workingSetKB": 155092,
+            "privateKB": 72420
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.5423249973841164,
+            "cpuSeconds": 2.446962,
+            "workingSetKB": 96368,
+            "privateKB": 37348
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122594,
+            "workingSetKB": 71628,
+            "privateKB": 31596
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 1.1236269894642457,
+            "cpuSeconds": 2.677855,
+            "workingSetKB": 186552,
+            "privateKB": 98508
+          }
+        ]
+      },
+      "detail": {
+        "paintMs": 28.399999998509884,
+        "raf": true,
+        "view": "agent",
+        "text": "登录 / 注册\n抓虾智能体\n模型待配置\n🤖\n智能体\n📄\n我的脚本\n🏪\n开放市场\n📋\n任务中心\n🎨\nAI 生图\n🎬\nAI 生视频\n🤖\nAI 工作流\n›\n🎞️\nAI 视频工作流\n🛍️\nAI 买家秀工作流\n💬\n提示词库\n📁\n数据文件\n钥\n智能体待配置\n请先配置任一可用的大模型供应商。\n等待模型配置",
+        "dom": 245
+      },
+      "ipcCalls": {}
+    },
+    {
+      "name": "idle-after-workflows-20s",
+      "durationMs": 20071.86825,
+      "mainCpuMs": 63,
+      "firstTimerDelayMs": 0.2244170000012673,
+      "mainLoopMaxMs": 26.591231,
+      "mainLoopP99Ms": 19.857407,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 13.25921439695449,
+            "cpuSeconds": 1.316087,
+            "workingSetKB": 155420,
+            "privateKB": 72868
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 0.05112474437627812,
+            "cpuSeconds": 2.446974,
+            "workingSetKB": 96368,
+            "privateKB": 37348
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.122594,
+            "workingSetKB": 71628,
+            "privateKB": 31596
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 2.2742616033755274,
+            "cpuSeconds": 2.678394,
+            "workingSetKB": 186552,
+            "privateKB": 98508
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 1.647754802206905,
+            "cpuSeconds": 1.81645,
+            "workingSetKB": 155764,
+            "privateKB": 72964
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 2.235301936805561,
+            "cpuSeconds": 4.382623,
+            "workingSetKB": 87540,
+            "privateKB": 37356
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.123022,
+            "workingSetKB": 71348,
+            "privateKB": 31252
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 1.8377641285321331,
+            "cpuSeconds": 3.946245,
+            "workingSetKB": 178472,
+            "privateKB": 98892
+          }
+        ]
+      },
+      "ipcCalls": {
+        "agentApi": 8,
+        "getStatus": 4,
+        "getTasks": 4,
+        "listBalaWorkspaceImages": 5
+      }
+    },
+    {
+      "name": "switch-30-times",
+      "durationMs": 1000.6103749999966,
+      "mainCpuMs": 0,
+      "firstTimerDelayMs": 1.813416999997571,
+      "mainLoopMaxMs": 19.431423,
+      "mainLoopP99Ms": 19.431423,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 13.245109321058688,
+            "cpuSeconds": 1.823356,
+            "workingSetKB": 155928,
+            "privateKB": 73220
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 3.7866605406233247,
+            "cpuSeconds": 4.384601,
+            "workingSetKB": 87540,
+            "privateKB": 37356
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.123022,
+            "workingSetKB": 71348,
+            "privateKB": 31252
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 6.447470817120623,
+            "cpuSeconds": 3.949559,
+            "workingSetKB": 178600,
+            "privateKB": 99020
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 344,
+          "images": 0,
+          "body": 654
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 1.0326798781355884,
+            "cpuSeconds": 1.857863,
+            "workingSetKB": 156484,
+            "privateKB": 73736
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 8.83193773942268,
+            "cpuSeconds": 4.654815,
+            "workingSetKB": 96544,
+            "privateKB": 37472
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.123022,
+            "workingSetKB": 71348,
+            "privateKB": 31252
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 12.334836278678832,
+            "cpuSeconds": 4.565805,
+            "workingSetKB": 205688,
+            "privateKB": 117244
+          }
+        ]
+      },
+      "detail": {
+        "paintMs": [
+          27.299999997019768,
+          30,
+          23.399999998509884,
+          25.100000001490116,
+          29.599999994039536,
+          29.299999997019768,
+          30.600000001490116,
+          29.19999999552965,
+          30.100000001490116,
+          28.899999998509884,
+          30.299999997019768,
+          30,
+          29.899999998509884,
+          29.799999997019768,
+          29.399999998509884,
+          30.5,
+          30.100000001490116,
+          32.399999998509884,
+          24.600000001490116,
+          29.299999997019768,
+          30.399999998509884,
+          29.299999997019768,
+          29.399999998509884,
+          30.600000001490116,
+          32.20000000298023,
+          27.799999997019768,
+          31.399999998509884,
+          30.799999997019768,
+          28.399999998509884,
+          29.400000005960464
+        ]
+      },
+      "ipcCalls": {
+        "getSettings": 20
+      }
+    },
+    {
+      "name": "directory-1000",
+      "durationMs": 671.6348339999968,
+      "mainCpuMs": 532,
+      "firstTimerDelayMs": 174.73558400000184,
+      "mainLoopMaxMs": 176.685055,
+      "mainLoopP99Ms": 176.685055,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 21.174544560068874,
+            "cpuSeconds": 2.140212,
+            "workingSetKB": 162268,
+            "privateKB": 75200
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.7590751056674976,
+            "cpuSeconds": 4.678271,
+            "workingSetKB": 96548,
+            "privateKB": 37472
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.123022,
+            "workingSetKB": 71348,
+            "privateKB": 31252
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 1.3727066559473955,
+            "cpuSeconds": 4.584109,
+            "workingSetKB": 206720,
+            "privateKB": 118288
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 2.328990757135199,
+            "cpuSeconds": 2.656517,
+            "workingSetKB": 168352,
+            "privateKB": 80404
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.985172178324066,
+            "cpuSeconds": 4.729882,
+            "workingSetKB": 96548,
+            "privateKB": 37472
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.123022,
+            "workingSetKB": 71348,
+            "privateKB": 31252
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 1.6058548313730587,
+            "cpuSeconds": 4.615757,
+            "workingSetKB": 206720,
+            "privateKB": 118288
+          }
+        ]
+      },
+      "detail": {
+        "files": 1000,
+        "timesMs": [
+          173.63212499999645,
+          175.68895799999882,
+          154.00450000000274
+        ]
+      },
+      "ipcCalls": {}
+    },
+    {
+      "name": "directory-10000",
+      "durationMs": 2428.3515840000036,
+      "mainCpuMs": 2360,
+      "firstTimerDelayMs": 877.6847500000003,
+      "mainLoopMaxMs": 878.182399,
+      "mainLoopP99Ms": 878.182399,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 23.245020305550185,
+            "cpuSeconds": 5.00174,
+            "workingSetKB": 169220,
+            "privateKB": 81336
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 0,
+            "cpuSeconds": 4.936092,
+            "workingSetKB": 96512,
+            "privateKB": 37416
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.123022,
+            "workingSetKB": 71348,
+            "privateKB": 31252
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 11.051147413457798,
+            "cpuSeconds": 4.754668,
+            "workingSetKB": 206720,
+            "privateKB": 118288
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 22.71064985346044,
+            "cpuSeconds": 7.279795,
+            "workingSetKB": 191600,
+            "privateKB": 102760
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.2930467261674163,
+            "cpuSeconds": 5.057199,
+            "workingSetKB": 88060,
+            "privateKB": 37428
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0.04261337432744043,
+            "cpuSeconds": 0.124408,
+            "workingSetKB": 70604,
+            "privateKB": 30360
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 0.8268551280206515,
+            "cpuSeconds": 4.835091,
+            "workingSetKB": 198216,
+            "privateKB": 118288
+          }
+        ]
+      },
+      "detail": {
+        "files": 10000,
+        "timesMs": [
+          875.2110829999947,
+          673.2931250000038,
+          705.033958
+        ]
+      },
+      "ipcCalls": {
+        "getTasks": 1
+      }
+    },
+    {
+      "name": "thumbnail-24mp-1",
+      "durationMs": 360.76129100000253,
+      "mainCpuMs": 328,
+      "firstTimerDelayMs": 290.5134160000016,
+      "mainLoopMaxMs": 306.708479,
+      "mainLoopP99Ms": 306.708479,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 2.0362557745688488,
+            "cpuSeconds": 8.570308,
+            "workingSetKB": 307744,
+            "privateKB": 217180
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.2822889320855293,
+            "cpuSeconds": 5.181286,
+            "workingSetKB": 87828,
+            "privateKB": 37108
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.126042,
+            "workingSetKB": 70652,
+            "privateKB": 30360
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 1.8397780648779658,
+            "cpuSeconds": 4.911309,
+            "workingSetKB": 198228,
+            "privateKB": 118288
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 19.8877489673907,
+            "cpuSeconds": 8.856122,
+            "workingSetKB": 294440,
+            "privateKB": 203124
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.6104823587672004,
+            "cpuSeconds": 5.204441,
+            "workingSetKB": 87828,
+            "privateKB": 37108
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.126042,
+            "workingSetKB": 70468,
+            "privateKB": 30360
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 1.228010147878626,
+            "cpuSeconds": 4.928967,
+            "workingSetKB": 192236,
+            "privateKB": 112220
+          }
+        ]
+      },
+      "detail": {
+        "elapsedMs": 289.93779200000426,
+        "count": 1,
+        "base64Bytes": 1819
+      },
+      "ipcCalls": {}
+    },
+    {
+      "name": "thumbnail-24mp-6",
+      "durationMs": 2232.3484590000007,
+      "mainCpuMs": 1907,
+      "firstTimerDelayMs": 2158.3987909999996,
+      "mainLoopMaxMs": 2172.649471,
+      "mainLoopP99Ms": 2172.649471,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 6.3908648446274805,
+            "cpuSeconds": 8.859536,
+            "workingSetKB": 294632,
+            "privateKB": 203380
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.3775020311692148,
+            "cpuSeconds": 5.205187,
+            "workingSetKB": 87828,
+            "privateKB": 37108
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.126042,
+            "workingSetKB": 70468,
+            "privateKB": 30360
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 3.68749538370633,
+            "cpuSeconds": 4.930964,
+            "workingSetKB": 192236,
+            "privateKB": 112220
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 3.8128860298828777,
+            "cpuSeconds": 10.682101,
+            "workingSetKB": 668096,
+            "privateKB": 577016
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.855747558226897,
+            "cpuSeconds": 5.35232,
+            "workingSetKB": 87824,
+            "privateKB": 37104
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.126653,
+            "workingSetKB": 69112,
+            "privateKB": 30356
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 2.3312799281723864,
+            "cpuSeconds": 5.018597,
+            "workingSetKB": 192236,
+            "privateKB": 112220
+          }
+        ]
+      },
+      "detail": {
+        "elapsedMs": 2156.5030000000042,
+        "count": 6,
+        "base64Bytes": 10914
+      },
+      "ipcCalls": {}
+    },
+    {
+      "name": "thumbnail-24mp-12",
+      "durationMs": 4844.877458000003,
+      "mainCpuMs": 4079,
+      "firstTimerDelayMs": 4752.234083999996,
+      "mainLoopMaxMs": 4760.535039,
+      "mainLoopP99Ms": 4760.535039,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 15.574712643678161,
+            "cpuSeconds": 10.688605,
+            "workingSetKB": 668300,
+            "privateKB": 577272
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 4.705545728852357,
+            "cpuSeconds": 5.354129,
+            "workingSetKB": 87824,
+            "privateKB": 37104
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.126653,
+            "workingSetKB": 69112,
+            "privateKB": 30356
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 7.30788675429727,
+            "cpuSeconds": 5.021488,
+            "workingSetKB": 192236,
+            "privateKB": 112220
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 24.56379498364231,
+            "cpuSeconds": 14.679062,
+            "workingSetKB": 293768,
+            "privateKB": 201744
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.2212355274356463,
+            "cpuSeconds": 5.665939,
+            "workingSetKB": 84924,
+            "privateKB": 37104
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.127098,
+            "workingSetKB": 66224,
+            "privateKB": 30356
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 1.3869469488774246,
+            "cpuSeconds": 5.214452,
+            "workingSetKB": 192184,
+            "privateKB": 112220
+          }
+        ]
+      },
+      "detail": {
+        "elapsedMs": 4748.112958999998,
+        "count": 12,
+        "base64Bytes": 21828
+      },
+      "ipcCalls": {
+        "agentApi": 2,
+        "getStatus": 1,
+        "getTasks": 1,
+        "listBalaWorkspaceImages": 1
+      }
+    },
+    {
+      "name": "windows-acl-repeat-3",
+      "durationMs": 15150.294916999992,
+      "mainCpuMs": 62,
+      "firstTimerDelayMs": 15094.493375000005,
+      "mainLoopMaxMs": 15099.494399,
+      "mainLoopP99Ms": 15099.494399,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 19.307739432305492,
+            "cpuSeconds": 14.682844,
+            "workingSetKB": 293984,
+            "privateKB": 202000
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 0,
+            "cpuSeconds": 5.665939,
+            "workingSetKB": 84924,
+            "privateKB": 37104
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.127098,
+            "workingSetKB": 66224,
+            "privateKB": 30356
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 3.657049979683056,
+            "cpuSeconds": 5.215172,
+            "workingSetKB": 192184,
+            "privateKB": 112220
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 23.731494746895894,
+            "cpuSeconds": 14.776476,
+            "workingSetKB": 167724,
+            "privateKB": 75544
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.1419578124533818,
+            "cpuSeconds": 6.403065,
+            "workingSetKB": 76900,
+            "privateKB": 37112
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.130093,
+            "workingSetKB": 60216,
+            "privateKB": 30356
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 6.6701445819049034,
+            "cpuSeconds": 5.687479,
+            "workingSetKB": 192204,
+            "privateKB": 112396
+          }
+        ]
+      },
+      "detail": {
+        "timesMs": [
+          7123.699958000012,
+          4215.713499999998,
+          3744.704165999996
+        ]
+      },
+      "ipcCalls": {
+        "agentApi": 4,
+        "getStatus": 3,
+        "getTasks": 3,
+        "listBalaWorkspaceImages": 4
+      }
+    },
+    {
+      "name": "renderer-only-4x-switch-12",
+      "durationMs": 960.9750000000058,
+      "mainCpuMs": 46,
+      "firstTimerDelayMs": 0.6087910000060219,
+      "mainLoopMaxMs": 18.137087,
+      "mainLoopP99Ms": 17.760255,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 14.559296042062217,
+            "cpuSeconds": 14.784451,
+            "workingSetKB": 170556,
+            "privateKB": 77760
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 1.2403951701427003,
+            "cpuSeconds": 6.403743,
+            "workingSetKB": 76900,
+            "privateKB": 37112
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0.7501463700234192,
+            "cpuSeconds": 0.130503,
+            "workingSetKB": 60264,
+            "privateKB": 30356
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 16.53727845320053,
+            "cpuSeconds": 5.696511,
+            "workingSetKB": 193456,
+            "privateKB": 112784
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 344,
+          "images": 0,
+          "body": 654
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 24.274160099543757,
+            "cpuSeconds": 14.807524,
+            "workingSetKB": 170288,
+            "privateKB": 77480
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 12.285714285714286,
+            "cpuSeconds": 6.654641,
+            "workingSetKB": 84504,
+            "privateKB": 37464
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.130503,
+            "workingSetKB": 59652,
+            "privateKB": 30356
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 27.689363416599516,
+            "cpuSeconds": 6.967076,
+            "workingSetKB": 206168,
+            "privateKB": 114692
+          }
+        ]
+      },
+      "detail": {
+        "paintMs": [
+          29.600000001490116,
+          84,
+          80.40000000596046,
+          12.799999997019768,
+          78.30000000447035,
+          83.10000000149012,
+          51.100000001490116,
+          96.89999999850988,
+          74.20000000298023,
+          34.29999999701977,
+          78.80000000447035,
+          78
+        ],
+        "note": "renderer slowdown only; not an i3 simulation"
+      },
+      "ipcCalls": {
+        "getSettings": 8
+      }
+    },
+    {
+      "name": "idle-final-15s",
+      "durationMs": 15081.571417,
+      "mainCpuMs": 0,
+      "firstTimerDelayMs": 0.6503749999974389,
+      "mainLoopMaxMs": 24.625151,
+      "mainLoopP99Ms": 19.152895,
+      "before": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 6.099705271618997,
+            "cpuSeconds": 14.814809,
+            "workingSetKB": 171040,
+            "privateKB": 78240
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 4.672748577167726,
+            "cpuSeconds": 6.660224,
+            "workingSetKB": 84504,
+            "privateKB": 37464
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0,
+            "cpuSeconds": 0.130503,
+            "workingSetKB": 59652,
+            "privateKB": 30356
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 12.427208835341366,
+            "cpuSeconds": 6.981929,
+            "workingSetKB": 205884,
+            "privateKB": 114348
+          }
+        ]
+      },
+      "after": {
+        "renderer": {
+          "heap": 11200000,
+          "dom": 245,
+          "images": 0,
+          "body": 157
+        },
+        "processes": [
+          {
+            "pid": 5080,
+            "type": "Browser",
+            "cpuPercent": 0.8099905349192421,
+            "cpuSeconds": 15.304235,
+            "workingSetKB": 163120,
+            "privateKB": 77864
+          },
+          {
+            "pid": 4020,
+            "type": "GPU",
+            "cpuPercent": 2.809172796694356,
+            "cpuSeconds": 8.438423,
+            "workingSetKB": 72520,
+            "privateKB": 37148
+          },
+          {
+            "pid": 2000,
+            "type": "Utility",
+            "cpuPercent": 0.0032252297277804527,
+            "cpuSeconds": 0.131778,
+            "workingSetKB": 55800,
+            "privateKB": 30356
+          },
+          {
+            "pid": 10828,
+            "type": "Tab",
+            "cpuPercent": 1.7158394005609583,
+            "cpuSeconds": 8.104548,
+            "workingSetKB": 192832,
+            "privateKB": 112792
+          }
+        ]
+      },
+      "ipcCalls": {
+        "agentApi": 6,
+        "getStatus": 3,
+        "getTasks": 3,
+        "listBalaWorkspaceImages": 3
+      }
+    }
+  ],
+  "errors": [],
+  "samples": [
+    {
+      "atMs": 1774.4378330000002,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 1.4144848928756646,
+          "cpuSeconds": 0.494122,
+          "workingSetKB": 151568,
+          "privateKB": 71404
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 0.34410281467359316,
+          "cpuSeconds": 0.1544,
+          "workingSetKB": 86228,
+          "privateKB": 36368
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.4858967057342406,
+          "cpuSeconds": 0.113202,
+          "workingSetKB": 71428,
+          "privateKB": 31460
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.1859847970137563,
+          "cpuSeconds": 0.500605,
+          "workingSetKB": 143872,
+          "privateKB": 74828
+        }
+      ]
+    },
+    {
+      "atMs": 2773.8555,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.30888658731230895,
+          "cpuSeconds": 0.506469,
+          "workingSetKB": 151684,
+          "privateKB": 71444
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.2549619603883713,
+          "cpuSeconds": 0.204566,
+          "workingSetKB": 86236,
+          "privateKB": 36376
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.0005253199198311772,
+          "cpuSeconds": 0.113223,
+          "workingSetKB": 71428,
+          "privateKB": 31460
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 0.7547294410519586,
+          "cpuSeconds": 0.530777,
+          "workingSetKB": 143836,
+          "privateKB": 74856
+        }
+      ]
+    },
+    {
+      "atMs": 3790.54975,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.3202754393367581,
+          "cpuSeconds": 0.519494,
+          "workingSetKB": 151752,
+          "privateKB": 71700
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.265093185296513,
+          "cpuSeconds": 0.256014,
+          "workingSetKB": 86240,
+          "privateKB": 36380
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.00014753788772956897,
+          "cpuSeconds": 0.113229,
+          "workingSetKB": 71428,
+          "privateKB": 31460
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 0.7638184677697769,
+          "cpuSeconds": 0.56184,
+          "workingSetKB": 143836,
+          "privateKB": 74856
+        }
+      ]
+    },
+    {
+      "atMs": 4809.0149169999995,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.5134777161618701,
+          "cpuSeconds": 0.540413,
+          "workingSetKB": 151768,
+          "privateKB": 71712
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.3384228090724952,
+          "cpuSeconds": 0.351282,
+          "workingSetKB": 86212,
+          "privateKB": 36324
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.004909213907213893,
+          "cpuSeconds": 0.113429,
+          "workingSetKB": 71400,
+          "privateKB": 31404
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.3729609199645745,
+          "cpuSeconds": 0.617773,
+          "workingSetKB": 143840,
+          "privateKB": 74860
+        }
+      ]
+    },
+    {
+      "atMs": 5824.3166249999995,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.83389308676605,
+          "cpuSeconds": 0.57428,
+          "workingSetKB": 151836,
+          "privateKB": 71728
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.834234974211397,
+          "cpuSeconds": 0.466394,
+          "workingSetKB": 86548,
+          "privateKB": 36680
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.006672056835091375,
+          "cpuSeconds": 0.1137,
+          "workingSetKB": 71420,
+          "privateKB": 31408
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.9307067679242458,
+          "cpuSeconds": 0.696198,
+          "workingSetKB": 143968,
+          "privateKB": 74864
+        }
+      ]
+    },
+    {
+      "atMs": 6824.584707999999,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.8212560869421782,
+          "cpuSeconds": 0.60714,
+          "workingSetKB": 152620,
+          "privateKB": 72360
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.08171215560907,
+          "cpuSeconds": 0.589706,
+          "workingSetKB": 86548,
+          "privateKB": 36680
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.1137,
+          "workingSetKB": 71420,
+          "privateKB": 31408
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.806182658927181,
+          "cpuSeconds": 0.768475,
+          "workingSetKB": 143988,
+          "privateKB": 74872
+        }
+      ]
+    },
+    {
+      "atMs": 7839.680667,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.8320765292703182,
+          "cpuSeconds": 0.640927,
+          "workingSetKB": 154080,
+          "privateKB": 72476
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.7068560947113953,
+          "cpuSeconds": 0.699618,
+          "workingSetKB": 86768,
+          "privateKB": 36752
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.1137,
+          "workingSetKB": 71420,
+          "privateKB": 31408
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.4326591157181063,
+          "cpuSeconds": 0.826695,
+          "workingSetKB": 144012,
+          "privateKB": 74876
+        }
+      ]
+    },
+    {
+      "atMs": 8854.429917,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.6677590364293988,
+          "cpuSeconds": 0.668044,
+          "workingSetKB": 154096,
+          "privateKB": 72476
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.716909504972341,
+          "cpuSeconds": 0.809948,
+          "workingSetKB": 86772,
+          "privateKB": 36752
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.15953338823501598,
+          "cpuSeconds": 0.120178,
+          "workingSetKB": 71576,
+          "privateKB": 31584
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.6262268736474195,
+          "cpuSeconds": 0.892672,
+          "workingSetKB": 144012,
+          "privateKB": 74876
+        }
+      ]
+    },
+    {
+      "atMs": 9869.704958,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.725065034882346,
+          "cpuSeconds": 0.697477,
+          "workingSetKB": 154104,
+          "privateKB": 72476
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.126691639780872,
+          "cpuSeconds": 0.93702,
+          "workingSetKB": 86776,
+          "privateKB": 36756
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.120178,
+          "workingSetKB": 71576,
+          "privateKB": 31584
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.8306035377050052,
+          "cpuSeconds": 0.96714,
+          "workingSetKB": 144012,
+          "privateKB": 74876
+        }
+      ]
+    },
+    {
+      "atMs": 10869.996625,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.9728008686445127,
+          "cpuSeconds": 0.736396,
+          "workingSetKB": 154136,
+          "privateKB": 72488
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.690109263087295,
+          "cpuSeconds": 1.044513,
+          "workingSetKB": 86776,
+          "privateKB": 36756
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.04870864520883143,
+          "cpuSeconds": 0.122124,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.7666611559483194,
+          "cpuSeconds": 1.037669,
+          "workingSetKB": 141712,
+          "privateKB": 72692
+        }
+      ]
+    },
+    {
+      "atMs": 11869.9005,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.5419286509364427,
+          "cpuSeconds": 0.758071,
+          "workingSetKB": 154136,
+          "privateKB": 72488
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.05255315090192,
+          "cpuSeconds": 1.126718,
+          "workingSetKB": 86748,
+          "privateKB": 36700
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122124,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.198792768194116,
+          "cpuSeconds": 1.085683,
+          "workingSetKB": 141716,
+          "privateKB": 72696
+        }
+      ]
+    },
+    {
+      "atMs": 12869.842042,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.5582919950394047,
+          "cpuSeconds": 0.7804,
+          "workingSetKB": 152868,
+          "privateKB": 72488
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.303604461684379,
+          "cpuSeconds": 1.21872,
+          "workingSetKB": 86748,
+          "privateKB": 36700
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.0023789752676722804,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.242960853180147,
+          "cpuSeconds": 1.135328,
+          "workingSetKB": 141724,
+          "privateKB": 72724
+        }
+      ]
+    },
+    {
+      "atMs": 13870.293292,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.4953647017666608,
+          "cpuSeconds": 0.800224,
+          "workingSetKB": 152888,
+          "privateKB": 72504
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.1723410018400817,
+          "cpuSeconds": 1.305657,
+          "workingSetKB": 86616,
+          "privateKB": 36700
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.2185685493545755,
+          "cpuSeconds": 1.184084,
+          "workingSetKB": 141724,
+          "privateKB": 72724
+        }
+      ]
+    },
+    {
+      "atMs": 14885.53925,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.5676776331663983,
+          "cpuSeconds": 0.82328,
+          "workingSetKB": 152876,
+          "privateKB": 72464
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.339123850708824,
+          "cpuSeconds": 1.400684,
+          "workingSetKB": 86616,
+          "privateKB": 36700
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.3331270245484494,
+          "cpuSeconds": 1.238277,
+          "workingSetKB": 141700,
+          "privateKB": 72672
+        }
+      ]
+    },
+    {
+      "atMs": 15885.420708,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.5901042328269891,
+          "cpuSeconds": 0.846879,
+          "workingSetKB": 152880,
+          "privateKB": 72468
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.324646782731867,
+          "cpuSeconds": 1.493639,
+          "workingSetKB": 86616,
+          "privateKB": 36700
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.6364811901244651,
+          "cpuSeconds": 1.303681,
+          "workingSetKB": 142240,
+          "privateKB": 73676
+        }
+      ]
+    },
+    {
+      "atMs": 16887.189417,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.5573505896162853,
+          "cpuSeconds": 0.869214,
+          "workingSetKB": 152900,
+          "privateKB": 72488
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.318389804115726,
+          "cpuSeconds": 1.586543,
+          "workingSetKB": 86620,
+          "privateKB": 36700
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.3756473296932838,
+          "cpuSeconds": 1.358817,
+          "workingSetKB": 142268,
+          "privateKB": 73684
+        }
+      ]
+    },
+    {
+      "atMs": 17901.548958000003,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.5895326527835564,
+          "cpuSeconds": 0.893132,
+          "workingSetKB": 152916,
+          "privateKB": 72504
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.383487841480754,
+          "cpuSeconds": 1.683235,
+          "workingSetKB": 86632,
+          "privateKB": 36712
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.316534108666996,
+          "cpuSeconds": 1.41223,
+          "workingSetKB": 142268,
+          "privateKB": 73684
+        }
+      ]
+    },
+    {
+      "atMs": 18915.787167000002,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.6029382332149903,
+          "cpuSeconds": 0.917594,
+          "workingSetKB": 152992,
+          "privateKB": 72612
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.3696150937592124,
+          "cpuSeconds": 1.77937,
+          "workingSetKB": 86632,
+          "privateKB": 36712
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.3416089641159181,
+          "cpuSeconds": 1.466636,
+          "workingSetKB": 142268,
+          "privateKB": 73684
+        }
+      ]
+    },
+    {
+      "atMs": 19931.193125,
+      "scene": "idle-first-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.3052344332408619,
+          "cpuSeconds": 0.929992,
+          "workingSetKB": 152996,
+          "privateKB": 72612
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.2783464349853493,
+          "cpuSeconds": 1.831304,
+          "workingSetKB": 86632,
+          "privateKB": 36712
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 0.7557846537869453,
+          "cpuSeconds": 1.49735,
+          "workingSetKB": 142240,
+          "privateKB": 73628
+        }
+      ]
+    },
+    {
+      "atMs": 20942.554292,
+      "scene": "view-scripts",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 2.7041482021322865,
+          "cpuSeconds": 0.965647,
+          "workingSetKB": 153332,
+          "privateKB": 72848
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.5572306499183342,
+          "cpuSeconds": 1.882297,
+          "workingSetKB": 86664,
+          "privateKB": 36736
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 20.315307908244165,
+          "cpuSeconds": 1.607966,
+          "workingSetKB": 148500,
+          "privateKB": 74916
+        }
+      ]
+    },
+    {
+      "atMs": 21946.418042,
+      "scene": "view-scripts",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.3294553178093164,
+          "cpuSeconds": 0.978875,
+          "workingSetKB": 153332,
+          "privateKB": 72852
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.934365619336732,
+          "cpuSeconds": 1.95996,
+          "workingSetKB": 92716,
+          "privateKB": 36928
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 0.9315411875705506,
+          "cpuSeconds": 1.645366,
+          "workingSetKB": 151124,
+          "privateKB": 75536
+        }
+      ]
+    },
+    {
+      "atMs": 22945.841708,
+      "scene": "view-task_center",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 1.1166304153072406,
+          "cpuSeconds": 1.027177,
+          "workingSetKB": 153700,
+          "privateKB": 73176
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.2642601293397506,
+          "cpuSeconds": 2.009772,
+          "workingSetKB": 92844,
+          "privateKB": 36968
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 2.9991927924174564,
+          "cpuSeconds": 1.762717,
+          "workingSetKB": 158524,
+          "privateKB": 80448
+        }
+      ]
+    },
+    {
+      "atMs": 23959.523917000002,
+      "scene": "view-ai_image",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.328822312814566,
+          "cpuSeconds": 1.049799,
+          "workingSetKB": 153884,
+          "privateKB": 73100
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.1218308882598218,
+          "cpuSeconds": 2.05404,
+          "workingSetKB": 93248,
+          "privateKB": 36992
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 2.9656086231538827,
+          "cpuSeconds": 1.868331,
+          "workingSetKB": 165528,
+          "privateKB": 85588
+        }
+      ]
+    },
+    {
+      "atMs": 24973.727792,
+      "scene": "view-ai_video_generation",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.721699321794449,
+          "cpuSeconds": 1.091553,
+          "workingSetKB": 154316,
+          "privateKB": 73484
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.3159944430204251,
+          "cpuSeconds": 2.10681,
+          "workingSetKB": 95004,
+          "privateKB": 37016
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 5.191458287294383,
+          "cpuSeconds": 2.03049,
+          "workingSetKB": 174048,
+          "privateKB": 89968
+        }
+      ]
+    },
+    {
+      "atMs": 25977.995417000002,
+      "scene": "view-ai_video",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 1.1444723517761308,
+          "cpuSeconds": 1.12265,
+          "workingSetKB": 154532,
+          "privateKB": 73648
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.278051128035752,
+          "cpuSeconds": 2.146679,
+          "workingSetKB": 95948,
+          "privateKB": 37028
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 6.868269046401636,
+          "cpuSeconds": 2.179426,
+          "workingSetKB": 184760,
+          "privateKB": 98812
+        }
+      ]
+    },
+    {
+      "atMs": 26979.779792,
+      "scene": "view-buyer_show_workflow",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.9704980832245258,
+          "cpuSeconds": 1.153922,
+          "workingSetKB": 154012,
+          "privateKB": 73008
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.520224181037603,
+          "cpuSeconds": 2.199907,
+          "workingSetKB": 96188,
+          "privateKB": 37004
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 4.066548200304707,
+          "cpuSeconds": 2.270288,
+          "workingSetKB": 189000,
+          "privateKB": 101476
+        }
+      ]
+    },
+    {
+      "atMs": 27992.855958,
+      "scene": "view-local_prompt_library",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.5673592008107717,
+          "cpuSeconds": 1.178939,
+          "workingSetKB": 154424,
+          "privateKB": 73272
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.2381827921184834,
+          "cpuSeconds": 2.25151,
+          "workingSetKB": 96268,
+          "privateKB": 37004
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 2.925912119490277,
+          "cpuSeconds": 2.328607,
+          "workingSetKB": 189496,
+          "privateKB": 101728
+        }
+      ]
+    },
+    {
+      "atMs": 28993.935542000003,
+      "scene": "view-files",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.6139850481880685,
+          "cpuSeconds": 1.194765,
+          "workingSetKB": 154464,
+          "privateKB": 73288
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.5819288754930863,
+          "cpuSeconds": 2.290143,
+          "workingSetKB": 96208,
+          "privateKB": 36944
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 4.019682604492534,
+          "cpuSeconds": 2.37515,
+          "workingSetKB": 189896,
+          "privateKB": 102116
+        }
+      ]
+    },
+    {
+      "atMs": 29994.863875000003,
+      "scene": "view-settings",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 1.937909490503967,
+          "cpuSeconds": 1.222618,
+          "workingSetKB": 154724,
+          "privateKB": 73468
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.1939813662879102,
+          "cpuSeconds": 2.34068,
+          "workingSetKB": 96208,
+          "privateKB": 36944
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122219,
+          "workingSetKB": 71624,
+          "privateKB": 31592
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 20.496077239702753,
+          "cpuSeconds": 2.466851,
+          "workingSetKB": 187968,
+          "privateKB": 99524
+        }
+      ]
+    },
+    {
+      "atMs": 30997.844917000002,
+      "scene": "view-settings",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 1.366992004466333,
+          "cpuSeconds": 1.277465,
+          "workingSetKB": 155300,
+          "privateKB": 72764
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.2721880218328638,
+          "cpuSeconds": 2.391724,
+          "workingSetKB": 96468,
+          "privateKB": 37344
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.00934640001595119,
+          "cpuSeconds": 0.122594,
+          "workingSetKB": 71628,
+          "privateKB": 31596
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 3.249480593539022,
+          "cpuSeconds": 2.597229,
+          "workingSetKB": 188388,
+          "privateKB": 98840
+        }
+      ]
+    },
+    {
+      "atMs": 31997.902542,
+      "scene": "view-agent",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.30347776718700353,
+          "cpuSeconds": 1.301669,
+          "workingSetKB": 154936,
+          "privateKB": 72384
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.1747807586204742,
+          "cpuSeconds": 2.438118,
+          "workingSetKB": 96368,
+          "privateKB": 37348
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122594,
+          "workingSetKB": 71628,
+          "privateKB": 31596
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.881878496162352,
+          "cpuSeconds": 2.671439,
+          "workingSetKB": 186488,
+          "privateKB": 98252
+        }
+      ]
+    },
+    {
+      "atMs": 33011.472917,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.3071223211433492,
+          "cpuSeconds": 1.326701,
+          "workingSetKB": 155488,
+          "privateKB": 72868
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.1563830119727416,
+          "cpuSeconds": 2.486933,
+          "workingSetKB": 95396,
+          "privateKB": 37348
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.122594,
+          "workingSetKB": 71628,
+          "privateKB": 31596
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 0.7924328867607355,
+          "cpuSeconds": 2.705773,
+          "workingSetKB": 183696,
+          "privateKB": 98516
+        }
+      ]
+    },
+    {
+      "atMs": 34023.656083,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.2615464262814021,
+          "cpuSeconds": 1.33729,
+          "workingSetKB": 155684,
+          "privateKB": 73124
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 0.9111629689932896,
+          "cpuSeconds": 2.523823,
+          "workingSetKB": 93156,
+          "privateKB": 37352
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.010571378043346602,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 0.577884631534021,
+          "cpuSeconds": 2.72917,
+          "workingSetKB": 183764,
+          "privateKB": 98580
+        }
+      ]
+    },
+    {
+      "atMs": 35024.9015,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.3114325949303877,
+          "cpuSeconds": 1.349763,
+          "workingSetKB": 155892,
+          "privateKB": 73380
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.2738711961640294,
+          "cpuSeconds": 2.574842,
+          "workingSetKB": 93156,
+          "privateKB": 37352
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 0.7921035337545368,
+          "cpuSeconds": 2.760894,
+          "workingSetKB": 181716,
+          "privateKB": 98580
+        }
+      ]
+    },
+    {
+      "atMs": 36037.812417,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.3416641162590951,
+          "cpuSeconds": 1.363606,
+          "workingSetKB": 155892,
+          "privateKB": 73380
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.275606914730825,
+          "cpuSeconds": 2.626525,
+          "workingSetKB": 91112,
+          "privateKB": 37356
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.0508656801292917,
+          "cpuSeconds": 2.803471,
+          "workingSetKB": 181800,
+          "privateKB": 98596
+        }
+      ]
+    },
+    {
+      "atMs": 37041.856583,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.20865266154148004,
+          "cpuSeconds": 1.371986,
+          "workingSetKB": 155924,
+          "privateKB": 73388
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 0.711181911982057,
+          "cpuSeconds": 2.655088,
+          "workingSetKB": 91112,
+          "privateKB": 37356
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 0.4797426499880488,
+          "cpuSeconds": 2.822739,
+          "workingSetKB": 178184,
+          "privateKB": 98588
+        }
+      ]
+    },
+    {
+      "atMs": 38041.667583,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.3613860742465477,
+          "cpuSeconds": 1.386439,
+          "workingSetKB": 155924,
+          "privateKB": 73388
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.3397848903148635,
+          "cpuSeconds": 2.708672,
+          "workingSetKB": 87536,
+          "privateKB": 37352
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 0.8373661519260022,
+          "cpuSeconds": 2.856231,
+          "workingSetKB": 178200,
+          "privateKB": 98596
+        }
+      ]
+    },
+    {
+      "atMs": 39042.180458,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.6422704667023803,
+          "cpuSeconds": 1.412144,
+          "workingSetKB": 155008,
+          "privateKB": 72136
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.3013173583272617,
+          "cpuSeconds": 2.760754,
+          "workingSetKB": 87536,
+          "privateKB": 37352
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 0.8227409105719009,
+          "cpuSeconds": 2.889159,
+          "workingSetKB": 178200,
+          "privateKB": 98596
+        }
+      ]
+    },
+    {
+      "atMs": 40041.910917,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.6180405735872608,
+          "cpuSeconds": 1.436861,
+          "workingSetKB": 155356,
+          "privateKB": 72608
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.8398027911256007,
+          "cpuSeconds": 2.874341,
+          "workingSetKB": 87536,
+          "privateKB": 37352
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.8565393251238127,
+          "cpuSeconds": 2.963443,
+          "workingSetKB": 178176,
+          "privateKB": 98544
+        }
+      ]
+    },
+    {
+      "atMs": 41041.788917,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.8712338303382013,
+          "cpuSeconds": 1.471703,
+          "workingSetKB": 155564,
+          "privateKB": 72936
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.12997334213593,
+          "cpuSeconds": 2.999503,
+          "workingSetKB": 87540,
+          "privateKB": 37356
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 2.683704855503591,
+          "cpuSeconds": 3.070727,
+          "workingSetKB": 178288,
+          "privateKB": 98600
+        }
+      ]
+    },
+    {
+      "atMs": 42042.263833000005,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.8121423045631093,
+          "cpuSeconds": 1.504205,
+          "workingSetKB": 155700,
+          "privateKB": 73192
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.1540984163664785,
+          "cpuSeconds": 3.125728,
+          "workingSetKB": 87540,
+          "privateKB": 37356
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 2.020284046614828,
+          "cpuSeconds": 3.151582,
+          "workingSetKB": 178296,
+          "privateKB": 98604
+        }
+      ]
+    },
+    {
+      "atMs": 43043.383292,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.7065466564516145,
+          "cpuSeconds": 1.532499,
+          "workingSetKB": 155840,
+          "privateKB": 73448
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.6613432476518586,
+          "cpuSeconds": 3.2323,
+          "workingSetKB": 87540,
+          "privateKB": 37356
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.6540307557073863,
+          "cpuSeconds": 3.217817,
+          "workingSetKB": 178296,
+          "privateKB": 98604
+        }
+      ]
+    },
+    {
+      "atMs": 44057.006292,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.8017740796135738,
+          "cpuSeconds": 1.565006,
+          "workingSetKB": 156044,
+          "privateKB": 73704
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.1173210644638467,
+          "cpuSeconds": 3.358705,
+          "workingSetKB": 87540,
+          "privateKB": 37356
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 2.0437134377468924,
+          "cpuSeconds": 3.300698,
+          "workingSetKB": 178296,
+          "privateKB": 98604
+        }
+      ]
+    },
+    {
+      "atMs": 45058.82925,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.8201818123747395,
+          "cpuSeconds": 1.597876,
+          "workingSetKB": 156412,
+          "privateKB": 74184
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.1391397916007455,
+          "cpuSeconds": 3.4845,
+          "workingSetKB": 87540,
+          "privateKB": 37356
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 2.1132623571867093,
+          "cpuSeconds": 3.385376,
+          "workingSetKB": 178292,
+          "privateKB": 98604
+        }
+      ]
+    },
+    {
+      "atMs": 46072.585292,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.8573129716466901,
+          "cpuSeconds": 1.632635,
+          "workingSetKB": 156536,
+          "privateKB": 74396
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.3253495278783634,
+          "cpuSeconds": 3.619311,
+          "workingSetKB": 87540,
+          "privateKB": 37356
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 2.2853824528650044,
+          "cpuSeconds": 3.478018,
+          "workingSetKB": 178380,
+          "privateKB": 98604
+        }
+      ]
+    },
+    {
+      "atMs": 47073.342875,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.7332358283032326,
+          "cpuSeconds": 1.661993,
+          "workingSetKB": 156804,
+          "privateKB": 74964
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.212120304056416,
+          "cpuSeconds": 3.747941,
+          "workingSetKB": 87540,
+          "privateKB": 37356
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.9570019834175902,
+          "cpuSeconds": 3.5564,
+          "workingSetKB": 178380,
+          "privateKB": 98604
+        }
+      ]
+    },
+    {
+      "atMs": 48074.094083,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.6680896862062039,
+          "cpuSeconds": 1.688735,
+          "workingSetKB": 156968,
+          "privateKB": 75224
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.917456926271527,
+          "cpuSeconds": 3.864724,
+          "workingSetKB": 87540,
+          "privateKB": 37356
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.6553738761333592,
+          "cpuSeconds": 3.622667,
+          "workingSetKB": 178380,
+          "privateKB": 98604
+        }
+      ]
+    },
+    {
+      "atMs": 49088.305,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.7163740527641783,
+          "cpuSeconds": 1.717795,
+          "workingSetKB": 157132,
+          "privateKB": 75484
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.0624818788054506,
+          "cpuSeconds": 3.988939,
+          "workingSetKB": 87540,
+          "privateKB": 37356
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.7523000309761838,
+          "cpuSeconds": 3.693718,
+          "workingSetKB": 178380,
+          "privateKB": 98604
+        }
+      ]
+    },
+    {
+      "atMs": 50088.631875,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.7784296479900854,
+          "cpuSeconds": 1.748949,
+          "workingSetKB": 156724,
+          "privateKB": 75164
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.2412062059260918,
+          "cpuSeconds": 4.118664,
+          "workingSetKB": 87540,
+          "privateKB": 37356
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.9357235361598202,
+          "cpuSeconds": 3.771203,
+          "workingSetKB": 178380,
+          "privateKB": 98604
+        }
+      ]
+    },
+    {
+      "atMs": 51088.82825,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.7567008144470609,
+          "cpuSeconds": 1.779219,
+          "workingSetKB": 157220,
+          "privateKB": 75744
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.1520791378272497,
+          "cpuSeconds": 4.244757,
+          "workingSetKB": 87540,
+          "privateKB": 37356
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 2.291158414653655,
+          "cpuSeconds": 3.862864,
+          "workingSetKB": 178464,
+          "privateKB": 98884
+        }
+      ]
+    },
+    {
+      "atMs": 52089.166833,
+      "scene": "idle-after-workflows-20s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.7195062473640341,
+          "cpuSeconds": 1.808016,
+          "workingSetKB": 157440,
+          "privateKB": 76000
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.1589396560598293,
+          "cpuSeconds": 4.371188,
+          "workingSetKB": 87540,
+          "privateKB": 37356
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.8481893370963036,
+          "cpuSeconds": 3.936838,
+          "workingSetKB": 178472,
+          "privateKB": 98892
+        }
+      ]
+    },
+    {
+      "atMs": 53088.848958,
+      "scene": "switch-30-times",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.8360888379343852,
+          "cpuSeconds": 1.85206,
+          "workingSetKB": 156064,
+          "privateKB": 73224
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 6.426129471656737,
+          "cpuSeconds": 4.6052,
+          "workingSetKB": 98712,
+          "privateKB": 40568
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 15.935785814424243,
+          "cpuSeconds": 4.496537,
+          "workingSetKB": 203124,
+          "privateKB": 114664
+        }
+      ]
+    },
+    {
+      "atMs": 54168.271583,
+      "scene": "directory-1000",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 21.07835366155736,
+          "cpuSeconds": 2.650782,
+          "workingSetKB": 168356,
+          "privateKB": 80500
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.9288910537961097,
+          "cpuSeconds": 4.724998,
+          "workingSetKB": 96548,
+          "privateKB": 37472
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.1430764912744142,
+          "cpuSeconds": 4.611803,
+          "workingSetKB": 206720,
+          "privateKB": 118288
+        }
+      ]
+    },
+    {
+      "atMs": 57791.291083000004,
+      "scene": "directory-10000",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 16.428682538171664,
+          "cpuSeconds": 4.996932,
+          "workingSetKB": 169032,
+          "privateKB": 81208
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.4474330717504527,
+          "cpuSeconds": 4.936092,
+          "workingSetKB": 96512,
+          "privateKB": 37416
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 0.9591065353846984,
+          "cpuSeconds": 4.752395,
+          "workingSetKB": 206720,
+          "privateKB": 118288
+        }
+      ]
+    },
+    {
+      "atMs": 59402.518583000005,
+      "scene": "directory-10000",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 23.963038234462697,
+          "cpuSeconds": 6.541162,
+          "workingSetKB": 187080,
+          "privateKB": 98488
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.2306318547028718,
+          "cpuSeconds": 5.015144,
+          "workingSetKB": 88060,
+          "privateKB": 37428
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.123022,
+          "workingSetKB": 71348,
+          "privateKB": 31252
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 0.8333265874303278,
+          "cpuSeconds": 4.808198,
+          "workingSetKB": 198212,
+          "privateKB": 118288
+        }
+      ]
+    },
+    {
+      "atMs": 61833.3885,
+      "scene": "directory-10000",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 19.817293665315002,
+          "cpuSeconds": 8.56218,
+          "workingSetKB": 393064,
+          "privateKB": 310792
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.838508917466762,
+          "cpuSeconds": 5.176167,
+          "workingSetKB": 87828,
+          "privateKB": 37108
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.025252275486562205,
+          "cpuSeconds": 0.126042,
+          "workingSetKB": 70652,
+          "privateKB": 30360
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.064349978425547,
+          "cpuSeconds": 4.903961,
+          "workingSetKB": 198156,
+          "privateKB": 118288
+        }
+      ]
+    },
+    {
+      "atMs": 64495.956708,
+      "scene": "thumbnail-24mp-6",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 20.735832145839602,
+          "cpuSeconds": 10.67615,
+          "workingSetKB": 667008,
+          "privateKB": 575876
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.6458572787421395,
+          "cpuSeconds": 5.349356,
+          "workingSetKB": 87824,
+          "privateKB": 37104
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.006975360424065382,
+          "cpuSeconds": 0.126653,
+          "workingSetKB": 69112,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 0.9577736597287994,
+          "cpuSeconds": 5.014858,
+          "workingSetKB": 192236,
+          "privateKB": 112220
+        }
+      ]
+    },
+    {
+      "atMs": 69326.12874999999,
+      "scene": "thumbnail-24mp-12",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 20.547099698580336,
+          "cpuSeconds": 14.617794,
+          "workingSetKB": 1324220,
+          "privateKB": 1234288
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.6146673848358233,
+          "cpuSeconds": 5.662897,
+          "workingSetKB": 84924,
+          "privateKB": 37104
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.0023271526946859336,
+          "cpuSeconds": 0.127098,
+          "workingSetKB": 66224,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 0.9911095519338853,
+          "cpuSeconds": 5.211,
+          "workingSetKB": 192184,
+          "privateKB": 112220
+        }
+      ]
+    },
+    {
+      "atMs": 84508.55374999999,
+      "scene": "windows-acl-repeat-3",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.10226189524761709,
+          "cpuSeconds": 14.744672,
+          "workingSetKB": 267972,
+          "privateKB": 175992
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 1.2166595633730453,
+          "cpuSeconds": 6.401534,
+          "workingSetKB": 76900,
+          "privateKB": 37112
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.0049536693805607625,
+          "cpuSeconds": 0.130093,
+          "workingSetKB": 60216,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 0.7663837079953313,
+          "cpuSeconds": 5.678529,
+          "workingSetKB": 191892,
+          "privateKB": 112164
+        }
+      ]
+    },
+    {
+      "atMs": 85508.91245799999,
+      "scene": "renderer-only-4x-switch-12",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.5437576454444167,
+          "cpuSeconds": 14.805183,
+          "workingSetKB": 170592,
+          "privateKB": 77760
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 6.548952299820706,
+          "cpuSeconds": 6.653437,
+          "workingSetKB": 84504,
+          "privateKB": 37464
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.130503,
+          "workingSetKB": 59652,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 33.2533179457588,
+          "cpuSeconds": 6.964327,
+          "workingSetKB": 206152,
+          "privateKB": 114692
+        }
+      ]
+    },
+    {
+      "atMs": 86512.11649999999,
+      "scene": "idle-final-15s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.6723322412653437,
+          "cpuSeconds": 14.840929,
+          "workingSetKB": 171040,
+          "privateKB": 78240
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.889549396536195,
+          "cpuSeconds": 6.772509,
+          "workingSetKB": 83720,
+          "privateKB": 37464
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.130503,
+          "workingSetKB": 59052,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 2.0970606728252963,
+          "cpuSeconds": 7.063442,
+          "workingSetKB": 206336,
+          "privateKB": 114740
+        }
+      ]
+    },
+    {
+      "atMs": 87525.922333,
+      "scene": "idle-final-15s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.685558308346086,
+          "cpuSeconds": 14.868722,
+          "workingSetKB": 171196,
+          "privateKB": 78496
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.7970414773467445,
+          "cpuSeconds": 6.885876,
+          "workingSetKB": 83048,
+          "privateKB": 37464
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.130503,
+          "workingSetKB": 58768,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.7363349288625611,
+          "cpuSeconds": 7.133801,
+          "workingSetKB": 206336,
+          "privateKB": 114740
+        }
+      ]
+    },
+    {
+      "atMs": 88527.79108299999,
+      "scene": "idle-final-15s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.8640617966256998,
+          "cpuSeconds": 14.903349,
+          "workingSetKB": 169216,
+          "privateKB": 77448
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.1733559175191464,
+          "cpuSeconds": 7.013049,
+          "workingSetKB": 82168,
+          "privateKB": 37196
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.005963674981210681,
+          "cpuSeconds": 0.130742,
+          "workingSetKB": 58276,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.931376629546786,
+          "cpuSeconds": 7.211202,
+          "workingSetKB": 206324,
+          "privateKB": 114740
+        }
+      ]
+    },
+    {
+      "atMs": 89530.22399999999,
+      "scene": "idle-final-15s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.8031454514442005,
+          "cpuSeconds": 14.935556,
+          "workingSetKB": 169296,
+          "privateKB": 78616
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.7020806986328147,
+          "cpuSeconds": 7.121418,
+          "workingSetKB": 81412,
+          "privateKB": 37144
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.130742,
+          "workingSetKB": 57880,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.7145343430185094,
+          "cpuSeconds": 7.280004,
+          "workingSetKB": 206324,
+          "privateKB": 114740
+        }
+      ]
+    },
+    {
+      "atMs": 90543.32766699999,
+      "scene": "idle-final-15s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.7346447190148622,
+          "cpuSeconds": 14.965335,
+          "workingSetKB": 168772,
+          "privateKB": 78872
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.0768228986816997,
+          "cpuSeconds": 7.246162,
+          "workingSetKB": 80852,
+          "privateKB": 37144
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.006241803007710231,
+          "cpuSeconds": 0.130995,
+          "workingSetKB": 57356,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.8922043244182007,
+          "cpuSeconds": 7.356707,
+          "workingSetKB": 197932,
+          "privateKB": 114736
+        }
+      ]
+    },
+    {
+      "atMs": 91556.98408299999,
+      "scene": "idle-final-15s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.8989369471078882,
+          "cpuSeconds": 15.001771,
+          "workingSetKB": 168112,
+          "privateKB": 79128
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.390420591878328,
+          "cpuSeconds": 7.383571,
+          "workingSetKB": 72564,
+          "privateKB": 37160
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.002911369044153132,
+          "cpuSeconds": 0.131113,
+          "workingSetKB": 56804,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 2.51321223964116,
+          "cpuSeconds": 7.458569,
+          "workingSetKB": 198456,
+          "privateKB": 115744
+        }
+      ]
+    },
+    {
+      "atMs": 92559.95474999999,
+      "scene": "idle-final-15s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.7575296865700359,
+          "cpuSeconds": 15.032165,
+          "workingSetKB": 165224,
+          "privateKB": 76668
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.969090234739537,
+          "cpuSeconds": 7.502689,
+          "workingSetKB": 72532,
+          "privateKB": 37148
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.003714213922768281,
+          "cpuSeconds": 0.131262,
+          "workingSetKB": 56320,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.7187836576434263,
+          "cpuSeconds": 7.527509,
+          "workingSetKB": 198456,
+          "privateKB": 115744
+        }
+      ]
+    },
+    {
+      "atMs": 93575.556,
+      "scene": "idle-final-15s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 1.117938609618929,
+          "cpuSeconds": 15.077583,
+          "workingSetKB": 165344,
+          "privateKB": 76892
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.394627434031699,
+          "cpuSeconds": 7.599983,
+          "workingSetKB": 72532,
+          "privateKB": 37148
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.131262,
+          "workingSetKB": 56048,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.5778841240884895,
+          "cpuSeconds": 7.591619,
+          "workingSetKB": 195428,
+          "privateKB": 112592
+        }
+      ]
+    },
+    {
+      "atMs": 94591.77091699999,
+      "scene": "idle-final-15s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.786453567879736,
+          "cpuSeconds": 15.109558,
+          "workingSetKB": 165132,
+          "privateKB": 77148
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.0261526654466024,
+          "cpuSeconds": 7.723007,
+          "workingSetKB": 72532,
+          "privateKB": 37148
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.131262,
+          "workingSetKB": 55844,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.8470007387609473,
+          "cpuSeconds": 7.666723,
+          "workingSetKB": 195428,
+          "privateKB": 112592
+        }
+      ]
+    },
+    {
+      "atMs": 95605.750542,
+      "scene": "idle-final-15s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.9601724161745235,
+          "cpuSeconds": 15.148487,
+          "workingSetKB": 165528,
+          "privateKB": 77788
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.441546523893208,
+          "cpuSeconds": 7.86252,
+          "workingSetKB": 72532,
+          "privateKB": 37148
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.131262,
+          "workingSetKB": 55800,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 2.1155750271227567,
+          "cpuSeconds": 7.752445,
+          "workingSetKB": 195416,
+          "privateKB": 112592
+        }
+      ]
+    },
+    {
+      "atMs": 96619.73304199999,
+      "scene": "idle-final-15s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.8402267557149915,
+          "cpuSeconds": 15.182571,
+          "workingSetKB": 164080,
+          "privateKB": 76580
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.9325476330392464,
+          "cpuSeconds": 7.981489,
+          "workingSetKB": 72532,
+          "privateKB": 37148
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0.009587760792022983,
+          "cpuSeconds": 0.131651,
+          "workingSetKB": 55800,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.9164870827755225,
+          "cpuSeconds": 7.830207,
+          "workingSetKB": 195444,
+          "privateKB": 112848
+        }
+      ]
+    },
+    {
+      "atMs": 97621.530292,
+      "scene": "idle-final-15s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.7113441686799912,
+          "cpuSeconds": 15.211072,
+          "workingSetKB": 165272,
+          "privateKB": 77780
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.4205721679125936,
+          "cpuSeconds": 8.078473,
+          "workingSetKB": 72532,
+          "privateKB": 37148
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.131651,
+          "workingSetKB": 55800,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.4732343005950153,
+          "cpuSeconds": 7.889224,
+          "workingSetKB": 195444,
+          "privateKB": 112848
+        }
+      ]
+    },
+    {
+      "atMs": 98623.22458299999,
+      "scene": "idle-final-15s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.8101856472701866,
+          "cpuSeconds": 15.243541,
+          "workingSetKB": 165348,
+          "privateKB": 78316
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 3.2382104895453865,
+          "cpuSeconds": 8.208254,
+          "workingSetKB": 72532,
+          "privateKB": 37148
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.131651,
+          "workingSetKB": 55800,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.917868504983654,
+          "cpuSeconds": 7.966098,
+          "workingSetKB": 194928,
+          "privateKB": 112848
+        }
+      ]
+    },
+    {
+      "atMs": 99636.72158299999,
+      "scene": "idle-final-15s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 0.7102855845898792,
+          "cpuSeconds": 15.272332,
+          "workingSetKB": 164396,
+          "privateKB": 78572
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 2.9489717180528063,
+          "cpuSeconds": 8.327798,
+          "workingSetKB": 72532,
+          "privateKB": 37148
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.131651,
+          "workingSetKB": 55800,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 1.7485508497570361,
+          "cpuSeconds": 8.036986,
+          "workingSetKB": 193948,
+          "privateKB": 112792
+        }
+      ]
+    },
+    {
+      "atMs": 100650.215958,
+      "scene": "idle-final-15s",
+      "processes": [
+        {
+          "pid": 5080,
+          "type": "Browser",
+          "cpuPercent": 10.23906532943307,
+          "cpuSeconds": 15.315996,
+          "workingSetKB": 164460,
+          "privateKB": 79060
+        },
+        {
+          "pid": 4020,
+          "type": "GPU",
+          "cpuPercent": 22.407866266489844,
+          "cpuSeconds": 8.464106,
+          "workingSetKB": 83400,
+          "privateKB": 48984
+        },
+        {
+          "pid": 2000,
+          "type": "Utility",
+          "cpuPercent": 0,
+          "cpuSeconds": 0.131778,
+          "workingSetKB": 55800,
+          "privateKB": 30356
+        },
+        {
+          "pid": 10828,
+          "type": "Tab",
+          "cpuPercent": 3.858802127064092,
+          "cpuSeconds": 8.10896,
+          "workingSetKB": 189268,
+          "privateKB": 108924
+        }
+      ]
+    }
+  ],
+  "shellReadyMs": 768.21975,
+  "initial": {
+    "renderer": {
+      "heap": 11200000,
+      "dom": 128,
+      "images": 0,
+      "body": 157
+    },
+    "processes": [
+      {
+        "pid": 5080,
+        "type": "Browser",
+        "cpuPercent": 0,
+        "cpuSeconds": 0.421875,
+        "workingSetKB": 151580,
+        "privateKB": 72012
+      },
+      {
+        "pid": 4020,
+        "type": "GPU",
+        "cpuPercent": 0,
+        "cpuSeconds": 0.125,
+        "workingSetKB": 83696,
+        "privateKB": 35908
+      },
+      {
+        "pid": 2000,
+        "type": "Utility",
+        "cpuPercent": 0,
+        "cpuSeconds": 0.09375,
+        "workingSetKB": 71468,
+        "privateKB": 31580
+      },
+      {
+        "pid": 10828,
+        "type": "Tab",
+        "cpuPercent": 0,
+        "cpuSeconds": 0.453125,
+        "workingSetKB": 134660,
+        "privateKB": 72284
+      }
+    ]
+  },
+  "fixtureImage": {
+    "width": 6000,
+    "height": 4000,
+    "bytes": 15231531
+  },
+  "finishedAt": "2026-09-15T02:08:35.499Z"
+}

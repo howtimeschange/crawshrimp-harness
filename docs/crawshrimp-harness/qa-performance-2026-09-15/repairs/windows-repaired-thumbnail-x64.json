@@ -1,0 +1,27 @@
+{
+  "platform": "win32",
+  "arch": "x64",
+  "rows": [
+    {
+      "count": 1,
+      "elapsedMs": 364.07287499999995,
+      "maxTimerGapMs": 38.46116600000002,
+      "ticks": 19,
+      "bytes": 2317
+    },
+    {
+      "count": 6,
+      "elapsedMs": 1654.0203749999998,
+      "maxTimerGapMs": 23.189374999999927,
+      "ticks": 99,
+      "bytes": 13902
+    },
+    {
+      "count": 12,
+      "elapsedMs": 3050.1098749999996,
+      "maxTimerGapMs": 25.734666999999718,
+      "ticks": 185,
+      "bytes": 27804
+    }
+  ]
+}

@@ -27,6 +27,7 @@
       </div>
       <div class="task-output-actions">
         <slot name="actions" />
+        <button v-if="activeTab === 'logs' && downloadable" type="button" @click="$emit('download-logs')">下载完整日志</button>
         <button v-if="activeTab === 'logs'" type="button" @click="$emit('clear-logs')">清空</button>
         <button
           type="button"
@@ -72,9 +73,11 @@
     </header>
 
     <div v-if="drawerState !== 'minimized'" class="task-output-body">
-      <div v-show="activeTab === 'logs'" ref="logBodyEl" class="task-output-log">
+      <div v-show="activeTab === 'logs'" ref="logBodyEl" class="task-output-log" @scroll="scrollTop = $event.target.scrollTop">
         <div v-if="!logs.length" class="task-output-empty">暂无运行日志</div>
-        <div v-for="(line, index) in logs" :key="index" :class="['log-line', logClass(line)]">{{ line }}</div>
+        <div :style="{ height: `${startRow * 21}px` }" />
+        <div v-for="(line, index) in visibleLogs" :key="startRow + index" :class="['log-line', logClass(line)]" :title="String(line)">{{ String(line).replace(/\r?\n/g, ' ↵ ') }}</div>
+        <div :style="{ height: `${Math.max(0, logs.length - startRow - visibleLogs.length) * 21}px` }" />
       </div>
       <div v-show="activeTab === 'files'" class="task-output-files">
         <div class="task-output-summary">{{ outputSummary.label }}</div>
@@ -99,6 +102,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { buildOutputFileEntries, summarizeOutputFiles } from '../utils/taskOutputSummary'
 
 const props = defineProps({
+  downloadable: { type: Boolean, default: false },
   logs: { type: Array, default: () => [] },
   files: { type: Array, default: () => [] },
   logClass: { type: Function, default: () => '' },
@@ -106,11 +110,14 @@ const props = defineProps({
   autoOpenOnOutputFiles: { type: Boolean, default: true },
 })
 
-defineEmits(['clear-logs', 'open-file'])
+defineEmits(['clear-logs', 'open-file', 'download-logs'])
 
 const activeTab = ref('logs')
 const drawerState = ref('minimized')
 const logBodyEl = ref(null)
+const scrollTop = ref(0)
+const startRow = computed(() => Math.min(Math.max(0, props.logs.length - 60), Math.max(0, Math.floor(scrollTop.value / 21) - 5)))
+const visibleLogs = computed(() => props.logs.slice(startRow.value, startRow.value + 60))
 const outputSummary = computed(() => summarizeOutputFiles(props.files))
 const displayOutputEntries = computed(() => buildOutputFileEntries(props.files))
 const latestLogPreview = computed(() => {
@@ -119,13 +126,14 @@ const latestLogPreview = computed(() => {
   return String(latest || '').replace(/\s+/g, ' ').trim()
 })
 
-watch(() => props.logs.length, (nextLength, previousLength) => {
+watch(() => [props.logs.length, props.logs.at(-1)], ([nextLength], [previousLength]) => {
+  const followTail = !logBodyEl.value || logBodyEl.value.scrollHeight - logBodyEl.value.scrollTop - logBodyEl.value.clientHeight < 50
   if (props.autoOpenOnFirstLog && nextLength > previousLength && previousLength === 0 && drawerState.value === 'minimized') {
     drawerState.value = 'half'
     activeTab.value = 'logs'
   }
   nextTick(() => {
-    if (logBodyEl.value) logBodyEl.value.scrollTop = logBodyEl.value.scrollHeight
+    if (followTail && logBodyEl.value) { logBodyEl.value.scrollTop = logBodyEl.value.scrollHeight; scrollTop.value = logBodyEl.value.scrollTop }
   })
 })
 
@@ -318,11 +326,12 @@ watch(() => props.files.length, (nextLength, previousLength) => {
 }
 .log-line {
   color: var(--text2);
-  white-space: pre-wrap;
-  word-break: break-word;
+  white-space: pre;
+  height: 21px;
+  min-width: max-content;
   font-family: 'Menlo', 'Monaco', monospace;
   font-size: 12px;
-  line-height: 1.7;
+  line-height: 21px;
 }
 .log-line.ok { color: var(--green); }
 .log-line.err { color: var(--red); }

@@ -10,6 +10,7 @@ function element(tag) {
   return { tag, dataset: {}, children: [], listeners: {},
     setAttribute(name, value) { this[name] = String(value) },
     appendChild(child) { this.children.push(child) },
+    append(...children) { this.children.push(...children) },
     querySelectorAll() { return [] },
     addEventListener(type, listener) { this.listeners[type] = listener },
   }
@@ -20,6 +21,7 @@ for (const columnClass of ['EvIC1a_column', 'Md3f7G_column']) {
     const upstream = readFileSync(resolve(root, 'node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js'), 'utf8')
     assert.ok(upstream.includes('"column": "EvIC1a_column"'))
     const column = element('div')
+    column.querySelectorAll = () => [{ after: block => column.children.push(block) }]
     const scroll = { scrollHeight: 900, scrollTop: 0, clientHeight: 900 }
     const messages = []
     const timers = []
@@ -42,12 +44,13 @@ for (const columnClass of ['EvIC1a_column', 'Md3f7G_column']) {
       const data = { artifact: { path: `/tmp/${mediaKind}`, filename: mediaKind, mediaKind, zipImages: ['one.png'] }, urls: { file: 'https://media.test/file', entries: ['https://media.test/one.png'] } }
       sandbox.renderArtifactShow(data)
       const block = column.children.at(-1)
-      const media = block.children[1]
+      const media = mediaKind === 'image' ? block.children[0].children[0] : block.children[1]
       assert.equal(media.tag, tag)
       if (mediaKind === 'zip') assert.equal(media.children[0].src, data.urls.entries[0])
       else assert.equal(media.src, data.urls.file)
       if (['video', 'audio'].includes(mediaKind)) assert.equal(media.controls, true)
-      block.children[0].listeners.click()
+      if (mediaKind === 'image') block.children[1].children[0].listeners.click()
+      else block.children[0].listeners.click()
       assert.equal(messages.at(-1).path, data.artifact.path)
       sandbox.renderArtifactShow(data)
     }

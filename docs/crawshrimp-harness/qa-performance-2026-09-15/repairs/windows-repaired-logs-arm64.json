@@ -1,0 +1,535 @@
+{
+  "platform": "win32",
+  "arch": "arm64",
+  "electron": "43.1.0",
+  "memory": 8580235264,
+  "scenarios": [
+    {
+      "rate": 1,
+      "count": 1000,
+      "wallMs": 35,
+      "elapsedMs": 30.700000002980232,
+      "lines": 60,
+      "dom": 94,
+      "heap": 2193940,
+      "processes": [
+        {
+          "type": "Browser",
+          "memory": {
+            "workingSetSize": 98996,
+            "peakWorkingSetSize": 98996,
+            "privateBytes": 41136
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.1875,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "GPU",
+          "memory": {
+            "workingSetSize": 67124,
+            "peakWorkingSetSize": 67124,
+            "privateBytes": 19600
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.078125,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "Utility",
+          "memory": {
+            "workingSetSize": 46360,
+            "peakWorkingSetSize": 46360,
+            "privateBytes": 12112
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.09375,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "Tab",
+          "memory": {
+            "workingSetSize": 79500,
+            "peakWorkingSetSize": 79500,
+            "privateBytes": 31644
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.109375,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        }
+      ]
+    },
+    {
+      "rate": 1,
+      "count": 10000,
+      "wallMs": 22,
+      "elapsedMs": 19.30000000447035,
+      "lines": 60,
+      "dom": 94,
+      "heap": 3555216,
+      "processes": [
+        {
+          "type": "Browser",
+          "memory": {
+            "workingSetSize": 99016,
+            "peakWorkingSetSize": 100452,
+            "privateBytes": 40820
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.21875,
+            "percentCPUUsage": 1.380619896124368,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "GPU",
+          "memory": {
+            "workingSetSize": 68248,
+            "peakWorkingSetSize": 68252,
+            "privateBytes": 19632
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.078125,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "Utility",
+          "memory": {
+            "workingSetSize": 47312,
+            "peakWorkingSetSize": 48260,
+            "privateBytes": 12208
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.09375,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "Tab",
+          "memory": {
+            "workingSetSize": 86688,
+            "peakWorkingSetSize": 86688,
+            "privateBytes": 36992
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.125,
+            "percentCPUUsage": 0.6900428908579584,
+            "idleWakeupsPerSecond": 0
+          }
+        }
+      ]
+    },
+    {
+      "rate": 1,
+      "count": 50000,
+      "wallMs": 43,
+      "elapsedMs": 41.79999999701977,
+      "lines": 60,
+      "dom": 94,
+      "heap": 10705004,
+      "processes": [
+        {
+          "type": "Browser",
+          "memory": {
+            "workingSetSize": 98988,
+            "peakWorkingSetSize": 100452,
+            "privateBytes": 40740
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.21875,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "GPU",
+          "memory": {
+            "workingSetSize": 68640,
+            "peakWorkingSetSize": 68716,
+            "privateBytes": 19492
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.078125,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "Utility",
+          "memory": {
+            "workingSetSize": 47316,
+            "peakWorkingSetSize": 48260,
+            "privateBytes": 12204
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.09375,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "Tab",
+          "memory": {
+            "workingSetSize": 100740,
+            "peakWorkingSetSize": 101928,
+            "privateBytes": 50308
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.15625,
+            "percentCPUUsage": 1.365513721555803,
+            "idleWakeupsPerSecond": 0
+          }
+        }
+      ]
+    },
+    {
+      "rate": 4,
+      "count": 1000,
+      "wallMs": 14,
+      "elapsedMs": 12.399999998509884,
+      "lines": 60,
+      "dom": 94,
+      "heap": 11012140,
+      "processes": [
+        {
+          "type": "Browser",
+          "memory": {
+            "workingSetSize": 99060,
+            "peakWorkingSetSize": 100452,
+            "privateBytes": 40740
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.21875,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "GPU",
+          "memory": {
+            "workingSetSize": 68640,
+            "peakWorkingSetSize": 68716,
+            "privateBytes": 19496
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.078125,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "Utility",
+          "memory": {
+            "workingSetSize": 47316,
+            "peakWorkingSetSize": 48260,
+            "privateBytes": 12204
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.09375,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "Tab",
+          "memory": {
+            "workingSetSize": 102416,
+            "peakWorkingSetSize": 102416,
+            "privateBytes": 51912
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.171875,
+            "percentCPUUsage": 0.7085820739845848,
+            "idleWakeupsPerSecond": 0
+          }
+        }
+      ]
+    },
+    {
+      "rate": 4,
+      "count": 10000,
+      "wallMs": 19,
+      "elapsedMs": 18.099999994039536,
+      "lines": 60,
+      "dom": 94,
+      "heap": 12612436,
+      "processes": [
+        {
+          "type": "Browser",
+          "memory": {
+            "workingSetSize": 99072,
+            "peakWorkingSetSize": 100452,
+            "privateBytes": 40748
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.21875,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "GPU",
+          "memory": {
+            "workingSetSize": 68636,
+            "peakWorkingSetSize": 68716,
+            "privateBytes": 19492
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.078125,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "Utility",
+          "memory": {
+            "workingSetSize": 47316,
+            "peakWorkingSetSize": 48260,
+            "privateBytes": 12204
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.09375,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "Tab",
+          "memory": {
+            "workingSetSize": 104976,
+            "peakWorkingSetSize": 104976,
+            "privateBytes": 54560
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.734375,
+            "percentCPUUsage": 25.72778765724824,
+            "idleWakeupsPerSecond": 0
+          }
+        }
+      ]
+    },
+    {
+      "rate": 4,
+      "count": 50000,
+      "wallMs": 58,
+      "elapsedMs": 56,
+      "lines": 60,
+      "dom": 94,
+      "heap": 19436328,
+      "processes": [
+        {
+          "type": "Browser",
+          "memory": {
+            "workingSetSize": 99096,
+            "peakWorkingSetSize": 100452,
+            "privateBytes": 40756
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.21875,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "GPU",
+          "memory": {
+            "workingSetSize": 68644,
+            "peakWorkingSetSize": 68716,
+            "privateBytes": 19496
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.078125,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "Utility",
+          "memory": {
+            "workingSetSize": 47316,
+            "peakWorkingSetSize": 48260,
+            "privateBytes": 12204
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 0.09375,
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          }
+        },
+        {
+          "type": "Tab",
+          "memory": {
+            "workingSetSize": 121848,
+            "peakWorkingSetSize": 121848,
+            "privateBytes": 70936
+          },
+          "cpu": {
+            "cumulativeCPUUsage": 1.34375,
+            "percentCPUUsage": 26.06077790379612,
+            "idleWakeupsPerSecond": 0
+          }
+        }
+      ]
+    }
+  ],
+  "afterGc": {
+    "metrics": [
+      {
+        "name": "Timestamp",
+        "value": 37742.583023
+      },
+      {
+        "name": "AudioHandlers",
+        "value": 0
+      },
+      {
+        "name": "AudioWorkletProcessors",
+        "value": 0
+      },
+      {
+        "name": "Documents",
+        "value": 2
+      },
+      {
+        "name": "Frames",
+        "value": 1
+      },
+      {
+        "name": "JSEventListeners",
+        "value": 7
+      },
+      {
+        "name": "LayoutObjects",
+        "value": 35
+      },
+      {
+        "name": "MediaKeySessions",
+        "value": 0
+      },
+      {
+        "name": "MediaKeys",
+        "value": 0
+      },
+      {
+        "name": "Nodes",
+        "value": 56
+      },
+      {
+        "name": "Resources",
+        "value": 2
+      },
+      {
+        "name": "ContextLifecycleStateObservers",
+        "value": 2
+      },
+      {
+        "name": "V8PerContextDatas",
+        "value": 2
+      },
+      {
+        "name": "WorkerGlobalScopes",
+        "value": 0
+      },
+      {
+        "name": "UACSSResources",
+        "value": 0
+      },
+      {
+        "name": "RTCPeerConnections",
+        "value": 0
+      },
+      {
+        "name": "ResourceFetchers",
+        "value": 2
+      },
+      {
+        "name": "AdSubframes",
+        "value": 0
+      },
+      {
+        "name": "DetachedScriptStates",
+        "value": 0
+      },
+      {
+        "name": "ArrayBufferContents",
+        "value": 0
+      },
+      {
+        "name": "LayoutCount",
+        "value": 18
+      },
+      {
+        "name": "RecalcStyleCount",
+        "value": 18
+      },
+      {
+        "name": "LayoutDuration",
+        "value": 0.043182
+      },
+      {
+        "name": "RecalcStyleDuration",
+        "value": 0.003624
+      },
+      {
+        "name": "DevToolsCommandDuration",
+        "value": 0.002672
+      },
+      {
+        "name": "ScriptDuration",
+        "value": 0.071431
+      },
+      {
+        "name": "V8CompileDuration",
+        "value": 0.000896
+      },
+      {
+        "name": "TaskDuration",
+        "value": 0.18758
+      },
+      {
+        "name": "TaskOtherDuration",
+        "value": 0.065775
+      },
+      {
+        "name": "ThreadTime",
+        "value": 0.15625
+      },
+      {
+        "name": "ProcessTime",
+        "value": 1.90625
+      },
+      {
+        "name": "JSHeapUsedSize",
+        "value": 1878908
+      },
+      {
+        "name": "JSHeapTotalSize",
+        "value": 2883584
+      },
+      {
+        "name": "FirstMeaningfulPaint",
+        "value": 37739.223302
+      },
+      {
+        "name": "DomContentLoaded",
+        "value": 37739.171259
+      },
+      {
+        "name": "NavigationStart",
+        "value": 37739.005802
+      }
+    ]
+  },
+  "finishedAt": "2026-09-15T02:40:58.418Z"
+}

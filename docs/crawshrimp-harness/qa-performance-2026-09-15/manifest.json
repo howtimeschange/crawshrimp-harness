@@ -1,0 +1,56 @@
+{
+  "commit": "c948181c7d441c7fb5518dae53d51a77ceaba351",
+  "date": "2026-09-15",
+  "host": {
+    "cpu": "Apple M5 Pro",
+    "ramGiB": 48,
+    "logicalCpus": 18
+  },
+  "guest": {
+    "name": "抓虾 Windows 11 ARM 测试",
+    "os": "Windows 11 ARM",
+    "virtualCpus": 4,
+    "ramMiB": 8192,
+    "electron": "43.1.0",
+    "engines": [
+      "x64 emulated",
+      "arm64 native"
+    ]
+  },
+  "sourceSha256": {
+    "app/src/main.js": "105a735a703c338dc4b6839347f9e7ecb96997bffffa83169777e5489f239e1d",
+    "app/src/windowsAcl.js": "aea96fc732e392211158a5902daf4de72baeac804ec435edb1b2ae5b6cf1ea95",
+    "app/src/balaWorkspaceFiles.js": "55975386ccca20f4d95bdda1cf379bbec5340127215b888b696505a1f7b6e665",
+    "app/src/renderer/App.vue": "061b75b737ee023f8dbf488a3ca3db8b60344dd339c624fea34d1bc25570f09d",
+    "app/src/renderer/views/AiVideoWorkflow.vue": "166e91f7e354e65a1da09ea2506910d0d030bab08308dd23d213171f3cb6104b",
+    "app/src/renderer/views/TaskOutputDrawer.vue": "2bdd5aa5867a384a33557c256c148d70af0c61764a6e37e477a2ef1eff685264",
+    "app/src/renderer/utils/taskRunOutput.js": "0e6f0f2a17a614f97c32b8a88bf733346e1e1d2685a17ade03568f57d671f0e3",
+    "core/api_server.py": "b2a070d639318c7ba2ec26ee1eb56b1de9783b4333bd7d55e245f3d865e999b4",
+    "core/data_sink.py": "d757c439e533e53dc155517710ac0a803916d9e7979840e5a21c79186a43fd17",
+    "core/runtime_paths.py": "f60678931ffe8ea8a378ab23a8fea5767184a98595019c00967f05e7a03f4de1"
+  },
+  "evidenceSha256": {
+    "logs-mac.json": "881e66570ab5b22ba8ade2acb4c729685ad57635fe17b34e02b2e8d8e9d3407b",
+    "targeted-tests.log": "a058572d35cf9c6ceb8612eb47d788393c076ed805fc6b833decb422f51d6d49",
+    "mac-source.json": "d7e5fb77c2e192e8854acda00530fa47f6fc40f858746a15090c82ed708ec642",
+    "startup-windows-arm64.json": "1deda8086346e3b5bc1d5e4c0a85959a09b8c8c4d9ecc140ce43f9c2679c157a",
+    "windows-x64-ipc.json": "711bdd25baa6194d14c457fd5423121124a5109fcf2fa657ca37c83a99b21db0",
+    "windows-arm64-hotpaths.json": "b401e915adf5a79f24b21abdaeac823a7c4cda35626c439936788eb4f6e3c4b9",
+    "windows-x64-ui.json": "d119388613c538f1746afe0bf1ef668360edd56eb6f866f109618b48241cf1a1",
+    "logs-windows-x64.json": "c1238ab1188bcb134aa84bf7d4db0c5e9655d963e4c6efa83342912734da39b5",
+    "startup-windows-x64.json": "2bc63a4d14d0c012634e41adbe73e205171a20780b9041b5e300057fe0db2c46",
+    "backend-windows.json": "217bf61328a2fc569cbb4153889bad7c07b7fce514280ec4b05f8543b89f4fc3",
+    "windows-x64-hotpaths.json": "f2d4cef4fc5048249fa84b59b56dc43310cc8aa61edd072b9c170eb8219b2a0c",
+    "backend-mac.json": "c2b166a36ad9c682ae65e23627a5be3d132c196c1b2748fb2d4c1e072c8b7ae2"
+  },
+  "benchmarkScriptSha256": {
+    "app/scripts/performance-backend.py": "531e501c426c1fcafc2bfd5a7185401ae041cfce71bac23d0aefc224ffeeabd9",
+    "app/scripts/build-performance-fixtures.mjs": "0fbd34e6319d4e88d72045d79c3e1533f108fc5eb8451ab6644c478f86bdf8bf",
+    "app/scripts/performance-logs.cjs": "62c8b44af356c7c384e5779bc3269e60fd67ac2bedf025f595618690d82cb7dd",
+    "app/scripts/performance-windows-startup.cjs": "5a43c759f35a24ceac3e33d42ede84c06a0e500731c111b63632b55a04939313",
+    "app/scripts/performance-audit.cjs": "381d82044a66dd8ce96ed3da0a25f5806c488efbcf19909421bf501bbb029a3a"
+  },
+  "originalEvidenceSha256BeforeNewlineNormalization": {
+    "backend-windows.json": "55b77dbf3f29adb87fb760f39ca80d6ee6d3262e2bde34cffc015302a92750f2"
+  }
+}

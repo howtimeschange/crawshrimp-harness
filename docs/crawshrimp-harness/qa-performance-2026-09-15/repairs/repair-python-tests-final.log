@@ -1,0 +1,112 @@
+...........adapter 事务回滚恢复旧版本失败: /var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/tmpezktacps/adapters/rollback-error-adapter
+Traceback (most recent call last):
+  File "/Users/xingyicheng/Documents/crawshrimp-harness/core/adapter_loader.py", line 390, in _install_from_dir_locked
+    replace_with_retry(staged, dest)
+  File "/Users/xingyicheng/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py", line 1139, in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xingyicheng/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py", line 1143, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xingyicheng/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py", line 1204, in _execute_mock_call
+    result = effect(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xingyicheng/Documents/crawshrimp-harness/tests/test_adapter_loader.py", line 483, in fail_commit_and_restore
+    raise PermissionError("new placement locked")
+PermissionError: new placement locked
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/xingyicheng/Documents/crawshrimp-harness/core/adapter_loader.py", line 403, in _install_from_dir_locked
+    replace_with_retry(backup, dest)
+  File "/Users/xingyicheng/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py", line 1139, in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xingyicheng/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py", line 1143, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xingyicheng/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py", line 1204, in _execute_mock_call
+    result = effect(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xingyicheng/Documents/crawshrimp-harness/tests/test_adapter_loader.py", line 485, in fail_commit_and_restore
+    raise PermissionError("old restore locked")
+PermissionError: old restore locked
+........adapter 目录扫描失败 /var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/tmpz854xt43/adapters: [WinError 5] Access is denied
+adapter 根目录扫描失败，保留上一份已加载清单: 1 个
+.adapter 扫描结果少于上一份清单，保留上一份以避免列表闪烁: previous=2 current=1
+.跳过无权限访问的 adapter 目录 /var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/tmp6aa8bvo2/adapters/blocked-adapter: [WinError 5] Access is denied
+......................................跳过无权限访问的 adapter 目录 /var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/tmp5r2qjybu/adapters/blocked-adapter: [WinError 5] Access is denied
+[agent] MCP gateway listening on http://127.0.0.1:18965/mcp
+agent service started
+crawshrimp core started
+StreamableHTTP session manager started
+<Server sockets=(<asyncio.TransportSocket fd=9, family=2, type=1, proto=0, laddr=('127.0.0.1', 18965)>,)> is serving
+StreamableHTTP session manager shutting down
+.Another crawshrimp backend instance is already active; skip startup side effects in this process
+crawshrimp core started
+.[agent] MCP gateway listening on http://127.0.0.1:18965/mcp
+agent service started
+crawshrimp core started
+StreamableHTTP session manager started
+<Server sockets=(<asyncio.TransportSocket fd=8, family=2, type=1, proto=0, laddr=('127.0.0.1', 18965)>,)> is serving
+StreamableHTTP session manager shutting down
+....[tmall-ops-assistant/tmall_material_test_data_export] Starting...
+mode=new，尝试新建页面：https://qn.taobao.com/home.htm/material-center/material-test/common_test?testStatus=1&testChannel=common_search
+新建页面实际落到目标标签页：https://qn.taobao.com/home.htm/material-center/material-test/common_test?testStatus=1&testChannel=common_search
+Found tab: https://qn.taobao.com/home.htm/material-center/material-test/common_test?testStatus=1&testChannel=common_search
+新建页运行上下文尚未进入业务入口，导航到：https://qn.taobao.com/home.htm/material-center/material-test/common_test?testStatus=1&testChannel=common_search（当前：about:blank）
+Injecting script: tmall-material-test-data-export.js
+Script complete. Records: 1
+巴拉-AI测图数据抓取导出本地导出：表格 0 个，目录 /Users/xingyicheng/Downloads/抓虾导出/天猫运营助手/巴拉-AI测图数据抓取导出
+[tmall-ops-assistant/tmall_material_test_data_export] Done. 1 records.
+....Background task crashed before cleanup: temu::tax_free_return_confirm
+Traceback (most recent call last):
+  File "/Users/xingyicheng/Documents/crawshrimp-harness/core/api_server.py", line 13669, in _run_task_background
+    await _execute_task(adapter_id, task_id, params, runtime_options, run_control=run_control)
+  File "/Users/xingyicheng/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/unittest/mock.py", line 2291, in _execute_mock_call
+    raise effect
+RuntimeError: boom before begin_run
+.已加载 1 个适配包
+...Executing <Task pending name='Task-246' coro=<ApiTaskLifecycleTests.test_runtime_install_readiness_finds_active_ai_jobs_beyond_ui_limit() running at /Users/xingyicheng/Documents/crawshrimp-harness/tests/test_api_task_lifecycle.py:1579> cb=[_run_until_complete_cb() at /Users/xingyicheng/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:181] created at /Users/xingyicheng/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/runners.py:100> took 0.463 seconds
+.......[temu/mall_flux] Starting...
+mode=new，Temu 使用后台入口新建页面：https://agentseller.temu.com/，稍后导航业务页：https://agentseller.temu.com/main/mall-flux-analysis-full
+Found tab: https://agentseller.temu.com/
+运行登录检测：auth_check.js
+导航回业务入口：https://agentseller.temu.com/main/mall-flux-analysis-full
+Injecting script: mall-flux.js
+Script complete. Records: 1
+[temu/mall_flux] Done. 1 records.
+.[temu/mall_flux] Starting...
+mode=new，Temu 使用后台入口新建页面：https://agentseller.temu.com/，稍后导航业务页：https://agentseller.temu.com/main/mall-flux-analysis-full
+Temu 复用已登录后台页打开新标签：https://agentseller.temu.com/
+Found tab: https://agentseller.temu.com/
+运行登录检测：auth_check.js
+导航回业务入口：https://agentseller.temu.com/main/mall-flux-analysis-full
+Injecting script: mall-flux.js
+Script complete. Records: 1
+[temu/mall_flux] Done. 1 records.
+.....[tmall-ops-assistant/buyer_reviews] Starting...
+mode=new，尝试新建页面：https://detail.tmall.com/item.htm?id=919643072179&skuId=5789814873879
+Found tab: https://detail.tmall.com/item.htm?id=919643072179&skuId=5789814873879
+运行登录检测：auth_check.js
+导航回业务入口：https://detail.tmall.com/item.htm?id=919643072179&skuId=5789814873879
+Injecting script: buyer-reviews.js
+抓取商品 1/3: https://detail.tmall.com/item.htm?id=919643072179&skuId=5789814873879
+抓取商品 2/3: https://detail.tmall.com/item.htm?id=1023254962064&skuId=6034929285662
+抓取商品 3/3: https://detail.tmall.com/item.htm?id=732533512173&skuId=6038497472965
+Script complete. Records: 3
+[tmall-ops-assistant/buyer_reviews] Done. 3 records.
+.[tmall-ops-assistant/tmall_compete_paid_monitor] Starting...
+mode=new，尝试新建页面：https://dmp.taobao.com/index_new.html?spm=x#!/compete/compete-situation
+Found tab: https://dmp.taobao.com/index_new.html?spm=x#!/compete/compete-situation
+新建页运行上下文尚未进入业务入口，导航到：https://dmp.taobao.com/index_new.html?spm=x#!/compete/compete-situation（当前：about:blank）
+Injecting script: tmall-compete-paid-monitor.js
+Script complete. Records: 1
+竞品付费投放数据监控本地导出：表格 0 个，目录 /Users/xingyicheng/Downloads/抓虾导出/天猫运营助手/竞品付费投放数据监控
+[tmall-ops-assistant/tmall_compete_paid_monitor] Done. 1 records.
+.
+----------------------------------------------------------------------
+Ran 88 tests in 27.594s
+
+OK

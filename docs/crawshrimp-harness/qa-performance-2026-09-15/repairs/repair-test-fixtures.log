@@ -1,0 +1,74 @@
+TAP version 13
+# Subtest: artifact media renders, deduplicates and opens in EvIC1a_column
+ok 1 - artifact media renders, deduplicates and opens in EvIC1a_column
+  ---
+  duration_ms: 2.532333
+  type: 'test'
+  ...
+# Subtest: artifact media renders, deduplicates and opens in Md3f7G_column
+ok 2 - artifact media renders, deduplicates and opens in Md3f7G_column
+  ---
+  duration_ms: 1.106833
+  type: 'test'
+  ...
+# Subtest: workspace header search stays on the product page while session navigation still works
+ok 3 - workspace header search stays on the product page while session navigation still works
+  ---
+  duration_ms: 1.371292
+  type: 'test'
+  ...
+# (node:64824) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/xingyicheng/Documents/crawshrimp-harness/app/src/renderer/utils/walkthroughRegression.test.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/xingyicheng/Documents/crawshrimp-harness/app/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: blank prompt rejected before creating a run: ""
+ok 4 - blank prompt rejected before creating a run: ""
+  ---
+  duration_ms: 1.263
+  type: 'test'
+  ...
+# Subtest: blank prompt rejected before creating a run: "   \\n  "
+ok 5 - blank prompt rejected before creating a run: "   \\n  "
+  ---
+  duration_ms: 0.358875
+  type: 'test'
+  ...
+# Subtest: new run does not inherit old target or 100 percent progress
+ok 6 - new run does not inherit old target or 100 percent progress
+  ---
+  duration_ms: 0.118958
+  type: 'test'
+  ...
+# Subtest: IPC failure reconciles optimistic running from persisted job
+ok 7 - IPC failure reconciles optimistic running from persisted job
+  ---
+  duration_ms: 0.535333
+  type: 'test'
+  ...
+# Subtest: download shows progress, blocks duplicate clicks and reports partial failures
+ok 8 - download shows progress, blocks duplicate clicks and reports partial failures
+  ---
+  duration_ms: 3.323375
+  type: 'test'
+  ...
+# Subtest: autosave only updates draft content, never a local running status
+ok 9 - autosave only updates draft content, never a local running status
+  ---
+  duration_ms: 0.495875
+  type: 'test'
+  ...
+# Subtest: nav clicks use current rail width after expanded-to-collapsed refresh
+ok 10 - nav clicks use current rail width after expanded-to-collapsed refresh
+  ---
+  duration_ms: 0.82275
+  type: 'test'
+  ...
+1..10
+# tests 10
+# suites 0
+# pass 10
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 46.994375

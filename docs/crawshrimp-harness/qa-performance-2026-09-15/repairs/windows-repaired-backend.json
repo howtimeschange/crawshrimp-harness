@@ -1,0 +1,34 @@
+{
+  "platform": "Windows-11-10.0.26200-SP0",
+  "scenarios": [
+    {
+      "name": "old-300-connections",
+      "timesMs": [
+        761.9447920005769,
+        720.8002089973888,
+        836.9135829998413,
+        913.8955829985207,
+        850.9975830020267
+      ]
+    },
+    {
+      "name": "new-batch-300",
+      "timesMs": [
+        12.421957995684352,
+        6.3158750053844415,
+        5.882291996385902,
+        6.091124996601138,
+        5.772666998382192
+      ]
+    },
+    {
+      "name": "logs-50000",
+      "appendMs": 7967.658832996676,
+      "retainedLines": 2000,
+      "retainedBytes": 528000,
+      "initialResponseBytes": 134141,
+      "incrementalEmptyBytes": 145,
+      "downloadLines": 50000
+    }
+  ]
+}

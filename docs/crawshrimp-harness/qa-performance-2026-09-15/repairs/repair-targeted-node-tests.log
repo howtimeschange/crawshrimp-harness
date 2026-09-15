@@ -1,0 +1,206 @@
+TAP version 13
+# Subtest: worker prepares fallback and preserves token across restarts
+ok 1 - worker prepares fallback and preserves token across restarts
+  ---
+  duration_ms: 47.633291
+  type: 'test'
+  ...
+# Subtest: ACL batch uses one fail-closed process and encoded literal paths
+ok 2 - ACL batch uses one fail-closed process and encoded literal paths
+  ---
+  duration_ms: 0.379667
+  type: 'test'
+  ...
+# (node:62668) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/xingyicheng/Documents/crawshrimp-harness/app/src/renderer/utils/taskLogCursor.test.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/xingyicheng/Documents/crawshrimp-harness/app/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: incremental logs, epoch reset, legacy response and bounds
+ok 3 - incremental logs, epoch reset, legacy response and bounds
+  ---
+  duration_ms: 1.775417
+  type: 'test'
+  ...
+# Subtest: download streams authenticated contents and preserves target on HTTP failure
+ok 4 - download streams authenticated contents and preserves target on HTTP failure
+  ---
+  duration_ms: 13.453709
+  type: 'test'
+  ...
+# Subtest: desktop backend starts as a module from python-scripts root
+ok 5 - desktop backend starts as a module from python-scripts root
+  ---
+  duration_ms: 1.8435
+  type: 'test'
+  ...
+# Subtest: desktop tells the Python backend whether it is packaged
+ok 6 - desktop tells the Python backend whether it is packaged
+  ---
+  duration_ms: 0.397333
+  type: 'test'
+  ...
+# Subtest: desktop backend switches away from an occupied non-compatible API port before launch
+ok 7 - desktop backend switches away from an occupied non-compatible API port before launch
+  ---
+  duration_ms: 0.493417
+  type: 'test'
+  ...
+# Subtest: desktop backend compatibility requires the current Electron launch identity
+ok 8 - desktop backend compatibility requires the current Electron launch identity
+  ---
+  duration_ms: 1.981708
+  type: 'test'
+  ...
+# Subtest: desktop backend readiness uses lightweight health probe
+ok 9 - desktop backend readiness uses lightweight health probe
+  ---
+  duration_ms: 1.691459
+  type: 'test'
+  ...
+# Subtest: desktop backend terminates stale crawshrimp backend processes for the same data root
+ok 10 - desktop backend terminates stale crawshrimp backend processes for the same data root
+  ---
+  duration_ms: 0.439042
+  type: 'test'
+  ...
+# Subtest: desktop services restart when macOS reopens the app after all windows close
+ok 11 - desktop services restart when macOS reopens the app after all windows close
+  ---
+  duration_ms: 0.582291
+  type: 'test'
+  ...
+# Subtest: desktop hides native application menu on Windows and Linux
+ok 12 - desktop hides native application menu on Windows and Linux
+  ---
+  duration_ms: 0.488875
+  type: 'test'
+  ...
+# Subtest: desktop lifecycle confirms active tasks before quitting
+ok 13 - desktop lifecycle confirms active tasks before quitting
+  ---
+  duration_ms: 0.879209
+  type: 'test'
+  ...
+# Subtest: settings page displays the runtime backend port reported by the main process
+ok 14 - settings page displays the runtime backend port reported by the main process
+  ---
+  duration_ms: 1.468208
+  type: 'test'
+  ...
+# Subtest: desktop get-status reports backend state machine state
+ok 15 - desktop get-status reports backend state machine state
+  ---
+  duration_ms: 0.32175
+  type: 'test'
+  ...
+# Subtest: desktop exposes structured backend diagnostics and one-click recovery
+ok 16 - desktop exposes structured backend diagnostics and one-click recovery
+  ---
+  duration_ms: 0.897458
+  type: 'test'
+  ...
+# Subtest: backend shutdown is bounded for long-lived SSE connections
+ok 17 - backend shutdown is bounded for long-lived SSE connections
+  ---
+  duration_ms: 1.434792
+  type: 'test'
+  ...
+# Subtest: desktop adopts a writable fallback selected by its owned Python backend
+ok 18 - desktop adopts a writable fallback selected by its owned Python backend
+  ---
+  duration_ms: 0.518625
+  type: 'test'
+  ...
+# Subtest: desktop classifies CDP health and refuses to spawn into an unknown occupied port
+ok 19 - desktop classifies CDP health and refuses to spawn into an unknown occupied port
+  ---
+  duration_ms: 0.390834
+  type: 'test'
+  ...
+# Subtest: desktop renderer exposes backend repair and structured runtime diagnostics
+ok 20 - desktop renderer exposes backend repair and structured runtime diagnostics
+  ---
+  duration_ms: 0.767042
+  type: 'test'
+  ...
+# Subtest: desktop acquires a single-instance lock before starting services
+ok 21 - desktop acquires a single-instance lock before starting services
+  ---
+  duration_ms: 0.497833
+  type: 'test'
+  ...
+# Subtest: desktop status requires a compatible owned backend, not only an HTTP responder
+ok 22 - desktop status requires a compatible owned backend, not only an HTTP responder
+  ---
+  duration_ms: 0.415208
+  type: 'test'
+  ...
+# Subtest: desktop backend receives a resolved writable CRAWSHRIMP_DATA directory
+ok 23 - desktop backend receives a resolved writable CRAWSHRIMP_DATA directory
+  ---
+  duration_ms: 0.540709
+  type: 'test'
+  ...
+# Subtest: desktop rejects broad Windows data roots and protects data directories and API token with native ACLs
+ok 24 - desktop rejects broad Windows data roots and protects data directories and API token with native ACLs
+  ---
+  duration_ms: 1.005417
+  type: 'test'
+  ...
+# Subtest: desktop retries transient Windows sharing violations while resetting PDF previews
+ok 25 - desktop retries transient Windows sharing violations while resetting PDF previews
+  ---
+  duration_ms: 0.294167
+  type: 'test'
+  ...
+# Subtest: desktop persistent JSON state uses atomic replacement
+ok 26 - desktop persistent JSON state uses atomic replacement
+  ---
+  duration_ms: 0.331708
+  type: 'test'
+  ...
+# Subtest: desktop backend startup fails before spawn when API token cannot be prepared
+ok 27 - desktop backend startup fails before spawn when API token cannot be prepared
+  ---
+  duration_ms: 1.440708
+  type: 'test'
+  ...
+# Subtest: desktop API helper supports request timeout for shutdown probes
+ok 28 - desktop API helper supports request timeout for shutdown probes
+  ---
+  duration_ms: 0.458208
+  type: 'test'
+  ...
+# Subtest: desktop API helper rejects HTTP error responses with backend detail
+ok 29 - desktop API helper rejects HTTP error responses with backend detail
+  ---
+  duration_ms: 0.334292
+  type: 'test'
+  ...
+# Subtest: desktop result data requests do not trigger backend restart readiness flow
+ok 30 - desktop result data requests do not trigger backend restart readiness flow
+  ---
+  duration_ms: 0.348417
+  type: 'test'
+  ...
+# Subtest: desktop quit stop requests log backend rejection details
+ok 31 - desktop quit stop requests log backend rejection details
+  ---
+  duration_ms: 0.210792
+  type: 'test'
+  ...
+# Subtest: desktop quit cancellation handles service recovery failures
+ok 32 - desktop quit cancellation handles service recovery failures
+  ---
+  duration_ms: 0.189625
+  type: 'test'
+  ...
+1..32
+# tests 32
+# suites 0
+# pass 32
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 86.168667

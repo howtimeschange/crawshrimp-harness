@@ -1,0 +1,18 @@
+{
+  "platform": "win32",
+  "arch": "arm64",
+  "electron": "43.1.0",
+  "paths": 5,
+  "rows": [
+    {
+      "iteration": 0,
+      "elapsedMs": 6546.3535,
+      "blockedTimerMs": 6548.311875
+    },
+    {
+      "iteration": 1,
+      "elapsedMs": 4775.491459000001,
+      "blockedTimerMs": 4779.454417000001
+    }
+  ]
+}

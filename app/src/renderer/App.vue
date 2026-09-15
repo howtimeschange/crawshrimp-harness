@@ -2,7 +2,7 @@
   <div
     class="layout"
     :class="{
-      'layout-ai-image': currentView === 'ai_image' || currentView === 'ai_video' || currentView === 'ai_video_generation' || currentView === 'buyer_show_workflow',
+      'layout-ai-image': currentView === 'ai_image' || currentView === 'ai_video_generation',
       'sidebar-collapsed': effectiveSidebarCollapsed,
       'has-script-sidebar': activeScript,
       'titlebar-macos': isMacTitlebar,
@@ -144,20 +144,6 @@
               @open-settings="openSettingsPanel('ai-video')"
             />
           </KeepAlive>
-          <!-- AI 视频工作流 -->
-          <KeepAlive>
-            <AiVideoWorkflow
-              v-if="currentView === 'ai_video'"
-              @open-settings="openSettingsPanel"
-            />
-          </KeepAlive>
-          <!-- AI 买家秀工作流 -->
-          <KeepAlive>
-            <BuyerShowWorkflow
-              v-if="currentView === 'buyer_show_workflow'"
-              @open-settings="openSettingsPanel"
-            />
-          </KeepAlive>
           <!-- 提示词库 -->
           <LocalPromptLibrary
             v-if="currentView === 'local_prompt_library'"
@@ -210,8 +196,6 @@ import TaskCenter  from './views/TaskCenter.vue'
 import TaskInstanceRunner from './views/TaskInstanceRunner.vue'
 import AiImageWorkbench from './views/AiImageWorkbench.vue'
 import AiVideoGenerationWorkbench from './views/AiVideoGenerationWorkbench.vue'
-import AiVideoWorkflow from './views/AiVideoWorkflow.vue'
-import BuyerShowWorkflow from './views/BuyerShowWorkflow.vue'
 import LocalPromptLibrary from './views/LocalPromptLibrary.vue'
 import DataFiles   from './views/DataFiles.vue'
 import SettingsPage from './views/SettingsPage.vue'
@@ -307,15 +291,6 @@ const navItems = [
   { id: 'task_center', icon: '📋', label: '任务中心' },
   { id: 'ai_image', icon: '🎨', label: 'AI 生图' },
   { id: 'ai_video_generation', icon: '🎬', label: 'AI 生视频' },
-  {
-    id: 'ai_workflows',
-    icon: '🤖',
-    label: 'AI 工作流',
-    children: [
-      { id: 'ai_video', icon: '🎞️', label: 'AI 视频工作流' },
-      { id: 'buyer_show_workflow', icon: '🛍️', label: 'AI 买家秀工作流' },
-    ],
-  },
   { id: 'local_prompt_library', icon: '💬', label: '提示词库' },
   { id: 'files',    icon: '📁', label: '数据文件' },
   { id: 'settings', icon: '⚙️', label: '设置' },
@@ -588,6 +563,7 @@ async function installUpdate() {
 }
 
 let pollTimer = null
+let overviewPollInFlight = false
 let updateStatusCleanup = null
 let systemThemeCleanup = null
 onMounted(async () => {
@@ -618,11 +594,15 @@ onMounted(async () => {
   }
 
   pollTimer = setInterval(async () => {
+    if (overviewPollInFlight) return
+    overviewPollInFlight = true
     try {
       await refreshRuntimeStatus()
       await loadScriptGroups({ preserveOnShrink: true })
     } catch (error) {
       console.error('Failed to poll runtime status', error)
+    } finally {
+      overviewPollInFlight = false
     }
   }, 5000)
 })

@@ -3,6 +3,7 @@
 支持：本地目录安装 / zip 包安装 / 扫描 / 卸载 / 启用禁用
 """
 import json
+from collections import OrderedDict
 import os
 import shutil
 import zipfile
@@ -27,6 +28,7 @@ _adapter_dirs: Dict[str, Path] = {}
 _enabled: Dict[str, bool] = {}
 _install_meta: Dict[str, dict[str, Any]] = {}
 _scan_lock = threading.RLock()
+_manifest_cache = OrderedDict()
 
 SCRIPT_SUFFIXES = (".js",)
 _TRANSACTION_DIR_RE = re.compile(r"^\..+\.(?:install|backup)-[0-9a-f]{32}$")
@@ -125,9 +127,23 @@ def _should_preserve_existing_link(existing_meta: dict[str, Any], dest: Path) ->
 
 
 def _read_manifest_file(manifest_path: Path) -> AdapterManifest:
-    with open(manifest_path, encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-    return AdapterManifest(**data)
+    # Stat every time so edits, atomic replacement and linked adapters are visible
+    # immediately; cache only parsing, never installation membership or enabled state.
+    with _scan_lock:
+        identity = str(manifest_path.resolve())
+        stat = manifest_path.stat()
+        version = (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+        cached = _manifest_cache.get(identity)
+        if cached and cached[0] == version:
+            _manifest_cache.move_to_end(identity)
+            return cached[1].model_copy(deep=True)
+        with open(manifest_path, encoding="utf-8") as f:
+            manifest = AdapterManifest(**yaml.safe_load(f))
+        _manifest_cache[identity] = (version, manifest.model_copy(deep=True))
+        _manifest_cache.move_to_end(identity)
+        while len(_manifest_cache) > 512:
+            _manifest_cache.popitem(last=False)
+        return manifest
 
 
 def resolve_adapter_relative_file(

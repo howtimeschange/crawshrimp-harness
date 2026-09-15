@@ -498,12 +498,14 @@ export function createDevCsBridge() {
         ? apiCall('GET', `/task-instances/${encodePathPart(uid)}/run-status`)
         : apiCall('GET', `/tasks/${encodePathPart(aid)}/${encodePathPart(tid)}/status`)
     },
-    getTaskLogs: (aid, tid, instanceUid = '') => {
+    getTaskLogs: (aid, tid, instanceUid = '', query = {}) => {
       const uid = String(instanceUid || '').trim()
+      const suffix = `?${new URLSearchParams(query)}`
       return uid
-        ? apiCall('GET', `/task-instances/${encodePathPart(uid)}/logs`)
-        : apiCall('GET', `/tasks/${encodePathPart(aid)}/${encodePathPart(tid)}/logs`)
+        ? apiCall('GET', `/task-instances/${encodePathPart(uid)}/logs${suffix}`)
+        : apiCall('GET', `/tasks/${encodePathPart(aid)}/${encodePathPart(tid)}/logs${suffix}`)
     },
+    downloadTaskLogs: async () => { throw devModeError('请在桌面客户端中下载完整日志') },
     clearTaskLogs: (aid, tid, instanceUid = '') => {
       const uid = String(instanceUid || '').trim()
       return uid

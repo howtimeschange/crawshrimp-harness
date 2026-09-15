@@ -98,7 +98,7 @@ test('desktop hides native application menu on Windows and Linux', () => {
   assert.match(main, /function hideNativeAppMenu\(\) \{\s*if \(process\.platform === 'darwin'\) return\s*Menu\.setApplicationMenu\(null\)\s*\}/)
   assert.match(main, /autoHideMenuBar: process\.platform !== 'darwin'/)
   assert.match(main, /if \(process\.platform !== 'darwin'\) \{\s*mainWindow\.setMenuBarVisibility\(false\)\s*\}/)
-  assert.match(main, /app\.whenReady\(\)\.then\(async \(\) => \{\s*hideNativeAppMenu\(\)\s*protocol\.handle\(BALA_WORKSPACE_MEDIA_PROTOCOL, handleBalaWorkspaceMediaRequest\)\s*protocol\.handle\(LOCAL_MEDIA_PROTOCOL, handleLocalMediaRequest\)\s*ensureDefaultLocalMediaRoots\(\)\s*createWindow\(\)/)
+  assert.match(main, /app\.whenReady\(\)\.then\(async \(\) => \{\s*hideNativeAppMenu\(\)\s*protocol\.handle\(BALA_WORKSPACE_MEDIA_PROTOCOL, handleBalaWorkspaceMediaRequest\)\s*protocol\.handle\(LOCAL_MEDIA_PROTOCOL, handleLocalMediaRequest\)\s*createWindow\(\)\s*await initializeDataDirectory\(\)\s*ensureDefaultLocalMediaRoots\(\)/)
 })
 
 test('desktop lifecycle confirms active tasks before quitting', () => {
@@ -258,11 +258,11 @@ test('desktop backend receives a resolved writable CRAWSHRIMP_DATA directory', (
   assert.match(main, /function ensureWritableDirectory\(dirPath, label = 'directory'\)/)
   assert.match(main, /function ensureWritableDataDir\(dirPath\)/)
   assert.match(main, /for \(const childName of \['adapters', 'adapter-meta', 'data', 'logs'\]\)/)
-  assert.match(main, /function prepareCrawshrimpDataDir\(\)/)
-  assert.match(main, /resolvedCrawshrimpDataDir = prepareCrawshrimpDataDir\(\)/)
+  assert.match(main, /function initializeDataDirectory\(\)/)
+  assert.match(main, /dataDirectoryReady = prepareDesktopDataDirectoryAsync\(/)
   assert.match(main, /resolvedCrawshrimpDataDir = getCrawshrimpDataDir\(\)/)
   assert.match(main, /CRAWSHRIMP_DATA: resolvedCrawshrimpDataDir/)
-  assert.match(main, /writeDesktopConfig\(\{ data_dir: writable \}\)/)
+  assert.match(main, /writeDesktopConfig\(\{ data_dir: root \}\)/)
   assert.match(main, /cfg\.data_dir = desktopDataDir \|\| getCrawshrimpDataDir\(\)/)
   assert.match(main, /plain\.data_dir = dataDir/)
   assert.match(main, /return resolvedCrawshrimpDataDir/)

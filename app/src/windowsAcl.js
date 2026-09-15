@@ -160,3 +160,27 @@ module.exports = {
   assertSafeWindowsDataRootSync,
   hardenWindowsPathSync,
 }
+
+// One process for a batch; execute in the data-directory worker at startup.
+function hardenWindowsPathsSync(paths, { platform = process.platform, fsApi = fs, execFileSyncApi = execFileSync } = {}) {
+  if (platform !== 'win32') return false
+  const targets = paths.map(value => {
+    const target = path.resolve(value)
+    const stat = fsApi.lstatSync(target)
+    if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) throw new Error('Windows ACL target must be a regular file or directory, not a link')
+    return { path: target, directory: stat.isDirectory() }
+  })
+  const encoded = Buffer.from(JSON.stringify(targets)).toString('base64')
+  const script = `$ErrorActionPreference='Stop'; $targets=ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'))); $user=[Security.Principal.WindowsIdentity]::GetCurrent().User; foreach($target in $targets) {
+    $security=if($target.directory){New-Object Security.AccessControl.DirectorySecurity}else{New-Object Security.AccessControl.FileSecurity};
+    $security.SetAccessRuleProtection($true,$false);
+    $inheritance=if($target.directory){[Security.AccessControl.InheritanceFlags]3}else{[Security.AccessControl.InheritanceFlags]0};
+    foreach($sid in @($user,(New-Object Security.Principal.SecurityIdentifier('S-1-5-18')),(New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))) {
+      $rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,[Security.AccessControl.FileSystemRights]::FullControl,$inheritance,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow); [void]$security.AddAccessRule($rule)
+    }
+    if($target.directory){[IO.Directory]::SetAccessControl($target.path,$security)}else{[IO.File]::SetAccessControl($target.path,$security)}
+  }`
+  execFileSyncApi('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], windowsExecOptions())
+  return true
+}
+module.exports.hardenWindowsPathsSync = hardenWindowsPathsSync

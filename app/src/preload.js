@@ -682,7 +682,8 @@ contextBridge.exposeInMainWorld('cs', {
   resumeTask:      (aid, tid, instanceUid = '') => ipcRenderer.invoke('resume-task', aid, tid, instanceUid),
   stopTask:        (aid, tid, instanceUid = '') => ipcRenderer.invoke('stop-task', aid, tid, instanceUid),
   getTaskStatus:   (aid, tid, instanceUid = '') => ipcRenderer.invoke('get-task-status', aid, tid, instanceUid),
-  getTaskLogs:     (aid, tid, instanceUid = '') => ipcRenderer.invoke('get-task-logs', aid, tid, instanceUid),
+  getTaskLogs:     (aid, tid, instanceUid = '', query = {}) => ipcRenderer.invoke('get-task-logs', aid, tid, instanceUid, query),
+  downloadTaskLogs: (aid, tid, instanceUid = '') => ipcRenderer.invoke('download-task-logs', aid, tid, instanceUid),
   clearTaskLogs:   (aid, tid, instanceUid = '') => ipcRenderer.invoke('clear-task-logs', aid, tid, instanceUid),
 
   getData:         (aid, tid, options = {}) => ipcRenderer.invoke('get-data', aid, tid, options),

@@ -1,0 +1,158 @@
+TAP version 13
+# Subtest: workspace deletion unlinks a regular nested image without a directory grant
+ok 1 - workspace deletion unlinks a regular nested image without a directory grant
+  ---
+  duration_ms: 1.762875
+  type: 'test'
+  ...
+# Subtest: workspace deletion allows regular images outside an approved workspace
+ok 2 - workspace deletion allows regular images outside an approved workspace
+  ---
+  duration_ms: 1.229292
+  type: 'test'
+  ...
+# Subtest: workspace deletion retries a transient Windows sharing violation for an outside image
+ok 3 - workspace deletion retries a transient Windows sharing violation for an outside image
+  ---
+  duration_ms: 1.425333
+  type: 'test'
+  ...
+# Subtest: workspace deletion permits AI image cache files without a workspace grant
+ok 4 - workspace deletion permits AI image cache files without a workspace grant
+  ---
+  duration_ms: 1.428375
+  type: 'test'
+  ...
+# Subtest: workspace deletion rejects the root, directories, non-images, and symlinks
+ok 5 - workspace deletion rejects the root, directories, non-images, and symlinks
+  ---
+  duration_ms: 1.349
+  type: 'test'
+  ...
+# Subtest: workspace image listing only returns real regular images with their current file versions
+ok 6 - workspace image listing only returns real regular images with their current file versions
+  ---
+  duration_ms: 2.399959
+  type: 'test'
+  ...
+# Subtest: workspace image listing treats the AI result folder as selected model material
+ok 7 - workspace image listing treats the AI result folder as selected model material
+  ---
+  duration_ms: 1.193667
+  type: 'test'
+  ...
+# Subtest: legacy workspace authorization store remains readable while deletion does not depend on it
+ok 8 - legacy workspace authorization store remains readable while deletion does not depend on it
+  ---
+  duration_ms: 12.828458
+  type: 'test'
+  ...
+# Subtest: workspace deletion is idempotent when the image is already missing anywhere on disk
+ok 9 - workspace deletion is idempotent when the image is already missing anywhere on disk
+  ---
+  duration_ms: 1.346458
+  type: 'test'
+  ...
+# Subtest: workspace video metadata permits regular videos anywhere and never serializes video bytes
+ok 10 - workspace video metadata permits regular videos anywhere and never serializes video bytes
+  ---
+  duration_ms: 1.5245
+  type: 'test'
+  ...
+# Subtest: workspace image metadata permits regular images anywhere and rejects symlinks
+ok 11 - workspace image metadata permits regular images anywhere and rejects symlinks
+  ---
+  duration_ms: 1.155
+  type: 'test'
+  ...
+# Subtest: workspace manifest reads and writes under any selected workspace directory
+ok 12 - workspace manifest reads and writes under any selected workspace directory
+  ---
+  duration_ms: 9.567042
+  type: 'test'
+  ...
+# Subtest: workspace manifest atomically retries a transient Windows replacement failure
+ok 13 - workspace manifest atomically retries a transient Windows replacement failure
+  ---
+  duration_ms: 13.083542
+  type: 'test'
+  ...
+# (node:55676) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/xingyicheng/Documents/crawshrimp-harness/app/src/renderer/utils/agentRuntimePolling.test.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/xingyicheng/Documents/crawshrimp-harness/app/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: timeout preserves an existing conversation and does not stack status requests
+ok 14 - timeout preserves an existing conversation and does not stack status requests
+  ---
+  duration_ms: 0.832959
+  type: 'test'
+  ...
+# Subtest: initial connection failure still triggers recovery without an existing conversation
+ok 15 - initial connection failure still triggers recovery without an existing conversation
+  ---
+  duration_ms: 0.322667
+  type: 'test'
+  ...
+# Subtest: startDesktopServices still starts Chrome when backend startup fails
+ok 16 - startDesktopServices still starts Chrome when backend startup fails
+  ---
+  duration_ms: 0.850167
+  type: 'test'
+  ...
+# Subtest: Harness startup defers Chrome even if the backend fails
+ok 17 - Harness startup defers Chrome even if the backend fails
+  ---
+  duration_ms: 0.1045
+  type: 'test'
+  ...
+# Subtest: normal Harness startup requires only the core service
+ok 18 - normal Harness startup requires only the core service
+  ---
+  duration_ms: 0.108584
+  type: 'test'
+  ...
+# Subtest: Windows ACL hardening protects a directory for the current user, SYSTEM, and Administrators
+ok 19 - Windows ACL hardening protects a directory for the current user, SYSTEM, and Administrators
+  ---
+  duration_ms: 1.727875
+  type: 'test'
+  ...
+# Subtest: Windows ACL hardening uses file-only ACEs and rejects links
+ok 20 - Windows ACL hardening uses file-only ACEs and rejects links
+  ---
+  duration_ms: 0.934
+  type: 'test'
+  ...
+# Subtest: Windows ACL hardening is a no-op on other platforms
+ok 21 - Windows ACL hardening is a no-op on other platforms
+  ---
+  duration_ms: 0.057833
+  type: 'test'
+  ...
+# Subtest: Windows data root guard rejects broad drive, profile, and AppData roots
+ok 22 - Windows data root guard rejects broad drive, profile, and AppData roots
+  ---
+  duration_ms: 1.178625
+  type: 'test'
+  ...
+# Subtest: Windows data root guard rejects the profiles root without USERPROFILE
+ok 23 - Windows data root guard rejects the profiles root without USERPROFILE
+  ---
+  duration_ms: 0.225291
+  type: 'test'
+  ...
+# Subtest: Windows data root preflight rejects a junction parent before creating children
+ok 24 - Windows data root preflight rejects a junction parent before creating children
+  ---
+  duration_ms: 1.109
+  type: 'test'
+  ...
+1..24
+# tests 24
+# suites 0
+# pass 24
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 89.832583

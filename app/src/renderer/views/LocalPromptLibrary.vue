@@ -262,6 +262,12 @@ watch(selectedLibraryUid, () => {
 
 watch(displayTemplates, resizePromptTextareas, { flush: 'post' })
 
+function ensureSelectedLibrary() {
+  if (!libraries.value.some(library => library.library_uid === selectedLibraryUid.value)) {
+    selectedLibraryUid.value = libraries.value[0]?.library_uid || ''
+  }
+}
+
 async function loadLibraries() {
   loading.value = true
   error.value = ''

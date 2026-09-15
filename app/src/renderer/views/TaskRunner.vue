@@ -827,6 +827,8 @@
           :log-class="logClass"
           :auto-open-on-first-log="false"
           @clear-logs="clearLogs"
+          :downloadable="true"
+          @download-logs="downloadLogs"
           @open-file="openFile"
         >
           <template #actions>
@@ -1079,7 +1081,8 @@ import { summarizePrecheckRows } from '../utils/precheckSummary'
 import { buildTaskRunnerProgressSummary, resolveTaskProgressConfig } from '../utils/taskProgress'
 import { buildOdpsSyncFile, isOdpsSyncableFile, isOdpsSyncableTask } from '../utils/odpsSyncTasks'
 import { mergeTaskLiveStatus, shouldResetTaskValues, taskIdentityKey } from '../utils/taskRunnerState'
-import { currentRunOutput, latestRunLogs, readCloudDriveDownloadSummary } from '../utils/taskRunOutput'
+import { createTaskLogCursor } from '../utils/taskLogCursor'
+import { currentRunOutput, readCloudDriveDownloadSummary } from '../utils/taskRunOutput'
 import { buildEmbeddedCloudApprovalUrl, isTrustedCloudApprovalBoardUrl } from '../utils/cloudApprovalUrl'
 import { collectDownloadedMaterialRows } from '../utils/balaAiVideoWorkflow'
 import {
@@ -1124,6 +1127,7 @@ function initialAiChainActiveStep(adapterId = props.adapterId, task = props.task
 
 const values = ref({})
 const logs = ref([])
+const logCursor = createTaskLogCursor()
 const isRunning = ref(false)
 const lastResult = ref(null)
 const localLiveSnapshot = ref(null)
@@ -1647,9 +1651,9 @@ watch(() => [props.adapterId, props.task], ([adapterId, task]) => {
   // 异步加载该任务的历史日志
   nextTick(async () => {
     try {
-      const logR = await window.cs.getTaskLogs(props.adapterId, task.task_id, effectiveInstanceUid.value)
+      const logR = await window.cs.getTaskLogs(props.adapterId, task.task_id, effectiveInstanceUid.value, logCursor.query())
       if (initialRevision !== runUiRevision) return
-      if (logR.logs) logs.value = latestRunLogs(logR.logs)
+      if (logR.logs) logs.value = logCursor.apply(logR)
       const taskStatus = await window.cs.getTaskStatus(props.adapterId, task.task_id, effectiveInstanceUid.value)
       if (initialRevision !== runUiRevision) return
       const live = taskStatus?.live
@@ -2834,6 +2838,7 @@ function resetRunUi() {
   runUiRevision += 1
   currentRunId = null
   logs.value = []
+  logCursor.reset()
   lastResult.value = null
   outputFiles.value = []
   approvalBoardUrl.value = ''
@@ -2914,14 +2919,20 @@ async function startTaskRun(params, pendingMessage) {
   currentRunId = initStatus?.live?.run_id ?? initStatus?.last_run?.id ?? null
   const token = runAbortToken
   return await new Promise((resolve) => {
+    let pollInFlight = false
     pollTimer = setInterval(async () => {
+      if (pollInFlight) return
+      pollInFlight = true
       if (token !== runAbortToken) {
         clearInterval(pollTimer)
         pollTimer = null
         resolve({ status: 'cancelled' })
         return
       }
-      const result = await pollStatusOnce()
+      let result
+      try { result = await pollStatusOnce() }
+      catch (error) { logs.value = [...logs.value.slice(-1999), `状态读取失败：${error.message}`] }
+      finally { pollInFlight = false }
       if (!result) return
       clearInterval(pollTimer)
       pollTimer = null
@@ -2934,13 +2945,19 @@ async function pollStatusOnce() {
   const revision = runUiRevision
   const r = await window.cs.getTaskStatus(props.adapterId, props.task.task_id, effectiveInstanceUid.value)
   const live = r.live
-  const logR = await window.cs.getTaskLogs(props.adapterId, props.task.task_id, effectiveInstanceUid.value)
+  let logR = await window.cs.getTaskLogs(props.adapterId, props.task.task_id, effectiveInstanceUid.value, logCursor.query())
 
   if (revision !== runUiRevision) return null
   const responseRunId = live?.run_id ?? r.last_run?.id
   if (currentRunId && responseRunId && String(responseRunId) !== String(currentRunId)) return null
-  if (logR.logs) logs.value = latestRunLogs(logR.logs)
-  const latestLogText = Array.isArray(logR.logs) ? logR.logs.slice(-30).join('\n') : ''
+  if (logR.logs) logs.value = logCursor.apply(logR)
+  // Drain the bounded tail before a finished task stops its polling timer.
+  for (let page = 0; logR.has_more && page < 4; page += 1) {
+    logR = await window.cs.getTaskLogs(props.adapterId, props.task.task_id, effectiveInstanceUid.value, logCursor.query())
+    if (revision !== runUiRevision) return null
+    logs.value = logCursor.apply(logR)
+  }
+  const latestLogText = logs.value.slice(-30).join('\n')
   if (/等待.*登录|登录.*等待|请.*登录|未登录/.test(latestLogText)) {
     showOperatorAttention(
       'waiting_login',
@@ -3284,8 +3301,14 @@ async function runTaskAndSyncOdps() {
   await runTask({ syncOdpsAfterDone: true })
 }
 
+async function downloadLogs() {
+  try { await window.cs.downloadTaskLogs(props.adapterId, props.task.task_id, effectiveInstanceUid.value) }
+  catch (error) { logs.value.push(`[错误] 日志下载失败：${error.message}`) }
+}
+
 async function clearLogs() {
   logs.value = []
+  logCursor.reset()
   try {
     await window.cs.clearTaskLogs(props.adapterId, props.task.task_id, effectiveInstanceUid.value)
   } catch {}

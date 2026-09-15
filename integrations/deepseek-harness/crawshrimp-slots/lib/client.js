@@ -553,7 +553,7 @@ window.__ModuleLoader__.load({
     }
 
     // ---- 抓虾菜单注入 DSH 侧边栏(主菜单 + 底部菜单) ----
-    const MAIN_NAV_IDS = ['scripts', 'market', 'ai_image', 'task_center', 'ai_video_generation', 'ai_workflows', 'local_prompt_library', 'files']
+    const MAIN_NAV_IDS = ['scripts', 'market', 'ai_image', 'task_center', 'ai_video_generation', 'local_prompt_library', 'files']
     const BOTTOM_NAV_IDS = ['settings']
     const MAIN_VISIBLE_DEFAULT = 3
 
@@ -564,7 +564,7 @@ window.__ModuleLoader__.load({
     let railResizeTarget = null
     let lastNavItems = []
     let lastNavActiveId = ''
-    const expandedNavGroupIds = new Set(['ai_workflows'])
+    const expandedNavGroupIds = new Set()
 
     function currentRailTarget() {
       const rail = document.querySelector('.hHd-Xa_root')
