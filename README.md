@@ -19,6 +19,13 @@ Harness 面向个人本地使用：本地功能免登录，设置中的个人账
 
 ## 版本记录
 
+## v0.2.1
+
+- 修复 Semir 网关鉴权，扩展国产模型配置和模型输出预算，兼容标量工具返回值。
+- 统一生图供应商与天猫图片工作流，保留部分成功的生成结果并恢复图片预览。
+- 移除旧 AI 工作流页面，优化桌面启动、图片缩略图、任务日志读取与下载性能。
+- 改善 Windows 数据目录和权限处理，补齐相关回归验证。
+
 ### v0.2.0
 
 - 新增个人账号与使用统计偏好，保留本地功能免登录；停用旧云审批和任务机，继续使用本地 DSH 权限审批。
@@ -282,7 +289,7 @@ npm --prefix app run build:win
 
 独立仓库 `howtimeschange/crawshrimp-harness` 的正式客户端使用 GitHub Release 元数据用于应用内更新。本仓构建不发布到 `https://updates.crawshrimp.com/`，也不刷新主项目的 `desktop-latest`。
 
-本次保持 `v0.2.0` 版本号重新构建；已安装同版本的客户端不会按更高版本自动升级，请从 [v0.2.0 Release](https://github.com/howtimeschange/crawshrimp-harness/releases/tag/v0.2.0) 下载新安装包覆盖安装。
+v0.2.1 安装包将在 CI 完成后提供于 [v0.2.1 Release](https://github.com/howtimeschange/crawshrimp-harness/releases/tag/v0.2.1)。
 
 升级不需要卸载旧版：
 

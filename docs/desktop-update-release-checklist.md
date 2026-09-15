@@ -168,3 +168,9 @@ Rollback evidence:
 - Command timestamp: `PENDING`
 - Reason: `PENDING`
 - Release readback after rollback: `PENDING`
+
+## v0.2.1 Version Decision (2026-09-15)
+
+- Target: `v0.2.1`, explicitly requested by the release owner.
+- Classification: maintenance release covering provider compatibility, image-result recovery, legacy workflow removal and desktop performance repairs; retain the explicitly requested PATCH version.
+- CI build, installer publication and update metadata readback: pending.
