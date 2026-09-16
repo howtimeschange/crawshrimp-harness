@@ -39,6 +39,9 @@ _end_runtime_operation: Callable[[str], None] | None = None
 AUTOMATION_JOB_PREFIX = "automation::"
 AUTOMATION_RETRY_JOB_PREFIX = "automation-retry::"
 DEFAULT_AUTOMATION_TIMEZONE = "Asia/Shanghai"
+RECURRING_MISFIRE_GRACE_SECONDS = 300
+AT_MISFIRE_GRACE_SECONDS = 3600
+RETRY_MISFIRE_GRACE_SECONDS = 300
 WEEKDAY_NAMES = {
     1: "mon",
     2: "tue",
@@ -55,7 +58,10 @@ def get_scheduler() -> AsyncIOScheduler:
     if _scheduler is None:
         # Windows Python builds do not always ship an IANA timezone database.
         # Crawshrimp only needs China standard time, so use a fixed UTC+8 tzinfo.
-        _scheduler = AsyncIOScheduler(timezone=APP_TIMEZONE)
+        _scheduler = AsyncIOScheduler(timezone=APP_TIMEZONE, job_defaults={
+            "misfire_grace_time": RECURRING_MISFIRE_GRACE_SECONDS,
+            "coalesce": True,
+        })
     return _scheduler
 
 
@@ -202,7 +208,8 @@ def register_adapter(manifest: AdapterManifest, run_callback: Callable) -> int:
         if sched.get_job(jid):
             sched.remove_job(jid)
 
-        sched.add_job(_job, trigger=apc_trigger, id=jid, replace_existing=True)
+        sched.add_job(_job, trigger=apc_trigger, id=jid, replace_existing=True,
+                      misfire_grace_time=RECURRING_MISFIRE_GRACE_SECONDS, coalesce=True)
         _task_callbacks[jid] = run_callback
         count += 1
         logger.info(f"Registered job {jid} ({trigger.type.value})")
@@ -260,7 +267,8 @@ def register_task_schedule(schedule: dict, run_callback: Callable) -> int:
         finally:
             _end_scheduled_runtime_operation(token)
 
-    sched.add_job(_job, trigger=trigger, id=jid, replace_existing=True)
+    sched.add_job(_job, trigger=trigger, id=jid, replace_existing=True,
+                  misfire_grace_time=RECURRING_MISFIRE_GRACE_SECONDS, coalesce=True)
     logger.info("Registered task schedule job %s", jid)
     return 1
 
@@ -499,7 +507,15 @@ def register_automation_schedule(automation: dict, callback: Callable) -> int:
         except Exception as exc:
             logger.error("Scheduled Agent Automation %s failed: %s", uid, exc)
 
-    sched.add_job(_job, trigger=trigger, id=jid, replace_existing=True)
+    # Late one-time triggers may run within one hour. Beyond the grace window,
+    # AutomationController.sweep records a durable missed/review boundary.
+    schedule = _automation_schedule_value(automation)
+    schedule_kind = str(schedule.get("kind") or schedule.get("type") or "").strip().lower()
+    if str(automation.get("automation_kind") or "").strip().lower() == "loop":
+        schedule_kind = "loop"
+    grace = AT_MISFIRE_GRACE_SECONDS if schedule_kind == "at" else RECURRING_MISFIRE_GRACE_SECONDS
+    sched.add_job(_job, trigger=trigger, id=jid, replace_existing=True,
+                  misfire_grace_time=grace, coalesce=True)
     logger.info("Registered Agent Automation job %s", jid)
     return 1
 
@@ -534,6 +550,8 @@ def register_automation_retry(automation: dict, callback: Callable) -> int:
         return 0
     timezone_value = _automation_timezone(_automation_schedule_value(automation))
     run_at = _automation_datetime(retry_at, timezone_value, field_name="retry_at")
+    if (_automation_now(timezone_value) - run_at).total_seconds() > RETRY_MISFIRE_GRACE_SECONDS:
+        raise ValueError("automation retry wake-up expired")
     jid = automation_retry_job_id(automation_uid)
     sched = get_scheduler()
     _automation_retry_callback_tokens.pop(automation_uid, None)
@@ -562,7 +580,8 @@ def register_automation_retry(automation: dict, callback: Callable) -> int:
         except Exception as exc:
             logger.error("Scheduled Agent Automation retry %s failed: %s", uid, exc)
 
-    sched.add_job(_job, trigger=DateTrigger(run_date=run_at, timezone=timezone_value), id=jid, replace_existing=True)
+    sched.add_job(_job, trigger=DateTrigger(run_date=run_at, timezone=timezone_value), id=jid, replace_existing=True,
+                  misfire_grace_time=RETRY_MISFIRE_GRACE_SECONDS, coalesce=True)
     logger.info("Registered Agent Automation retry job %s", jid)
     return 1
 

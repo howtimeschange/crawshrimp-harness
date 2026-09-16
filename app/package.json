@@ -16,7 +16,8 @@
     "test:builtin-clis": "node scripts/smoke-builtin-clis.cjs",
     "pretest": "node ../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs",
     "vite:build": "vite build",
-    "test": "node --test src/*.test.js src/renderer/utils/*.test.js scripts/*.test.js",
+    "test": "node ../scripts/test-collection.mjs run app",
+    "test:dsh-web-auth": "electron scripts/dsh-web-auth-electron-smoke.cjs",
     "test:update-artifacts": "node --test scripts/validate-update-artifacts.test.js",
     "stage:office": "node scripts/stage-office-runtime.mjs"
   },

@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from core import data_sink
 from core.automation_policy import automation_policy_error
 from core.automation_program import ProgramValidationError, evaluate_program, validate_program
+from core.scheduler import AT_MISFIRE_GRACE_SECONDS, RECURRING_MISFIRE_GRACE_SECONDS, RETRY_MISFIRE_GRACE_SECONDS
 
 
 logger = logging.getLogger(__name__)
@@ -262,6 +263,109 @@ class AutomationController:
         self.observer_executor = observer_executor
         self.action_executor = action_executor
         self._claim_locks: dict[str, asyncio.Lock] = {}
+        self._watchdog_task: Optional[asyncio.Task] = None
+
+    def start_watchdog(self) -> None:
+        if self._watchdog_task is None or self._watchdog_task.done():
+            self._watchdog_task = asyncio.create_task(self._watchdog(), name="automation-watchdog")
+
+    async def stop_watchdog(self) -> None:
+        task, self._watchdog_task = self._watchdog_task, None
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    async def _watchdog(self) -> None:
+        while True:
+            await asyncio.sleep(60)
+            try:
+                await self.sweep()
+            except Exception:
+                # A failed scan must not silently terminate future scans.
+                logger.exception("Automation watchdog scan failed")
+
+    def _expire_retry(self, automation: dict, current: datetime) -> dict:
+        retry_at = str(automation.get("retry_at") or "").strip()
+        if not retry_at:
+            return automation
+        due = _as_datetime(retry_at, _timezone(_schedule(automation)), field_name="retry_at")
+        if (current - due).total_seconds() <= RETRY_MISFIRE_GRACE_SECONDS:
+            return automation
+        uid = automation["automation_uid"]
+        self.scheduler.unregister_automation_retry(uid)
+        for run in data_sink.list_agent_automation_dispatch_runs(include_retries=True):
+            if run.get("automation_uid") == uid and run.get("status") == "retry_scheduled":
+                data_sink.update_agent_automation_run(
+                    run["run_uid"], status="needs_review", error_code="RETRY_MISSED_WHILE_RUNNING",
+                    error_message="Retry wake-up exceeded its grace window; review before retrying",
+                    finished_at=current.isoformat(),
+                )
+        updates = {"retry_at": "", "last_status": "needs_review", "last_error": "RETRY_MISSED_WHILE_RUNNING"}
+        if _kind(automation) in {"at", "loop"}:
+            updates["next_run_at"] = ""
+            self.scheduler.unregister_automation_schedule(uid)
+            if _kind(automation) == "at":
+                updates["enabled"] = False
+        logger.warning("Automation %s retry missed its grace window (%s)", uid, retry_at)
+        return data_sink.update_agent_automation(uid, **updates)
+
+    async def sweep(self, now: Any = None) -> None:
+        """Recover runtime misfires without replaying expired or in-flight work.
+
+        Unlike boot restore, this respects the scheduler's grace windows. The
+        same per-definition claim lock prevents racing a callback or retry.
+        """
+        current = _now_datetime(now)
+        for item in data_sink.list_agent_automations(enabled=True, include_archived=False):
+            uid = item["automation_uid"]
+            async with self._lock(uid):
+                automation = data_sink.get_agent_automation(uid)
+                if not automation or not automation.get("enabled") or automation.get("archived"):
+                    continue
+                try:
+                    retry_at = automation.get("retry_at")
+                    automation = self._expire_retry(automation, current)
+                    if retry_at and not automation.get("retry_at"):
+                        self._refresh_at(automation, now=current)
+                        # A held one-shot/loop must not be armed by this scan.
+                        if _kind(automation) in {"at", "loop"}:
+                            continue
+                    if not self._is_overdue(automation, now=current):
+                        continue
+                    due = self._trigger_time(automation, now=current)
+                    kind = _kind(automation)
+                    grace = AT_MISFIRE_GRACE_SECONDS if kind == "at" else RECURRING_MISFIRE_GRACE_SECONDS
+                    if (current - due).total_seconds() <= grace:
+                        continue
+                    if data_sink.has_active_agent_automation_run(uid):
+                        continue
+                    trigger_kind = "loop" if kind == "loop" else "scheduled"
+                    # Missed loop boundaries have no executed cycle; preserve
+                    # the cycle budget and use the durable timestamp identity.
+                    trigger_uid = f"{trigger_kind}:{due.isoformat()}"
+                    claimed = data_sink.claim_agent_automation_run(
+                        uid, trigger_kind, trigger_uid, trigger_at=due.isoformat(), scheduled_at=due.isoformat(),
+                    )
+                    if not claimed["created"]:
+                        continue
+                    data_sink.update_agent_automation_run(
+                        claimed["run"]["run_uid"], status="missed", error_code="MISSED_WHILE_RUNNING",
+                        error_message="Scheduled wake-up exceeded its grace window",
+                        finished_at=current.isoformat(),
+                    )
+                    updates = {"next_run_at": "", "last_status": "missed", "last_error": "MISSED_WHILE_RUNNING"}
+                    if kind == "at":
+                        updates.update(enabled=False, last_status="needs_review")
+                    elif kind == "loop":
+                        updates["next_run_at"] = (current + timedelta(seconds=_interval_seconds(automation.get("loop_policy") or {}))).isoformat()
+                    refreshed = data_sink.update_agent_automation(uid, **updates)
+                    self._refresh_at(refreshed, now=current)
+                    logger.warning("Automation %s missed scheduled boundary %s", uid, due.isoformat())
+                except (TypeError, ValueError, ZoneInfoNotFoundError):
+                    logger.exception("Unable to recover Automation %s misfire", uid)
 
     def _lock(self, automation_uid: str) -> asyncio.Lock:
         uid = str(automation_uid or "").strip()
@@ -912,6 +1016,7 @@ class AutomationController:
             logger.exception("Unable to advance Automation %s schedule cursor", automation.get("automation_uid"))
 
     def _refresh_at(self, automation: dict, *, now: Any = None) -> dict:
+        automation = self._expire_retry(automation, _now_datetime(now))
         uid = str(automation.get("automation_uid") or "").strip()
         # A retry is a second one-shot wake-up.  It must not replace a normal
         # cron/interval schedule, otherwise a transient failure silently moves

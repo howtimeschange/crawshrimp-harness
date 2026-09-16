@@ -9531,6 +9531,7 @@ async def lifespan(app: FastAPI):
             recover_receipts = getattr(agent_service, "recover_automation_receipts", None)
             if callable(recover_receipts):
                 await recover_receipts()
+            automation_controller.start_watchdog()
         except Exception:
             app.state.automation_controller = None
             agent_mcp_gateway.set_automation_controller(None)
@@ -9539,6 +9540,9 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        automation_controller = getattr(app.state, "automation_controller", None)
+        if automation_controller is not None:
+            await automation_controller.stop_watchdog()
         agent_service = getattr(app.state, "agent_service", None)
         if agent_service is not None:
             try:
@@ -13816,11 +13820,11 @@ async def _agent_run_task_instance(instance_uid: str, params: dict, tab_id: Opti
 async def _agent_control_task_instance(instance_uid: str, action: str):
     _get_task_instance_or_404(instance_uid)
     if action == "pause":
-        return await _pause_run_jid(_instance_jid(instance_uid))
+        return _pause_run_jid(_instance_jid(instance_uid))
     if action == "resume":
-        return await _resume_run_jid(_instance_jid(instance_uid))
+        return _resume_run_jid(_instance_jid(instance_uid))
     if action == "stop":
-        return await _stop_run_jid(_instance_jid(instance_uid))
+        return _stop_run_jid(_instance_jid(instance_uid))
     raise ValueError(f"unknown action: {action}")
 
 

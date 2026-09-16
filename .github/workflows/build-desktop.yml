@@ -38,6 +38,9 @@ jobs:
           cache-dependency-path: |
             app/package-lock.json
             integrations/deepseek-harness/package-lock.json
+            skills/cli/DeepDrawCLI/package-lock.json
+            skills/cli/semir-yunpan-cli/package-lock.json
+            skills/cli/tmall-cli/package-lock.json
 
       - name: Enable Corepack for bundled CLI builds
         run: corepack enable
@@ -64,12 +67,48 @@ jobs:
           done
           npm ci
 
+      - name: Cache pnpm CLI dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/harness-pnpm-store
+          key: pnpm-cli-${{ runner.os }}-${{ hashFiles('skills/cli/bmall-cli/pnpm-lock.yaml') }}
+
+      - name: Install bundled CLI test dependencies
+        shell: bash
+        run: |
+          for cli in DeepDrawCLI semir-yunpan-cli tmall-cli; do
+            npm ci --ignore-scripts --prefix "skills/cli/$cli"
+          done
+
+      - name: Install Bmall CLI test dependencies
+        working-directory: skills/cli/bmall-cli
+        shell: bash
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts --store-dir "$HOME/.cache/harness-pnpm-store"
+
+      - name: Verify test collection
+        run: node scripts/test-collection.mjs verify
+
+      - name: Run integrations tests
+        run: node scripts/test-collection.mjs run integrations
+
+      - name: Run DeepDraw CLI tests
+        run: node scripts/test-collection.mjs run DeepDrawCLI
+
+      - name: Run Bmall CLI tests
+        run: node scripts/test-collection.mjs run bmall-cli
+
+      - name: Run Semir cloud drive CLI tests
+        run: node scripts/test-collection.mjs run semir-yunpan-cli
+
+      - name: Run Tmall CLI tests
+        run: node scripts/test-collection.mjs run tmall-cli
+
       - name: Run app tests
         working-directory: app
         run: npm test
 
       - name: Run adapter JavaScript tests
-        run: node --test tests/*.test.js
+        run: node scripts/test-collection.mjs run adapters
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -82,7 +121,7 @@ jobs:
       - name: Run Python tests
         env:
           PYTHONPATH: .
-        run: python -m pytest tests -v
+        run: node scripts/test-collection.mjs run python
 
   build:
     name: ${{ matrix.name }}
@@ -328,6 +367,17 @@ jobs:
 
           exit "${build_status}"
 
+      # Exercises relocated staging dependencies on both native build hosts.
+      - name: Validate bundled CLI runtime
+        working-directory: app
+        run: npm run test:builtin-clis
+
+      - name: Exercise Electron iframe authentication
+        working-directory: app
+        run: npm run test:dsh-web-auth
+
+      # Authenticated cloud and machine-specific performance scripts remain
+      # explicit manual exceptions in scripts/test-collection.mjs.
       - name: Notarize and staple macOS DMGs
         if: matrix.artifact_suffix == 'mac' && startsWith(github.ref, 'refs/tags/v')
         working-directory: app
