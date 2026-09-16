@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -138,6 +139,8 @@ class AgentWorker:
                     msg = json.loads(line)
                 except json.JSONDecodeError as exc:
                     raise WorkerProtocolError(f"worker 非 JSON 帧: {line[:160]!r}") from exc
+                if not isinstance(msg, dict):
+                    raise WorkerProtocolError("worker JSON 帧必须是对象")
                 if isinstance(msg.get("id"), (int, str)) and msg.get("id") in self._pending:
                     fut = self._pending.pop(msg["id"])
                     if fut.done():
@@ -147,10 +150,17 @@ class AgentWorker:
                     else:
                         fut.set_result(msg.get("result"))
                 elif msg.get("method") and self.on_notification:
-                    await self.on_notification(msg["method"], msg.get("params") or {})
+                    try:
+                        await self.on_notification(msg["method"], msg.get("params") or {})
+                    except WorkerProtocolError:
+                        raise
+                    except Exception:  # noqa: BLE001
+                        logging.getLogger(__name__).exception(
+                            "worker 通知处理失败: method=%s", msg["method"])
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).exception("worker 读取失败: %s", type(exc).__name__)
             exit_message = f"worker 读取失败: {exc}"
             self._fail_pending(exit_message)
         finally:

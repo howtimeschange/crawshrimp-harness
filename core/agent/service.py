@@ -9,6 +9,7 @@ import asyncio
 import copy
 import inspect
 import json
+import logging
 import math
 import os
 import re
@@ -38,6 +39,11 @@ from core.llm_gateway import (
 )
 from core.agent.worker import AgentWorker, resolve_harness_root, resolve_node_executable
 from core.config import load_config
+
+
+def _as_dict(value: Any) -> dict:
+    return value if isinstance(value, dict) else {}
+
 
 APPROVAL_WAIT_SECONDS = 15 * 60
 APPROVAL_MAX_CONCURRENCY = 4
@@ -2948,6 +2954,10 @@ class AgentService:
             run_id = str(run.get("run_id") or "")
             session_id = str(run.get("session_id") or "")
             try:
+                # The registered snapshot can still say queued/running after
+                # turn/end has durably completed the run.
+                if _as_dict(db.get_run(run_id)).get("status") in RUN_FINAL_STATUSES:
+                    continue
                 await self._finalize_assistant_stream(run_id, mark_complete=True)
                 db.update_run(
                     run_id,
@@ -2979,6 +2989,7 @@ class AgentService:
                 self.unregister_run_context(runtime_session_id, run_id)
 
     async def _on_worker_notification(self, method: str, params: dict) -> None:
+        params = _as_dict(params)
         if method == "worker.status":
             state = params.get("status")
             if state in ("ready", "starting", "stopping", "stopped", "crashed"):
@@ -2995,24 +3006,31 @@ class AgentService:
         if method != "harness.notification":
             return
         run_id = params.get("runId")
-        event = params.get("event") or {}
-        if not run_id:
-            # web UI 原生会话:影子投影(建立 active run,任务准备/审批/产物可用)
-            shadow_session = params.get("sessionId")
-            if shadow_session:
-                await self._project_shadow_event(str(shadow_session), event)
-            return
-        run = db.get_run(run_id)
-        if not run:
-            return
-        session_id = run["session_id"]
-        await self._project_event(session_id, run, event)
+        event = _as_dict(params.get("event"))
+        runtime_session_id = str(params.get("sessionId") or "")
+        session_id = runtime_session_id
+        try:
+            if not run_id:
+                run_id = _as_dict(self.shadow_runs.get(runtime_session_id)).get("run_id")
+                if runtime_session_id:
+                    await self._project_shadow_event(runtime_session_id, event)
+                return
+            run = db.get_run(run_id)
+            if not run:
+                return
+            session_id = run["session_id"]
+            await self._project_event(session_id, run, event)
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).exception(
+                "worker 事件投影失败: run=%s session=%s runtime_session=%s event.type=%s",
+                run_id, session_id, runtime_session_id, event.get("type"))
 
     # ---------- web UI 原生会话影子投影 ----------
 
     async def _project_shadow_event(self, runtime_session_id: str, event: dict) -> None:
+        event = _as_dict(event)
         event_type = event.get("type") or "unknown"
-        data = event.get("data") or {}
+        data = _as_dict(event.get("data"))
 
         session = db.get_session_by_runtime(runtime_session_id)
         if session is None:
@@ -3069,14 +3087,19 @@ class AgentService:
             if title:
                 db.update_session(session_id, title=title)
         elif event_type == "turn/end":
-            reason = data.get("reason") or {}
+            reason = _as_dict(data.get("reason"))
             kind = reason.get("kind") or "completed"
             if kind == "completed":
                 await self._finalize_assistant_stream(run["run_id"], mark_complete=True)
                 db.update_run(run["run_id"], status="completed", finished_at=_now_iso())
                 db.update_turn(run.get("turn_id") or "", status="completed", completed_at=_now_iso())
                 await self.broadcast(session_id, 0, "run.completed", {"run_id": run["run_id"]})
-                await self._broadcast_run_artifacts(run["run_id"], session_id)
+                try:
+                    await self._broadcast_run_artifacts(run["run_id"], session_id)
+                except Exception:  # noqa: BLE001
+                    logging.getLogger(__name__).exception(
+                        "worker 产物投影失败: run=%s session=%s event.type=%s",
+                        run["run_id"], session_id, event_type)
             else:
                 await self._finalize_assistant_stream(run["run_id"], mark_complete=True)
                 error_code = None
@@ -3112,8 +3135,9 @@ class AgentService:
         await self._project_event(session_id, run, event)
 
     async def _project_event(self, session_id: str, run: dict, event: dict) -> None:
+        event = _as_dict(event)
         event_type = event.get("type") or "unknown"
-        data = event.get("data") or {}
+        data = _as_dict(event.get("data"))
         dsh_seq = int(event.get("seq") or 0)
         run_id = run["run_id"]
         from core.product_analytics import runtime_event
@@ -3123,7 +3147,7 @@ class AgentService:
             db.update_run(run_id, dsh_end_seq=max(int(run.get("dsh_end_seq") or 0), dsh_seq))
 
         if event_type == "request/header":
-            config = (data.get("header") or {}).get("config") or {}
+            config = _as_dict(_as_dict(data.get("header")).get("config"))
             if config.get("provider") and config.get("model"):
                 fields = {"provider_id": str(config["provider"]), "model_id": str(config["model"])}
                 db.update_run(run_id, **fields)
@@ -3134,7 +3158,7 @@ class AgentService:
 
         if event_type == "assistant/chunk":
             # block-end repeats the full block already delivered by text-delta.
-            if (data.get("chunk") or {}).get("type") != "text-delta":
+            if _as_dict(data.get("chunk")).get("type") != "text-delta":
                 return
             delta = _extract_text(data)
             if delta:
@@ -3146,7 +3170,7 @@ class AgentService:
                 return
             # Native message provenance is the actual model used, including
             # sessions which switched away from the generation default.
-            source = (data.get("message") or {}).get("source") or {}
+            source = _as_dict(_as_dict(data.get("message")).get("source"))
             if source.get("provider") and source.get("model"):
                 db.update_run(run_id, provider_id=str(source["provider"]), model_id=str(source["model"]))
             text = _extract_text(data)
@@ -3189,7 +3213,7 @@ class AgentService:
             return
 
         if event_type == "turn/end":
-            reason = data.get("reason") or {}
+            reason = _as_dict(data.get("reason"))
             kind = reason.get("kind") or "error"
             if kind == "completed":
                 await self._finalize_assistant_stream(run_id, mark_complete=True)

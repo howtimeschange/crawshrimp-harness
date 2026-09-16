@@ -142,12 +142,12 @@ def test_crash_circuit_blocks_queue_and_start_entry_until_manual_reset():
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize('frame', ['bad-json', '{"method":"event","params":{}}'])
-def test_broken_protocol_stops_child_and_reports_exit(monkeypatch, frame):
+@pytest.mark.parametrize('frame', ['bad-json', '51', '[1, 2]', '{"method":"event","params":{}}'])
+def test_broken_protocol_stops_child_and_reports_exit(monkeypatch, frame, caplog):
     async def scenario():
         exits = []
         async def failed_notification(*args):
-            raise RuntimeError('projection failed')
+            raise WorkerProtocolError('protocol failed')
         async def on_exit(message, unexpected):
             exits.append((message, unexpected))
         worker = AgentWorker(runtime_root='.', data_root='.', mcp_url='', session_root='',
@@ -161,6 +161,7 @@ def test_broken_protocol_stops_child_and_reports_exit(monkeypatch, frame):
             await asyncio.wait_for(asyncio.shield(reader), 6)
             assert proc.returncode is not None
             assert len(exits) == 1 and exits[0][1] is True
+            assert "WorkerProtocolError" in caplog.text and "Traceback" in caplog.text
             with pytest.raises(WorkerProtocolError):
                 await worker.request('worker.health', timeout=.1)
         finally:
@@ -230,4 +231,77 @@ def test_uncertain_automation_cancellation_stops_worker_before_releasing_tasks(r
         service._cancel_automation_task_instances = cancel_tasks
         await service._stop_timed_out_automation('run', 'automation')
         assert order == ['stopped', 'tasks']
+    asyncio.run(scenario())
+
+
+def test_notification_failure_keeps_worker_and_pending_request_alive(caplog):
+    async def scenario():
+        handler = AsyncMock(side_effect=[AttributeError("projection failed"), None])
+        worker = AgentWorker(runtime_root='.', data_root='.', mcp_url='', session_root='',
+                             on_notification=handler, on_exit=AsyncMock())
+        stdout = asyncio.StreamReader()
+        worker.proc = SimpleNamespace(stdout=stdout, stderr=asyncio.StreamReader(), returncode=None)
+        worker._terminate_process = AsyncMock()
+        pending = asyncio.get_running_loop().create_future()
+        worker._pending[1] = pending
+        reader = asyncio.create_task(worker._read_loop())
+        stdout.feed_data(b'{"method":"event","params":{}}\n{"method":"event","params":{}}\n{"id":1,"result":{"ok":true}}\n')
+        try:
+            assert await asyncio.wait_for(pending, 1) == {'ok': True}
+            assert not reader.done()
+            assert worker._channel_error is None
+            worker._terminate_process.assert_not_awaited()
+            worker.on_exit.assert_not_awaited()
+            assert handler.await_count == 2
+            assert 'AttributeError' in caplog.text and 'Traceback' in caplog.text
+            assert 'worker 读取失败' not in caplog.text
+        finally:
+            worker._stop_requested = True
+            stdout.feed_eof()
+            await reader
+        assert worker.on_exit.call_args.args[1] is False
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('status', ['completed', 'failed', 'canceled', 'interrupted'])
+def test_shadow_interrupt_preserves_durable_terminal(monkeypatch, tmp_path, status):
+    async def scenario():
+        service, _ = _service_with_runs(monkeypatch, tmp_path)
+        db.update_run('user-run', status=status)
+        await service._interrupt_shadow_runs('WORKER_EXITED', 'fixture exit')
+        assert db.get_run('user-run')['status'] == status
+        assert db.get_run('user-run')['error_code'] is None
+        service.broadcast.assert_not_awaited()
+        assert not service.shadow_runs
+        assert not service.active_runs_by_runtime
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('shadow', [True, False])
+def test_notification_projection_failure_is_logged_and_isolated(monkeypatch, tmp_path, caplog, shadow):
+    async def scenario():
+        service, _ = _service_with_runs(monkeypatch, tmp_path)
+        service._project_shadow_event = AsyncMock(side_effect=AttributeError('projection failed'))
+        service._project_event = AsyncMock(side_effect=AttributeError('projection failed'))
+        params = {'sessionId': 'native-source', 'event': {'type': 'turn/end'}}
+        if not shadow:
+            params['runId'] = 'user-run'
+        await service._on_worker_notification('harness.notification', params)
+        assert service.runtime_state == 'ready'
+        assert service.crash_budget == []
+        assert 'turn/end' in caplog.text and 'user-run' in caplog.text
+        assert 'native-source' in caplog.text and 'Traceback' in caplog.text
+    asyncio.run(scenario())
+
+
+
+def test_shadow_interrupt_still_closes_running_run_once(monkeypatch, tmp_path):
+    async def scenario():
+        service, _ = _service_with_runs(monkeypatch, tmp_path)
+        await service._interrupt_shadow_runs('WORKER_EXITED', 'fixture exit')
+        await service._interrupt_shadow_runs('WORKER_EXITED', 'fixture exit')
+        assert db.get_run('user-run')['status'] == 'interrupted'
+        assert db.get_run('user-run')['error_code'] == 'WORKER_EXITED'
+        service.broadcast.assert_awaited_once()
+        assert service.broadcast.call_args.args[2] == 'run.interrupted'
     asyncio.run(scenario())

@@ -3319,3 +3319,81 @@ def test_artifact_collection_ignores_non_object_shell_output(monkeypatch, tmp_pa
     monkeypatch.setattr(mcp_gateway.ctx, 'list_task_artifacts', artifacts)
     assert AgentService._collect_run_artifacts('numeric-result-run') == []
     artifacts.assert_called_once_with('task-valid')
+
+
+@pytest.mark.parametrize('artifact_failure', [False, True])
+def test_numeric_shell_turn_end_stays_completed(monkeypatch, tmp_path, caplog, artifact_failure):
+    async def scenario():
+        db = _init_temp_agent_db(monkeypatch, tmp_path)
+        db.create_session('numeric-session', 'numeric-native')
+        db.create_turn('numeric-turn', 'numeric-session', 1, 'numeric-user')
+        run = db.create_run('numeric-run', 'numeric-session', 'numeric-turn', 'p', 'm')
+        db.update_run('numeric-run', status='running')
+        service = AgentService()
+        service.runtime_state = 'ready'
+        service.shadow_runs['numeric-native'] = run
+        service.register_run_context('numeric-native', run)
+        service.broadcast = AsyncMock()
+        if artifact_failure:
+            service._broadcast_run_artifacts = AsyncMock(side_effect=AttributeError('artifact projection failed'))
+        proc = await asyncio.create_subprocess_exec('/bin/bash', '-c', 'printf "51\\n"', stdout=asyncio.subprocess.PIPE)
+        output, _ = await proc.communicate()
+        assert output == b'51\n'
+        worker = AgentWorker(runtime_root='.', data_root='.', mcp_url='', session_root='',
+                             on_notification=service._on_worker_notification, on_exit=AsyncMock())
+        stdout = asyncio.StreamReader()
+        worker.proc = SimpleNamespace(stdout=stdout, stderr=asyncio.StreamReader(), returncode=None)
+        worker._terminate_process = AsyncMock()
+        service.worker = worker
+        reader = asyncio.create_task(worker._read_loop())
+        events = [
+            {'type': 'tool/call', 'data': {'callId': 'numeric-call', 'name': 'bash', 'arguments': {'command': 'printf "51\\n"'}}},
+            {'type': 'tool/result', 'data': {'callId': 'numeric-call', 'message': {'content': [{'type': 'tool-result', 'content': output.decode()}]}}},
+            {'type': 'turn/end', 'data': {'reason': {'kind': 'completed'}}},
+        ]
+        done = asyncio.get_running_loop().create_future()
+        worker._pending[1] = done
+        for event in events:
+            stdout.feed_data((json.dumps({'method': 'harness.notification', 'params': {'sessionId': 'numeric-native', 'event': event}})+'\n').encode())
+        stdout.feed_data(b'{"id":1,"result":true}\n')
+        try:
+            assert await asyncio.wait_for(done, 2) is True
+            call = db.get_tool_call('numeric-run', 'numeric-call')
+            assert call['status'] == 'succeeded'
+            assert json.loads(call['result_json'])['text'] == '51\n'
+            assert db.get_run('numeric-run')['status'] == 'completed'
+            assert db.get_run('numeric-run')['error_code'] is None
+            assert service.runtime_state == 'ready' and not service.crash_budget
+            assert not service.shadow_runs and not service.active_runs_by_runtime
+            assert not reader.done() and worker._channel_error is None
+            worker.on_exit.assert_not_awaited()
+            worker._terminate_process.assert_not_awaited()
+            assert 'worker 读取失败' not in caplog.text
+            assert 'WORKER_EXITED' not in caplog.text
+        finally:
+            worker._stop_requested = True
+            stdout.feed_eof()
+            await reader
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('event', [
+    {'type': 'assistant/chunk', 'data': 51},
+    {'type': 'assistant/chunk', 'data': {'chunk': [1]}},
+    {'type': 'request/header', 'data': {'header': 51}},
+    {'type': 'request/header', 'data': {'header': {'config': [1]}}},
+    {'type': 'assistant/message', 'data': {'message': {'source': 51}}},
+    {'type': 'turn/end', 'data': {'reason': [1]}},
+])
+def test_projection_tolerates_non_object_event_fields(monkeypatch, tmp_path, event):
+    async def scenario():
+        db = _init_temp_agent_db(monkeypatch, tmp_path)
+        db.create_session('guard-session', 'guard-native')
+        db.create_turn('guard-turn', 'guard-session', 1, 'guard-user')
+        run = db.create_run('guard-run', 'guard-session', 'guard-turn', 'p', 'm')
+        service = AgentService()
+        service.broadcast = AsyncMock()
+        await service._project_event('guard-session', run, event)
+        await service._on_worker_notification('harness.notification', 51)
+        await service._on_worker_notification('harness.notification', {'event': [1]})
+    asyncio.run(scenario())
