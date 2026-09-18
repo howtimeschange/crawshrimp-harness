@@ -72,6 +72,8 @@ export function verifyWorkflow(base = root) {
     if (!runs.includes(`node scripts/test-collection.mjs run ${name}`)) throw new Error(`CI does not run suite ${name}`)
   }
   if (!runs.includes('node scripts/test-collection.mjs verify')) throw new Error('CI collection guard is missing')
+  const patchIndex = runs.indexOf('node integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs')
+  if (patchIndex < 0 || patchIndex > runs.indexOf('node scripts/test-collection.mjs run integrations')) throw new Error('CI must patch DSH runtime before integration tests')
   const build = workflow.jobs.build
   if (!build.needs.includes('test')) throw new Error('Build must depend on test')
   for (const command of Object.values(smokes)) {

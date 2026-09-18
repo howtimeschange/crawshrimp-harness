@@ -88,6 +88,9 @@ jobs:
       - name: Verify test collection
         run: node scripts/test-collection.mjs verify
 
+      - name: Patch DSH runtime before integration tests
+        run: node integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs
+
       - name: Run integrations tests
         run: node scripts/test-collection.mjs run integrations
 

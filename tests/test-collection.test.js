@@ -38,5 +38,7 @@ test('workflow guard rejects removing a required suite step', async () => {
     verifyWorkflow(temporary)
     fs.writeFileSync(path.join(temporary, '.github/workflows/build-desktop.yml'), workflow.replace('node scripts/test-collection.mjs run integrations', 'echo omitted'))
     assert.throws(() => verifyWorkflow(temporary), /CI does not run suite integrations/)
+    fs.writeFileSync(path.join(temporary, '.github/workflows/build-desktop.yml'), workflow.replace('run: node integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs', 'run: echo omitted'))
+    assert.throws(() => verifyWorkflow(temporary), /CI must patch DSH runtime before integration tests/)
   } finally { fs.rmSync(temporary, { recursive: true, force: true }) }
 })
