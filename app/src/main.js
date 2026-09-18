@@ -380,58 +380,9 @@ function normalizeExtensionList(value) {
     .filter(Boolean))
 }
 
-function listDirectoryFilesSnapshot(rootPath, opts = {}) {
-  const rawRoot = String(rootPath || '').trim()
-  if (!rawRoot) throw new Error('目录路径不能为空')
-  const root = fs.realpathSync.native(path.resolve(rawRoot))
-  const stat = fs.statSync(root)
-  if (!stat.isDirectory()) throw new Error(`不是有效目录：${rawRoot}`)
-
-  const allowedExts = normalizeExtensionList(opts.extensions)
-  const maxFiles = Math.max(1, Math.min(Number(opts.max_files || opts.maxFiles || 5000) || 5000, 20000))
-  const results = []
-
-  function walk(dir) {
-    if (results.length >= maxFiles) return
-    let entries = []
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true })
-    } catch {
-      return
-    }
-    entries.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }))
-
-    for (const entry of entries) {
-      if (results.length >= maxFiles) return
-      if (!entry?.name || entry.name.startsWith('.')) continue
-      const fullPath = path.join(dir, entry.name)
-      if (entry.isDirectory()) {
-        walk(fullPath)
-        continue
-      }
-      if (!entry.isFile()) continue
-      const ext = path.extname(entry.name).slice(1).toLowerCase()
-      if (allowedExts.size && !allowedExts.has(ext)) continue
-      try {
-        const fileStat = fs.statSync(fullPath)
-        results.push({
-          path: fullPath,
-          relativePath: path.relative(root, fullPath).replace(/\\/g, '/'),
-          mtimeMs: fileStat.mtimeMs,
-          size: fileStat.size,
-        })
-      } catch {}
-    }
-  }
-
-  walk(root)
-  return {
-    ok: true,
-    root,
-    paths: results,
-    truncated: results.length >= maxFiles,
-  }
-}
+const { listDirectoryFilesSnapshot, createDirectoryScanner, createPdfPreviewer } = require('./localFileJobs')
+const scanDirectoryFiles = createDirectoryScanner()
+const performanceDiagnostics = require('./performanceDiagnostics').createPerformanceDiagnostics()
 
 function normalizeUrlForMatch(raw) {
   try {
@@ -854,19 +805,14 @@ function imageMimeForPath(filePath = '') {
   return ''
 }
 
-function readLocalImageDataUrl(rawPath = '') {
+async function readLocalImageDataUrl(rawPath = '') {
   const imagePath = resolveLocalImagePath(rawPath)
   const mime = imageMimeForPath(imagePath)
   if (!imagePath || !mime) throw new Error('请选择 PNG、JPG、WEBP 或 GIF 图片')
-  const stat = fs.statSync(imagePath)
+  const stat = await fs.promises.stat(imagePath)
   if (!stat.isFile()) throw new Error('图片文件不存在')
   assertImageInputSize(stat.size, imagePath)
-  const raw = fs.readFileSync(imagePath)
-  return {
-    ok: true,
-    path: imagePath,
-    data_url: `data:${mime};base64,${raw.toString('base64')}`,
-  }
+  return require('./imageDataUrl').readImageDataUrl(imagePath, mime)
 }
 
 /**
@@ -880,127 +826,8 @@ async function readLocalImageThumbnail(rawPath = '', opts = {}) {
   return thumbnailReader(imagePath, opts)
 }
 
-function renderPdfPreviewWithPyMuPDF(pdfPath, outputDir) {
-  const pythonBin = getPythonBin()
-  fs.mkdirSync(outputDir, { recursive: true })
-
-  const script = `
-import json
-import sys
-from pathlib import Path
-
-import fitz
-
-pdf_path = Path(sys.argv[1])
-output_dir = Path(sys.argv[2])
-output_dir.mkdir(parents=True, exist_ok=True)
-
-doc = fitz.open(str(pdf_path))
-pages = []
-try:
-    for index in range(doc.page_count):
-        page = doc.load_page(index)
-        rect = page.rect
-        long_edge = max(float(rect.width or 0), float(rect.height or 0), 1.0)
-        scale = max(3.0, min(8.0, 3600.0 / long_edge))
-        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
-        target = output_dir / f"page-{index + 1}.png"
-        pixmap.save(str(target))
-        pages.append({
-            "page": index + 1,
-            "preview_path": str(target),
-            "width": pixmap.width,
-            "height": pixmap.height,
-        })
-finally:
-    doc.close()
-
-print(json.dumps({"pages": pages}, ensure_ascii=False))
-`.trim()
-
-  try {
-    const env = { ...process.env, PYTHONIOENCODING: 'utf-8' }
-    delete env.ELECTRON_RUN_AS_NODE
-    const stdout = execFileSync(pythonBin, ['-c', script, pdfPath, outputDir], {
-      encoding: 'utf8',
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 60000,
-      maxBuffer: 1024 * 1024,
-    })
-    const parsed = JSON.parse(String(stdout || '').trim() || '{}')
-    const pages = Array.isArray(parsed.pages)
-      ? parsed.pages
-        .filter(page => page?.preview_path && fs.existsSync(page.preview_path))
-        .map(page => pdfPreviewPageFromImage(
-          page.preview_path,
-          Number(page.page) || 1,
-          Number(page.width) || 0,
-          Number(page.height) || 0,
-        ))
-      : []
-    if (!pages.length) return { ok: false, error: 'PyMuPDF 没有渲染出 PDF 页面。' }
-    return {
-      ok: true,
-      engine: 'pymupdf',
-      page_count: pages.length,
-      pages,
-      preview_path: pages[0].preview_path,
-      data_url: pages[0].data_url,
-    }
-  } catch (error) {
-    const stderr = String(error?.stderr || '').trim()
-    const detail = stderr || error.message || String(error)
-    return { ok: false, error: detail }
-  }
-}
-
-function renderPdfPreviewWithQuickLook(pdfPath) {
-  if (!fs.existsSync(pdfPath) || !fs.statSync(pdfPath).isFile()) {
-    return { ok: false, error: `PDF 文件不存在：${pdfPath}` }
-  }
-  if (path.extname(pdfPath).toLowerCase() !== '.pdf') {
-    return { ok: false, error: '请选择 PDF 文件进行预览框选。' }
-  }
-
-  const previewRoot = path.join(getCrawshrimpDataDir(), 'pdf-previews')
-  const digest = crypto.createHash('sha1').update(`${pdfPath}:${fs.statSync(pdfPath).mtimeMs}`).digest('hex').slice(0, 16)
-  const outputDir = path.join(previewRoot, digest)
-  retryWindowsFileOperationSync(() => fs.rmSync(outputDir, { recursive: true, force: true }))
-  fs.mkdirSync(outputDir, { recursive: true })
-
-  const pymupdfResult = renderPdfPreviewWithPyMuPDF(pdfPath, path.join(outputDir, 'pages'))
-  if (pymupdfResult.ok) return pymupdfResult
-  if (process.platform !== 'darwin') {
-    return { ok: false, error: `PDF 预览图生成失败：PyMuPDF: ${pymupdfResult.error}` }
-  }
-
-  try {
-    const quickLookBin = fs.existsSync('/usr/bin/qlmanage') ? '/usr/bin/qlmanage' : 'qlmanage'
-    execFileSync(quickLookBin, ['-t', '-s', '1800', '-o', outputDir, pdfPath], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 45000,
-    })
-    const previewPath = findQuickLookPdfPreview(pdfPath, outputDir)
-    if (!previewPath) {
-      const produced = fs.readdirSync(outputDir).join(', ')
-      return { ok: false, error: `PDF 预览图生成失败：PyMuPDF: ${pymupdfResult.error}；Quick Look 没有输出图片。输出目录：${produced || '空'}` }
-    }
-    const page = pdfPreviewPageFromImage(previewPath, 1)
-    return {
-      ok: true,
-      engine: 'quicklook',
-      page_count: 1,
-      pages: [page],
-      preview_path: previewPath,
-      data_url: page.data_url,
-    }
-  } catch (error) {
-    const stderr = String(error?.stderr || '').trim()
-    const detail = stderr || error.message || String(error)
-    return { ok: false, error: `PDF 预览图生成失败：PyMuPDF: ${pymupdfResult.error}；Quick Look: ${detail}` }
-  }
-}
+const renderPdfPreviewWithQuickLook = createPdfPreviewer(getPythonBin, () => path.join(getCrawshrimpDataDir(), 'pdf-previews-v2'))
+app.on('will-quit', () => { scanDirectoryFiles.dispose(); renderPdfPreviewWithQuickLook.dispose(); thumbnailReader.dispose(); performanceDiagnostics.stop() })
 
 // ── Window ────────────────────────────────────────────────────────────────────
 let mainWindow = null
@@ -1059,7 +886,7 @@ function secureHandle(channel, handler) {
   ipcMain.handle(channel, trustedIpcHandler(async (event, ...args) => {
     try {
       await initializeDataDirectory()
-      const result = await handler(event, ...args)
+      const result = await performanceDiagnostics.measure(channel, () => handler(event, ...args))
       try { observeProductAction(channel, args, result) } catch {}
       return result
     } catch (error) {
@@ -1498,7 +1325,14 @@ const automationPermissionBridge = createAutomationPermissionBridge({ requestPer
 
 // ── HTTP helper (call FastAPI) ─────────────────────────────────────────────────
 
+const readSnapshots = require('./readSnapshotCache').createReadSnapshotCache()
 function apiCall(method, urlPath, body = null, options = {}) {
+  if (method !== 'GET') readSnapshots.invalidate()
+  const load = () => performApiCall(method, urlPath, body, options)
+  if (method === 'GET' && ['/agent/runtime', '/tasks'].includes(urlPath) && !options.fresh) return readSnapshots.read(`${apiPort}:${urlPath}`, load)
+  return load()
+}
+function performApiCall(method, urlPath, body = null, options = {}) {
   return requestBackendApi({
     http,
     port: apiPort,
@@ -1673,7 +1507,7 @@ function getSavedAiVideoDirectory(scope = 'input') {
   })
 }
 
-function listAiVideoDirectory(directoryToken, opts = {}) {
+async function listAiVideoDirectory(directoryToken, opts = {}) {
   const directory = resolveAiVideoCapabilityPath(directoryToken, {
     secret: AI_VIDEO_CAPABILITY_SECRET,
     expectedKind: 'directory',
@@ -1683,7 +1517,7 @@ function listAiVideoDirectory(directoryToken, opts = {}) {
   const extensions = ['jpg', 'jpeg', 'png', 'webp'].filter(ext => !requested.size || requested.has(ext))
   if (!extensions.length) return { ok: true, items: [], truncated: false }
   const maxFiles = Math.max(1, Math.min(Number(opts?.maxFiles || 500) || 500, 500))
-  const snapshot = listDirectoryFilesSnapshot(directory.path, { extensions, maxFiles })
+  const snapshot = await listDirectoryFilesSnapshot(directory.path, { extensions, maxFiles })
   return {
     ok: true,
     items: snapshot.paths.map(item => aiVideoPublicFileItem(item.path, {
@@ -1729,10 +1563,10 @@ function stripLocalPath(result = {}) {
   return sanitized
 }
 
-function readAiVideoImagePreview(fileToken) {
+async function readAiVideoImagePreview(fileToken) {
   const media = getAiVideoCapabilityMediaFile(fileToken)
   if (!String(media.mime || '').startsWith('image/')) throw new Error('该授权不是图片')
-  return stripLocalPath(readLocalImageDataUrl(media.path))
+  return stripLocalPath(await readLocalImageDataUrl(media.path))
 }
 
 async function readAiVideoImageThumbnail(fileToken, opts = {}) {
@@ -2577,7 +2411,9 @@ configureSingleInstance({
       protocol.handle(BALA_WORKSPACE_MEDIA_PROTOCOL, handleBalaWorkspaceMediaRequest)
       protocol.handle(LOCAL_MEDIA_PROTOCOL, handleLocalMediaRequest)
       createWindow()
-      await initializeDataDirectory()
+      performanceDiagnostics.mark('startup.window-created')
+      mainWindow?.webContents.once('did-finish-load', () => performanceDiagnostics.mark('startup.renderer-loaded'))
+      await performanceDiagnostics.measure('startup.data-directory', initializeDataDirectory)
       ensureDefaultLocalMediaRoots()
       app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -2585,7 +2421,8 @@ configureSingleInstance({
       })
 
       scheduleInitialUpdateCheck()
-      await ensureDesktopServicesStarted()
+      await performanceDiagnostics.measure('startup.desktop-services', ensureDesktopServicesStarted)
+      performanceDiagnostics.mark('startup.services-ready')
     }).catch(error => {
       log(`[startup] ${error.message}`)
       dialog.showErrorBox('启动失败', error.message)
@@ -2596,6 +2433,7 @@ configureSingleInstance({
     })
 
     powerMonitor.on('resume', () => {
+      readSnapshots.invalidate()
       updateCheckScheduler.onAppFocus()
     })
 
@@ -2758,7 +2596,7 @@ const marketplaceBridge = require('./marketplaceBridge').createMarketplaceBridge
 secureHandle('market:action', (_, action, input = {}) => marketplace.run(action, input))
 app.on('before-quit', () => accountAuth?.dispose())
 
-secureHandle('get-status', async () => getDesktopStatus())
+secureHandle('get-status', async () => readSnapshots.read(`desktop:${apiPort}`, getDesktopStatus))
 secureHandle('agent:export-session-log', async (_, sessionId) => {
   if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 200) throw new Error('会话标识无效')
   if (!dshWebAuthBridge) throw new Error('智能体窗口已关闭')
@@ -3722,18 +3560,29 @@ secureHandle('read-local-image-thumbnail', async (_, filePath, opts = {}) => {
   }
 })
 
-secureHandle('list-directory-files', async (_, rootPath, opts = {}) => {
+secureHandle('list-directory-files', async (event, rootPath, opts = {}) => {
   const directory = getAuthorizedLocalMediaDirectory(rootPath)
-  return listDirectoryFilesSnapshot(directory, opts)
+  const requestId = `${event.sender.id}:${opts.requestId || 'directory'}`
+  const cancel = () => scanDirectoryFiles.cancel(requestId)
+  event.sender.once('destroyed', cancel)
+  try { return await scanDirectoryFiles(directory, { ...opts, requestId }) }
+  finally { event.sender.removeListener('destroyed', cancel) }
+})
+secureHandle('cancel-directory-files', async (event, requestId = 'directory') => {
+  scanDirectoryFiles.cancel(`${event.sender.id}:${requestId}`)
+  return { ok: true }
 })
 
-secureHandle('render-pdf-preview', async (_, filePath) => {
+secureHandle('render-pdf-preview', async (event, filePath, opts = {}) => {
   try {
-    return renderPdfPreviewWithQuickLook(String(filePath || ''))
+    return await renderPdfPreviewWithQuickLook(String(filePath || ''), { page: opts.page, requestId: `${event.sender.id}:${opts.requestId || 'preview'}` })
   } catch (error) {
     return { ok: false, error: error.message || String(error) }
   }
 })
+
+secureHandle('cancel-pdf-preview', async (event, requestId = 'preview') => { renderPdfPreviewWithQuickLook.cancel(`${event.sender.id}:${requestId}`); return { ok: true } })
+secureHandle('performance-snapshot', async () => performanceDiagnostics.snapshot())
 
 secureHandle('read-excel', async (_, filePath, options = {}) => {
   try {

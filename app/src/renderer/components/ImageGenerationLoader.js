@@ -1,7 +1,7 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { ImageGenerationReact } from './imageGenerationReact.js'
-import { defineComponent, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { defineComponent, h, onBeforeUnmount, onMounted, onActivated, onDeactivated, ref, watch } from 'vue'
 
 export default defineComponent({
   name: 'ImageGenerationLoader',
@@ -16,23 +16,29 @@ export default defineComponent({
   },
   setup(props) {
     const host = ref(null)
+    let activated = true
+    const syncVisibility = () => renderReact()
     let root = null
 
     const renderReact = () => {
       if (!host.value || !root) return
       root.render(React.createElement(ImageGenerationReact, {
         images: props.images,
-        mode: props.mode,
+        mode: activated && !document.hidden ? props.mode : 'static',
         revealKey: props.revealKey,
       }))
     }
 
+    onActivated(() => { activated = true; renderReact() })
+    onDeactivated(() => { activated = false; renderReact() })
     onMounted(() => {
+      document.addEventListener('visibilitychange', syncVisibility)
       root = createRoot(host.value)
       renderReact()
     })
 
     onBeforeUnmount(() => {
+      document.removeEventListener('visibilitychange', syncVisibility)
       if (root) root.unmount()
       root = null
     })

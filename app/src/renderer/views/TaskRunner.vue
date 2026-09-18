@@ -879,7 +879,11 @@
           </select>
           <div class="pdf-crop-page-controls">
             <button type="button" class="pdf-crop-page-step" :disabled="!canGoPrevPdfCropPage" @click="setPdfCropPage(pdfCropModal.pageIndex - 1)">上一页</button>
-            <span class="pdf-crop-page-current">{{ currentPdfCropPageText }}</span>
+            <span class="pdf-crop-page-current">
+              第 <input class="pdf-crop-page-input" type="number" min="1" :max="pdfCropModal.pages.length" step="1"
+                :value="pdfCropModal.pageIndex + 1" aria-label="PDF 页码" :title="currentPdfCropPageText + '，输入页码后按回车跳转'"
+                @change="jumpPdfCropPage" @keydown.enter="$event.target.blur()" /> / {{ pdfCropModal.pages.length }} 页
+            </span>
             <button type="button" class="pdf-crop-page-step" :disabled="!canGoNextPdfCropPage" @click="setPdfCropPage(pdfCropModal.pageIndex + 1)">下一页</button>
           </div>
           <div class="pdf-crop-zoom-controls">
@@ -933,14 +937,14 @@
         >
           <div v-if="pdfCropModal.pages.length > 1" class="pdf-crop-page-list" aria-label="PDF 页缩略图">
             <button
-              v-for="(page, index) in pdfCropModal.pages"
-              :key="`${pdfCropModal.previewPath}-${page.page || index}`"
+              v-for="page in visiblePdfCropPages"
+              :key="`${pdfCropModal.previewPath}-${page.page}`"
               type="button"
-              :class="['pdf-crop-page-button', { active: index === pdfCropModal.pageIndex }]"
-              @click="setPdfCropPage(index)"
+              :class="['pdf-crop-page-button', { active: page.page - 1 === pdfCropModal.pageIndex }]"
+              @click="setPdfCropPage(page.page - 1)"
             >
-              <img :src="page.data_url" draggable="false" alt="" />
-              <span>第{{ page.page || index + 1 }}页</span>
+              <img v-if="page.data_url" :src="page.data_url" draggable="false" alt="" />
+              <span>第{{ page.page }}页</span>
             </button>
           </div>
           <div class="pdf-crop-stage">
@@ -1145,6 +1149,13 @@ const aiChainActiveStep = ref('config')
 const syncingOdps = ref(false)
 const excelLoading = ref({})
 const directoryListingLoading = ref({})
+const directoryScanRequests = new Map()
+let directoryScanSequence = 0
+function cancelDirectoryScan(paramId) {
+  const requestId = directoryScanRequests.get(paramId)
+  directoryScanRequests.delete(paramId)
+  if (requestId) void window.cs.cancelDirectoryFiles?.(requestId)?.catch(() => {})
+}
 const directoryListingError = ref({})
 const templateFeedback = ref({})
 const runStage = ref('')
@@ -2279,7 +2290,7 @@ const currentPdfCropTemplateText = computed(() => {
 
 const currentPdfCropPage = computed(() => {
   const pages = Array.isArray(pdfCropModal.value.pages) ? pdfCropModal.value.pages : []
-  return pages[pdfCropModal.value.pageIndex] || pages[0] || null
+  return pages[pdfCropModal.value.pageIndex] || null
 })
 
 const currentPdfCropPageText = computed(() => {
@@ -2287,6 +2298,12 @@ const currentPdfCropPageText = computed(() => {
   if (!pages.length) return '未生成页面'
   const page = currentPdfCropPage.value
   return `第 ${page?.page || pdfCropModal.value.pageIndex + 1} / ${pages.length} 页`
+})
+
+const visiblePdfCropPages = computed(() => {
+  const { pages, pageIndex } = pdfCropModal.value
+  const start = Math.max(0, pageIndex - 5)
+  return Array.from({ length: Math.min(11, pages.length - start) }, (_, offset) => pages[start + offset] || { page: start + offset + 1 })
 })
 
 const canGoPrevPdfCropPage = computed(() => pdfCropModal.value.pageIndex > 0)
@@ -3745,6 +3762,7 @@ async function pickDirectory(param) {
 }
 
 function clearDirectory(paramId) {
+  cancelDirectoryScan(paramId)
   values.value[paramId] = ''
   values.value[paramId + '_files'] = []
   directoryListingError.value[paramId] = ''
@@ -3754,6 +3772,10 @@ function clearDirectory(paramId) {
 async function refreshDirectoryFileListing(param, rootPath) {
   const paramId = param?.id
   if (!paramId || !rootPath) return []
+  cancelDirectoryScan(paramId)
+  const requestId = `directory-${Date.now()}-${++directoryScanSequence}`
+  directoryScanRequests.set(paramId, requestId)
+  const isCurrent = () => directoryScanRequests.get(paramId) === requestId && values.value[paramId] === rootPath
   directoryListingLoading.value[paramId] = true
   directoryListingError.value[paramId] = ''
   values.value[paramId + '_files'] = []
@@ -3764,19 +3786,26 @@ async function refreshDirectoryFileListing(param, rootPath) {
     const result = await window.cs.listDirectoryFiles(rootPath, {
       extensions: ['jpg', 'jpeg', 'png', 'webp', 'mp4', 'mov', 'm4v'],
       max_files: 10000,
+      requestId,
     })
+    if (!isCurrent()) return []
     const files = normalizeDirectoryFileListing(result)
     values.value[paramId + '_files'] = files
     if (result?.truncated) {
-      directoryListingError.value[paramId] = `目录文件较多，已读取前 ${files.length} 个文件`
+      const reason = { max_files: '文件数量达到上限', scan_budget: '扫描时间或条目数量达到上限', depth: '子目录层级超过上限' }[result.reason] || '扫描达到上限'
+      directoryListingError.value[paramId] = `${reason}，已读取 ${files.length} 个文件，清单不完整`
     }
     return files
   } catch (error) {
+    if (!isCurrent()) return []
     directoryListingError.value[paramId] = `目录扫描失败：${error?.message || String(error)}`
     values.value[paramId + '_files'] = []
     return []
   } finally {
-    directoryListingLoading.value[paramId] = false
+    if (directoryScanRequests.get(paramId) === requestId) {
+      directoryScanRequests.delete(paramId)
+      directoryListingLoading.value[paramId] = false
+    }
   }
 }
 
@@ -4140,7 +4169,11 @@ function stopPdfCropInteraction() {
   pdfCropModal.value.interaction = null
 }
 
+let pdfPreviewRevision = 0
+const pdfPreviewRequestId = `crop-${Date.now()}`
 function closePdfCropModal() {
+  pdfPreviewRevision++
+  window.cs.cancelPdfPreview?.(pdfPreviewRequestId)
   stopPdfCropInteraction()
   pdfCropModal.value = makePdfCropModalState()
 }
@@ -4165,6 +4198,8 @@ async function openPdfCropModal(type) {
 
 async function loadPdfCropPreview(previewPath) {
   if (!previewPath) return
+  const revision = ++pdfPreviewRevision
+  window.cs.cancelPdfPreview?.(pdfPreviewRequestId)
   stopPdfCropInteraction()
   pdfCropModal.value.previewPath = previewPath
   pdfCropModal.value.loading = true
@@ -4178,25 +4213,58 @@ async function loadPdfCropPreview(previewPath) {
     if (typeof window.cs.renderPdfPreview !== 'function') {
       throw new Error('PDF 预览能力尚未加载，请重启抓虾客户端后再框选。')
     }
-    const result = await window.cs.renderPdfPreview(previewPath)
+    const result = await window.cs.renderPdfPreview(previewPath, { page: 1, requestId: pdfPreviewRequestId })
+    if (revision !== pdfPreviewRevision) return
     const pages = normalizePdfPreviewPages(result)
     if (!result?.ok || !pages.length) {
       throw new Error(result?.error || 'PDF 预览生成失败')
     }
-    pdfCropModal.value.pages = pages
+    pdfCropModal.value.pages = new Array(Math.max(pages.length, Number(result.page_count) || 1))
+    for (const page of pages) pdfCropModal.value.pages[page.page - 1] = page
     pdfCropModal.value.dataUrl = pages[0]?.data_url || ''
     resetPdfCropZoom()
   } catch (error) {
-    pdfCropModal.value.error = error?.message || String(error)
+    if (revision === pdfPreviewRevision) pdfCropModal.value.error = error?.message || String(error)
   } finally {
-    pdfCropModal.value.loading = false
+    if (revision === pdfPreviewRevision) pdfCropModal.value.loading = false
   }
 }
 
-function setPdfCropPage(index) {
-  const pages = pdfCropModal.value.pages
-  if (!pages.length) return
-  pdfCropModal.value.pageIndex = Math.min(pages.length - 1, Math.max(0, Number(index) || 0))
+function jumpPdfCropPage(event) {
+  const page = Number(event.target.value)
+  if (!Number.isInteger(page) || page < 1 || page > pdfCropModal.value.pages.length) {
+    event.target.value = pdfCropModal.value.pageIndex + 1
+    return
+  }
+  setPdfCropPage(page - 1)
+}
+
+async function setPdfCropPage(index) {
+  const state = pdfCropModal.value
+  if (!state.pages.length) return
+  const target = Math.min(state.pages.length - 1, Math.max(0, Number(index) || 0))
+  const revision = ++pdfPreviewRevision
+  window.cs.cancelPdfPreview?.(pdfPreviewRequestId)
+  state.pageIndex = target
+  state.error = ''
+  if (state.pages[target]?.data_url) { state.loading = false; return }
+  state.loading = true
+  try {
+    const result = await window.cs.renderPdfPreview(state.previewPath, { page: target + 1, requestId: pdfPreviewRequestId })
+    if (revision !== pdfPreviewRevision) return
+    if (!result?.ok) throw new Error(result?.error || 'PDF 预览生成失败')
+    const page = normalizePdfPreviewPages(result)[0]
+    if (!page) throw new Error('PDF 页面为空')
+    state.pages[target] = page
+    // Bound renderer image strings while keeping every page navigable.
+    for (const key of Object.keys(state.pages)) {
+      if (Math.abs(Number(key) - target) > 5) delete state.pages[key]
+    }
+  } catch (error) {
+    if (revision === pdfPreviewRevision) state.error = error?.message || String(error)
+  } finally {
+    if (revision === pdfPreviewRevision) state.loading = false
+  }
 }
 
 function resetPdfCropZoom() {
@@ -4411,6 +4479,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  for (const paramId of directoryScanRequests.keys()) cancelDirectoryScan(paramId)
+  closePdfCropModal()
   clearInterval(pollTimer)
   stopAiChainApprovalBatchPolling()
   if (instanceDraftSaveTimer) {
@@ -5731,6 +5801,15 @@ onUnmounted(() => {
   min-width: 76px;
   font-size: 12px;
   color: var(--text2);
+  text-align: center;
+}
+.pdf-crop-page-input {
+  width: 58px;
+  padding: 5px 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
   text-align: center;
 }
 .pdf-crop-zoom-controls {

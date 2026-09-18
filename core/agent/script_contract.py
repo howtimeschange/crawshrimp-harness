@@ -152,7 +152,9 @@ def validate_page_script(source: str, filename: str = "script.js") -> None:
     iife_body = _outer_iife_body(text)
     valid_return = bool(iife_body) and _has_top_level_contract_return(iife_body)
     if not valid_return:
-        raise ValueError(f"{filename} 必须返回包含 success、data、meta 的对象")
+        raise ValueError(f"{filename} 必须在外层 async IIFE 的末尾直接返回包含 success、data、meta 的对象；"
+                         "请把处理结果保存为变量，再在 try/if 等块之外写 return { success: result.success, data: result.data || [], meta: result.meta || {} }，"
+                         "不要只 return 变量或只在嵌套块/辅助函数中返回。")
 
 
 def validate_adapter_package(manifest: Mapping[str, Any], files: Mapping[str, Path]) -> None:

@@ -51,6 +51,12 @@ const OUTPUT_CONTINUATION_MAX_CHARS = 2_000
 // settles; no interactive Session permission state is changed or persisted.
 const automationNativePolicies = new Map()
 
+// Read-only presentation hint. Returning tool names never grants execution;
+// automationNativeToolDecision and the MCP lease policy remain authoritative.
+export function automationToolPresentationHints(sessionId) {
+  return [...(automationNativePolicies.get(String(sessionId || ''))?.policy.toolset || [])]
+}
+
 function automationPolicySnapshot(policy) {
   const source = policy && typeof policy === 'object' ? policy : {}
   const execution = source.execution_policy && typeof source.execution_policy === 'object'

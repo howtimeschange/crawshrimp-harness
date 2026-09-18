@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import hashlib
+import threading
+from functools import wraps
 import json
 import os
 import re
@@ -13,6 +15,15 @@ from typing import Any
 from core import adapter_loader
 from core import runtime_paths
 from core.atomic_file import atomic_write_json, atomic_write_text, remove_path_with_retry
+
+
+_index_lock = threading.RLock()
+def _serialized_index(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        with _index_lock:
+            return fn(*args, **kwargs)
+    return wrapped
 
 
 SECTION_PATTERN = re.compile(r"^(#{2,3})\s+(.*)$")
@@ -388,6 +399,7 @@ def _write_skill_docs(cards: list[dict[str, Any]]) -> dict[tuple[str, str], str]
     return path_map
 
 
+@_serialized_index
 def rebuild_knowledge_index() -> dict[str, Any]:
     cards: list[dict[str, Any]] = []
     for adapter_id, adapter_dir in _iter_installed_adapter_dirs():
@@ -421,6 +433,7 @@ def rebuild_knowledge_index() -> dict[str, Any]:
     return {"ok": True, **meta}
 
 
+@_serialized_index
 def ensure_knowledge_index() -> dict[str, Any]:
     current_fingerprint = _source_fingerprint()
     if not _meta_path().exists() or not _cards_path().exists():

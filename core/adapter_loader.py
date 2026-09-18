@@ -29,6 +29,7 @@ _enabled: Dict[str, bool] = {}
 _install_meta: Dict[str, dict[str, Any]] = {}
 _scan_lock = threading.RLock()
 _manifest_cache = OrderedDict()
+_metadata_cache = OrderedDict()
 
 SCRIPT_SUFFIXES = (".js",)
 _TRANSACTION_DIR_RE = re.compile(r"^\..+\.(?:install|backup)-[0-9a-f]{32}$")
@@ -203,19 +204,31 @@ def _remove_installed_path(path: Path) -> None:
 
 def _read_install_metadata(adapter_id: str) -> dict[str, Any]:
     path = _metadata_path(adapter_id)
-    if not path.exists():
-        return {}
     try:
+        stat = path.stat()
+        key = str(path)
+        version = (stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+        cached = _metadata_cache.get(key)
+        if cached and cached[0] == version:
+            return dict(cached[1])
         payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = payload if isinstance(payload, dict) else {}
+        _metadata_cache[key] = (version, payload)
+        _metadata_cache.move_to_end(key)
+        while len(_metadata_cache) > 512:
+            _metadata_cache.popitem(last=False)
+        return dict(payload)
+    except FileNotFoundError:
+        return {}
     except Exception as e:
         logger.warning("adapter 安装元数据读取失败 %s: %s", path, e)
         return {}
-    return payload if isinstance(payload, dict) else {}
 
 
 def _write_install_metadata(adapter_id: str, payload: dict[str, Any]) -> None:
     path = _metadata_path(adapter_id)
-    atomic_write_json(path, payload, ensure_ascii=False, indent=2)
+    if _read_install_metadata(adapter_id) != payload:
+        atomic_write_json(path, payload, ensure_ascii=False, indent=2)
     _install_meta[adapter_id] = dict(payload)
 
 

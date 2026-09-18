@@ -10,7 +10,10 @@ from typing import Any, Callable, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from openpyxl import load_workbook
+def load_workbook(*args, **kwargs):
+    # Excel parsing is only needed when this optional sync feature runs.
+    from openpyxl import load_workbook as load
+    return load(*args, **kwargs)
 
 
 TASK_TABLE_MAP = {

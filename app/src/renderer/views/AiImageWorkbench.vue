@@ -880,7 +880,7 @@ import AiImageMaterialList from '../components/AiImageMaterialList.vue'
 import AiImageDropFeedback from '../components/AiImageDropFeedback.vue'
 import { reorderImageInput, inputDropCapacity, isInputSortTransfer } from '../utils/aiImageDrag.mjs'
 import { assertImageFiles, assertImageInputCount, mergeImageInputs, mainPaths, materialKey, inputAssetsForState, inputStateFromParams, serializeInputs, moveInput } from '../utils/aiImageInputs.mjs'
-import { computed, h, nextTick, onActivated, onBeforeUnmount, onMounted, reactive, ref, shallowReactive, watch } from 'vue'
+import { computed, h, nextTick, onActivated, onDeactivated, onBeforeUnmount, onMounted, reactive, ref, shallowReactive, watch } from 'vue'
 import {
   AI_IMAGE_FORMATS,
   AI_IMAGE_MODELS,
@@ -928,8 +928,9 @@ import {
 } from '../utils/aiImageOperatorMessages.mjs'
 import { focusFirstInDialog, trapDialogFocus } from '../utils/dialogAccessibility.mjs'
 import { isAiImageWorkbenchHiddenJob, selectRestorableAiImageJob } from '../utils/aiImageTaskIsolation.js'
-import TldrawAnnotationLayer from '../components/TldrawAnnotationLayer.js'
-import ImageGenerationLoader from '../components/ImageGenerationLoader.js'
+import { lazyView } from '../utils/lazyView'
+const TldrawAnnotationLayer = lazyView(() => import('../components/TldrawAnnotationLayer.js'))
+const ImageGenerationLoader = lazyView(() => import('../components/ImageGenerationLoader.js'))
 import PromptLibraryPickerModal from '../components/PromptLibraryPickerModal.vue'
 
 const emit = defineEmits(['open-settings'])
@@ -1119,7 +1120,19 @@ let resultCacheQueue = Promise.resolve()
 let jobPollingTimer = null
 let jobPollingUid = ''
 let jobPollingInFlight = false
+let jobPollingGeneration = 0
 let loadingMessageTimer = null
+let workbenchVisible = true
+function syncLoadingMessageTimer() {
+  clearInterval(loadingMessageTimer)
+  loadingMessageTimer = null
+  if (!workbenchVisible || document.hidden) return
+  loadingMessageTimer = setInterval(() => {
+    if (visibleResultCards.value.some(item => item.loading)) {
+      loadingMessageTick.value = (loadingMessageTick.value + 1) % AI_IMAGE_LOADING_MESSAGES.length
+    }
+  }, 2400)
+}
 let actionNoticeTimer = null
 const dialogReturnFocus = {
   batch: null,
@@ -1268,6 +1281,8 @@ const taskRecords = computed(() => {
   return records
 })
 onMounted(async () => {
+  document.addEventListener('visibilitychange', syncLoadingMessageTimer)
+  syncLoadingMessageTimer()
   document.addEventListener('keydown', handleWorkbenchDialogKeydown)
   window.addEventListener('dragend', resetInputDrag)
   window.addEventListener('drop', resetInputDrag)
@@ -1277,18 +1292,19 @@ onMounted(async () => {
   await Promise.all([loadSettings(), loadJobs()])
   await restoreInitialTask()
   if (hasActiveRuns(currentJob.value)) startJobPolling(currentJob.value?.job_uid)
-  loadingMessageTimer = setInterval(() => {
-    if (visibleResultCards.value.some((item) => item.loading)) {
-      loadingMessageTick.value = (loadingMessageTick.value + 1) % AI_IMAGE_LOADING_MESSAGES.length
-    }
-  }, 2400)
 })
 
 onActivated(() => {
+  workbenchVisible = true
+  syncLoadingMessageTimer()
   void loadSettings()
+  if (hasActiveRuns(currentJob.value)) startJobPolling(currentJob.value?.job_uid)
 })
+onDeactivated(() => { workbenchVisible = false; syncLoadingMessageTimer(); stopJobPolling() })
 
 onBeforeUnmount(() => {
+  workbenchVisible = false
+  document.removeEventListener('visibilitychange', syncLoadingMessageTimer)
   document.removeEventListener('keydown', handleWorkbenchDialogKeydown)
   window.removeEventListener('dragend', resetInputDrag)
   window.removeEventListener('drop', resetInputDrag)
@@ -1852,6 +1868,7 @@ function hasActiveRuns(job) {
 }
 
 function stopJobPolling() {
+  jobPollingGeneration++
   if (jobPollingTimer) clearTimeout(jobPollingTimer)
   jobPollingTimer = null
   jobPollingUid = ''
@@ -1861,19 +1878,21 @@ function stopJobPolling() {
 function startJobPolling(jobUid) {
   const uid = String(jobUid || '').trim()
   stopJobPolling()
-  if (!uid) return
+  if (!uid || !workbenchVisible) return
   jobPollingUid = uid
   jobPollingTimer = setTimeout(pollActiveJob, 1000)
 }
 
 async function pollActiveJob() {
   const uid = jobPollingUid
+  const generation = jobPollingGeneration
   jobPollingTimer = null
   if (!uid || jobPollingInFlight) return
+  if (document.hidden) { jobPollingTimer = setTimeout(pollActiveJob, 30000); return }
   jobPollingInFlight = true
   try {
     const latest = await window.cs.getAiImageJob(uid)
-    if (uid !== jobPollingUid) return
+    if (generation !== jobPollingGeneration || uid !== jobPollingUid) return
     mergeResultCacheFromJob(latest)
     captureNewResultReveals(latest)
     upsertJob(latest)
@@ -1886,11 +1905,11 @@ async function pollActiveJob() {
       return
     }
   } catch (error) {
-    logs.value.push(`刷新批量任务状态失败：${error.message || error}`)
+    if (generation === jobPollingGeneration) logs.value.push(`刷新批量任务状态失败：${error.message || error}`)
   } finally {
-    jobPollingInFlight = false
+    if (generation === jobPollingGeneration) jobPollingInFlight = false
   }
-  if (uid === jobPollingUid) jobPollingTimer = setTimeout(pollActiveJob, 1000)
+  if (generation === jobPollingGeneration && uid === jobPollingUid) jobPollingTimer = setTimeout(pollActiveJob, 1000)
 }
 
 function parseAdvancedJsonValue(value, options = {}) {

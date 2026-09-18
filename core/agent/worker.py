@@ -97,6 +97,11 @@ class AgentWorker:
         self._stop_requested = False
         self._exit_reported = False
         self._channel_error: Optional[str] = None
+        self._notifications: asyncio.Queue = asyncio.Queue(maxsize=64)
+        self._notification_task: Optional[asyncio.Task] = None
+        self._notification_bytes = 0
+        self._notification_space = asyncio.Event()
+        self._notification_space.set()
 
     async def start(self) -> None:
         node_executable = resolve_node_executable()
@@ -129,6 +134,7 @@ class AgentWorker:
         assert self.proc and self.proc.stdout
         proc = self.proc
         stderr_task = asyncio.create_task(self._drain_stderr())
+        self._notification_task = asyncio.create_task(self._project_notifications())
         exit_message = "worker 已退出"
         try:
             while True:
@@ -150,13 +156,18 @@ class AgentWorker:
                     else:
                         fut.set_result(msg.get("result"))
                 elif msg.get("method") and self.on_notification:
-                    try:
-                        await self.on_notification(msg["method"], msg.get("params") or {})
-                    except WorkerProtocolError:
-                        raise
-                    except Exception:  # noqa: BLE001
-                        logging.getLogger(__name__).exception(
-                            "worker 通知处理失败: method=%s", msg["method"])
+                    if msg["method"] == "harness.notification":
+                        # Bounded backpressure; control responses bypass slow projection.
+                        size = len(line)
+                        while self._notification_bytes + size > 8 * 1024 * 1024:
+                            self._notification_space.clear()
+                            await self._notification_space.wait()
+                        self._notification_bytes += size
+                        await self._notifications.put((msg["method"], msg.get("params") or {}, size))
+                    else:
+                        if msg["method"] == "worker.status" and (msg.get("params") or {}).get("status") in ("stopped", "crashed"):
+                            await self._notifications.join()
+                        await self._deliver_notification(msg["method"], msg.get("params") or {})
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -164,6 +175,13 @@ class AgentWorker:
             exit_message = f"worker 读取失败: {exc}"
             self._fail_pending(exit_message)
         finally:
+            if self._notification_task:
+                try:
+                    await asyncio.wait_for(self._notifications.join(), timeout=15)
+                except asyncio.TimeoutError:
+                    exit_message += "; 通知落盘未完成"
+                self._notification_task.cancel()
+                await asyncio.gather(self._notification_task, return_exceptions=True)
             self._channel_error = exit_message
             self._fail_pending(f"{exit_message},未返回请求结果")
             try:
@@ -177,6 +195,30 @@ class AgentWorker:
                 if return_code is not None:
                     exit_message += f" (exit code={return_code})"
                 await self._report_exit(exit_message, unexpected=not self._stop_requested)
+
+    async def _deliver_notification(self, method: str, params: dict) -> None:
+        try:
+            await self.on_notification(method, params)
+        except WorkerProtocolError:
+            raise
+        except Exception:
+            logging.getLogger(__name__).exception("worker 通知处理失败: method=%s", method)
+
+    async def _project_notifications(self) -> None:
+        try:
+            while True:
+                method, params, size = await self._notifications.get()
+                try:
+                    await self._deliver_notification(method, params)
+                finally:
+                    self._notification_bytes -= size
+                    self._notification_space.set()
+                    self._notifications.task_done()
+        except WorkerProtocolError as exc:
+            self._channel_error = str(exc)
+            self._fail_pending(str(exc))
+            if self._reader_task:
+                self._reader_task.cancel()
 
     @staticmethod
     async def _terminate_process(proc) -> None:
@@ -256,7 +298,10 @@ class AgentWorker:
         async def exchange():
             self.proc.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
             await self.proc.stdin.drain()
-            return await fut
+            result = await fut
+            if method == "worker.run":
+                await self._notifications.join()
+            return result
         try:
             return await asyncio.wait_for(exchange(), timeout=timeout)
         finally:

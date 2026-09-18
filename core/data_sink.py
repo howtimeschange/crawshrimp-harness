@@ -3006,6 +3006,8 @@ def heartbeat_run(run_id: int, phase: str = "", current_row: int = 0, records_co
 
 
 def finish_run(run_id: int, records_count: int, output_files: List[str]):
+    from core.log_writer import flush_logs
+    flush_logs()
     now = datetime.now().isoformat()
     with _get_conn() as conn:
         conn.execute("""
@@ -3018,6 +3020,8 @@ def finish_run(run_id: int, records_count: int, output_files: List[str]):
 
 
 def fail_run(run_id: int, error: str, records_count: int = 0, output_files: Optional[List[str]] = None):
+    from core.log_writer import flush_logs
+    flush_logs()
     now = datetime.now().isoformat()
     with _get_conn() as conn:
         conn.execute("""
@@ -3037,6 +3041,8 @@ def fail_run(run_id: int, error: str, records_count: int = 0, output_files: Opti
 
 
 def stop_run(run_id: int, records_count: int, output_files: List[str], error: str = ""):
+    from core.log_writer import flush_logs
+    flush_logs()
     now = datetime.now().isoformat()
     with _get_conn() as conn:
         conn.execute("""

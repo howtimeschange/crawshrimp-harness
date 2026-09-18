@@ -13,9 +13,10 @@
 //   产品侧必须保证 runtime_session_id 全局唯一且不跨代复用。
 
 import readline from 'node:readline'
+import { compactRequestEvent } from './context-metrics.mjs'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { DshWebRuntime, activeTurnEvents, assertSessionHeadersExcludeNativeWebTools } from './web-rpc-client.mjs'
-import { createNativeWebFollowManager } from './native-web-follow-manager.mjs'
+import { createNativeWebFollowManager, createRecoveringRunFollow } from './native-web-follow-manager.mjs'
 
 const PROTOCOL_VERSION = 1
 const MODEL_IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
@@ -92,6 +93,7 @@ function extractEventDeltaText(data) {
 }
 
 function compactHarnessEvent(event) {
+  event = compactRequestEvent(event)
   if (!event || event.type !== 'user/message') return event
   const text = extractEventText(event.data || {})
   return { ...event, data: text ? { text } : {} }
@@ -224,7 +226,9 @@ function finishRun(result) {
 function attachRunEventHandlers(run) {
   const runtime = state.runtime
   if (!runtime) throw new Error('runtime unavailable while opening Session follow stream')
-  run.follow = runtime.follow(run.sessionId, {
+  run.follow = createRecoveringRunFollow({
+    runtime, sessionId: run.sessionId,
+    logError: message => console.error(message),
     onSnapshotComplete: (events) => {
       // The opening snapshot is the pre-prompt gate for a resumed Session.
       assertSessionHeadersExcludeNativeWebTools(events)
@@ -591,6 +595,7 @@ async function startRun(params) {
     const summary = await done
     return { ok: true, summary }
   } catch (error) {
+    if (state.activeRun !== run) return { ok: true, summary: await done }
     console.error(`[worker] run ${runId} prompt 失败: ${error.message}`)
     if (promptSubmitted) {
       // The HTTP response can fail after the Host accepted/queued the prompt.

@@ -864,6 +864,8 @@ def _approval_display_arguments(summary: dict, plan: dict, risk: str) -> Any:
 
 class AgentService:
     def __init__(self) -> None:
+        self._event_write_lock = asyncio.Lock()
+        self.context_metrics = {}
         # Snapshot only actual process-start values. Runtime generations never
         # write their own credentials back to os.environ, so a subsequent
         # restart can distinguish an operator fallback from an old UI setting.
@@ -1495,22 +1497,25 @@ class AgentService:
     async def broadcast(self, session_id: str, seq: int, event_type: str, payload: Any) -> None:
         """持久化一次产品事件并用同一个 SQLite seq 扇出 session/global SSE。"""
         del seq  # 旧调用位保留兼容；事件序号只能来自 agent_events 自增主键。
-        session = db.get_session(session_id) or {}
-        if isinstance(payload, dict):
-            payload = {
-                **payload,
-                "session_id": payload.get("session_id") or session_id,
-                "runtime_session_id": payload.get("runtime_session_id")
-                or session.get("runtime_session_id") or "",
-            }
-        run_id = payload.get("run_id") if isinstance(payload, dict) else None
-        event_seq = db.append_event(session_id, run_id, event_type, payload)
-        message = {"seq": event_seq, "event_type": event_type, "payload": payload}
-        for queue in list(self.subscribers.get(session_id, ())):
-            self._fanout_sse_message(queue, message, session_id=session_id)
-        gmessage = message
-        for queue in list(self.global_subscribers):
-            self._fanout_sse_message(queue, gmessage, global_stream=True)
+        async with self._event_write_lock:
+            commit = asyncio.create_task(asyncio.to_thread(db.append_session_event, session_id, event_type, payload))
+            canceled = False
+            while True:
+                try:
+                    event_seq, payload = await asyncio.shield(commit)
+                    break
+                except asyncio.CancelledError:
+                    # Cancellation cannot release ordering while the DB thread
+                    # still commits; publish its durable sequence before leaving.
+                    canceled = True
+            message = {"seq": event_seq, "event_type": event_type, "payload": payload}
+            for queue in list(self.subscribers.get(session_id, ())):
+                self._fanout_sse_message(queue, message, session_id=session_id)
+            gmessage = message
+            for queue in list(self.global_subscribers):
+                self._fanout_sse_message(queue, gmessage, global_stream=True)
+            if canceled:
+                raise asyncio.CancelledError
 
     def _assistant_stream_state(self, session_id: str, run: dict) -> dict:
         run_id = str(run["run_id"])
@@ -2841,6 +2846,7 @@ class AgentService:
         return response if isinstance(response, dict) else {"ok": False, "error": "INVALID_WORKER_RESPONSE"}
 
     def runtime_status(self) -> dict:
+        from core.performance_metrics import snapshot as performance_snapshot
         cfg = load_config()
         llm = (cfg.get("ai") or {}).get("llm") or {}
         import os as _os
@@ -2855,6 +2861,7 @@ class AgentService:
             "enabled": _os.environ.get("CRAWSHRIMP_AGENT_ENABLED", "1") not in ("0", "false", "no"),
             "state": display_state,
             "generation": self.generation,
+            "performance": {**performance_snapshot(), "context": dict(self.context_metrics), "projection_queue": self.worker._notifications.qsize() if self.worker and hasattr(self.worker, "_notifications") else 0},
             "model": select_default_model(cfg),
             "api_key_configured": any_key_configured,
             "gateway_api_key_configured": gateway_key_configured,
@@ -3146,6 +3153,11 @@ class AgentService:
         if dsh_seq:
             db.update_run(run_id, dsh_end_seq=max(int(run.get("dsh_end_seq") or 0), dsh_seq))
 
+        if event_type == "assistant/message" and isinstance(data.get("usage"), dict):
+            from core.performance_metrics import request_usage_metrics
+            self.context_metrics.update(request_usage_metrics(data["usage"], dsh_seq, data.get("turn"), data.get("step")))
+        if event_type in FILTERED_EVENT_TYPES and isinstance(data.get("context_metrics"), dict):
+            self.context_metrics = {**self.context_metrics, **data["context_metrics"]}
         if event_type == "request/header":
             config = _as_dict(_as_dict(data.get("header")).get("config"))
             if config.get("provider") and config.get("model"):

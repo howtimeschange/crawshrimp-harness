@@ -813,7 +813,10 @@ contextBridge.exposeInMainWorld('cs', {
   /** Compressed grid thumbnail (resized JPEG). Prefer this for libraries with many large images. */
   readLocalImageThumbnail: (path, opts) => ipcRenderer.invoke('read-local-image-thumbnail', path, opts || {}),
   listDirectoryFiles: (path, opts) => ipcRenderer.invoke('list-directory-files', path, opts),
-  renderPdfPreview:(path) => ipcRenderer.invoke('render-pdf-preview', path),
+  cancelDirectoryFiles: requestId => ipcRenderer.invoke('cancel-directory-files', requestId),
+  renderPdfPreview:(path, options = {}) => ipcRenderer.invoke('render-pdf-preview', path, options),
+  cancelPdfPreview:(requestId) => ipcRenderer.invoke('cancel-pdf-preview', requestId),
+  performanceSnapshot:() => ipcRenderer.invoke('performance-snapshot'),
 
   statFile:        (path) => ipcRenderer.invoke('stat-file', path),
   revealFile:      (path) => ipcRenderer.invoke('reveal-file', path),

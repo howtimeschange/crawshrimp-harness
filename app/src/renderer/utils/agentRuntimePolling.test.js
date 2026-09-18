@@ -16,7 +16,7 @@ function pollingHarness(url) {
     webUrl: { value: url }, error: { value: '' },
     window: { cs: { agentApi: () => { requests++; return new Promise((_, fail) => { reject = fail }) } } },
     autoRecover: () => { recoveries++ },
-    setInterval: (fn) => { poll = fn },
+    adaptivePoll: (fn) => { poll = fn },
   }
   vm.runInNewContext(source.slice(start, end), context)
   return { context, poll, fail: () => reject(new Error('status request timed out')), requests: () => requests, recoveries: () => recoveries }

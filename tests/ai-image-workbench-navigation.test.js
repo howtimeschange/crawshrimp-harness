@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import vm from 'node:vm'
 
 function read(path) {
   return fs.readFileSync(path, 'utf8')
@@ -86,8 +87,15 @@ test('AI image workbench renders option 3 shell regions and settings action', ()
 test('cached AI image workbench reloads model keys after returning from settings', () => {
   const workbench = read('app/src/renderer/views/AiImageWorkbench.vue')
 
-  assert.match(workbench, /onActivated/)
-  assert.match(workbench, /onActivated\(\(\) => \{\s*void loadSettings\(\)\s*\}\)/)
+  let activate, loads = 0
+  const source = workbench.slice(workbench.indexOf('onActivated(() => {'), workbench.indexOf('onDeactivated(', workbench.indexOf('onActivated(() => {')))
+  vm.runInNewContext(source, {
+    onActivated: fn => { activate = fn }, workbenchVisible: false,
+    syncLoadingMessageTimer() {}, loadSettings() { loads++ },
+    hasActiveRuns: () => false, currentJob: { value: null },
+  })
+  activate(); activate()
+  assert.equal(loads, 2, 'each reactivation must refresh model settings')
 })
 
 test('AI image workbench uses picker interactions and hides canvas entry for now', () => {
@@ -641,7 +649,7 @@ test('AI image workbench embeds a tldraw annotation layer for precise edits', ()
   const setToolEnd = workbench.indexOf('function setLightboxAnnotationColor', setToolStart)
   const setToolBody = workbench.slice(setToolStart, setToolEnd)
 
-  assert.match(workbench, /import TldrawAnnotationLayer from '\.\.\/components\/TldrawAnnotationLayer\.js'/)
+  assert.match(workbench, /const TldrawAnnotationLayer = lazyView\(\(\) => import\('\.\.\/components\/TldrawAnnotationLayer\.js'\)\)/)
   assert.match(workbench, /<TldrawAnnotationLayer/)
   assert.match(workbench, /class="aiw-lightbox-main-image"/)
   assert.ok(

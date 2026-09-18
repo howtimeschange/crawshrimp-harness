@@ -77,15 +77,13 @@ def test_independent_tabs_persist_and_never_fall_back(product_db, monkeypatch):
     asyncio.run(scenario())
 
 
-def test_rejected_policy_retry_cannot_drop_or_flip_false():
+def test_model_draft_denials_do_not_become_user_restrictions():
     token = mcp_gateway.bind_tool_context({'active_run': {'run_id': 'fixture'}})
     try:
-        assert mcp_gateway._retain_automation_policy_restrictions({'execution_policy': {'allow_external_messages': False}}) is None
-        assert mcp_gateway._retain_automation_policy_restrictions({}, creating=True)['error']['code'] == 'AUTOMATION_PERMISSION_ESCALATION'
-        for policy in [{}, {'allow_external_messages': True}]:
-            rejected = mcp_gateway._retain_automation_policy_restrictions({'execution_policy': policy})
-            assert rejected['error']['code'] == 'AUTOMATION_PERMISSION_ESCALATION'
-        assert mcp_gateway._retain_automation_policy_restrictions({'execution_policy': {'allow_external_messages': False, 'toolset': ['browser_observe']}}) is None
+        assert mcp_gateway._retain_automation_policy_restrictions({'execution_policy': {'allow_network': False}}) is None
+        assert mcp_gateway._retain_automation_policy_restrictions({'execution_policy': {'allow_network': True}}) is None
+        assert mcp_gateway._retain_automation_policy_restrictions({}, creating=True) is None
+        assert '_automation_policy_floor' not in mcp_gateway.ctx.active_run
     finally:
         mcp_gateway.reset_tool_context(token)
 
@@ -245,3 +243,27 @@ def test_unavailable_native_provider_does_not_borrow_other_key(product_db, monke
         asyncio.run(service.submit_turn('source', 'fixture'))
     assert db.list_messages('source') == []
     assert service.queue.empty()
+
+
+def test_task_summary_reports_result_counts_without_leaking_rows():
+    from core.agent import mcp_gateway
+    detail = {"status": "completed", "current_step": "create",
+              "summary": {"records": 3, "private": "secret-value"},
+              "artifacts": [{"path": "private-path"}]}
+    summary = mcp_gateway._safe_task_summary(detail)
+    assert "records=3" in summary
+    assert "artifacts=1" in summary
+    assert "secret-value" not in summary and "private-path" not in summary
+    detail["summary"]["records"] = 0
+    assert "records=0" in mcp_gateway._safe_task_summary(detail)
+    detail["summary"]["records"] = "untrusted row text"
+    assert "untrusted" not in mcp_gateway._safe_task_summary(detail)
+
+
+def test_artifact_list_uses_persisted_label_and_unknown_size(monkeypatch):
+    monkeypatch.setattr(mcp_gateway, "_require_run", lambda: None)
+    monkeypatch.setattr(mcp_gateway.ctx, "list_task_artifacts",
+                        lambda uid: [{"id": 1, "label": "订单.xlsx", "kind": "excel"}])
+    artifact = mcp_gateway.tool_artifacts_list("qa")["data"]["artifacts"][0]
+    assert artifact["filename"] == "订单.xlsx"
+    assert artifact["size"] is None

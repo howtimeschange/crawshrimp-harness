@@ -164,6 +164,7 @@
 </template>
 
 <script setup>
+import { adaptivePoll } from '../utils/adaptivePoll'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { IconExternalLink, IconSettings } from '@tabler/icons-vue'
 import VoyageLoader from '../components/agent/VoyageLoader.vue'
@@ -778,7 +779,7 @@ onMounted(() => {
   // 持续读取受控 runtime 状态来恢复。rc.1 的 Web Host 对裸 HTTP 正确返回
   // 401，因此不能以无 cookie 的 fetch 误判它离线。
   let runtimePollInFlight = false
-  pollTimer = setInterval(async () => {
+  pollTimer = adaptivePoll(async () => {
     if (runtimePollInFlight) return
     runtimePollInFlight = true
     try {
@@ -817,12 +818,12 @@ onMounted(() => {
     } finally {
       runtimePollInFlight = false
     }
-  }, 5000)
+  })
 
 })
 
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
+  pollTimer?.()
   window.removeEventListener('message', onWindowMessage)
   if (nativeWebFollowRetryTimer) clearTimeout(nativeWebFollowRetryTimer)
   nativeWebFollowRetryTimer = null

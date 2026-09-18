@@ -65,11 +65,18 @@ files:
   - "dist/renderer/**/*"
   - "package.json"
   - "node_modules/**/*"
+  - "!src/**/*.test.*"
+  - "!src/renderer/**"
+  - "!dist/renderer/**/*.map"
 
 extraResources:
   # Python scripts (core/ + adapters/)
   - from: "../core"
     to: python-scripts/core
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
   - from: "../adapters"
     to: python-scripts/adapters
     filter:

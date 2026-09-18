@@ -10,9 +10,11 @@ from pathlib import Path
 
 from core.atomic_file import atomic_write_text
 from .executor import execute
+from . import render_cache
+from core.resource_budget import OFFICE_WORKERS
 from .runtime import OfficeError, file_hash, python_executable
 
-_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="office")
+_pool = ThreadPoolExecutor(max_workers=OFFICE_WORKERS, thread_name_prefix="office")
 _lock = threading.RLock()
 _live: dict[str, threading.Event] = {}
 MAX_PENDING = 20
@@ -70,6 +72,7 @@ def start(root: Path, operation: str, *, code: str = "", document: Path | None =
             source = work / "source" / document.name
             shutil.copy2(document, source)
             document = source
+            data["render_cache_key"] = render_cache.cache_key(source, recalculate, expected)
         else:
             raise OfficeError("OFFICE_INVALID_INPUT", "未知办公操作。")
     except Exception as exc:
@@ -94,9 +97,13 @@ def start(root: Path, operation: str, *, code: str = "", document: Path | None =
                 request = work / "request.json"
                 request.write_text(json.dumps({"document": str(document), "work": str(work),
                                                "recalculate": recalculate, "expected": expected or {}}), encoding="utf-8")
-                execute([str(python), str(Path(__file__).with_name("cli.py")), "render", str(request)],
-                        work, timeout=300, cancel=cancel)
-                result = json.loads((work / "result.json").read_text(encoding="utf-8"))
+                result = render_cache.restore(root, work, data.get("render_cache_key"), cancel)
+                if result is None:
+                    execute([str(python), str(Path(__file__).with_name("cli.py")), "render", str(request)],
+                            work, timeout=300, cancel=cancel)
+                    result = json.loads((work / "result.json").read_text(encoding="utf-8"))
+                if data.get("render_cache_key"):
+                    data["render_cache_files"] = render_cache.file_digests(work, result)
             with _lock:
                 if cancel.is_set():
                     raise OfficeError("OFFICE_CANCELED", "作业已取消。")

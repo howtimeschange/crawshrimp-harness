@@ -188,17 +188,19 @@
 </template>
 
 <script setup>
+import { lazyView } from './utils/lazyView'
+import { adaptivePoll } from './utils/adaptivePoll'
 import { computed, onMounted, onUnmounted, provide, ref } from 'vue'
-import ScriptList  from './views/ScriptList.vue'
-import MarketPage from './views/MarketPage.vue'
-import TaskRunner  from './views/TaskRunner.vue'
-import TaskCenter  from './views/TaskCenter.vue'
-import TaskInstanceRunner from './views/TaskInstanceRunner.vue'
-import AiImageWorkbench from './views/AiImageWorkbench.vue'
-import AiVideoGenerationWorkbench from './views/AiVideoGenerationWorkbench.vue'
-import LocalPromptLibrary from './views/LocalPromptLibrary.vue'
-import DataFiles   from './views/DataFiles.vue'
-import SettingsPage from './views/SettingsPage.vue'
+const ScriptList = lazyView(() => import('./views/ScriptList.vue'))
+const MarketPage = lazyView(() => import('./views/MarketPage.vue'))
+const TaskRunner = lazyView(() => import('./views/TaskRunner.vue'))
+const TaskCenter = lazyView(() => import('./views/TaskCenter.vue'))
+const TaskInstanceRunner = lazyView(() => import('./views/TaskInstanceRunner.vue'))
+const AiImageWorkbench = lazyView(() => import('./views/AiImageWorkbench.vue'))
+const AiVideoGenerationWorkbench = lazyView(() => import('./views/AiVideoGenerationWorkbench.vue'))
+const LocalPromptLibrary = lazyView(() => import('./views/LocalPromptLibrary.vue'))
+const DataFiles = lazyView(() => import('./views/DataFiles.vue'))
+const SettingsPage = lazyView(() => import('./views/SettingsPage.vue'))
 import AgentWebView from './views/AgentWebView.vue'
 import AgentProductLayer from './components/agent/AgentProductLayer.vue'
 import UpdateChangelogModal from './components/UpdateChangelogModal.vue'
@@ -593,7 +595,7 @@ onMounted(async () => {
     console.error('Failed to load initial script groups', error)
   }
 
-  pollTimer = setInterval(async () => {
+  pollTimer = adaptivePoll(async () => {
     if (overviewPollInFlight) return
     overviewPollInFlight = true
     try {
@@ -604,12 +606,12 @@ onMounted(async () => {
     } finally {
       overviewPollInFlight = false
     }
-  }, 5000)
+  })
 })
 onUnmounted(() => {
   systemThemeCleanup?.()
   systemThemeCleanup = null
-  clearInterval(pollTimer)
+  pollTimer?.()
   if (typeof updateStatusCleanup === 'function') updateStatusCleanup()
   window.cs.offStatus()
 })

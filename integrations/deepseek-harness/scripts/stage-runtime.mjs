@@ -4,7 +4,7 @@
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -75,6 +75,7 @@ const REQUIRED_SKILL_SOURCE_FILES = [
 ]
 const required = [
   'worker/builtin-runtime.cjs',
+  'worker/windows-console.cjs',
   'skills/crawshrimp-market/SKILL.md',
   'skills/crawshrimp-market/scripts/market.cjs',
   'skills/dws/SKILL.md',
@@ -109,9 +110,13 @@ const required = [
   'node_modules/@xmanrui/dsh-im/lib/client.js',
   'node_modules/@xmanrui/dsh-im/src/channels/shared/inbound-ttl.mjs',
   'node_modules/crawshrimp-product-bridge/lib/index.js',
+  'node_modules/crawshrimp-product-bridge/lib/context-tools.js',
+  'skills/crawshrimp-product-guide/SKILL.md',
+  ...['introduction', 'office', 'media', 'workflow', 'data', 'automation'].map(page => `skills/crawshrimp-product-guide/references/${page}.md`),
   'node_modules/crawshrimp-slots/lib/client.js',
   'node_modules/crawshrimp-slots/lib/image-generation-effect.js',
   'worker/worker.mjs',
+  'worker/context-metrics.mjs',
   'worker/native-web-follow-manager.mjs',
   'worker/web-rpc-client.mjs',
   'worker/repair-automation-receipts.mjs',
@@ -192,7 +197,9 @@ function linkProfilePackage(packagePath) {
   const destination = join(profileRoot, 'node_modules', ...packagePath.split('/'))
   if (!existsSync(source)) fail('profile dependency is missing: ' + packagePath)
   mkdirSync(dirname(destination), { recursive: true })
-  rmSync(destination, { recursive: true, force: true })
+  const existing = lstatSync(destination, { throwIfNoEntry: false })
+  if (existing?.isSymbolicLink()) unlinkSync(destination)
+  else if (existing) rmSync(destination, { recursive: true, force: true })
   symlinkSync(source, destination, 'junction')
 }
 

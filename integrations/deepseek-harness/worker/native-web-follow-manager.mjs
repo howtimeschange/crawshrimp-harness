@@ -12,6 +12,7 @@ export function createNativeWebFollowManager({
   notify,
   logError = () => {},
   firstFrameTimeoutMs = 8000,
+  reconnectDelayMs = 250,
 } = {}) {
   if (!(records instanceof Map)) throw new TypeError('records must be a Map')
   if (typeof getRuntime !== 'function') throw new TypeError('getRuntime must be a function')
@@ -24,6 +25,8 @@ export function createNativeWebFollowManager({
       record.turnActive = false
       notify(record.sessionId, { type: 'turn/end', data: { reason: terminalReason } })
     }
+    if (record.retryTimer) clearTimeout(record.retryTimer)
+    record.retryTimer = null
     record.closed = true
     record.state = state
     try { record.follow?.close() } catch {}
@@ -46,7 +49,12 @@ export function createNativeWebFollowManager({
   }
 
   const forwardSnapshot = (record, events) => {
-    for (const event of activeTurnEvents(events)) forwardEvent(record, event)
+    // Reconnect snapshots also contain the real terminal frame if a turn
+    // completed while the socket was unavailable. Never replace it with a
+    // transport-generated interruption, or replay an already projected frame.
+    const pending = record.hasSnapshot ? events : activeTurnEvents(events)
+    record.hasSnapshot = true
+    for (const event of pending) forwardEvent(record, event)
     const maxSnapshotSeq = (Array.isArray(events) ? events : []).reduce((max, event) => (
       Math.max(max, Number(event?.seq || 0) || 0)
     ), record.lastSeq)
@@ -104,33 +112,55 @@ export function createNativeWebFollowManager({
       lastSeq: 0,
       owners,
       turnActive: false,
+      hasSnapshot: false,
+      hadReady: false,
+      retries: 0,
+      retryTimer: null,
+      connection: 0,
     }
     records.set(normalized, record)
+    return await connect(record, runtime)
+  }
+
+  const connect = async (record, runtime) => {
+    const normalized = record.sessionId
+    const connection = ++record.connection
+    const current = () => !record.closed && record.connection === connection
     const onError = (error) => {
-      if (record.closed) return
-      const message = errorMessage(error)
-      logError(`[worker] native Web Session follow ${normalized} failed: ${message}`)
-      closeRecord(record, {
-        state: 'failed',
-        terminalReason: {
-          kind: 'interrupted',
-          error: { code: 'SESSION_FOLLOW_FAILED', message },
-        },
-      })
+      if (!current() || record.state === 'reconnecting') return
+      logError(`[worker] native Web Session follow ${normalized} failed: ${errorMessage(error)}`)
+      if (!record.hadReady) {
+        closeRecord(record, { state: 'failed' })
+        return
+      }
+      // A socket failure says nothing about the Host turn's outcome. Retain
+      // ownership and its cursor, then reconcile against the next snapshot.
+      record.state = 'reconnecting'
+      try { record.follow?.close() } catch {}
+      const delay = Math.min(4000, reconnectDelayMs * 2 ** Math.min(record.retries++, 4))
+      record.retryTimer = setTimeout(() => {
+        record.retryTimer = null
+        if (!current() || getRuntime() !== runtime) return
+        record.state = 'connecting'
+        void connect(record, runtime)
+      }, delay)
+      record.retryTimer.unref?.()
     }
     try {
       record.follow = runtime.follow(normalized, {
         onSnapshot: () => {},
-        onSnapshotComplete: (events) => forwardSnapshot(record, events),
-        onEvent: (event) => forwardEvent(record, event),
+        onSnapshotComplete: (events) => { if (current()) forwardSnapshot(record, events) },
+        onEvent: (event) => { if (current()) forwardEvent(record, event) },
         onError,
         firstFrameTimeoutMs,
       })
       await record.follow.ready
-      if (record.closed || records.get(normalized) !== record) {
+      if (!current() || records.get(normalized) !== record || record.state === 'reconnecting') {
         return { ok: false, error: { code: 'SESSION_FOLLOW_FAILED', message: 'follow closed before ready' } }
       }
       record.state = 'ready'
+      record.hadReady = true
+      record.retries = 0
       return { ok: true, following: true, state: 'ready', owners: record.owners.size }
     } catch (error) {
       onError(error)
@@ -175,4 +205,51 @@ export function createNativeWebFollowManager({
   }
 
   return { observe, unobserve, closeAll, inspect }
+}
+
+// Product-dispatched runs use the same recovery cursor as native Web turns.
+// Only projection/policy errors are fatal; a transport failure cannot prove
+// that the Host stopped executing the task.
+export function createRecoveringRunFollow({
+  runtime, sessionId, onSnapshotComplete = () => {}, onEvent, onError,
+  logError = () => {}, reconnectDelayMs = 250,
+}) {
+  let manager
+  let forwardingError = null
+  const guarded = callback => value => {
+    try { return callback(value) } catch (error) {
+      forwardingError = error
+      throw error
+    }
+  }
+  const source = {
+    follow(id, handlers) {
+      return runtime.follow(id, {
+        ...handlers,
+        onSnapshotComplete: guarded(events => {
+          onSnapshotComplete(events)
+          handlers.onSnapshotComplete(events)
+        }),
+        onError: error => {
+          if (forwardingError === error) {
+            manager.closeAll()
+            onError?.(error)
+          } else handlers.onError(error)
+        },
+      })
+    },
+  }
+  manager = createNativeWebFollowManager({
+    getRuntime: () => source,
+    // The first snapshot predates this queued prompt. Reconnect snapshots
+    // replay only frames after the cursor established by that initial gate.
+    activeTurnEvents: () => [],
+    notify: (_id, event) => guarded(onEvent)(event),
+    logError,
+    reconnectDelayMs,
+  })
+  const ready = manager.observe(sessionId, { owner: 'product-run' }).then(result => {
+    if (!result.ok) throw Object.assign(new Error(result.error.message), { code: result.error.code })
+  })
+  return { ready, close: () => manager.closeAll() }
 }

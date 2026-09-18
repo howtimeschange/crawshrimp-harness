@@ -116,3 +116,33 @@ test('AI video config IPC removes backend paths and returns the fixed output cap
   assert.match(main, /defaultOutputDirToken/)
   assert.match(main, /defaultOutputDirName/)
 })
+
+test('AI video directory IPC uses the real async scanner and preserves file capabilities', async () => {
+  const os = require('node:os')
+  const vm = require('node:vm')
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'video-input-'))
+  try {
+    fs.writeFileSync(path.join(root, 'photo.jpg'), 'image fixture')
+    fs.writeFileSync(path.join(root, 'ignored.txt'), 'not an image')
+    const declaration = main.match(/^const \{[^\n]+\} = require\('\.\/localFileJobs'\)$/m)?.[0]
+    assert.ok(declaration)
+    const source = section(main, 'async function listAiVideoDirectory', 'async function openAiVideoDirectory')
+    const list = vm.runInNewContext(`${declaration}\n${source}\nlistAiVideoDirectory`, {
+      require, AI_VIDEO_CAPABILITY_SECRET: 'test',
+      resolveAiVideoCapabilityPath(token, options) {
+        assert.equal(token, 'signed-directory')
+        assert.equal(options.expectedKind, 'directory')
+        return { path: root }
+      },
+      normalizeExtensionList: values => new Set(values || []),
+      aiVideoPublicFileItem: (file, options) => ({ token: 'file-capability', name: path.basename(file), scope: options.scope }),
+    })
+    const result = await list('signed-directory', { extensions: ['jpg'] })
+    assert.equal(result.ok, true)
+    assert.equal(result.items.length, 1)
+    assert.equal(result.items[0].name, 'photo.jpg')
+    assert.equal(result.items[0].token, 'file-capability')
+    assert.equal(result.items[0].scope, 'input')
+    assert.equal(result.truncated, false)
+  } finally { fs.rmSync(root, { recursive: true, force: true }) }
+})

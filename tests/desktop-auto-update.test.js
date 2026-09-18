@@ -57,8 +57,11 @@ test('desktop schedules resilient automatic update checks and visible availabili
   assert.match(main, /powerMonitor\.on\('resume'/)
   assert.match(main, /updateCheckScheduler\.onAppFocus\(\)/)
   assert.match(main, /updateCheckScheduler\.dispose\(\)/)
+  const updateIndex = startup.indexOf('scheduleInitialUpdateCheck()')
+  const servicesIndex = startup.indexOf("await performanceDiagnostics.measure('startup.desktop-services', ensureDesktopServicesStarted)")
+  assert.ok(updateIndex >= 0 && servicesIndex >= 0, 'both startup operations must remain present')
   assert.ok(
-    startup.indexOf('scheduleInitialUpdateCheck()') < startup.indexOf('await ensureDesktopServicesStarted()'),
+    updateIndex < servicesIndex,
     'automatic update scheduling does not wait for backend startup'
   )
 })

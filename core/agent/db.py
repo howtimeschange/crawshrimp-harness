@@ -557,6 +557,26 @@ def append_event(session_id: str, run_id: Optional[str], event_type: str, payloa
             conn.close()
 
 
+def append_session_event(session_id: str, event_type: str, payload: Any) -> tuple[int, Any]:
+    """Resolve session identity and append atomically with one connection."""
+    conn = _conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if isinstance(payload, dict):
+            session = conn.execute("SELECT runtime_session_id FROM agent_sessions WHERE session_id = ?", (session_id,)).fetchone()
+            payload = {**payload, "session_id": payload.get("session_id") or session_id,
+                       "runtime_session_id": payload.get("runtime_session_id") or (session[0] if session else "")}
+        run_id = payload.get("run_id") if isinstance(payload, dict) else None
+        cur = conn.execute("INSERT INTO agent_events (session_id, run_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)",
+                           (session_id, run_id, event_type, _json(payload), _now_iso()))
+        seq = int(cur.lastrowid)
+        conn.execute("UPDATE agent_sessions SET last_event_seq = MAX(last_event_seq, ?), updated_at = ? WHERE session_id = ?", (seq, _now_iso(), session_id))
+        conn.commit()
+        return seq, payload
+    finally:
+        conn.close()
+
+
 def list_events_after(session_id: str, after_seq: int, limit: int = 500) -> list[dict]:
     with _lock:
         conn = _conn()

@@ -1236,8 +1236,15 @@ function toolArguments(toolCall) {
 function patchDshWebApprovalAllowAll(root) {
   const entry = requireFile(root, 'node_modules/@deepseek-ai/dsh-client-ui-approval/lib/client.js')
   let source = readFileSync(entry, 'utf8')
+  // Upgrade existing patched runtimes too: this grants the whole Session full
+  // access, not a reusable permission for only the current Office/browser tool.
+  const describeScope = value => value
+    .replace('allowAll: "允许所有"', 'allowAll: "本会话完全访问（不再逐次审批）"')
+    .replace('allowAll: "Allow all"', 'allowAll: "Full access for this session (no further approvals)"')
   if (source.includes(CRAWSHRIMP_DSH_WEB_APPROVAL_ALLOW_ALL_MARKER)) {
-    return { entry, patched: false }
+    const updated = describeScope(source)
+    if (updated !== source) writeFileSync(entry, updated, 'utf8')
+    return { entry, patched: updated !== source }
   }
   source = replaceRequired(
     source,
@@ -1320,7 +1327,7 @@ function patchDshWebApprovalAllowAll(root) {
 \t\t\t\tchildren: { "conversation.approval.detail": {`,
     'Web approval Session command injection',
   )
-  writeFileSync(entry, source, 'utf8')
+  writeFileSync(entry, describeScope(source), 'utf8')
   return { entry, patched: true }
 }
 

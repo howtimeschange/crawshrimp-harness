@@ -277,17 +277,21 @@ def tool_automation_get(automation_uid: str) -> dict:
 
 
 def _retain_automation_policy_restrictions(payload: dict, *, creating: bool = False) -> Optional[dict]:
-    """A rejected proposal cannot be retried with its explicit denials removed."""
-    run = ctx.active_run
+    """Only trusted user restrictions constrain proposal corrections.
+
+    Tool arguments are model proposals, not user authorization. In particular,
+    invalid drafts must not create a run-wide sticky deny list. The controller
+    still validates every submitted policy and preserves saved policy fields
+    when patching an existing Automation.
+    """
+    run = ctx.active_run or {}
     policy = payload.get("execution_policy", {} if creating else None)
-    if not run or not isinstance(policy, Mapping):
+    if not isinstance(policy, Mapping):
         return None
-    floor = run.setdefault("_automation_policy_floor", {})
-    from core.automation_policy import DENIED_TOOLS
-    widened = [flag for flag in floor if policy.get(flag) is not False]
+    floor = run.get("_automation_user_restrictions", {})
+    widened = [flag for flag, value in floor.items() if value is False and policy.get(flag) is not False]
     if widened:
-        return _failed("AUTOMATION_PERMISSION_ESCALATION", "不能在重试中撤销明确禁止的权限：" + ", ".join(sorted(widened)) + "。请缩小工具集；网页只读采集使用 browser_observe。")
-    floor.update({flag: False for flag in DENIED_TOOLS if policy.get(flag) is False})
+        return _failed("AUTOMATION_PERMISSION_ESCALATION", "本次方案超出用户已确认的限制：" + ", ".join(sorted(widened)) + "。请在创建阶段向用户确认需要改变的具体操作范围。")
     return None
 
 
@@ -358,29 +362,18 @@ def automation_create_tool_description(now: Optional[datetime] = None) -> str:
     business language here because it is an instruction to the Agent, not a
     user-facing form or a requirement that users speak JSON.
     """
-    return f"""由 Automation Controller 创建自动化。用户会用自然中文表达意图；你应直接理解并调用本工具，不能要求用户提供 JSON。
-
-对于“今天/明天/几点/三分钟后”等相对时间，先调用 automation_current_time 读取实时上海时间（不要根据训练数据或本工具描述猜测日期），再换算成带 +08:00 的未来 ISO-8601 时间；若用户给出的时间已过去，先追问或提出新的未来时间，不能创建已过期任务。
-
-不要为了猜字段而调用 fs_read、fs_list、fs_exec、browser_*、script_* 或 repo_*，也不要读取/修改任何文件。本工具的合同已经完整给出。
-
-调用参数只有 values 对象。所有自动化至少填写：
-- title：用户可见标题；objective_prompt：到点后智能体要做什么；automation_kind：scheduled 或 loop；context_mode：isolated 或 inherited；execution_policy：本次运行允许的工具集和限制。有明确条数、字段、交付要求时，用 execution_policy.verification_schema（JSON Schema）固化这些结果条件，例如 required=["verified","records","user_message"]、records 的 minItems/maxItems 及每条 required 字段。验证提交必须完整满足条件。
-- 一次性定时（例如“今晚 22:47 提醒我”）：automation_kind="scheduled"；schedule={{"kind":"at","value":"未来 ISO-8601 时间","timezone":"Asia/Shanghai"}}；context_mode="isolated"；enabled=true。此场景不需要 Program。
-- 固定周期任务（例如“每小时同步”“每天汇总”）：automation_kind="scheduled"；schedule={{"kind":"every","interval_seconds":3600,"timezone":"Asia/Shanghai"}}（每天填 86400）。这是默认快路径，无需 Program、无需 automation_program_test；持续执行直到用户暂停。
-- 周期性条件闭环（例如“连续三次低库存才处理”）：才使用 automation_kind="loop"；loop_policy 包含 cycle_interval_seconds/max_cycles/failure_threshold；必须携带受限 program。先用 automation_program_test 对代表性 facts/checkpoint 校验条件和 checkpoint，再把该工具返回的 program_test_proof 原样放进 values；没有这份短时证明不能保存或启用 Program。
-
-对于固定周期同步：如用户给了已授权页面，最多先 browser_observe 一次以识别页面；只有同步对象确实不明确时才问一个合并式问题。默认将中文摘要通过 automation_record_verification 发回创建对话，不创建 archive.md、不读写历史文件、不调用 skill_list 或扫描源码。默认策略只授予 browser_observe 和 automation_record_verification；明确为 false 的权限在失败重试时也不得删除或改成 true，必须缩小工具集。不要默认授予 fs_write 或 browser_act。若用户明确要求“新增对比”，才授予 automation_state_get：先读取小型 last_snapshot，再在 automation_record_verification 的 result.state 中写回新的 last_snapshot（最大 16 KiB）；不要读取或整体重写历史归档。若用户明确要求保存归档或展开页面，再单独申请所需权限；回执必须如实说明是否写入了文件。
-
-创建成功后立即向用户确认标题、周期、时区和最小权限；除非用户明确要求“立即运行”或“验收首轮”，不要调用 automation_run_now、不要等待。若用户要求首轮计入 loop 的 max_cycles，调用 automation_run_now 时传 count_toward_max_cycles=true；若用户明确要求等待验收，使用 automation_wait_run（最多 60 秒），不要用固定 sleep。等待自然周期时使用 automation_wait_next，传上次 run_uid 作为 after_run_uid；出现后再用 automation_wait_run。
-
-若某项 MCP 工具在普通对话中原本需要确认，execution_policy 除 toolset 外还必须显式填写 allowed_risks（仅可为 read_only、local_write、external_write、destructive）。两者缺一不可：toolset 限定具体工具，allowed_risks 限定这次允许无人值守的风险类型。不要为普通提醒填写风险授权。
-
-无副作用的本地确认任务应明确限制 execution_policy：toolset 仅为 ["automation_record_verification"]，allowed_risks 为空，并将 allow_browser、allow_filesystem、allow_network、allow_external_messages、allow_script_publish 全部设为 false。不要为这类任务增加网页、文件、外部消息、外部服务或脚本发布。
-
-权限开关必须是布尔值，显式 false 优先于工具列表；矛盾策略会被拒绝。命令执行、脚本/任务执行、仓库安装更新及委托其他自动化无法保证这些限制，不可与显式 false 同时授权。不要为了保存成功擅自放宽限制，应移除冲突工具或让用户明确修改授权。
-
-示例：用户说“今天 22:47 给我做一次本地验收提醒，到时只确认已完成，不访问网页或文件”，应创建标题“本地自动化验收提醒”的 isolated 一次性 scheduled Automation，使用 Asia/Shanghai 的未来 at 时间和上述无副作用策略。创建成功后只用返回结果向用户确认标题、运行时间、时区和安全限制。"""
+    return """创建自动化；理解用户自然语言，不要求用户提供JSON。参数只有values对象。不要为猜字段调用fs_read、fs_list、fs_exec、browser_*、script_* 或 repo_*或扫描源码；本合同已给出必要字段。业务示例按需读crawshrimp-product-guide/references/automation.md。
+时间：今天/明天/几点/几分钟后先automation_current_time，换算未来ISO-8601（+08:00）；已过期则澄清，不猜日期。
+values必填title、objective_prompt、automation_kind、context_mode（isolated/inherited）、execution_policy；enabled=true。具体条数/字段/交付条件用execution_policy.verification_schema（JSON Schema）约束，提交验证必须满足。
+- 一次性：automation_kind="scheduled"，schedule={"kind":"at","value":"未来ISO-8601","timezone":"Asia/Shanghai"}，context_mode="isolated"，无需Program。
+- 每小时同步等固定周期：automation_kind="scheduled"，schedule={"kind":"every","interval_seconds":3600,"timezone":"Asia/Shanghai"}（每天86400）；无需 Program、无需automation_program_test，直到暂停。
+- 仅条件闭环用automation_kind="loop"，loop_policy含cycle_interval_seconds/max_cycles/failure_threshold；受限program先automation_program_test验证代表性facts/checkpoint，返回的短时program_test_proof原样放入values才可保存/启用。
+授权：创建时一次确定目标、动作、保存位置及是否外发；用户已明确要求的操作即为授权，缺失信息合并询问，仅新增范围再确认。不要为所有任务默认填一组 allow_*=false；未涉及开关可省略，开关必须布尔值，用户明确false必须保留。矛盾草案不保存，模型填错false不成为用户禁令，可按已确认需求纠正重试。
+策略：execution_policy.toolset列工具；需普通对话确认的动作还须allowed_risks（仅read_only/local_write/external_write/destructive），二者共同限制无人值守动作。无副作用提醒（如本地自动化验收提醒）仅["automation_record_verification"]，allowed_risks=[]，allow_browser/allow_filesystem/allow_network/allow_external_messages/allow_script_publish=false，不增加服务或脚本。
+网页同步：已授权页面最多先browser_observe一次识别，仅对象不明才问。默认toolset为browser_observe、automation_record_verification；筛选/查询/翻页授权browser_act，下拉用action="select",selector,text，查询翻页用click。CSV授权fs_write与local_write，独立回读再加fs_read；指定绝对路径保留，相对路径在任务工作区。命令/脚本不能保证网络/外发细分限制，保存CSV优先fs_write。禁止外发时browser_eval/browser_verify仅无副作用读取。
+联网与外发不同：allow_external_messages仅外部渠道；当前会话automation_record_verification回执不是外发。需要外发则创建时确认渠道、收件人和内容；未要求则不加消息工具/external_write。“不外发”不能转成allow_network=false，网页采集填写此开关时须true，本地页访问也不是断网。
+默认中文摘要回创建会话，不建archive.md、不读写历史、不扫描技能；新增对比才加automation_state_get读小型last_snapshot，automation_record_verification的result.state写回（≤16KiB）。仅用户要求归档/展开页面才授对应权限，回执如实说明文件是否写入。
+成功即确认标题、周期/时间、时区和权限；除非明确立即运行/验收，不run_now或等待。立即运行计入loop上限须count_toward_max_cycles=true；等待使用automation_wait_run（≤60秒）。自然触发用automation_wait_next(after_run_uid=上次游标)后wait_run，不用run_now冒充或固定sleep。"""
 
 
 def tool_automation_update(automation_uid: str, values: dict) -> dict:
@@ -955,6 +948,14 @@ def _automation_policy_values(policy: Mapping[str, Any], key: str) -> set[str]:
     return {str(item).strip() for item in raw if str(item).strip()}
 
 
+def _automation_flag_denied(flag: str) -> bool:
+    policy = ctx.automation_policy
+    if not isinstance(policy, Mapping):
+        return False
+    nested = policy.get("execution_policy")
+    return policy.get(flag) is False or (isinstance(nested, Mapping) and nested.get(flag) is False)
+
+
 def _automation_approval_decision(plan: dict, summary: dict) -> Optional[str]:
     """Resolve unattended approval without changing interactive semantics.
 
@@ -982,6 +983,8 @@ def _automation_approval_decision(plan: dict, summary: dict) -> Optional[str]:
     if not allowed_tools:
         allowed_tools = _automation_policy_values(policy, "toolset")
     allowed_risks = _automation_policy_values(policy, "allowed_risks")
+    if risk == "external_write" and _automation_flag_denied("allow_external_messages"):
+        return "rejected"
     if tool_name in allowed_tools and risk in allowed_risks:
         return "approved"
     controller = getattr(ctx, "automation_controller", None)
@@ -1162,8 +1165,8 @@ def tool_artifacts_list(task_instance_uid: str) -> dict:
     return _ok({
         "task_instance_uid": task_instance_uid,
         "artifacts": [{
-            "artifact_id": a.get("id"), "filename": a.get("filename") or a.get("name"),
-            "kind": a.get("kind") or "", "size": a.get("size") or 0,
+            "artifact_id": a.get("id"), "filename": a.get("filename") or a.get("name") or a.get("label"),
+            "kind": a.get("kind") or "", "size": a.get("size"),
             "created_at": a.get("created_at"),
         } for a in artifacts],
         "total": len(artifacts),
@@ -1659,13 +1662,23 @@ async def tool_fs_write(path: str, content: str) -> dict:
     if not raw:
         return _failed("INVALID_PARAMETERS", "path 不能为空")
     p = Path(raw).expanduser()
+    risk = "external_write"
+    if isinstance(ctx.automation_policy, Mapping):
+        # A scheduled CSV export is local work, not an outbound message.
+        # Resolve relative paths in this run's workspace rather than the API
+        # process cwd; preserve the interactive arbitrary-path contract.
+        if ctx.workspace_root is None:
+            return _failed("CONTEXT_REQUIRED", "任务工作区尚未就绪")
+        workspace = Path(ctx.workspace_root).resolve()
+        p = (p if p.is_absolute() else workspace / p).resolve()
+        risk = "local_write"
     if p.is_dir():
         return _failed("INVALID_PARAMETERS", f"是目录: {raw}")
     text = str(content or "")
     summary = {"kind": "fs_write", "path": str(p), "size": len(text.encode("utf-8"))}
     decision = await _await_approval_async(
         {"plan_id": f"fs-write-{uuid.uuid4().hex[:8]}", "params_json": "{}", "params_sha256": "",
-         "risk": "external_write", "adapter_id": "", "task_id": ""}, summary)
+         "risk": risk, "adapter_id": "", "task_id": ""}, summary)
     if decision != "approved":
         return _rejected("rejected", "APPROVAL_REJECTED" if decision == "rejected" else "APPROVAL_EXPIRED",
                          "写文件未获批准")
@@ -1676,10 +1689,22 @@ async def tool_fs_write(path: str, content: str) -> dict:
         # ACL/mode with the private-state defaults used by atomic_write_text.
         # Retrying the open/write operation handles transient Windows sharing
         # violations while preserving the target file's existing metadata.
-        await asyncio.to_thread(retry_file_operation, lambda: p.write_text(text, encoding="utf-8"))
+        # Preserve the requested bytes on Windows too: text-mode LF -> CRLF
+        # translation would make a successful write fail byte-level readback.
+        await asyncio.to_thread(retry_file_operation, lambda: p.write_text(text, encoding="utf-8", newline=""))
     except OSError as exc:
         return _failed("TASK_FAILED", f"写入失败: {exc}")
-    return _ok({"path": str(p), "size": len(text.encode("utf-8")), "message": "已写入(经审批授权)"})
+    expected = text.encode("utf-8")
+    try:
+        actual = await asyncio.to_thread(p.read_bytes)
+    except OSError as exc:
+        return _failed("FILE_READBACK_FAILED", f"写入后读回失败: {exc}")
+    if actual != expected:
+        return _failed("FILE_READBACK_MISMATCH", "写入后文件内容与请求不一致")
+    import hashlib
+    return _ok({"path": str(p), "size": len(actual), "verified": True,
+                "sha256": hashlib.sha256(actual).hexdigest(), "line_count": len(text.splitlines()),
+                "message": "已写入并读回确认内容一致(经授权)"})
 
 
 def _decode_subprocess_output(value) -> str:
@@ -2523,7 +2548,7 @@ async def tool_browser_eval(expression: str) -> dict:
     if not expression or len(expression) > 4000:
         return _failed("INVALID_PARAMETERS", "expression 必填且不超过 4000 字符")
     try:
-        value = await _browser_read_with_retry(client, tab, lambda active: active.evaluate(expression))
+        value = await _browser_read_with_retry(client, tab, lambda active: active.evaluate(expression, read_only=True) if _automation_flag_denied("allow_external_messages") else active.evaluate(expression))
         return _ok({"tab_url": (tab or {}).get("url", ""), "value": _cap_json(value)},
                    evidence={"task_instance_uid": None, "artifact_ids": []})
     except Exception as exc:  # noqa: BLE001
@@ -2544,7 +2569,7 @@ async def tool_browser_act(action: str, selector: str = "", text: str = "",
     client, tab, guard = _browser_client()
     if guard:
         return guard
-    if action not in ("click", "type", "scroll", "wait"):
+    if action not in ("click", "type", "select", "scroll", "wait"):
         return _failed("INVALID_PARAMETERS", f"不支持的 action: {action}")
 
     # 凭证字段默认阻断；仅在用户当前对话明确授权并给出要填写内容时放行。
@@ -2594,7 +2619,10 @@ async def tool_browser_act(action: str, selector: str = "", text: str = "",
         async with client:
             result = await client.act(action, {"selector": selector, "text": text,
                                                "delta_y": delta_y, "ms": ms,
-                                               "credential_authorized": credential_authorized})
+                                               "credential_authorized": credential_authorized,
+                                               **({"deny_external_messages": True} if _automation_flag_denied("allow_external_messages") else {})})
+        if isinstance(result, dict) and result.get("externalMessageBlocked"):
+            return _rejected("rejected", "AUTOMATION_POLICY_DENIED", "该操作会对外发送消息，超出已确认任务范围")
         if isinstance(result, dict) and result.get("credentialBlocked"):
             return _rejected("rejected", "INVALID_PARAMETERS",
                              "检测到凭证类输入框;仅在用户明确授权并设置 credential_authorized=true 后才可由智能体填写")
@@ -2609,7 +2637,7 @@ async def tool_browser_verify(expression: str) -> dict:
     if guard:
         return guard
     try:
-        result = await _browser_read_with_retry(client, tab, lambda active: active.verify(expression))
+        result = await _browser_read_with_retry(client, tab, lambda active: active.verify(expression, read_only=True) if _automation_flag_denied("allow_external_messages") else active.verify(expression))
         return _ok(result, evidence={"task_instance_uid": None, "artifact_ids": []})
     except Exception as exc:  # noqa: BLE001
         return _failed("CONTEXT_REQUIRED", f"verify 失败: {exc}")
@@ -2867,6 +2895,14 @@ def _task_failure_message(detail: dict) -> str:
 
 def _safe_task_summary(detail: dict) -> str:
     pieces = [f"{key}={str(detail[key])[:120]}" for key in ("current_step", "status") if detail.get(key)]
+    summary = detail.get("summary")
+    if isinstance(summary, Mapping):
+        records = summary.get("records")
+        if isinstance(records, int) and not isinstance(records, bool) and records >= 0:
+            pieces.append(f"records={records}")
+    artifacts = detail.get("artifacts")
+    if isinstance(artifacts, list):
+        pieces.append(f"artifacts={len(artifacts)}")
     error = _task_failure_message(detail)
     if error:
         pieces.append(f"error={error[:200]}")
@@ -2996,7 +3032,7 @@ def create_agent_mcp_server() -> MCPServer:
                  description="当前授权页面结构化摘要(标题/正文/链接/按钮/输入框),非原始 HTML")
     mcp.add_tool(tool_browser_eval, name="browser_eval", description="在当前页面执行 JS 表达式并返回 JSON 值")
     mcp.add_tool(tool_browser_act, name="browser_act",
-                 description="页面操作:click(selector 或 text)/type/scroll/wait;需本次运行授权。type 凭证字段默认阻断;仅当用户明确授权并给出内容时传 credential_authorized=true")
+                 description="页面操作:click(selector 或 text)/type/select(下拉选项文字或值)/scroll/wait;需本次运行授权。type 凭证字段默认阻断;仅当用户明确授权并给出内容时传 credential_authorized=true")
     mcp.add_tool(tool_browser_verify, name="browser_verify", description="断言页面 JS 表达式布尔结果")
     mcp.add_tool(tool_browser_navigate, name="browser_navigate",
                  description="导航 http(s) URL；未绑定时自动创建本会话独立页面，new_tab=true 显式另开；后续轮次复用该会话精确绑定，页面关闭不回退其他会话。自动化只能使用创建时绑定页面")

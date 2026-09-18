@@ -3,18 +3,39 @@ from __future__ import annotations
 
 import shutil
 import threading
+import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from .executor import execute
 from .runtime import OfficeError, assets, file_hash, office_root
 
 
+@contextmanager
+def _conversion_profile(work: Path):
+    # LibreOffice creates deeply nested files beneath UserInstallation. On
+    # Windows a session/job directory can push these beyond MAX_PATH, causing
+    # a zero exit code without any converted output. Keep the private profile
+    # short; documents and artifacts retain their original controlled paths.
+    if sys.platform == "win32":
+        with tempfile.TemporaryDirectory(prefix="cs-lo-") as directory:
+            yield Path(directory)
+    else:
+        yield work / "lo-profile"
+
+
 def render(document: Path, work: Path, *, recalculate: bool = False,
            cancel: threading.Event | None = None) -> dict:
+    with _conversion_profile(work) as profile:
+        return _render(document, work, profile=profile, recalculate=recalculate, cancel=cancel)
+
+
+def _render(document: Path, work: Path, *, profile: Path, recalculate: bool = False,
+            cancel: threading.Event | None = None) -> dict:
     import pymupdf as fitz
     from PIL import Image, ImageDraw
     manifest = assets()
-    profile = work / "lo-profile"
     profile.mkdir(parents=True, exist_ok=True)
     # A private profile prevents reuse of the user's running GUI instance.
     (profile / "user").mkdir(exist_ok=True)

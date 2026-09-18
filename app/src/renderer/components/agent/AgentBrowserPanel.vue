@@ -276,7 +276,7 @@ watch(isDocked, (docked) => {
     placeDefault()
   }
   if (frame.value) frame.value = { ...frame.value }
-  if (!started) void start()
+  syncStreamVisibility()
 })
 
 function onDragStart(event) {
@@ -413,6 +413,7 @@ const statusText = computed(() => {
 })
 
 async function start() {
+  if (streamDisposed || document.hidden || minimized.value) return
   if (started || typeof window.cs?.startAgentBrowserStream !== 'function') return
   started = true
   statusState.value = 'connecting'
@@ -424,17 +425,39 @@ async function start() {
   }
 }
 
-async function restart() {
-  if (typeof window.cs?.stopAgentBrowserStream === 'function') {
-    await window.cs.stopAgentBrowserStream(props.tabId)
-  }
-  frame.value = null
-  statusState.value = 'connecting'
-  started = false
-  start()
+function restart() {
+  return syncStreamVisibility(true)
 }
 
+let streamDisposed = false
+let visibilityQueue = Promise.resolve()
+function syncStreamVisibility(forceRestart = false) {
+  visibilityQueue = visibilityQueue.catch(() => {}).then(async () => {
+  if (forceRestart === true) {
+    await window.cs?.stopAgentBrowserStream?.(props.tabId)
+    frame.value = null
+    statusState.value = 'connecting'
+    started = false
+  }
+  if (streamDisposed || document.hidden || minimized.value) {
+    started = false
+    await window.cs?.stopAgentBrowserStream?.(props.tabId)
+  } else {
+    await start()
+    if (streamDisposed || document.hidden || minimized.value) {
+      started = false
+      await window.cs?.stopAgentBrowserStream?.(props.tabId)
+    }
+  }
+  }).catch(error => {
+    started = false
+    if (!streamDisposed) { statusState.value = 'error'; statusMessage.value = error?.message || '浏览器预览连接失败' }
+  })
+  return visibilityQueue
+}
+watch(minimized, () => syncStreamVisibility())
 onMounted(() => {
+  document.addEventListener('visibilitychange', syncStreamVisibility)
   loadPrefs()
   if (isDocked.value) {
     minimized.value = false
@@ -458,19 +481,19 @@ onMounted(() => {
       if (payload?.state === 'error' || payload?.state === 'disconnected') started = false
     })
   }
-  start()
+  syncStreamVisibility()
 })
 
 onUnmounted(() => {
+  streamDisposed = true
+  document.removeEventListener('visibilitychange', syncStreamVisibility)
   offFrame?.()
   offStatus?.()
   stopInteractions({ save: false })
   dragging.value = false
   resizing.value = false
   if (interactionFrame) window.cancelAnimationFrame(interactionFrame)
-  if (typeof window.cs?.stopAgentBrowserStream === 'function') {
-    window.cs.stopAgentBrowserStream(props.tabId)
-  }
+  syncStreamVisibility()
 })
 </script>
 

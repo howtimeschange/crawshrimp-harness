@@ -65,6 +65,33 @@ function loadWorkspaceInitializer(logs = []) {
   return client.module.ensureDefaultWorkspace
 }
 
+test('shell directory pickers coexist with the official priority-zero native pickers', () => {
+  const names = ['conversation.hero.workspace.directoryFlow', 'sidebar.workspaces.directoryFlow']
+  const entries = new Map(names.map(name => [name, [{ priority: 0, component: 'official' }]]))
+  const ctx = { slots: {
+    inject(name, callback) {
+      assert.ok(entries.has(name))
+      const result = callback()
+      if (result?.next) for (const unused of result) { void unused }
+    },
+    register(options, component) {
+      const slot = entries.get(options.name)
+      const priority = options.priority ?? 0
+      assert.ok(!slot.some(entry => entry.priority === priority), 'single slots reject equal priorities')
+      slot.push({ ...options, priority, component })
+    },
+  } }
+  loadSlotsClient().module.registerCrawshrimpDirectoryFlow(ctx)
+  assert.ok([...entries.values()].every(slot => slot.length === 1), 'standalone Web keeps its native picker')
+  loadSlotsClient({ search: '?csDirectoryPicker=shell' }).module.registerCrawshrimpDirectoryFlow(ctx)
+  for (const slot of entries.values()) {
+    assert.equal(slot.length, 2)
+    const selected = slot.toSorted((a, b) => a.priority - b.priority)[0]
+    assert.equal(selected.component.name, 'CrawshrimpShellDirectoryFlow')
+    assert.equal(typeof selected.inject().pick, 'function')
+  }
+})
+
 test('Crawshrimp fixes its one agent preset without a picker display layer', () => {
   const source = readFileSync(clientBundle, 'utf8')
   const profile = readFileSync(profilePatch, 'utf8')

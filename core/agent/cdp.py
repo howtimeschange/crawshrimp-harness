@@ -55,6 +55,11 @@ ACT_CLICK_JS = r"""
       || candidates.find((e) => visible(e) && (e.innerText || e.textContent || e.value || '').trim().toLowerCase().includes(t)) || null;
   }
   if (!el) return { clicked: false, error: '未找到目标元素' };
+  const denyExternalMessages = %s;
+  const actionLabel = [el.innerText, el.textContent, el.value, el.getAttribute('aria-label'), el.getAttribute('title'), el.id, el.name].filter(Boolean).join(' ');
+  if (denyExternalMessages && /发送|发信|发邮件|群发|推送|发布|send|publish|post\b|mailto:/i.test(actionLabel + ' ' + (el.href || ''))) {
+    return { clicked: false, externalMessageBlocked: true, error: '外部消息发送未获授权' };
+  }
   el.scrollIntoView({ block: 'center' });
   el.click();
   return { clicked: true, tag: el.tagName.toLowerCase(), text: (el.innerText || el.textContent || el.value || '').trim().slice(0, 80) };
@@ -217,12 +222,13 @@ class CdpClient:
             if not fut.done():
                 fut.cancel()
 
-    async def evaluate(self, expression: str, user_gesture: bool = False) -> dict:
+    async def evaluate(self, expression: str, user_gesture: bool = False, *, read_only: bool = False) -> dict:
         result = await self.send("Runtime.evaluate", {
             "expression": expression,
             "returnByValue": True,
             "userGesture": user_gesture,
-            "awaitPromise": True,
+            "awaitPromise": not read_only,
+            **({"throwOnSideEffect": True} if read_only else {}),
         })
         if result.get("exceptionDetails"):
             text = result["exceptionDetails"].get("text", "JS 异常")
@@ -240,7 +246,19 @@ class CdpClient:
 
     async def act(self, action: str, payload: dict) -> dict:
         if action == "click":
-            expr = ACT_CLICK_JS % (_js_literal(payload.get("selector")), _js_literal(payload.get("text")))
+            expr = ACT_CLICK_JS % (_js_literal(payload.get("selector")), _js_literal(payload.get("text")), "true" if payload.get("deny_external_messages") else "false")
+            return await self.evaluate(expr)
+        if action == "select":
+            expr = """(() => {
+              const el = document.querySelector(%s), text = %s;
+              if (!(el instanceof HTMLSelectElement)) return {selected:false,error:'目标不是下拉框'};
+              const option = Array.from(el.options).find(o => o.value === text || o.textContent.trim() === text);
+              if (!option) return {selected:false,error:'未找到选项'};
+              el.value = option.value;
+              el.dispatchEvent(new Event('input', {bubbles:true}));
+              el.dispatchEvent(new Event('change', {bubbles:true}));
+              return {selected:true,value:el.value};
+            })()""" % (_js_literal(payload.get("selector")), _js_literal(payload.get("text")))
             return await self.evaluate(expr)
         if action == "type":
             allow_credentials = "true" if payload.get("credential_authorized") else "false"
@@ -261,8 +279,8 @@ class CdpClient:
         await self.send("Page.navigate", {"url": url})
         return {"navigated": True, "url": url}
 
-    async def verify(self, expression: str) -> dict:
-        value = await self.evaluate(f"!!({expression})")
+    async def verify(self, expression: str, *, read_only: bool = False) -> dict:
+        value = await self.evaluate(f"!!({expression})", read_only=read_only)
         return {"ok": bool(value), "value": bool(value)}
 
     async def capture_requests(self, duration_ms: int = 3000) -> list[dict]:

@@ -137,11 +137,13 @@ function workerFixture({ stop = async () => {}, cancel = async () => ({ accepted
     async stop() { stopCalls++; return await stop() },
   }
   const context = { console, setTimeout, clearTimeout, Buffer, runtime,
-    createNativeWebFollowManager: () => ({ closeAll() {} }),
     assertSessionHeadersExcludeNativeWebTools() {}, activeTurnEvents: x => x,
     process: { env: {}, versions: process.versions, stdout: { write() {} }, exit() { throw Error('worker exit') } },
   }
   vm.createContext(context)
+  const followSource = fs.readFileSync(path.join(root, 'worker/native-web-follow-manager.mjs'), 'utf8').replace(/^export /gm, '')
+  vm.runInContext(followSource, context)
+  vm.runInContext(fs.readFileSync(path.join(root, 'worker/context-metrics.mjs'), 'utf8').replace(/^export /gm, ''), context)
   vm.runInContext(source, context)
   vm.runInContext("state.runtime = runtime; state.provider = 'p'; state.model = 'm'", context)
   return { context, runtime, events: () => events,

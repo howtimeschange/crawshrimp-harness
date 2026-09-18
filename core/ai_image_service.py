@@ -15,6 +15,7 @@ import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from core.resource_budget import NETWORK_WORKERS, POLL_WORKERS, network_slot
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -53,7 +54,7 @@ GPT_IMAGE_QUALITIES = {"auto", "low", "medium", "high"}
 NANO_BANANA_RESOLUTIONS = {"1K", "2K", "4K"}
 _WORKBENCH_JOB_LOCKS: dict[str, threading.RLock] = {}
 _WORKBENCH_JOB_LOCKS_GUARD = threading.Lock()
-_WORKBENCH_POLL_EXECUTOR = ThreadPoolExecutor(max_workers=100, thread_name_prefix="ai-image-poll")
+_WORKBENCH_POLL_EXECUTOR = ThreadPoolExecutor(max_workers=POLL_WORKERS, thread_name_prefix="ai-image-poll")
 
 
 class MissingModelKeyError(ValueError):
@@ -1360,15 +1361,16 @@ def submit_workbench_batch(
             payload.pop("n", None)
         else:
             payload["n"] = int(run.get("requested_count") or 1)
-        task = client.create_task(
-            payload,
-            idempotency_key=f"ai_image_{job_uid}_{run['run_uid']}",
-            timeout=30,
-            request_retries=3,
-        )
+        with network_slot():
+            task = client.create_task(
+                payload,
+                idempotency_key=f"ai_image_{job_uid}_{run['run_uid']}",
+                timeout=30,
+                request_retries=3,
+            )
         return _compact(run.get("run_uid")), dict(task or {})
 
-    with executor_factory(max_workers=min(len(batch_runs), 100)) as executor:
+    with executor_factory(max_workers=min(len(batch_runs), NETWORK_WORKERS)) as executor:
         future_to_run = {executor.submit(create_one, run): run for run in batch_runs}
         for future in as_completed(future_to_run):
             run = future_to_run[future]

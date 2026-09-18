@@ -10,7 +10,7 @@ import { repairAutomationReceiptLogs } from './repair-automation-receipts.mjs'
  */
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import WebSocket from 'ws'
 import builtinRuntime from './builtin-runtime.cjs'
@@ -93,7 +93,12 @@ function linkProfilePackage(profileRoot, runtimeRoot, packagePath) {
   const destination = join(profileRoot, 'node_modules', ...packagePath.split('/'))
   if (!existsSync(target)) throw new Error('DSH runtime is missing profile dependency ' + packagePath)
   mkdirSync(dirname(destination), { recursive: true })
-  rmSync(destination, { recursive: true, force: true })
+  // Electron on Windows can traverse a junction during recursive rm, deleting
+  // the bundled package itself on the next launch. Unlink links explicitly,
+  // including dangling links left by an upgrade.
+  const existing = lstatSync(destination, { throwIfNoEntry: false })
+  if (existing?.isSymbolicLink()) unlinkSync(destination)
+  else if (existing) rmSync(destination, { recursive: true, force: true })
   symlinkSync(target, destination, 'junction')
 }
 
@@ -542,8 +547,8 @@ export class DshWebRuntime {
       }
     })
     socket.on('error', fail)
-    socket.on('close', () => {
-      if (!closed) fail(new Error('DSH Session follow socket closed unexpectedly'))
+    socket.on('close', (code, reason) => {
+      if (!closed) fail(new Error(`DSH Session follow socket closed unexpectedly (${code}${reason?.length ? ': ' + String(reason) : ''})`))
     })
     const boundedFirstFrameMs = Math.max(1, Number(firstFrameTimeoutMs) || 8000)
     firstFrameTimer = setTimeout(() => {

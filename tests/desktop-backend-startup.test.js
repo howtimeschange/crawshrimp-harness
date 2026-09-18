@@ -98,7 +98,7 @@ test('desktop hides native application menu on Windows and Linux', () => {
   assert.match(main, /function hideNativeAppMenu\(\) \{\s*if \(process\.platform === 'darwin'\) return\s*Menu\.setApplicationMenu\(null\)\s*\}/)
   assert.match(main, /autoHideMenuBar: process\.platform !== 'darwin'/)
   assert.match(main, /if \(process\.platform !== 'darwin'\) \{\s*mainWindow\.setMenuBarVisibility\(false\)\s*\}/)
-  assert.match(main, /app\.whenReady\(\)\.then\(async \(\) => \{\s*hideNativeAppMenu\(\)\s*protocol\.handle\(BALA_WORKSPACE_MEDIA_PROTOCOL, handleBalaWorkspaceMediaRequest\)\s*protocol\.handle\(LOCAL_MEDIA_PROTOCOL, handleLocalMediaRequest\)\s*createWindow\(\)\s*await initializeDataDirectory\(\)\s*ensureDefaultLocalMediaRoots\(\)/)
+  assert.match(main, /app\.whenReady\(\)\.then\(async \(\) => \{\s*hideNativeAppMenu\(\)\s*protocol\.handle\(BALA_WORKSPACE_MEDIA_PROTOCOL, handleBalaWorkspaceMediaRequest\)\s*protocol\.handle\(LOCAL_MEDIA_PROTOCOL, handleLocalMediaRequest\)\s*createWindow\(\)[\s\S]*?await performanceDiagnostics\.measure\('startup\.data-directory', initializeDataDirectory\)\s*ensureDefaultLocalMediaRoots\(\)/)
 })
 
 test('desktop lifecycle confirms active tasks before quitting', () => {
@@ -281,15 +281,13 @@ test('desktop rejects broad Windows data roots and protects data directories and
   assert.match(requirements, /pywin32>=311; sys_platform == "win32"/)
 })
 
-test('desktop retries transient Windows sharing violations while resetting PDF previews', () => {
+test('desktop uses incremental PDF previews instead of resetting a shared output directory', () => {
   const main = readRepoFile('app/src/main.js')
-  const body = main.slice(
-    main.indexOf('function renderPdfPreviewWithQuickLook'),
-    main.indexOf('function getLocalPromptLibraryStatePath'),
-  )
-
-  assert.match(main, /const \{[^}]*retryWindowsFileOperationSync[^}]*\} = require\('\.\/atomicFile'\)/)
-  assert.match(body, /retryWindowsFileOperationSync\(\(\) => fs\.rmSync\(outputDir, \{ recursive: true, force: true \}\)\)/)
+  const jobs = readRepoFile('app/src/localFileJobs.js')
+  assert.match(main, /const renderPdfPreviewWithQuickLook = createPdfPreviewer/)
+  assert.match(jobs, /stat\.ctimeMs, 'preview-v2', page/)
+  assert.doesNotMatch(jobs, /rm(?:Sync)?\(root/)
+  assert.match(jobs, /files\[i\]\.name !== target/)
 })
 
 test('desktop persistent JSON state uses atomic replacement', () => {
@@ -324,7 +322,8 @@ test('desktop API helper rejects HTTP error responses with backend detail', () =
   const backendApi = readRepoFile('app/src/backendApi.js')
 
   assert.match(main, /const \{[\s\S]*?\brequestBackendApi,?[\s\S]*?\} = require\('\.\/backendApi'\)/)
-  assert.match(main, /function apiCall\(method, urlPath, body = null, options = \{\}\) \{\s*return requestBackendApi\(\{/)
+  assert.match(main, /function performApiCall\(method, urlPath, body = null, options = \{\}\) \{\s*return requestBackendApi\(\{/)
+  assert.match(main, /const load = \(\) => performApiCall\(method, urlPath, body, options\)/)
   assert.match(backendApi, /if \(statusCode >= 400\) \{\s*reject\(backendErrorFromResponse\(statusCode, res\.statusMessage, payload\)\)/)
   assert.match(backendApi, /const detail = structuredErrorDetail\(payload\)/)
   assert.match(backendApi, /const error = new Error\(detail\.message \|\| fallback\)/)

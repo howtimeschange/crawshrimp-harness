@@ -45,9 +45,13 @@ tasks:
 Param types include `text`, `textarea`, `select` (with `options`), `checkbox`, `number`,
 `date`, `file`. Keep task ids and param ids stable once anything depends on them.
 
+抓取、汇总或导出数据的任务应显式配置 `output`（例如上述 Excel），否则执行成功并返回 `data` 也不会自动生成可下载产物。验收时通过 `task_status` 核对记录数，再用 `artifacts_list` / `data_preview` 核对实际明细。任务默认可能新开标签页，不能用原绑定标签页是否改变来判断执行成功。
+
 ## 3. Task script contract
 
 Every task script MUST be an async IIFE and MUST return an object:
+
+当前静态校验要求外层 IIFE 末尾直接返回包含 `success`、`data`、`meta` 的对象字面量。使用 try/catch、条件分支或辅助函数时，先把结果存入变量，再在这些块之外写 `return { success: result.success, data: result.data || [], meta: result.meta || {} }`。不要只 `return result`。`script_test` 和 `script_publish` 的 `rev_id` 必须传整个包的 `manifest.yaml` 修订，不能传 JS 修订；校验通过后还须实际运行任务验证结果。
 
 ```js
 ;(async () => {

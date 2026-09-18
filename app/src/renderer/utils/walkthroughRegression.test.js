@@ -71,3 +71,30 @@ test('nav clicks use current rail width after expanded-to-collapsed refresh', ()
   click(); width=54; click(); width=280; click(); width=54; click()
   assert.deepEqual(messages.map(message=>message.railWidth),[280,54,280,54])
 })
+
+test('reactivating the same image job ignores its stale poll and keeps one timer', async () => {
+  const timers = new Map(), requests = [], updates = []
+  let timerId = 0
+  const context = {
+    jobPollingTimer: null, jobPollingUid: '', jobPollingInFlight: false,
+    jobPollingGeneration: 0, workbenchVisible: true, document: { hidden: false },
+    setTimeout(fn) { timers.set(++timerId, fn); return timerId },
+    clearTimeout(id) { timers.delete(id) },
+    window: { cs: { getAiImageJob: () => new Promise(resolve => requests.push(resolve)) } },
+    mergeResultCacheFromJob() {}, captureNewResultReveals() {},
+    upsertJob(job) { updates.push(job.status) }, currentJob: { value: null }, logs: { value: [] },
+    hasActiveRuns: job => job.status === 'running',
+  }
+  vm.runInNewContext(imageSource.slice(imageSource.indexOf('function stopJobPolling('), imageSource.indexOf('function parseAdvancedJsonValue(')), context)
+  const tick = () => { const [id, fn] = [...timers][0]; timers.delete(id); return fn() }
+  context.startJobPolling('same-job')
+  const oldPoll = tick()
+  context.stopJobPolling()
+  context.startJobPolling('same-job')
+  const currentPoll = tick()
+  requests[1]({ status: 'running' }); await currentPoll
+  requests[0]({ status: 'done' }); await oldPoll
+  assert.deepEqual(updates, ['running'])
+  assert.equal(timers.size, 1)
+  assert.equal(context.jobPollingUid, 'same-job')
+})

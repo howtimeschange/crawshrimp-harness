@@ -77,7 +77,7 @@ def test_recovery_preserves_known_live_agent(controller, status):
     assert data_sink.has_active_agent_automation_run(auto["automation_uid"])
 
 
-@pytest.mark.parametrize("flag,tool", [(flag, sorted(tools)[0]) for flag, tools in DENIED_TOOLS.items()])
+@pytest.mark.parametrize("flag,tool", [(flag, sorted(tools)[0]) for flag, tools in DENIED_TOOLS.items() if tools])
 def test_policy_conflicts_rejected_on_create_and_patch(controller, flag, tool):
     with pytest.raises(ValueError, match=flag):
         controller.create(definition(**{flag: False, "toolset": [tool]}))

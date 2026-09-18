@@ -26,9 +26,9 @@ DENIED_TOOLS = {
         "browser_eval", "browser_act", "browser_verify", "browser_navigate",
         "browser_capture_requests", "image_generate", "video_generate",
     },
-    "allow_external_messages": {
-        "browser_eval", "browser_act", "browser_navigate", "browser_verify", "browser_capture_requests",
-    },
+    # Browser access is not a message destination. Message sends are checked
+    # at the action/risk boundary; arbitrary execution remains denied below.
+    "allow_external_messages": set(),
     "allow_script_publish": {"script_publish"},
 }
 

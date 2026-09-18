@@ -68,9 +68,11 @@ function notify(webContents, state, extra = {}) {
   }
 }
 
+const canceledStarts = new Set()
 function stopAgentBrowserStream(targetId) {
   if (targetId) {
     const startKey = String(targetId)
+    if (startingByTarget.has(startKey)) canceledStarts.add(startKey)
     const startingSocket = startingSockets.get(startKey)
     if (startingSocket) {
       startingSockets.delete(startKey)
@@ -85,6 +87,7 @@ function stopAgentBrowserStream(targetId) {
     } catch {}
     return { ok: true, stopped: true, targetId: String(targetId) }
   }
+  for (const key of startingByTarget.keys()) canceledStarts.add(key)
   for (const [, socket] of startingSockets) {
     try { socket.close() } catch {}
   }
@@ -133,6 +136,7 @@ function startAgentBrowserStream(webContents, targetId) {
       return { ok: false, error: message, targetId: tid }
     })
     .finally(() => {
+      canceledStarts.delete(startKey)
       startingByTarget.delete(startKey)
       startingSockets.delete(startKey)
     })
@@ -150,6 +154,7 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
     notify(webContents, 'error', { message: String(error.message || error), targetId: tid })
     return { ok: false, error: String(error.message || error) }
   }
+  if (canceledStarts.has(startKey)) return { ok: false, canceled: true }
   const actualTid = String(target.id || tid || 'tab')
   if (streams.has(actualTid)) {
     const existing = streams.get(actualTid)
@@ -258,12 +263,18 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
     if (st !== streams.get(actualTid)) return
     if (st.ws.readyState !== WebSocket.OPEN) return
     if (st.capturing) return
+    if (webContents?.isDestroyed()) return
     st.capturing = true
     try {
+      const layout = await send('Page.getLayoutMetrics')
+      const view = layout?.cssVisualViewport || layout?.visualViewport || {}
+      st.width = Math.round(Number(view.clientWidth || st.width || 0))
+      st.height = Math.round(Number(view.clientHeight || st.height || 0))
       const shot = await send('Page.captureScreenshot', {
         format: 'jpeg',
         quality: SCREENSHOT_QUALITY,
         fromSurface: true,
+        ...(st.width > 0 && st.height > 0 ? { clip: { x: Number(view.pageX || 0), y: Number(view.pageY || 0), width: st.width, height: st.height, scale: Math.min(1, 1440 / Math.max(st.width, st.height)) }, captureBeyondViewport: false } : {}),
       })
       // SPA 内部路由(hash/history)不触发 frameNavigated,定期回读 location.href 兜底
       st.frameCount = (st.frameCount || 0) + 1
@@ -284,7 +295,7 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
           st.height = Math.round(Number(visual.clientHeight || st.height || 0))
         } catch { /* 忽略单次尺寸回读失败 */ }
       }
-      if (st && webContents && !webContents.isDestroyed()) {
+      if (streams.get(actualTid) === st && webContents && !webContents.isDestroyed()) {
         webContents.send('agent:browser:frame', {
           targetId: actualTid,
           dataUrl: `data:image/jpeg;base64,${shot.data}`,

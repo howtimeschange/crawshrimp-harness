@@ -46,6 +46,11 @@ test('fresh Web profiles copy both the product preset composition and metadata, 
   }
 
   ensureWebProfile({ runtimeRoot, dshHome })
+  for (const packagePath of ['@xmanrui/dsh-im', 'crawshrimp-product-bridge', 'crawshrimp-slots']) {
+    for (const root of [runtimeRoot, profile]) {
+      assert.equal(readFileSync(join(root, 'node_modules', packagePath, 'package.json'), 'utf8'), '{}\n')
+    }
+  }
   for (const file of expectedFiles) {
     assert.equal(readFileSync(join(targetPreset, file), 'utf8'), readFileSync(join(sourcePreset, file), 'utf8'))
   }

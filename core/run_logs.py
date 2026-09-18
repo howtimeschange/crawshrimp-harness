@@ -9,6 +9,7 @@ import weakref
 from uuid import uuid4
 
 from core import runtime_paths
+from core.log_writer import writer, flush_logs
 
 MAX_LINES = 2000
 MAX_BYTES = 1024 * 1024
@@ -16,7 +17,10 @@ MAX_BYTES = 1024 * 1024
 class RunLogBuffer:
     def __init__(self, job_id):
         self.path = runtime_paths.child_dir('logs') / 'tasks' / (hashlib.sha256(job_id.encode()).hexdigest() + '.jsonl')
+        flush_logs(self.path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        from core.log_archive import restore_log
+        restore_log(self.path)
         self.epoch = uuid4().hex
         self.next_cursor = 0
         self.entries = deque()
@@ -55,8 +59,7 @@ class RunLogBuffer:
     def append(self, line):
         line = str(line)
         with self.lock:
-            with self.path.open('a', encoding='utf-8') as f:
-                f.write(json.dumps({'line': line, 'cursor': self.next_cursor}, ensure_ascii=False) + '\n')
+            writer().append(self.path, (json.dumps({'line': line, 'cursor': self.next_cursor}, ensure_ascii=False) + '\n').encode('utf-8'))
             self._retain(self.next_cursor, line)
             self.next_cursor += 1
 
@@ -81,11 +84,14 @@ class RunLogBuffer:
 
     def clear(self):
         with self.lock:
+            flush_logs()
             self.path.write_text('', encoding='utf-8')
+            writer().errors.pop(self.path, None)
             self.entries.clear(); self.bytes = 0; self.next_cursor = 0; self.epoch = uuid4().hex
 
     def stream_text(self):
         # Freeze the byte boundary so a continuing task cannot extend this download forever.
+        flush_logs(self.path)
         size = self.path.stat().st_size if self.path.exists() else 0
         if not size:
             return

@@ -42,6 +42,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.run_logs import RunLogRegistry, buffer_for
 from core import runtime_paths
+from core import performance_metrics
 from core import script_favorites
 from core import bala_ai_model_library
 from core import bala_ai_video_materials
@@ -9461,10 +9462,14 @@ async def lifespan(app: FastAPI):
                     logger.warning(f"Built-in adapter failed {d.name}: {e}")
 
         adapter_loader.scan_all()
-        try:
-            ensure_knowledge_index()
-        except Exception:
-            logger.exception("knowledge index initialization failed; continuing without prebuilt index")
+        # Optional index warmup must not delay scheduler/Agent readiness.
+        # Search still ensures freshness on demand.
+        async def warm_knowledge():
+            try:
+                await asyncio.to_thread(ensure_knowledge_index)
+            except Exception:
+                logger.exception("knowledge index warmup failed; search will retry on demand")
+        app.state.knowledge_warmup = asyncio.create_task(warm_knowledge())
 
     # Register scheduled tasks
     if owns_backend_instance:
@@ -9536,10 +9541,34 @@ async def lifespan(app: FastAPI):
             app.state.automation_controller = None
             agent_mcp_gateway.set_automation_controller(None)
             logger.exception("agent automation controller startup failed; continuing without automations")
+    perf_sampler = asyncio.create_task(performance_metrics.sample_loop()) if performance_metrics.enabled() else None
+    archive_stop = threading.Event()
+    async def maintain_logs():
+        from core.log_archive import archive_cold_logs
+        while not archive_stop.is_set():
+            await asyncio.sleep(60 if not hasattr(app.state, "log_archive_stats") else 3600)
+            if archive_stop.is_set():
+                break
+            try:
+                app.state.log_archive_stats = await asyncio.to_thread(
+                    archive_cold_logs, runtime_paths.child_dir("logs") / "tasks", cancel=archive_stop)
+            except Exception:
+                logger.exception("cold log maintenance failed")
+    archive_task = asyncio.create_task(maintain_logs()) if owns_backend_instance else None
     logger.info("crawshrimp core started")
     try:
         yield
     finally:
+        if perf_sampler:
+            perf_sampler.cancel()
+            await asyncio.gather(perf_sampler, return_exceptions=True)
+        archive_stop.set()
+        if archive_task:
+            archive_task.cancel()
+            await asyncio.gather(archive_task, return_exceptions=True)
+        warmup = getattr(app.state, "knowledge_warmup", None)
+        if warmup is not None:
+            await warmup
         automation_controller = getattr(app.state, "automation_controller", None)
         if automation_controller is not None:
             await automation_controller.stop_watchdog()
@@ -9561,6 +9590,8 @@ async def lifespan(app: FastAPI):
         app.state.owns_backend_instance = False
         app.state.automation_controller = None
         agent_mcp_gateway.set_automation_controller(None)
+        from core.log_writer import flush_logs
+        await asyncio.to_thread(flush_logs)
         instance_lock.close()
 
 
@@ -9576,6 +9607,19 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-Crawshrimp-Token", "Range"],
     expose_headers=["Content-Range", "Accept-Ranges"],
 )
+
+
+@app.middleware("http")
+async def measure_api_headers(request: Request, call_next):
+    if not performance_metrics.enabled():
+        return await call_next(request)
+    import time
+    start = time.monotonic()
+    try:
+        return await call_next(request)
+    finally:
+        route = getattr(request.scope.get("route"), "path", "unmatched")
+        performance_metrics.observe(f"{request.method} {route}", (time.monotonic() - start) * 1000)
 
 
 @app.middleware("http")

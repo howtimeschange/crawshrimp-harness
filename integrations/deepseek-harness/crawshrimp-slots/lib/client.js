@@ -372,10 +372,13 @@ window.__ModuleLoader__.load({
       ctx.slots.inject('conversation.hero.workspace.directoryFlow', () => ctx.slots.inject('sidebar.workspaces.directoryFlow', function* () {
         yield ctx.slots.register({
           name: 'conversation.hero.workspace.directoryFlow',
+          // The official native picker occupies priority 0. Lower values win.
+          priority: -10,
           inject: injected,
         }, CrawshrimpShellDirectoryFlow)
         yield ctx.slots.register({
           name: 'sidebar.workspaces.directoryFlow',
+          priority: -10,
           inject: injected,
         }, CrawshrimpShellDirectoryFlow)
       }))
@@ -2083,7 +2086,7 @@ window.__ModuleLoader__.load({
       // 浏览器标题:去 DeepSeek(DocumentTitle 组件会在会话切换后重新拼后缀,需持续兜底)
       normalizeDocumentTitle()
       normalizeRunningStatus()
-      setInterval(normalizeDocumentTitle, 1000)
+      setInterval(() => { if (!document.hidden) normalizeDocumentTitle() }, 5000)
       try {
         const query = new URLSearchParams(window.location.search).get('theme')
         if (query) applyShellTheme(ctx, query)
@@ -2093,13 +2096,14 @@ window.__ModuleLoader__.load({
       installShellMessageBridge(ctx)
       // apply 时 DOM 可能尚未就绪:轮询挂载(幂等),保证附件入口一定出现
       setInterval(() => {
+        if (document.hidden) return
         mountAttachmentCapture()
         mountUnifiedButtons()
         installLlmConfigGate()
         publishCurrentSession(ctx)
         openCrawshrimpImSettings()
         normalizeRunningStatus()
-      }, 1000)
+      }, 5000)
       // 页面/会话重载后向 shell 请求重放产物媒体(iframe 重载期间到达的事件会丢失)
       try {
         postToShell({ __crawshrimp: 'artifact-replay', runtimeSessionId: activeRuntimeSessionId() })
@@ -2157,14 +2161,16 @@ window.__ModuleLoader__.load({
       setTimeout(() => scheduleRailMetricsPush(), 800)
       // 周期同步兜底:侧栏拖拽宽度只改 AppFrame 的 grid 列宽时,没有 DOM 子节点变化。
       setInterval(() => {
+        if (document.hidden) return
         installRailResizeObserver()
         scheduleRailMetricsPush()
-      }, 800)
+      }, 5000)
     }
 
     exports.apply = apply
     // 可执行契约测试直接调用真实实现，避免退化为源码字符串匹配。
     exports.ensureDefaultWorkspace = ensureDefaultWorkspace
+    exports.registerCrawshrimpDirectoryFlow = registerCrawshrimpDirectoryFlow
     exports.installShellMessageBridge = installShellMessageBridge
     exports.publishCurrentSession = publishCurrentSession
     exports.requestLlmConfigFromComposer = requestLlmConfigFromComposer

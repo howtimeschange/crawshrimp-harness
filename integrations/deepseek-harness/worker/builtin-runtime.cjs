@@ -24,6 +24,11 @@ function builtinRuntimeEnvironment({ runtimeRoot, cliRoot, env = process.env, pl
   // Windows env keys are case-insensitive; avoid two conflicting Path/PATHs.
   for (const key of Object.keys(result)) if (key.toLowerCase() === 'path') delete result[key]
   result.PATH = [bin, ...previous.split(separator).filter(value => value && value !== bin)].join(separator)
+  if (platform === 'win32') {
+    const preload = JSON.stringify(path.join(root, 'worker', 'windows-console.cjs').replaceAll('\\', '/'))
+    const options = String(result.NODE_OPTIONS || '').trim()
+    result.NODE_OPTIONS = options.includes(preload) ? options : `${options} --require=${preload}`.trim()
+  }
   return {
     ...result,
     CRAWSHRIMP_SKILL_ROOT: skills,
