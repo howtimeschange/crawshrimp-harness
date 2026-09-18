@@ -23,6 +23,12 @@ const results = []
 try {
   fs.mkdirSync(skills, { recursive: true })
   copyDirSync(source, skills)
+  // Windows Node children preload worker/windows-console.cjs, which loads
+  // koffi from the runtime dependency tree. Relocate those with the skills.
+  for (const directory of ['worker', 'node_modules']) {
+    fs.mkdirSync(path.join(runtimeRoot, directory), { recursive: true })
+    copyDirSync(path.join(path.dirname(source), directory), path.join(runtimeRoot, directory))
+  }
   const env = builtinRuntimeEnvironment({ runtimeRoot, env: { PATH: process.env.PATH || process.env.Path || '',
     SystemRoot: process.env.SystemRoot || '', TEMP: temporary, TMP: temporary, HOME: temporary, USERPROFILE: temporary,
     CRAWSHRIMP_NODE_EXECUTABLE: node, CRAWSHRIMP_PYTHON_EXECUTABLE: python } })

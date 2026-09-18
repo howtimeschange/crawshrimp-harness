@@ -67,6 +67,7 @@ const REQUIRED_DEEPSEEK_HARNESS_FILES = [
   'skills/crawshrimp-computer-use/SKILL.md',
   'skills/crawshrimp-computer-use/scripts/computer_use.py',
   'worker/builtin-runtime.cjs',
+  'worker/windows-console.cjs',
   'skills/dws/SKILL.md',
   'skills/dws/LICENSE',
   'skills/cli/manifest.json',
