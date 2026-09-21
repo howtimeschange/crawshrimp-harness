@@ -202,6 +202,11 @@ function normalizeModelEntries(models = []) {
       max_output_tokens: Number(model.max_output_tokens || model.maxTokens || 32768) || 32768,
       supports_tools: model.supports_tools !== false && model.supportsTools !== false,
       input_modalities: normalizedInputModalities.length ? normalizedInputModalities : ['text'],
+      ...(['deepseek', 'openai'].includes(model.reasoning_protocol) ? {
+        reasoning_protocol: model.reasoning_protocol,
+        reasoning_efforts: ['off', 'low', 'medium', 'high', 'xhigh', 'max'].filter(level =>
+          (model.reasoning_efforts || []).includes(level) && (level !== 'off' || model.reasoning_protocol === 'deepseek')),
+      } : {}),
     })
   }
   return normalized
@@ -213,8 +218,12 @@ export function mergeCustomLlmModelDraft(text, existing = []) {
   return normalizeModelEntries(parseLlmModelsText(text).map(model => previous.get(model.id) || model))
 }
 
-export function customLlmBudgetError(models) {
+export function customLlmBudgetError(models, protocol = 'openai') {
   for (const model of models) {
+    if (protocol === 'openai' && ['deepseek', 'openai'].includes(model.reasoning_protocol) &&
+        !(model.reasoning_efforts || []).some(level => ['low', 'medium', 'high', 'xhigh', 'max'].includes(level))) {
+      return `${model.id}：请至少选择一个供应商支持的推理等级。`
+    }
     const context = Number(model.context_window)
     const output = Number(model.max_output_tokens)
     if (!Number.isSafeInteger(context) || !Number.isSafeInteger(output) || context <= 0 || output <= 0 || output >= context) {

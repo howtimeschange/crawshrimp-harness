@@ -22,6 +22,34 @@ from core.config import load_config
 OVERSEAS_OPENAI_BASE_URL = "https://ai-aigw.semir.com/overseas-openai-vip/v1"
 OVERSEAS_ANTHROPIC_BASE_URL = "https://ai-aigw.semir.com/overseas-anthropic-vip"
 DOMESTIC_OPENAI_BASE_URL = "https://ai-aigw.semir.com/bailian-codingplan/v1"
+SEMIR_DEEPSEEK_REASONING_MODELS = frozenset(("deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4.1-flash"))
+REASONING_LEVELS = ("off", "low", "medium", "high", "xhigh", "max")
+
+
+def reasoning_runtime_fields(protocol: str, efforts: list) -> dict:
+    """Explicit per-route capabilities; never infer them from a model name."""
+    if protocol not in ("deepseek", "openai"):
+        return {"reasoningEfforts": False}
+    levels = [level for level in REASONING_LEVELS if level in efforts and (level != "off" or protocol == "deepseek")]
+    if not any(level != "off" for level in levels):
+        return {"reasoningEfforts": False}
+    fields = {
+        "reasoningEfforts": {level: level for level in levels},
+        "compat": {"supportsReasoningEffort": True},
+    }
+    if protocol == "deepseek":
+        fields["compat"].update(thinkingFormat="deepseek", requiresReasoningContentOnAssistantMessages=True)
+    else:
+        fields["compat"]["thinkingFormat"] = "openai"
+    return fields
+
+
+def semir_deepseek_reasoning_fields(base_url: str, model_id: str) -> dict:
+    if base_url.rstrip("/") == DOMESTIC_OPENAI_BASE_URL and model_id in SEMIR_DEEPSEEK_REASONING_MODELS:
+        return reasoning_runtime_fields("deepseek", ["off", "low", "high", "max"])
+    return {}
+
+
 # DeepSeek 原生接入(官方 API,独立于公司网关)。
 # 产品内 ID 加 official 前缀,与国内网关的 deepseek-v4-pro 区分;
 # 调用官方 API 时映射回真实模型名。
@@ -360,6 +388,9 @@ def _normalize_custom_models(value: Any) -> list[dict[str, Any]]:
             "max_output_tokens": int(model.get("max_output_tokens") or model.get("maxTokens") or 32768),
             "supports_tools": bool(model.get("supports_tools", model.get("supportsTools", True))),
             "input_modalities": list(model.get("input_modalities") or model.get("input") or ["text"]),
+            **({"reasoning_protocol": model["reasoning_protocol"],
+                "reasoning_efforts": [level for level in REASONING_LEVELS if level in (model.get("reasoning_efforts") or [])]}
+               if model.get("reasoning_protocol") in ("deepseek", "openai") else {}),
         })
     return models
 
@@ -437,6 +468,10 @@ def custom_providers_runtime_payload(config: dict | None = None) -> tuple[list[d
                     "contextWindow": int(model.get("context_window") or 256000),
                     "maxTokens": int(model.get("max_output_tokens") or 32768),
                     "input": list(model.get("input_modalities") or ["text"]),
+                    **reasoning_runtime_fields(
+                        model.get("reasoning_protocol", "default") if provider["protocol"] == "openai" else "default",
+                        model.get("reasoning_efforts") or [],
+                    ),
                 }
                 for model in provider.get("models") or []
                 if model.get("id")

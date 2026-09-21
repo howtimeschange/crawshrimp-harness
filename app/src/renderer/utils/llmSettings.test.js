@@ -28,6 +28,24 @@ import {
   llmProviderConfigured,
 } from './llmSettings.mjs'
 
+test('custom reasoning survives reactive save and unrelated edits; Default removes the opt-in', () => {
+  const model = { id: 'deepseek-v4-pro', reasoning_protocol: 'deepseek', reasoning_efforts: ['off', 'low', 'high', 'max'] }
+  const models = mergeCustomLlmModelDraft('deepseek-v4-pro\nother', [model])
+  assert.deepEqual(models[0].reasoning_efforts, model.reasoning_efforts)
+  assert.equal(models[1].reasoning_protocol, undefined)
+  const cfg = reactive({ [LLM_CUSTOM_PROVIDERS_FIELD]: [{ id: 'custom-test', name: 'Test', protocol: 'openai', base_url: 'https://example.invalid', models }] })
+  const saved = structuredClone(buildLlmSettingsPatch(cfg))[LLM_CUSTOM_PROVIDERS_FIELD][0]
+  assert.deepEqual(saved.models[0].reasoning_efforts, model.reasoning_efforts)
+  assert.equal(customLlmBudgetError(saved.models), '')
+  saved.models[0].reasoning_efforts = ['off']
+  assert.match(customLlmBudgetError(saved.models), /至少选择/)
+  assert.equal(customLlmBudgetError(saved.models, 'anthropic'), '')
+  saved.models[0].reasoning_protocol = 'default'
+  const reset = mergeCustomLlmModelDraft('deepseek-v4-pro', saved.models)[0]
+  assert.equal(reset.reasoning_protocol, undefined)
+  assert.equal(reset.reasoning_efforts, undefined)
+})
+
 test('LLM settings expose all configured gateway defaults and supported model ids', () => {
   assert.equal(LLM_DEFAULTS['ai.llm.default_model'], 'deepseek-official-flash')
   assert.equal(LLM_DEFAULTS['ai.llm.deepseek_base_url'], 'https://api.deepseek.com')

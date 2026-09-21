@@ -846,6 +846,21 @@
                 <label>输出上限（tokens）
                   <input v-model.number="model.max_output_tokens" class="input" type="number" min="1" step="1" :aria-label="`${model.id} 输出上限 tokens`" />
                 </label>
+                <label v-if="llmProviderDraft.protocol === 'openai'">推理控制（可选）
+                  <select :value="model.reasoning_protocol || 'default'" class="select" :aria-label="`${model.id} 推理协议`"
+                    @change="model.reasoning_protocol = $event.target.value; model.reasoning_efforts = []">
+                    <option value="default">默认（不传推理参数）</option>
+                    <option value="deepseek">DeepSeek 推理协议</option>
+                    <option value="openai">OpenAI reasoning_effort</option>
+                  </select>
+                </label>
+                <div v-if="llmProviderDraft.protocol === 'openai' && ['deepseek', 'openai'].includes(model.reasoning_protocol)" class="custom-model-reasoning">
+                  <span>供应商支持的推理等级</span>
+                  <label v-for="level in (model.reasoning_protocol === 'deepseek' ? ['off', 'low', 'medium', 'high', 'xhigh', 'max'] : ['low', 'medium', 'high', 'xhigh', 'max'])" :key="level">
+                    <input v-model="model.reasoning_efforts" type="checkbox" :value="level" :aria-label="`${model.id} 推理等级 ${level}`" />{{ level === 'off' ? 'Off（关闭思考）' : level }}
+                  </label>
+                  <p class="field-hint">只勾选供应商确认支持的档位。Default 不传控制参数；Off 明确关闭思考。</p>
+                </div>
               </div>
             </div>
 
@@ -1438,7 +1453,7 @@ async function applyLlmProviderDraft() {
     return
   }
 
-  const budgetError = customLlmBudgetError(llmProviderDraft.models)
+  const budgetError = customLlmBudgetError(llmProviderDraft.models, protocol)
   if (budgetError) {
     llmProviderModal.error = budgetError
     return
@@ -1890,6 +1905,10 @@ watch(imSettingsUrl, () => {
 .custom-model-budget > strong { grid-column: 1 / -1; overflow-wrap: anywhere; }
 .custom-model-budget label { min-width: 0; }
 .custom-model-budget input { margin-top: 6px; }
+.custom-model-reasoning { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px 16px; }
+.custom-model-reasoning > span, .custom-model-reasoning > p { flex-basis: 100%; }
+.custom-model-reasoning label { display: inline-flex; align-items: center; gap: 6px; }
+.custom-model-reasoning input { margin: 0; }
 
 .view {
   height: 100%;

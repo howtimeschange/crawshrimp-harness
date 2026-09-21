@@ -139,14 +139,29 @@
             contextWindow: 256000
             maxTokens: 32768
             input: [text]
+            reasoningEfforts: !!js "(process.env.CRAWSHRIMP_DOMESTIC_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/bailian-codingplan/v1').replace(/\\/$/, '') === 'https://ai-aigw.semir.com/bailian-codingplan/v1' ? { off:'off', low:'low', high:'high', max:'max' } : false"
+            compat:
+              thinkingFormat: deepseek
+              supportsReasoningEffort: true
+              requiresReasoningContentOnAssistantMessages: true
           - id: deepseek-v4-flash
             contextWindow: 256000
             maxTokens: 32768
             input: [text]
+            reasoningEfforts: !!js "(process.env.CRAWSHRIMP_DOMESTIC_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/bailian-codingplan/v1').replace(/\\/$/, '') === 'https://ai-aigw.semir.com/bailian-codingplan/v1' ? { off:'off', low:'low', high:'high', max:'max' } : false"
+            compat:
+              thinkingFormat: deepseek
+              supportsReasoningEffort: true
+              requiresReasoningContentOnAssistantMessages: true
           - id: deepseek-v4-pro
             contextWindow: 256000
             maxTokens: 32768
             input: [text]
+            reasoningEfforts: !!js "(process.env.CRAWSHRIMP_DOMESTIC_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/bailian-codingplan/v1').replace(/\\/$/, '') === 'https://ai-aigw.semir.com/bailian-codingplan/v1' ? { off:'off', low:'low', high:'high', max:'max' } : false"
+            compat:
+              thinkingFormat: deepseek
+              supportsReasoningEffort: true
+              requiresReasoningContentOnAssistantMessages: true
           - id: glm-5.2
             contextWindow: 256000
             maxTokens: 32768

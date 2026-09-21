@@ -3121,7 +3121,7 @@ def test_agent_start_generation_missing_all_model_keys_launches_config_gate_runt
 
 @pytest.mark.parametrize("model", ["deepseek-flash", "deepseek-v4-pro"])
 @pytest.mark.parametrize("effort", [None, "off", "low", "high", "max"])
-def test_deepseek_text_default_high_preserves_explicit_effort(tmp_path, model, effort):
+def test_deepseek_text_preserves_default_and_explicit_effort(tmp_path, model, effort):
     import yaml
     from core.agent import service as service_mod
 
@@ -3137,7 +3137,7 @@ def test_deepseek_text_default_high_preserves_explicit_effort(tmp_path, model, e
             agent_dir, "crawshrimp-deepseek-official", model, {}, [],
         )
         saved = yaml.safe_load(path.read_text(encoding="utf-8"))
-        assert saved["agent-default-model"]["reasoningEffort"] == (effort or "high")
+        assert saved["agent-default-model"].get("reasoningEffort") == effort
         assert "reasoning" not in saved["llm-pi-ai"]["providers"]["crawshrimp-deepseek-official"]
 
 

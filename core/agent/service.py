@@ -36,6 +36,7 @@ from core.llm_gateway import (
     gateway_api_key_configured,
     model_has_configured_key,
     select_default_model,
+    semir_deepseek_reasoning_fields,
 )
 from core.agent.worker import AgentWorker, resolve_harness_root, resolve_node_executable
 from core.config import load_config
@@ -646,6 +647,9 @@ def _dsh_llm_pi_ai_settings(
             or _compact_text((runtime_env or os.environ).get(str(provider.get("base_url_env") or "")))
             or str(provider.get("base_url_default") or "")
         )
+        if provider_id == "crawshrimp-domestic-openai":
+            for model in models:
+                model.update(semir_deepseek_reasoning_fields(base_url, model["id"]))
         entry: dict[str, Any] = {
             "displayName": str(provider.get("display_name") or provider_id),
             "apiKeyEnv": str(provider.get("api_key_env") or ""),
@@ -689,20 +693,34 @@ def _sync_dsh_default_model_settings(
             settings = loaded
     current = settings.get("agent-default-model")
     entry = dict(current) if isinstance(current, dict) else {}
+    previous_model = entry.get("model")
+    if provider_id == "crawshrimp-deepseek-official":
+        aliases = ("deepseek-v4-flash", "deepseek-v4-flash-vision-exp")
+        if runtime_model_id in aliases:
+            runtime_model_id = "deepseek-flash"
+        if entry.get("provider") in (None, provider_id) and previous_model in aliases:
+            previous_model = "deepseek-flash"
+    route_changed = entry.get("provider") not in (None, provider_id) or previous_model not in (None, runtime_model_id)
+    if route_changed:
+        entry.pop("reasoningEffort", None)
     entry.update({"provider": provider_id, "model": runtime_model_id})
     # Official Flash supports thinking with both text and image input.
     if provider_id == "crawshrimp-deepseek-official":
-        if runtime_model_id in ("deepseek-v4-flash", "deepseek-v4-flash-vision-exp"):
-            entry["model"] = "deepseek-flash"
-        entry.setdefault("reasoningEffort", "high")
-    elif "image" in list(model_capabilities(runtime_model_id).get("input_modalities") or []):
-        entry.pop("reasoningEffort", None)
-    settings["agent-default-model"] = entry
+        if route_changed or not isinstance(current, dict):
+            entry.setdefault("reasoningEffort", "high")
     settings["llm-pi-ai"] = _dsh_llm_pi_ai_settings(
         cfg if isinstance(cfg, dict) else {},
         custom_provider_profiles if isinstance(custom_provider_profiles, list) else [],
         runtime_env,
     )
+    models = settings["llm-pi-ai"]["providers"].get(provider_id, {}).get("models", [])
+    descriptor = next((model for model in models if model["id"] == entry["model"]), {})
+    efforts = descriptor.get("reasoningEfforts")
+    # Unknown catalog capabilities are resolved by the runtime. Custom models
+    # explicitly disable reasoning unless the user configured its protocol.
+    if efforts is False or isinstance(efforts, dict) and entry.get("reasoningEffort") not in efforts:
+        entry.pop("reasoningEffort", None)
+    settings["agent-default-model"] = entry
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(settings_path, yaml.safe_dump(settings, allow_unicode=True, sort_keys=False))
 

@@ -22,6 +22,7 @@ import { patchCurrencyMath } from './currency-math.mjs'
 import { patchHistorySearch } from './history-search.mjs'
 import { patchCompactChat } from './compact-chat.mjs'
 import { patchReasoningRecovery } from './reasoning-recovery.mjs'
+import { patchReasoningCompatibility } from './reasoning-compatibility.mjs'
 
 export const RUNTIME_GUARD_MARKER = 'crawshrimp-dsh-im-411-product-patch-v1'
 const DSH_IM_RUNTIME_ROOT = 'node_modules/@xmanrui/dsh-im'
@@ -2260,6 +2261,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
   patchOfficeVision(root, deepseekVisionBridge)
   patchDeepSeekFlash(root)
   patchSemirAnthropicAuth(root)
+  patchReasoningCompatibility(root)
   applyCompatibility()
   const profilePackages = assertEffectiveProfileRootClosure(root)
   const standardPreset = assertStandardPresetRootClosure(root)
