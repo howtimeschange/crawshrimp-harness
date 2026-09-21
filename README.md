@@ -19,6 +19,13 @@ Harness 面向个人本地使用：本地功能免登录，设置中的个人账
 
 ## 版本记录
 
+### v0.2.3
+
+- 修复切换模型与恢复旧会话时沿用不兼容推理等级的问题，按当前供应商和模型能力恢复 Default 并保存。
+- 区分 Default（使用供应商默认行为）与 Off（明确关闭思考），保留重启前的有效选择。
+- 为森马 bailian-codingplan 网关的 DeepSeek V4 Pro、V4 Flash 和 V4.1 Flash 启用 Off / Low / High / Max 推理档位。
+- 自定义 OpenAI 兼容模型可配置 DeepSeek 或 OpenAI 推理协议及供应商支持的档位，菜单按实际能力展示。
+
 ### v0.2.2
 
 - 修复任务投影写入失败影响智能体 Worker 生命周期的问题，增强连接中断后的恢复能力。
@@ -297,7 +304,7 @@ npm --prefix app run build:win
 
 独立仓库 `howtimeschange/crawshrimp-harness` 的正式客户端使用 GitHub Release 元数据用于应用内更新。本仓构建不发布到 `https://updates.crawshrimp.com/`，也不刷新主项目的 `desktop-latest`。
 
-v0.2.1 安装包将在 CI 完成后提供于 [v0.2.1 Release](https://github.com/howtimeschange/crawshrimp-harness/releases/tag/v0.2.1)。
+v0.2.3 安装包在发布 CI 成功后提供于 [v0.2.3 Release](https://github.com/howtimeschange/crawshrimp-harness/releases/tag/v0.2.3)。
 
 升级不需要卸载旧版：
 
