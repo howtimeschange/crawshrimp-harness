@@ -553,6 +553,8 @@ contextBridge.exposeInMainWorld('cs', {
   streamGlobalAgentEvents: (afterSeq, handlers) => streamGlobalAgentEvents(afterSeq, handlers),
   pickAgentAttachments: () => ipcRenderer.invoke('agent:pick-attachments'),
   saveAgentClipboardImage: (payload) => ipcRenderer.invoke('agent:save-clipboard-image', payload),
+  getAgentAttachmentPath: (file) => webUtils.getPathForFile(file),
+  describeAgentAttachment: (sourcePath) => ipcRenderer.invoke('agent:describe-attachment', sourcePath),
   saveAgentAttachment: (payload) => ipcRenderer.invoke('agent:save-attachment', payload),
   readAgentImageDataUrl: (filePath) => ipcRenderer.invoke('agent:read-image-dataurl', filePath),
   readAgentAttachment: (filePath) => ipcRenderer.invoke('agent:read-attachment', filePath),

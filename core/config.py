@@ -161,8 +161,32 @@ def save_config(cfg: dict) -> None:
     atomic_write_json(path, _expand_dotted_keys(cfg), ensure_ascii=False, indent=2)
 
 
+def validate_video_base_url(value: str) -> str:
+    """Reject pasted prose/credentials before a provider request or settings write."""
+    from urllib.parse import urlsplit
+    text = str(value or "").strip()
+    if not text:
+        return text
+    try:
+        url = urlsplit(text)
+        valid = (url.scheme in {"https", "http"} and url.hostname and
+                 not any(c.isspace() for c in text) and not url.username and
+                 not url.password and not url.query and not url.fragment)
+        _ = url.port
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError("视频接口地址无效：请只填写完整的 http(s) 地址，不要包含说明文字、密钥、查询参数或片段。")
+    return text.rstrip("/")
+
+
 def patch_config(patch: dict) -> dict:
-    cfg = _deep_merge(load_config(), _expand_dotted_keys(patch))
+    expanded = _expand_dotted_keys(patch)
+    video = (expanded.get("ai") or {}).get("video") or {}
+    for field in ("seedance_base_url", "bailian_base_url", "bailian_uploads_url"):
+        if field in video:
+            video[field] = validate_video_base_url(video[field])
+    cfg = _deep_merge(load_config(), expanded)
     save_config(cfg)
     return cfg
 

@@ -2718,6 +2718,19 @@ secureHandle('agent:browser:stream:stop', async (_, payload = {}) => stopAgentBr
 secureHandle('agent:browser:tabs', async () => listAgentBrowserTabs())
 secureHandle('agent:browser:stream:state', async () => getAgentBrowserState())
 
+// Resolve browser-owned dropped paths in the trusted shell. Directories stay
+// references; never try to read them as bytes or recursively upload them.
+secureHandle('agent:describe-attachment', async (_, sourcePath) => {
+  try {
+    if (typeof sourcePath !== 'string' || !path.isAbsolute(sourcePath)) throw new Error('附件路径无效')
+    const resolved = await fs.promises.realpath(sourcePath)
+    const stat = await fs.promises.stat(resolved)
+    if (!stat.isDirectory() && !stat.isFile()) throw new Error('仅支持文件和文件夹')
+    return { ok: true, path: resolved, name: path.basename(sourcePath),
+      kind: stat.isDirectory() ? 'directory' : 'file', size: stat.size }
+  } catch (error) { return { ok: false, error: String(error.message || error) } }
+})
+
 secureHandle('agent:pick-attachments', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: '选择图片或附件',

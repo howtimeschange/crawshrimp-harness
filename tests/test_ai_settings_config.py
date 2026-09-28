@@ -202,3 +202,17 @@ class AiSettingsConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class VideoConnectionValidationTests(unittest.TestCase):
+    def test_invalid_video_url_never_replaces_saved_configuration(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp, patch('core.config._config_path', return_value=Path(tmp) / 'config.json'):
+            save_config({'ai': {'video': {'seedance_base_url': 'https://example.com/api/v3'}}})
+            for value in ['baseurl-视频 https://example.com KEY一样', 'https://example.com KEY',
+                          'file:///tmp/video', 'https://secret@example.com', 'https://example.com?key=secret']:
+                with self.assertRaisesRegex(ValueError, '视频接口地址无效'):
+                    patch_config({'ai.video.seedance_base_url': value})
+                self.assertEqual(load_config()['ai']['video']['seedance_base_url'], 'https://example.com/api/v3')
+            patch_config({'ai': {'video': {'seedance_base_url': ' https://gateway.example/api/v3/ '}}})
+            self.assertEqual(load_config()['ai']['video']['seedance_base_url'], 'https://gateway.example/api/v3')

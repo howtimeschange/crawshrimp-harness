@@ -83,7 +83,10 @@ export class ArkContentGenerationClient {
 
     if (!response.ok) {
       const detail = formatErrorBody(body ?? rawBody);
-      throw new ArkApiError(`Ark API request failed with HTTP ${response.status}: ${detail}`, {
+      const hint = response.status === 403
+        ? " 网关拒绝访问，请核对该地址对应的密钥、模型授权及网关访问策略；空响应不能单独证明密钥无效。"
+        : "";
+      throw new ArkApiError(`Ark API request failed with HTTP ${response.status}: ${detail}${hint}`, {
         status: response.status,
         body: body ?? rawBody
       });
@@ -124,7 +127,13 @@ export function normalizeArkBaseUrl(baseUrl) {
     throw new Error("baseUrl must be a non-empty string.");
   }
 
-  const normalized = baseUrl.replace(/\/+$/, "");
+  const normalized = baseUrl.trim().replace(/\/+$/, "");
+  let url;
+  try { url = new URL(normalized); } catch { /* handled below */ }
+  if (!url || !["https:", "http:"].includes(url.protocol) || /\s/.test(normalized) ||
+      url.username || url.password || url.search || url.hash) {
+    throw new Error("Seedance Base URL 配置无效：请只填写完整的 http(s) 地址，不要包含说明文字、密钥、查询参数或片段。");
+  }
   return /\/api\/v3$/i.test(normalized) ? normalized : `${normalized}/api/v3`;
 }
 

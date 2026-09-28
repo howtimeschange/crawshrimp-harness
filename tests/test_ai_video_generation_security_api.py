@@ -29,6 +29,14 @@ class AiVideoGenerationSecurityApiTests(unittest.TestCase):
         capability_env.start()
         self.addCleanup(capability_env.stop)
 
+    def test_invalid_video_endpoint_returns_422_without_echoing_pasted_secret(self):
+        patch_config({"ai.video.seedance_base_url": "https://valid.example/api/v3"})
+        with self.assertRaises(HTTPException) as raised:
+            api_server.patch_settings({"ai.video.seedance_base_url": "baseurl https://invalid.example KEY=private-value"})
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertNotIn("private-value", raised.exception.detail)
+        self.assertEqual(load_config()["ai"]["video"]["seedance_base_url"], "https://valid.example/api/v3")
+
     def test_settings_response_never_contains_ai_video_credentials_or_connection_values(self):
         patch_config({
             "ai.video.seedance_api_key": "seedance-secret",

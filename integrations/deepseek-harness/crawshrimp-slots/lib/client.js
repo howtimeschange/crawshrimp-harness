@@ -40,7 +40,7 @@ window.__ModuleLoader__.load({
     let lastPublishedConversationPhase = ''
     let shellRequiresLlmConfig = false
     let crawshrimpContext = null
-    const pendingAttachmentHintsBySession = new Map()
+    let attachmentBridgeDisposed = false
 
     function persistedRuntimeSessionId() {
       // 新建会话在发送首条消息前，sessions.list 的 current 仍可能为空；
@@ -64,7 +64,7 @@ window.__ModuleLoader__.load({
     function shellOrigin() {
       try {
         const origin = new URL(document.referrer).origin
-        return origin && origin !== 'null' ? origin : '*'
+        return origin && origin !== 'null' && origin !== window.location.origin ? origin : '*'
       } catch (error) {
         return '*'
       }
@@ -1208,6 +1208,18 @@ window.__ModuleLoader__.load({
 
     // ---- 会话附件上传:📎 按钮 + 拖入 + 粘贴 ----
     const ATTACH_CSS = [
+      '.cs-attachment-rail { display:flex; align-items:center; gap:8px; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden; min-width:0; padding:2px 14px 4px; scrollbar-width:none; scroll-padding:14px; overscroll-behavior-x:contain; }',
+      '.cs-attachment-rail::-webkit-scrollbar { display:none; }',
+      '.cs-attachment-card { display:flex; flex:0 0 180px; align-items:center; gap:8px; height:52px; box-sizing:border-box; padding:8px 9px; border:1px solid var(--dsw-alias-border-l1); border-radius:10px; background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); position:relative; }',
+      '.cs-attachment-icon { display:grid; place-items:center; width:26px; flex-shrink:0; color:var(--dsw-alias-label-secondary); } .cs-attachment-icon svg { width:22px; height:22px; }',
+      '.cs-attachment-label { min-width:0; flex:1; } .cs-attachment-label strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; font-weight:500; line-height:17px; } .cs-attachment-label small { display:block; margin-top:1px; color:var(--dsw-alias-label-secondary); font-size:10px; line-height:14px; }',
+      '.cs-attachment-card button, .cs-attachment-image .cs-attachment-remove { display:grid; place-items:center; width:18px; height:18px; padding:0; flex-shrink:0; border:0; border-radius:50%; cursor:pointer; color:var(--dsw-alias-label-secondary); background:transparent; font-size:17px; line-height:1; }',
+      '.cs-attachment-card button:hover { background:var(--dsw-alias-interactive-bg-hover); color:var(--dsw-alias-label-primary); }',
+      '.cs-attachment-image { position:relative; flex:0 0 52px; width:52px; height:52px; } .cs-attachment-image .cs-image-preview { display:block; width:52px; height:52px; border:1px solid var(--dsw-alias-border-l1); border-radius:10px; padding:0; overflow:hidden; cursor:pointer; background:transparent; } .cs-image-preview img { width:100%; height:100%; object-fit:cover; }',
+      '.cs-attachment-image .cs-attachment-remove { position:absolute; top:2px; right:2px; color:white; background:rgba(0,0,0,.65); }',
+      '.cs-unified-attachments .JVDQca_root { display:contents; } .cs-unified-attachments .JVDQca_rail { display:none; }',
+      '.cs-sent-attachments { display:flex; flex-wrap:nowrap; gap:6px; max-width:100%; min-width:0; overflow-x:auto; padding:2px; } .cs-sent-attachments .cs-attachment-card { flex:0 0 180px; } .cs-has-sent-attachments [data-slot="conversation.message.images"] { display:none !important; } .cs-sent-image { flex:0 0 52px; width:52px; height:52px; padding:0; border:0; border-radius:8px; overflow:hidden; cursor:pointer; } .cs-sent-image img { width:100%; height:100%; object-fit:cover; } .cs-has-sent-attachments > .Sixlwa_bubble:not(.cs-sent-text) { display:none; } .cs-sent-text { white-space:pre-wrap; }',
+      '[data-composer-chip="crawshrimp-attachment"] { display:none; }',
       '.cs-attach-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; margin: 0 8px 8px 0; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font-size: 12.5px; cursor: pointer; transition: background-color 120ms cubic-bezier(0.4, 0, 0.2, 1); }',
       '.cs-attach-btn:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }',
       '.cs-attach-btn:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }',
@@ -1308,11 +1320,18 @@ window.__ModuleLoader__.load({
       return false
     }
 
+    const pendingAttachmentUploads = new Map()
+    let attachmentUploadSequence = 0
     const forwardedImageEvents = new WeakSet()
 
     function postAttachmentFiles(files) {
       for (const file of nonImageFiles(files)) {
-        postToShell({ __crawshrimp: 'upload-attachment', file, runtimeSessionId: activeRuntimeSessionId() })
+        const runtimeSessionId = activeRuntimeSessionId()
+        const requestId = `drop-${Date.now()}-${++attachmentUploadSequence}`
+        pendingAttachmentUploads.set(requestId, { sessionId: runtimeSessionId, name: file.name })
+        sessionInput(runtimeSessionId)
+        renderAttachmentCards()
+        postToShell({ __crawshrimp: 'upload-attachment', file, runtimeSessionId, requestId })
       }
     }
 
@@ -1471,55 +1490,410 @@ window.__ModuleLoader__.load({
       }, true)
     }
 
-    function insertAttachmentHint(name, attachmentId) {
-      const hint = `[附件: ${name} (attachment_id: ${attachmentId})]`
-      const ta = document.querySelector('textarea')
-      if (ta) {
-        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
-        const current = ta.value || ''
-        setter.call(ta, current ? current + '\n' + hint : hint)
-        ta.dispatchEvent(new Event('input', { bubbles: true }))
-        ta.focus()
-        return true
-      }
+    const ATTACHMENT_SOURCE = 'crawshrimp-attachment'
 
-      // rc.1's Web composer is a contenteditable div instead of the old
-      // textarea.  The attachment stays registered in the product inbox, but
-      // without this input event the native session never receives its
-      // attachment_id and therefore cannot call attachment_read.
-      const editor = document.querySelector('[contenteditable="true"]')
-      if (!editor) return false
-      const current = String(editor.textContent || '').trim()
-      editor.textContent = current ? `${current}\n${hint}` : hint
-      try {
-        editor.dispatchEvent(new InputEvent('input', {
-          bubbles: true,
-          inputType: 'insertText',
-          data: hint,
-        }))
-      } catch (error) {
-        editor.dispatchEvent(new Event('input', { bubbles: true }))
-      }
-      editor.focus()
-      return true
+    function attachmentText(data) {
+      return data.kind === 'directory'
+        ? `[文件夹路径: ${JSON.stringify(data.path)}]`
+        : `[附件: ${data.name} (attachment_id: ${data.attachmentId})]`
     }
 
-    function queueAttachmentHint(sessionId, name, attachmentId) {
-      if (!sessionId) return
-      if (sessionId === activeRuntimeSessionId()) {
-        insertAttachmentHint(name, attachmentId)
-        return
+    const draftAttachmentsBySession = new Map()
+    const watchedAttachmentInputs = new WeakSet()
+
+    function attachmentIdentity(data) {
+      return data.attachmentId || `directory:${data.path}`
+    }
+
+    function attachmentDraft(sessionId) {
+      if (!draftAttachmentsBySession.has(sessionId)) draftAttachmentsBySession.set(sessionId, new Map())
+      return draftAttachmentsBySession.get(sessionId)
+    }
+
+    let imageDraftDatabase
+    function imageDraftStore(mode, action) {
+      if (!window.indexedDB) return Promise.resolve(undefined)
+      if (!imageDraftDatabase) imageDraftDatabase = new Promise((resolve, reject) => {
+        const request = window.indexedDB.open('crawshrimp-image-drafts', 1)
+        request.onupgradeneeded = () => request.result.createObjectStore('sessions')
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      return imageDraftDatabase.then(db => new Promise((resolve, reject) => {
+        const transaction = db.transaction('sessions', mode)
+        const request = action(transaction.objectStore('sessions'))
+        transaction.oncomplete = () => resolve(request.result)
+        transaction.onerror = () => reject(transaction.error)
+        transaction.onabort = () => reject(transaction.error)
+      }))
+    }
+
+    function watchAttachmentInput(sessionId, scoped, input) {
+      if (attachmentBridgeDisposed || !input?.state?.subscribe || !input.submit || watchedAttachmentInputs.has(input)) return
+      watchedAttachmentInputs.add(input)
+      let queued = false, submitting = false, disposed = false, restoringImages = !!window.indexedDB
+      let savedImageIds = null
+      const sync = () => {
+        queued = false
+        if (disposed || submitting) return
+        const state = input.state.getSnapshot()
+        if (!restoringImages) {
+          const ids = JSON.stringify(state.imageIds || [])
+          if (ids !== savedImageIds) {
+            savedImageIds = ids
+            const conversation = scoped.get('conversation')
+            const files = conversation.draftImages?.(state.imageIds || []).map(image => image.file) || []
+            imageDraftStore('readwrite', store => files.length ? store.put(files, sessionId) : store.delete(sessionId))
+              .catch(() => input.notify('error', '图片草稿暂时无法保存，刷新前请先发送'))
+          }
+        }
+        if (!['plain', 'claimed'].includes(state.phase)) return
+        const draft = attachmentDraft(sessionId)
+        // Failed sends restore native references. Adopt them back into the
+        // independent attachment draft; editing/selecting all text cannot
+        // accidentally delete attached files.
+        for (const item of state.occurrences || []) {
+          if (item.source !== ATTACHMENT_SOURCE) continue
+          const data = JSON.parse(item.ref)
+          draft.set(attachmentIdentity(data), data)
+        }
+        flushAttachmentHints(sessionId)
+        if (sessionId === activeRuntimeSessionId()) renderAttachmentCards()
       }
-      const hints = pendingAttachmentHintsBySession.get(sessionId) || []
-      hints.push({ name, attachmentId })
-      pendingAttachmentHintsBySession.set(sessionId, hints.slice(-20))
+      const schedule = () => {
+        if (queued || disposed) return
+        queued = true
+        Promise.resolve().then(sync)
+      }
+      const originalSubmit = input.submit
+      const wrappedSubmit = function (...args) {
+        if (restoringImages) {
+          input.notify('error', '正在恢复图片附件，请稍候再发送')
+          return
+        }
+        if ([...pendingAttachmentUploads.values()].some(item => item.sessionId === sessionId)) {
+          input.notify('error', '附件正在添加，请稍候再发送')
+          return
+        }
+        flushAttachmentHints(sessionId)
+        const state = input.state.getSnapshot()
+        if (!['plain', 'claimed'].includes(state.phase)) return originalSubmit.apply(input, args)
+        const draft = attachmentDraft(sessionId)
+        // Hand this exact batch to DSH's native serializer/transaction. Its
+        // optimistic commit clears cards; a rejected send restores references.
+        for (const item of state.occurrences || []) {
+          if (item.source === ATTACHMENT_SOURCE) draft.delete(attachmentIdentity(JSON.parse(item.ref)))
+        }
+        submitting = true
+        try { return originalSubmit.apply(input, args) }
+        finally { submitting = false; schedule() }
+      }
+      input.submit = wrappedSubmit
+      const unsubscribe = input.state.subscribe(schedule)
+      crawshrimpContext?.effect?.(() => () => {
+        disposed = true
+        unsubscribe()
+        if (input.submit === wrappedSubmit) input.submit = originalSubmit
+      })
+      if (restoringImages) {
+        imageDraftStore('readonly', store => store.get(sessionId)).then(files => {
+          if (disposed || !files?.length) return
+          const conversation = scoped.get('conversation')
+          const fingerprint = file => JSON.stringify([file.name, file.size, file.type, file.lastModified])
+          const existing = new Set(conversation.draftImages(input.state.getSnapshot().imageIds || []).map(image => fingerprint(image.file)))
+          const missing = files.filter(file => !existing.has(fingerprint(file)))
+          if (!missing.length) return
+          const drafts = conversation.createDraftImages(missing)
+          if (!input.addImages(drafts.map(image => image.id))) {
+            conversation.releaseDraftImages(drafts)
+            input.notify('error', '图片草稿恢复失败，请重新添加图片')
+          }
+        }).catch(() => {
+          if (!disposed) input.notify('error', '图片草稿恢复失败，请检查附件后再发送')
+        }).finally(() => { restoringImages = false; schedule() })
+      }
+      schedule()
+    }
+
+    function sessionInput(sessionId, ctx = crawshrimpContext) {
+      const scoped = ctx?.sessions?.scope(sessionId)
+      const conversation = scoped?.get('conversation')
+      const input = conversation?.input?.for(scoped)
+      watchAttachmentInput(sessionId, scoped, input)
+      return { scoped, input, conversation }
+    }
+
+    function attachmentNotice(sessionId, message) {
+      try { sessionInput(sessionId).input?.notify('error', message) } catch (_) { /* scope not ready */ }
+    }
+
+    function insertAttachmentHint(name, attachmentId, sessionId = activeRuntimeSessionId(), details = {}) {
+      try {
+        const { input } = sessionInput(sessionId)
+        const state = input?.state?.getSnapshot()
+        if (!state || !input.insertReference) return false
+        const data = { ...details, name, attachmentId }
+        // Token spans use detect coordinates: every existing reference is one
+        // character, even though the clipboard projection expands its text.
+        const at = state.draft.length - (state.occurrences || []).reduce((n, item) => n + item.length - 1, 0)
+        return input.insertReference({
+          source: ATTACHMENT_SOURCE, ref: JSON.stringify(data), label: name,
+          appearance: data.kind === 'directory' ? 'folder' : 'file',
+          clipboardText: attachmentText(data),
+        }, { start: at, end: at, draftRev: state.draftRev })
+      } catch (_) { return false }
+    }
+
+    function queueAttachmentHint(sessionId, name, attachmentId, details = {}) {
+      if (!sessionId) return
+      const data = { ...details, name, attachmentId }
+      attachmentDraft(sessionId).set(attachmentIdentity(data), data)
+      flushAttachmentHints(sessionId)
     }
 
     function flushAttachmentHints(sessionId) {
-      const hints = pendingAttachmentHintsBySession.get(sessionId) || []
-      if (!hints.length) return
-      pendingAttachmentHintsBySession.delete(sessionId)
-      for (const hint of hints) insertAttachmentHint(hint.name, hint.attachmentId)
+      if (attachmentBridgeDisposed) return
+      const draft = draftAttachmentsBySession.get(sessionId)
+      if (!draft?.size) return
+      let input
+      try { input = sessionInput(sessionId).input } catch (_) { return }
+      if (!input) return
+      const existing = new Set((input.state.getSnapshot().occurrences || [])
+        .filter(item => item.source === ATTACHMENT_SOURCE)
+        .map(item => attachmentIdentity(JSON.parse(item.ref))))
+      for (const [id, data] of draft) {
+        if (!existing.has(id)) insertAttachmentHint(data.name, data.attachmentId, sessionId, data)
+      }
+    }
+
+    function removeAttachmentReference(sessionId, occurrenceId) {
+      const { scoped, input } = sessionInput(sessionId)
+      const state = input.state.getSnapshot()
+      const occurrences = state.occurrences || []
+      const item = occurrences.find(item => item.occurrenceId === occurrenceId)
+      if (!item) return
+      attachmentDraft(sessionId).delete(attachmentIdentity(JSON.parse(item.ref)))
+      const start = item.offset - occurrences.filter(other => other.offset < item.offset).reduce((n, other) => n + other.length - 1, 0)
+      scoped.bail('slash/input-consume-token', { guard: { kind: 'span', span: {
+        start, end: start + 1, draftRev: state.draftRev,
+      } } })
+    }
+
+    function parseAttachmentText(text) {
+      const pattern = /\[文件夹路径: ("(?:[^"\\]|\\.)*")\]|\[附件: ([^\n]*?) \(attachment_id: (att-[a-f0-9]+)\)\]/g
+      const result = []
+      for (const match of String(text || '').matchAll(pattern)) {
+        let data
+        if (match[1]) {
+          try {
+            const path = JSON.parse(match[1])
+            const name = path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path
+            data = { kind: 'directory', path, name }
+          } catch (_) { continue }
+        } else data = { name: match[2], attachmentId: match[3] }
+        result.push({ index: match.index, length: match[0].length, data })
+      }
+      return result
+    }
+
+    function restoreAttachmentReferences(input) {
+      // DSH persists the clipboard projection. Rehydrate receipts after reload.
+      const original = input.state.getSnapshot()
+      for (const match of parseAttachmentText(original.draft).reverse()) {
+        const state = input.state.getSnapshot()
+        const occurrences = state.occurrences || []
+        if (occurrences.some(item => item.offset < match.index + match.length && item.offset + item.length > match.index)) continue
+        const data = match.data
+        const start = match.index - occurrences.filter(item => item.offset < match.index).reduce((n, item) => n + item.length - 1, 0)
+        input.insertReference({ source: ATTACHMENT_SOURCE, ref: JSON.stringify(data), label: data.name,
+          appearance: data.kind === 'directory' ? 'folder' : 'file', clipboardText: attachmentText(data),
+        }, { start, end: start + match.length, draftRev: state.draftRev })
+      }
+    }
+
+    function renderSentAttachmentCards() {
+      if (attachmentBridgeDisposed) return
+      for (const row of document.querySelectorAll('[data-chat-flow-kind="user"]')) {
+        const bubble = row.querySelector('.Sixlwa_bubble:not(.cs-sent-text)')
+        const stack = row.querySelector('.Sixlwa_userStack')
+        if (!bubble || !stack) continue
+        const text = bubble.textContent || ''
+        const imageButtons = [...stack.querySelectorAll('.R_Yw7q_frame')]
+        const signature = JSON.stringify([text, imageButtons.map(button => button.querySelector('img')?.src)])
+        if (stack.dataset.csAttachmentText === signature) continue
+        const attachments = parseAttachmentText(text)
+        if (!attachments.length) continue
+        stack.dataset.csAttachmentText = signature
+        stack.classList.add('cs-has-sent-attachments')
+        stack.querySelector('.cs-sent-attachments')?.remove()
+        stack.querySelector('.cs-sent-text')?.remove()
+        const rail = document.createElement('div')
+        rail.className = 'cs-sent-attachments'
+        rail.setAttribute('aria-label', '此消息附带的图片、文件和文件夹')
+        rail.tabIndex = 0
+        rail.addEventListener('wheel', event => {
+          if (event.ctrlKey || event.deltaX || rail.scrollWidth <= rail.clientWidth) return
+          rail.scrollLeft += event.deltaY
+          event.preventDefault()
+        }, { passive: false })
+        for (const original of imageButtons) {
+          const image = original.querySelector('img')
+          if (!image) continue
+          const preview = document.createElement('button')
+          preview.type = 'button'
+          preview.className = 'cs-sent-image'
+          preview.setAttribute('aria-label', original.getAttribute('aria-label') || '查看原图')
+          preview.append(image.cloneNode())
+          preview.onclick = () => original.click()
+          rail.append(preview)
+        }
+        let visibleText = text
+        for (const item of [...attachments].reverse()) visibleText = visibleText.slice(0, item.index) + visibleText.slice(item.index + item.length)
+        for (const { data } of attachments) {
+          const card = document.createElement('div')
+          card.className = 'cs-attachment-card'
+          card.title = data.path || data.name
+          const icon = document.createElement('span')
+          icon.className = 'cs-attachment-icon'
+          icon.innerHTML = data.kind === 'directory'
+          ? '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>'
+          : '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></svg>'
+          const label = document.createElement('div')
+          label.className = 'cs-attachment-label'
+          const name = document.createElement('strong')
+          name.textContent = data.name
+          const type = document.createElement('small')
+          type.textContent = data.kind === 'directory' ? '文件夹' : `${data.name.split('.').pop().toUpperCase()} 文件`
+          label.append(name, type)
+          card.append(icon, label)
+          rail.append(card)
+        }
+        stack.insertBefore(rail, bubble)
+        if (visibleText.trim()) {
+          const message = document.createElement('div')
+          message.className = 'Sixlwa_bubble cs-sent-text'
+          message.textContent = visibleText.trim()
+          stack.insertBefore(message, bubble)
+        }
+      }
+    }
+
+    function renderAttachmentCards() {
+      if (attachmentBridgeDisposed) return
+      const sessionId = activeRuntimeSessionId()
+      if (!sessionId) return
+      let state, conversation
+      try {
+        const resolved = sessionInput(sessionId)
+        if (resolved.input) restoreAttachmentReferences(resolved.input)
+        state = resolved.input?.state?.getSnapshot()
+        conversation = resolved.conversation
+      } catch (_) { return }
+      const composer = document.querySelector('[data-composer-input]')?.closest('.uV2eYG_card')
+      if (!composer || !state) return
+      const items = (state.occurrences || []).filter(item => item.source === ATTACHMENT_SOURCE)
+      const images = conversation.draftImages(state.imageIds || [])
+      const pending = [...pendingAttachmentUploads.values()].filter(item => item.sessionId === sessionId)
+      let rail = composer.querySelector('.cs-attachment-rail')
+      if (!items.length && !images.length && !pending.length) {
+        rail?.remove()
+        composer.classList.remove('cs-unified-attachments')
+        return
+      }
+      composer.classList.add('cs-unified-attachments')
+      const signature = JSON.stringify([sessionId, items, images.map(image => image.id), pending])
+      if (rail?.dataset.signature === signature) return
+      if (!rail) {
+        rail = document.createElement('div')
+        rail.className = 'cs-attachment-rail'
+        rail.setAttribute('aria-label', '待发送的图片、文件和文件夹')
+        rail.tabIndex = 0
+        rail.addEventListener('wheel', event => {
+          if (event.ctrlKey || event.deltaX || rail.scrollWidth <= rail.clientWidth) return
+          rail.scrollLeft += event.deltaY
+          event.preventDefault()
+        }, { passive: false })
+        composer.prepend(rail)
+      }
+      rail.dataset.signature = signature
+      const scrollLeft = rail.scrollLeft
+      rail.replaceChildren()
+      for (const [index, image] of images.entries()) {
+        const tile = document.createElement('div')
+        tile.className = 'cs-attachment-image'
+        const preview = document.createElement('button')
+        preview.type = 'button'
+        preview.className = 'cs-image-preview'
+        preview.title = image.file.name
+        preview.setAttribute('aria-label', `预览 ${image.file.name}`)
+        const img = document.createElement('img')
+        img.src = image.previewUrl
+        img.alt = image.file.name
+        preview.append(img)
+        preview.onclick = () => composer.querySelectorAll('.JVDQca_thumbnail')[index]?.click()
+        const remove = document.createElement('button')
+        remove.type = 'button'
+        remove.className = 'cs-attachment-remove'
+        remove.textContent = '×'
+        remove.setAttribute('aria-label', `移除图片 ${image.file.name}`)
+        remove.onclick = () => {
+          composer.querySelectorAll('.JVDQca_remove')[index]?.click()
+          renderAttachmentCards()
+        }
+        tile.append(preview, remove)
+        rail.append(tile)
+      }
+      for (const item of items) {
+        const data = JSON.parse(item.ref)
+        const card = document.createElement('div')
+        card.className = 'cs-attachment-card'
+        card.title = data.path || data.name
+        const icon = document.createElement('span')
+        icon.className = 'cs-attachment-icon'
+        icon.innerHTML = data.kind === 'directory'
+          ? '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>'
+          : '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></svg>'
+        const label = document.createElement('div')
+        label.className = 'cs-attachment-label'
+        const name = document.createElement('strong')
+        name.textContent = data.name
+        const type = document.createElement('small')
+        type.textContent = data.kind === 'directory' ? '文件夹' : ((data.name.split('.').pop() || '文件').toUpperCase() + ' 文件')
+        label.append(name, type)
+        const remove = document.createElement('button')
+        remove.type = 'button'
+        remove.textContent = '×'
+        remove.setAttribute('aria-label', `移除 ${data.name}`)
+        remove.onclick = () => { removeAttachmentReference(sessionId, item.occurrenceId); renderAttachmentCards() }
+        card.append(icon, label, remove)
+        rail.append(card)
+      }
+      for (const item of pending) {
+        const card = document.createElement('div')
+        card.className = 'cs-attachment-card'
+        card.setAttribute('aria-busy', 'true')
+        const label = document.createElement('div')
+        label.className = 'cs-attachment-label'
+        const name = document.createElement('strong')
+        name.textContent = item.name
+        const status = document.createElement('small')
+        status.textContent = '正在添加…'
+        label.append(name, status)
+        card.append(label)
+        rail.append(card)
+      }
+      rail.scrollLeft = scrollLeft
+    }
+
+    function registerAttachmentSource(ctx) {
+      ctx.effect(() => ctx.inputTriggers.registerSource({
+        trigger: '@', name: ATTACHMENT_SOURCE,
+        candidates: async () => [], onPick: () => undefined,
+        codec: {
+          clipboardText: ref => attachmentText(JSON.parse(ref)),
+          serialize: async ref => attachmentText(JSON.parse(ref)),
+        },
+      }))
     }
 
     // 与 DSH 原生 UI 统一:原「加号」按钮改造为上传附件;旁边单开「@」命令按钮。
@@ -1775,12 +2149,13 @@ window.__ModuleLoader__.load({
 
     function mountAttachmentCapture() {
       if (typeof document === 'undefined' || !document.documentElement?.dataset) return
+      injectAttachCss()
       installNativeDropOverlayFixups()
       if (document.documentElement.dataset.csAttachCapture === '1') return
       document.documentElement.dataset.csAttachCapture = '1'
       document.addEventListener('paste', handlePasteAttachments, true)
       document.addEventListener('dragover', (e) => e.preventDefault())
-      document.addEventListener('drop', handleDropAttachments, true)
+      window.addEventListener('drop', handleDropAttachments, true)
     }
 
     // ---- 默认工作区:自动采用抓虾运行时目录,不需要用户指定 ----
@@ -2042,9 +2417,20 @@ window.__ModuleLoader__.load({
         if (data && data.__crawshrimp === 'native-image-attachment') {
           installNativeImageDraft(ctx, data)
         }
+        if (data && data.__crawshrimp === 'attachment-upload-started') {
+          pendingAttachmentUploads.set(data.requestId, { sessionId: data.runtimeSessionId, name: data.name })
+          sessionInput(data.runtimeSessionId)
+          renderAttachmentCards()
+        }
+        if (data && data.__crawshrimp === 'attachment-upload-finished') {
+          pendingAttachmentUploads.delete(data.requestId)
+          renderAttachmentCards()
+        }
+        if (data && data.__crawshrimp === 'attachment-error') attachmentNotice(data.runtimeSessionId, data.message)
         if (data && data.__crawshrimp === 'attachment-added') {
           const sessionId = String(data.runtimeSessionId || currentRuntimeSessionId || '')
-          queueAttachmentHint(sessionId, data.name, data.attachmentId)
+          queueAttachmentHint(sessionId, data.name, data.attachmentId, data)
+          renderAttachmentCards()
         }
         if (data && data.__crawshrimp === 'open-runtime-session' && data.runtimeSessionId) {
           try { ctx.sessions.open(String(data.runtimeSessionId)) } catch (error) { /* 会话已删除 */ }
@@ -2078,6 +2464,15 @@ window.__ModuleLoader__.load({
 
     function apply(ctx) {
       crawshrimpContext = ctx
+      attachmentBridgeDisposed = false
+      ctx.on('dispose', () => {
+        attachmentBridgeDisposed = true
+        draftAttachmentsBySession.clear()
+        window.removeEventListener('drop', handleDropAttachments, true)
+        document.removeEventListener('paste', handlePasteAttachments, true)
+        delete document.documentElement.dataset.csAttachCapture
+      })
+      registerAttachmentSource(ctx)
       registerCrawshrimpBrandSlots(ctx)
       registerCrawshrimpDirectoryFlow(ctx)
       ctx.theme.overrideTokens('crawshrimp', CRAWSHRIMP_TOKENS)
@@ -2093,7 +2488,8 @@ window.__ModuleLoader__.load({
       } catch (error) {
         // 无 URL 参数,交给 shell 的 postMessage
       }
-      installShellMessageBridge(ctx)
+      ctx.effect(() => installShellMessageBridge(ctx))
+      mountAttachmentCapture()
       // apply 时 DOM 可能尚未就绪:轮询挂载(幂等),保证附件入口一定出现
       setInterval(() => {
         if (document.hidden) return
@@ -2101,6 +2497,9 @@ window.__ModuleLoader__.load({
         mountUnifiedButtons()
         installLlmConfigGate()
         publishCurrentSession(ctx)
+        flushAttachmentHints(activeRuntimeSessionId())
+        renderAttachmentCards()
+        renderSentAttachmentCards()
         openCrawshrimpImSettings()
         normalizeRunningStatus()
       }, 5000)
@@ -2127,6 +2526,9 @@ window.__ModuleLoader__.load({
       const observer = new MutationObserver((mutations) => {
         // The first message changes hero -> active without changing the session ID.
         publishCurrentSession(ctx)
+        flushAttachmentHints(activeRuntimeSessionId())
+        renderAttachmentCards()
+        renderSentAttachmentCards()
         const runningStatusChanged = Array.from(mutations || []).some((mutation) => {
           const target = mutation.target?.nodeType === 3 ? mutation.target.parentElement : mutation.target
           if (target?.closest?.('[role="status"]')) return true
@@ -2175,10 +2577,19 @@ window.__ModuleLoader__.load({
     exports.publishCurrentSession = publishCurrentSession
     exports.requestLlmConfigFromComposer = requestLlmConfigFromComposer
     exports.handleDropAttachments = handleDropAttachments
+    exports.insertAttachmentHint = insertAttachmentHint
+    exports.queueAttachmentHint = queueAttachmentHint
+    exports.flushAttachmentHints = flushAttachmentHints
+    exports.removeAttachmentReference = removeAttachmentReference
+    exports.registerAttachmentSource = registerAttachmentSource
+    exports.restoreAttachmentReferences = restoreAttachmentReferences
+    exports.watchAttachmentInput = watchAttachmentInput
+    exports.parseAttachmentText = parseAttachmentText
+    exports.setAttachmentContext = ctx => { crawshrimpContext = ctx }
     exports.handlePasteAttachments = handlePasteAttachments
     exports.insertAttachmentHint = insertAttachmentHint
     // kernel 服务依赖声明:rc.1 的会话创建在 uiWorkspace，不在原始 workspaces controller。
-    exports.inject = ['theme', 'workspaces', 'sessions', 'slots', 'uiWorkspace']
+    exports.inject = ['theme', 'workspaces', 'sessions', 'slots', 'uiWorkspace', 'inputTriggers']
     return module.exports
   },
 })

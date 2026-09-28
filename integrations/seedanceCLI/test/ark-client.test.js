@@ -157,3 +157,20 @@ function jsonResponse(body, init = {}) {
     }
   });
 }
+
+test('rejects prose, credentials and unsupported schemes before any request', () => {
+  for (const baseUrl of ['baseurl-豆包视频 https://example.com/api/v3 KEY和之前一样',
+    'https://example.com/api/v3 KEY', 'file:///tmp/video', 'https://key:secret@example.com',
+    'https://example.com?key=secret', 'https://example.com/#fragment']) {
+    assert.throws(() => new ArkContentGenerationClient({ apiKey: 'test', baseUrl }), /配置无效/);
+  }
+});
+
+test('403 gives actionable gateway diagnostics without claiming the credential is invalid or retrying', async () => {
+  let calls = 0;
+  const client = new ArkContentGenerationClient({ apiKey: 'test', fetchImpl: async () => {
+    calls++; return new Response('', { status: 403 });
+  } });
+  await assert.rejects(client.getVideoTask('known-task'), /网关拒绝访问.*空响应不能单独证明密钥无效/);
+  assert.equal(calls, 1);
+});

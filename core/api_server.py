@@ -14706,7 +14706,10 @@ def _reload_agent_runtime_after_llm_settings() -> dict:
 def _write_settings(cfg: dict) -> dict:
     patch = _safe_settings_write_patch(cfg)
     reload_llm_runtime = _touches_llm_runtime_settings(patch)
-    patch_config(patch)
+    try:
+        patch_config(patch)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     reset_bridge()
     result = {"ok": True}
     if reload_llm_runtime:

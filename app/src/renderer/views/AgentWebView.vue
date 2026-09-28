@@ -194,6 +194,7 @@ const runtimeGeneration = ref(0)
 const frameEl = ref(null)
 const fileDropOverlay = ref(null)
 const activeRuntimeSessionId = ref('')
+let attachmentUploadQueue = Promise.resolve()
 const activeConversationPhase = ref('hero')
 const lastRuntimeState = ref('')
 let pollTimer = null
@@ -609,7 +610,8 @@ function onWindowMessage(event) {
     }
   } else if (data.__crawshrimp === 'upload-attachment') {
     // 会话界面拖入/粘贴文件 → 保存 + 注册为会话附件
-    registerAttachmentFile(data.file, data.runtimeSessionId)
+    attachmentUploadQueue = attachmentUploadQueue.then(() => registerAttachmentFile(data.file, data.runtimeSessionId))
+      .finally(() => postToFrame({ __crawshrimp: 'attachment-upload-finished', requestId: data.requestId }))
   } else if (data.__crawshrimp === 'upload-attachment-pick') {
     // 会话界面 📎 按钮 → 打开原生选择器逐个注册
     handlePickAttachments(data.runtimeSessionId)
@@ -703,73 +705,83 @@ async function pushNativeImageDraft(file, runtimeSessionId = '') {
   }
 }
 
+function reportAttachmentError(runtimeId, message) {
+  postToFrame({ __crawshrimp: 'attachment-error', runtimeSessionId: runtimeId, message })
+}
+
 async function registerAttachmentFile(file, runtimeSessionId = '') {
   if (!file || typeof window.cs?.saveAgentAttachment !== 'function') return
   if (isImageLikeFile(file)) return
-  if (Number(file.size || 0) > MAX_ATTACHMENT_BYTES) {
-    console.warn('[agent] 附件过大(>200MB),已跳过:', file.name)
-    return
-  }
+  const runtimeId = String(runtimeSessionId || activeRuntimeSessionId.value || '')
   try {
-    const runtimeId = String(runtimeSessionId || activeRuntimeSessionId.value || '')
     if (!runtimeId) throw new Error('当前 DSH 会话尚未就绪')
-    const buffer = new Uint8Array(await file.arrayBuffer())
-    const saved = await window.cs.saveAgentAttachment({
-      buffer,
-      name: file.name || 'file',
-      mime: file.type || '',
-    })
-    if (!saved?.ok) return
+    const sourcePath = window.cs.getAgentAttachmentPath?.(file) || ''
+    let saved
+    if (sourcePath) {
+      saved = await window.cs.describeAgentAttachment(sourcePath)
+      if (!saved?.ok) throw new Error(saved?.error || '读取附件路径失败')
+      if (saved.kind === 'directory') {
+        postToFrame({ __crawshrimp: 'attachment-added', kind: 'directory',
+          name: saved.name, path: saved.path, runtimeSessionId: runtimeId })
+        return
+      }
+    } else {
+      if (Number(file.size || 0) > MAX_ATTACHMENT_BYTES) throw new Error('附件过大（最大 200MB）')
+      const buffer = new Uint8Array(await file.arrayBuffer())
+      saved = await window.cs.saveAgentAttachment({ buffer, name: file.name || 'file', mime: file.type || '' })
+      if (!saved?.ok) throw new Error(saved?.error || '保存附件失败')
+    }
+    if (saved.size > MAX_ATTACHMENT_BYTES) throw new Error('附件过大（最大 200MB）')
     const registered = await window.cs.agentApi('POST', '/agent/attachments/inbox', {
-      name: saved.name, path: saved.path, mime: saved.mime, size: saved.size,
+      name: saved.name, path: saved.path, mime: file.type || '', size: saved.size,
       runtime_session_id: runtimeId,
     })
     const att = registered?.attachment
-    if (att) {
-      postToFrame({
-        __crawshrimp: 'attachment-added',
-        name: att.filename,
-        attachmentId: att.attachment_id,
-        runtimeSessionId: runtimeId,
-      })
-    }
+    if (!att) throw new Error('附件注册失败，请重试')
+    postToFrame({ __crawshrimp: 'attachment-added', name: att.filename,
+      attachmentId: att.attachment_id, path: att.stored_path || saved.path,
+      runtimeSessionId: runtimeId })
   } catch (error) {
-    console.warn('[agent] 附件注册失败:', error?.message)
+    reportAttachmentError(runtimeId, `${file.name || '附件'}：${error?.message || '添加失败'}`)
   }
 }
 
 async function handlePickAttachments(runtimeSessionId = '') {
   if (typeof window.cs?.pickAgentAttachments !== 'function') return
+  const runtimeId = String(runtimeSessionId || activeRuntimeSessionId.value || '')
+  const requests = []
   try {
-    const runtimeId = String(runtimeSessionId || activeRuntimeSessionId.value || '')
     if (!runtimeId) throw new Error('当前 DSH 会话尚未就绪')
     const result = await window.cs.pickAgentAttachments()
     if (!result?.ok) return
-    for (const file of result.files || []) {
-      if (isImageLikeFile(file)) {
-        await pushNativeImageDraft(file, runtimeId)
-        continue
-      }
+    for (const [index, file] of (result.files || []).entries()) {
+      const requestId = `pick-${Date.now()}-${index}`
+      requests.push({ file, requestId })
+      postToFrame({ __crawshrimp: 'attachment-upload-started', requestId, name: file.name, runtimeSessionId: runtimeId })
+    }
+    for (const { file, requestId } of requests) {
       try {
+        if (isImageLikeFile(file)) {
+          await pushNativeImageDraft(file, runtimeId)
+          continue
+        }
+        if (file.size > MAX_ATTACHMENT_BYTES) throw new Error('附件过大（最大 200MB）')
         const registered = await window.cs.agentApi('POST', '/agent/attachments/inbox', {
           name: file.name, path: file.path, mime: file.mime, size: file.size,
           runtime_session_id: runtimeId,
         })
         const att = registered?.attachment
-        if (att) {
-          postToFrame({
-            __crawshrimp: 'attachment-added',
-            name: att.filename,
-            attachmentId: att.attachment_id,
-            runtimeSessionId: runtimeId,
-          })
-        }
+        if (!att) throw new Error('附件注册失败，请重试')
+        postToFrame({ __crawshrimp: 'attachment-added', name: att.filename,
+          attachmentId: att.attachment_id, runtimeSessionId: runtimeId })
       } catch (error) {
-        console.warn('[agent] 附件注册失败:', error?.message)
+        reportAttachmentError(runtimeId, `${file.name}：${error?.message || '添加失败'}`)
+      } finally {
+        postToFrame({ __crawshrimp: 'attachment-upload-finished', requestId })
       }
     }
   } catch (error) {
-    console.warn('[agent] 附件选择失败:', error?.message)
+    reportAttachmentError(runtimeId, error?.message || '附件选择失败')
   }
 }
 
