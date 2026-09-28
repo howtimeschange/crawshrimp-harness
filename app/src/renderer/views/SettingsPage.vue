@@ -363,6 +363,31 @@
           </div>
         </section>
 
+        <section v-else-if="activePanelId === 'storage-archived'" key="storage-archived" class="panel archive-panel">
+          <div class="panel-head">
+            <div><p class="panel-kicker">存储</p><h3>已归档会话</h3></div>
+            <button class="btn-ghost" :disabled="archiveLoading || !!archiveRestoring" @click="loadArchivedSessions">{{ archiveLoading ? '加载中…' : '刷新' }}</button>
+          </div>
+          <p>归档会话的聊天记录会保留。恢复后，会话将重新出现在侧边栏中。</p>
+          <input v-model="archiveQuery" class="input" placeholder="搜索会话标题或 ID" aria-label="搜索已归档会话" />
+          <p v-if="archiveError" role="alert">{{ archiveError }}</p>
+          <p v-if="archiveNotice" class="archive-notice" role="status">{{ archiveNotice }}</p>
+          <p v-if="archiveLoading">正在加载已归档会话…</p>
+          <p v-else-if="!archiveError && !filteredArchivedSessions.length">{{ archiveQuery.trim() ? '没有匹配的已归档会话' : '暂无已归档会话' }}</p>
+          <div v-for="session in pagedArchivedSessions" :key="session.id" class="archived-session-row">
+            <div class="archived-session-info"><strong :title="session.title">{{ session.title }}</strong><div class="archive-meta"><time :datetime="archiveTime(session.updatedAt).iso" :title="archiveTime(session.updatedAt).full">最近活动 {{ archiveTime(session.updatedAt).short }}</time><small :title="session.id">{{ session.id }}</small></div></div>
+            <button class="btn-ghost" :disabled="archiveLoading || !!archiveRestoring" @click="restoreArchivedSession(session.id)">{{ archiveRestoring === session.id ? '恢复中…' : '恢复会话' }}</button>
+          </div>
+          <nav v-if="filteredArchivedSessions.length" class="archive-pagination" aria-label="归档会话分页">
+            <span>共 {{ filteredArchivedSessions.length }} 条 · 每页 {{ archivePageSize }} 条</span>
+            <div>
+              <button class="btn-ghost" :disabled="archivePage <= 1 || archiveLoading || !!archiveRestoring" @click="archivePage--">上一页</button>
+              <span aria-live="polite">{{ archivePage }} / {{ archivePageCount }}</span>
+              <button class="btn-ghost" :disabled="archivePage >= archivePageCount || archiveLoading || !!archiveRestoring" @click="archivePage++">下一页</button>
+            </div>
+          </nav>
+        </section>
+
         <section v-else-if="activePanelId === 'storage-data'" key="storage-data" class="panel">
           <div class="panel-head">
             <div>
@@ -899,6 +924,7 @@
 </template>
 
 <script setup>
+import { requestArchivedSessions } from '../utils/archivedSessions.mjs'
 import { computed, defineComponent, h, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import AccountPanel from '../components/AccountPanel.vue'
 import AutomationPermissionsPanel from '../components/AutomationPermissionsPanel.vue'
@@ -1165,8 +1191,8 @@ const menuGroups = [
     id: 'storage',
     icon: '●',
     label: '存储',
-    desc: '运行数据目录',
-    children: [{ id: 'storage-data', label: '数据目录' }],
+    desc: '数据目录 / 已归档会话',
+    children: [{ id: 'storage-data', label: '数据目录' }, { id: 'storage-archived', label: '已归档会话' }],
   },
   {
     id: 'sync',
@@ -1867,9 +1893,55 @@ async function testNotify(channel) {
   }
 }
 
+const archivedSessions = ref([])
+const archiveQuery = ref('')
+const archiveLoading = ref(false)
+const archiveRestoring = ref('')
+const archiveError = ref('')
+const archiveNotice = ref('')
+const filteredArchivedSessions = computed(() => {
+  const query = archiveQuery.value.trim().toLowerCase()
+  return archivedSessions.value.filter(item => `${item.title} ${item.id}`.toLowerCase().includes(query))
+})
+function archiveTime(value) {
+  const date = value == null ? null : new Date(value)
+  if (!date || !Number.isFinite(date.getTime())) return { short: '未知', full: '暂无时间信息', iso: undefined }
+  const pad = n => String(n).padStart(2, '0')
+  const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  return { short: `${day} ${time}`, full: `${day} ${time}:${pad(date.getSeconds())}（本地时间）`, iso: date.toISOString() }
+}
+const archivePageSize = 10
+const archivePage = ref(1)
+const archivePageCount = computed(() => Math.max(1, Math.ceil(filteredArchivedSessions.value.length / archivePageSize)))
+const pagedArchivedSessions = computed(() => filteredArchivedSessions.value.slice((archivePage.value - 1) * archivePageSize, archivePage.value * archivePageSize))
+watch(archiveQuery, () => { archivePage.value = 1 })
+watch(archivePageCount, pages => { archivePage.value = Math.min(archivePage.value, pages) }, { flush: 'sync' })
+async function loadArchivedSessions() {
+  if (archiveLoading.value || archiveRestoring.value) return
+  archiveLoading.value = true
+  archiveError.value = ''
+  archiveNotice.value = ''
+  try { archivedSessions.value = await requestArchivedSessions() }
+  catch (error) { archiveError.value = error.message }
+  finally { archiveLoading.value = false }
+}
+async function restoreArchivedSession(id) {
+  if (archiveLoading.value || archiveRestoring.value) return
+  archiveRestoring.value = id
+  archiveError.value = ''
+  archiveNotice.value = ''
+  try {
+    archivedSessions.value = await requestArchivedSessions('restore', id)
+    archiveNotice.value = '会话已恢复，可在侧边栏查看。'
+  } catch (error) { archiveError.value = error.message }
+  finally { archiveRestoring.value = '' }
+}
+
 onMounted(async () => {
   window.addEventListener('message', onImSettingsMessage)
   await load()
+  if (activePanelId.value === 'storage-archived') await loadArchivedSessions()
   if (activePanelId.value === 'im-bots') await refreshAgentRuntime()
 })
 
@@ -1882,6 +1954,7 @@ watch(() => [props.focusPanelId, props.focusRequestId], ([panelId]) => {
 })
 
 watch(activePanelId, panelId => {
+  if (panelId === 'storage-archived') loadArchivedSessions()
   if (panelId === 'im-bots') {
     imSettingsPanelMountedOnce.value = true
     if (!imSettingsFrame.value) imSettingsReady.value = false
@@ -3433,4 +3506,21 @@ watch(imSettingsUrl, () => {
     padding: 12px;
   }
 }
+</style>
+
+<style scoped>
+.archive-panel { gap: 12px; }
+.archive-panel > p { margin: 0; font-size: 13px; }
+.archive-panel .panel-head { margin-bottom: 0; }
+.archive-panel .archived-session-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; min-height: 48px; box-sizing: border-box; border-bottom: 1px solid var(--border-color, #383842); }
+.archived-session-info { flex: 1; min-width: 0; }
+.archived-session-info strong, .archived-session-info small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.archived-session-info strong { font-size: 13px; font-weight: 500; }
+.archive-meta { display: flex; gap: 12px; align-items: baseline; margin-top: 2px; min-width: 0; font-size: 11px; opacity: .65; }
+.archive-meta time { flex-shrink: 0; }
+.archived-session-info small { font-size: 11px; min-width: 0; }
+@media (max-width: 800px) { .archive-meta { flex-wrap: wrap; gap: 2px 12px; } }
+.archive-panel .archived-session-row .btn-ghost, .archive-pagination .btn-ghost { padding: 5px 10px; min-height: 30px; font-size: 12px; flex-shrink: 0; }
+.archive-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 12px; padding-top: 4px; }
+.archive-pagination > div { display: flex; align-items: center; gap: 10px; }
 </style>

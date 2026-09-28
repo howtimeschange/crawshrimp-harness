@@ -19,6 +19,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { patchConfiguredModelCatalog } from './configured-model-catalog.mjs'
 import { patchCurrencyMath } from './currency-math.mjs'
+import { patchSessionArchive } from './session-archive.mjs'
 import { patchHistorySearch } from './history-search.mjs'
 import { patchCompactChat } from './compact-chat.mjs'
 import { patchReasoningRecovery } from './reasoning-recovery.mjs'
@@ -2216,6 +2217,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const applyCompatibility = prepareCompatibility(root)
   patchCompactChat(root)
   patchHistorySearch(root)
+  patchSessionArchive(root)
   const dshManifest = requireText(root, 'node_modules/@deepseek-ai/dsh/package.json', '"0.1.2-rc.1"')
   const dshBin = requireFile(root, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
   // Cordis resolves Web Host plugins from the product runtime root.  Keep the

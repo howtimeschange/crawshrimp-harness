@@ -2392,6 +2392,42 @@ window.__ModuleLoader__.load({
       } finally { sessionLogDownloads.delete(sessionId) }
     }
 
+    async function handleArchivedSessionsRequest(ctx, data) {
+      const reply = { __crawshrimp: 'archived-sessions-response', requestId: data.requestId }
+      try {
+        if (!['list', 'restore'].includes(data.action)) throw new Error('不支持的会话操作')
+        const state = ctx.workspaces.list.getSnapshot()
+        const sessions = ctx.sessions.list.getSnapshot()
+        if (state.phase !== 'ready' || sessions.phase !== 'ready') throw new Error('会话服务正在加载，请稍后刷新。')
+        if (data.action === 'restore') {
+          if (typeof data.sessionId !== 'string' || !data.sessionId) throw new Error('会话标识无效')
+          await ctx.workspaces.archiveSession(data.sessionId, false)
+          if (ctx.workspaces.list.getSnapshot().archivedSessionIds.includes(data.sessionId)) {
+            throw new Error('会话仍处于归档状态，请刷新后重试。')
+          }
+          // The workspace controller already updates the archive projection.
+          // A full session refresh tears down the session scope and resets layout.
+          const restored = ctx.sessions.list.getSnapshot().byId[data.sessionId]
+          if (!restored) {
+            throw new Error('已取消归档，但会话信息尚未加载，请重新进入设置后查看。')
+          }
+          if (restored.origin === 'subagent') throw new Error('已取消归档；这是一条子会话，请从所属主会话查看。')
+          // Blank sessions are hidden unless selected. Select the restored session
+          // through the controller rather than merely removing its archive flag.
+          if (restored.blank) ctx.sessions.open(data.sessionId)
+          if (restored.blank && ctx.sessions.list.getSnapshot().current !== data.sessionId) {
+            throw new Error('已取消归档，但未能定位会话，请刷新后重试。')
+          }
+        }
+        const current = ctx.workspaces.list.getSnapshot()
+        reply.items = current.archivedSessionIds.map(id => ({
+          id, title: sessions.byId[id]?.displayTitle || '未命名会话',
+          updatedAt: sessions.byId[id]?.updatedAt ?? null,
+        }))
+      } catch (error) { reply.error = String(error.message || error) }
+      postToShell(reply)
+    }
+
     function installShellMessageBridge(ctx) {
       // The shell exports through the same host endpoint without a success modal.
       const resourceStyle = document.createElement?.('style')
@@ -2406,6 +2442,7 @@ window.__ModuleLoader__.load({
         if (data && data.__crawshrimp === 'download-session-log' && String(data.runtimeSessionId || '') === String(currentRuntimeSessionId || '')) {
           void downloadSessionLog(String(data.runtimeSessionId || ''))
         }
+        if (data && data.__crawshrimp === 'archived-sessions-request') void handleArchivedSessionsRequest(ctx, data)
         if (data && data.__crawshrimp === 'theme') applyShellTheme(ctx, data.theme)
         if (data && data.__crawshrimp === 'nav') renderNav(data.items, data.active)
         if (data && data.__crawshrimp === 'app-version') publishCrawshrimpAppVersion(data.version)

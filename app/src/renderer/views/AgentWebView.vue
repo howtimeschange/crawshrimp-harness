@@ -557,6 +557,10 @@ async function handleWorkspaceDirectoryPick(data = {}) {
   }
 }
 
+function onArchiveRequest(event) {
+  postToFrame({ ...event.detail, __crawshrimp: 'archived-sessions-request' })
+}
+
 // iframe 内菜单点击 / 侧边栏宽度变化 / 会话导航 → shell
 function onWindowMessage(event) {
   const data = event?.data
@@ -564,6 +568,10 @@ function onWindowMessage(event) {
   // 仅接受智能体会话 iframe 的消息(防其他内嵌页面冒用特权通道)
   const sessionWin = frameEl.value?.contentWindow
   if (!sessionWin || event.source !== sessionWin || event.origin !== frameOrigin.value) return
+  if (data.__crawshrimp === 'archived-sessions-response') {
+    window.dispatchEvent(new CustomEvent('cs-archive-response', { detail: data }))
+    return
+  }
   if (data.__crawshrimp === 'file-drop-overlay') {
     const frame = frameEl.value.getBoundingClientRect()
     const shell = frameEl.value.closest('.agent-web-view').getBoundingClientRect()
@@ -788,6 +796,7 @@ async function handlePickAttachments(runtimeSessionId = '') {
 onMounted(() => {
   loadRuntime()
   window.addEventListener('message', onWindowMessage)
+  window.addEventListener('cs-archive-request', onArchiveRequest)
   // 持续读取受控 runtime 状态来恢复。rc.1 的 Web Host 对裸 HTTP 正确返回
   // 401，因此不能以无 cookie 的 fetch 误判它离线。
   let runtimePollInFlight = false
@@ -837,6 +846,7 @@ onMounted(() => {
 onUnmounted(() => {
   pollTimer?.()
   window.removeEventListener('message', onWindowMessage)
+  window.removeEventListener('cs-archive-request', onArchiveRequest)
   if (nativeWebFollowRetryTimer) clearTimeout(nativeWebFollowRetryTimer)
   nativeWebFollowRetryTimer = null
   void unobserveNativeWebSession(nativeWebFollowSessionId || activeRuntimeSessionId.value)

@@ -307,6 +307,7 @@ const hashInputs = [
   readFileSync(join(here, 'semir-anthropic-auth.mjs')),
   readFileSync(join(here, 'currency-math.mjs')),
   readFileSync(join(here, 'compact-chat.mjs')),
+  readFileSync(join(here, 'session-archive.mjs')),
   readFileSync(join(here, 'reasoning-recovery.mjs')),
   readFileSync(join(here, 'build-patched-dsh-im.mjs')),
   targetId,
