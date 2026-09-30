@@ -1,0 +1,426 @@
+[
+  {
+    "event": "artifact.created",
+    "payload": {
+      "task_instance_uid": "",
+      "artifact_id": "file-387c3ceb15bde2f87d17f8c0",
+      "filename": "销售.csv",
+      "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/中文材料/销售.csv",
+      "kind": "file",
+      "size": 84,
+      "media_kind": "file",
+      "zip_images": [],
+      "source": "shell",
+      "run_id": "qa-run-p1",
+      "tool_call_id": "qa-shell",
+      "verified": true,
+      "verification": {
+        "status": "exists",
+        "mtime_ns": 1790751135578038552
+      },
+      "runtime_session_id": "qa-a"
+    }
+  },
+  {
+    "event": "artifact.created",
+    "payload": {
+      "task_instance_uid": "",
+      "artifact_id": "file-d1a2e63b191ce4588c92bbf2",
+      "filename": "摘要.md",
+      "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/中文材料/摘要.md",
+      "kind": "file",
+      "size": 2128,
+      "media_kind": "file",
+      "zip_images": [],
+      "source": "shell",
+      "run_id": "qa-run-p1",
+      "tool_call_id": "qa-shell",
+      "verified": true,
+      "verification": {
+        "status": "exists",
+        "mtime_ns": 1790751135578137760
+      },
+      "runtime_session_id": "qa-a"
+    }
+  },
+  {
+    "event": "artifact.created",
+    "payload": {
+      "task_instance_uid": "",
+      "artifact_id": "file-9c7a3f6e6e9a45ff0f421d0f",
+      "filename": "销售图.svg",
+      "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/中文材料/销售图.svg",
+      "kind": "file",
+      "size": 538,
+      "media_kind": "file",
+      "zip_images": [],
+      "source": "shell",
+      "run_id": "qa-run-p1",
+      "tool_call_id": "qa-run-p1:browser",
+      "verified": true,
+      "verification": {
+        "status": "exists",
+        "mtime_ns": 1790751135582706813
+      },
+      "runtime_session_id": "qa-a"
+    }
+  },
+  {
+    "event": "artifact.created",
+    "payload": {
+      "task_instance_uid": "",
+      "artifact_id": "file-60f9fe211ea5dd852ac1b1d4",
+      "filename": "大文件.log",
+      "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/中文材料/大文件.log",
+      "kind": "file",
+      "size": 1330000,
+      "media_kind": "file",
+      "zip_images": [],
+      "source": "shell",
+      "run_id": "qa-run-p1",
+      "tool_call_id": "qa-run-p1:browser",
+      "verified": true,
+      "verification": {
+        "status": "exists",
+        "mtime_ns": 1790751135583205397
+      },
+      "runtime_session_id": "qa-a"
+    }
+  },
+  {
+    "event": "artifact.created",
+    "payload": {
+      "artifact_id": "qa-adapter-file",
+      "filename": "适配器交付.txt",
+      "kind": "file",
+      "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/中文材料/适配器交付.txt",
+      "size": 32,
+      "task_instance_uid": "qa-adapter",
+      "source": "adapter",
+      "verified": true,
+      "run_id": "qa-run-p1",
+      "tool_call_id": "qa-run-p1:adapter-call",
+      "media_kind": "file",
+      "zip_images": [],
+      "runtime_session_id": "qa-a"
+    }
+  },
+  {
+    "event": "artifact.created",
+    "payload": {
+      "artifact_id": "office-915a6f54b24940e799c959ef78511809-办公摘要.docx",
+      "filename": "办公摘要.docx",
+      "kind": "file",
+      "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/915a6f54b24940e799c959ef78511809/editable/办公摘要.docx",
+      "size": 36670,
+      "media_kind": "office",
+      "source": "office",
+      "verified": true,
+      "tool_call_id": "qa-run-p1:browser",
+      "office": {
+        "job_id": "915a6f54b24940e799c959ef78511809",
+        "revision": null,
+        "pdf": null,
+        "pages": [],
+        "validation": null,
+        "visual": null,
+        "delivery": null
+      },
+      "run_id": "qa-run-p1",
+      "runtime_session_id": "qa-a"
+    }
+  },
+  {
+    "event": "artifact.created",
+    "payload": {
+      "artifact_id": "office-915a6f54b24940e799c959ef78511809-办公演示.pptx",
+      "filename": "办公演示.pptx",
+      "kind": "file",
+      "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/915a6f54b24940e799c959ef78511809/editable/办公演示.pptx",
+      "size": 28292,
+      "media_kind": "office",
+      "source": "office",
+      "verified": true,
+      "tool_call_id": "qa-run-p1:browser",
+      "office": {
+        "job_id": "915a6f54b24940e799c959ef78511809",
+        "revision": null,
+        "pdf": null,
+        "pages": [],
+        "validation": null,
+        "visual": null,
+        "delivery": null
+      },
+      "run_id": "qa-run-p1",
+      "runtime_session_id": "qa-a"
+    }
+  },
+  {
+    "event": "artifact.created",
+    "payload": {
+      "artifact_id": "office-915a6f54b24940e799c959ef78511809-办公销售.xlsx",
+      "filename": "办公销售.xlsx",
+      "kind": "file",
+      "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/915a6f54b24940e799c959ef78511809/editable/办公销售.xlsx",
+      "size": 4922,
+      "media_kind": "office",
+      "source": "office",
+      "verified": true,
+      "tool_call_id": "qa-run-p1:browser",
+      "office": {
+        "job_id": "915a6f54b24940e799c959ef78511809",
+        "revision": null,
+        "pdf": null,
+        "pages": [],
+        "validation": null,
+        "visual": null,
+        "delivery": null
+      },
+      "run_id": "qa-run-p1",
+      "runtime_session_id": "qa-a"
+    }
+  },
+  {
+    "event": "artifact.created",
+    "payload": {
+      "artifact_id": "office-11767be3ed134050a59dcbbc32bc8dc6-办公摘要.docx",
+      "filename": "办公摘要.docx",
+      "kind": "file",
+      "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/11767be3ed134050a59dcbbc32bc8dc6/editable/办公摘要.docx",
+      "size": 36670,
+      "media_kind": "office",
+      "source": "office",
+      "verified": true,
+      "tool_call_id": "qa-run-p1:browser",
+      "office": {
+        "job_id": "11767be3ed134050a59dcbbc32bc8dc6",
+        "revision": "872fbe9da3a0490003707484d5380985cc2f5d68f918c7c29cf3fef60676518d",
+        "pdf": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/11767be3ed134050a59dcbbc32bc8dc6/preview/办公摘要.pdf",
+        "pages": [
+          {
+            "page": 1,
+            "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/11767be3ed134050a59dcbbc32bc8dc6/preview/pages/page-0001.png",
+            "sha256": "17001cf600b14415282c8f06a1f32054c6606a70f11f77bb54ac626105bddcc6",
+            "width": 1224,
+            "height": 1584,
+            "text_length": 19
+          }
+        ],
+        "validation": {
+          "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/11767be3ed134050a59dcbbc32bc8dc6/editable/办公摘要.docx",
+          "revision": "872fbe9da3a0490003707484d5380985cc2f5d68f918c7c29cf3fef60676518d",
+          "issues": [],
+          "paragraphs": 2,
+          "tables": 0,
+          "design_audit": {
+            "preset": null,
+            "issues": [],
+            "status": "passed",
+            "visual": "not_run"
+          },
+          "status": "passed"
+        },
+        "visual": {
+          "status": "not_run",
+          "reviewed": [],
+          "total": 1
+        },
+        "delivery": null
+      },
+      "run_id": "qa-run-p1",
+      "runtime_session_id": "qa-a"
+    }
+  },
+  {
+    "event": "artifact.created",
+    "payload": {
+      "task_instance_uid": "",
+      "artifact_id": "file-090f9b4ba6f569d30cfaa0d6",
+      "filename": "办公摘要.pdf",
+      "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/11767be3ed134050a59dcbbc32bc8dc6/preview/办公摘要.pdf",
+      "kind": "file",
+      "size": 25929,
+      "media_kind": "file",
+      "zip_images": [],
+      "source": "shell",
+      "run_id": "qa-run-p1",
+      "tool_call_id": "qa-run-p1:browser",
+      "verified": true,
+      "verification": {
+        "status": "exists",
+        "mtime_ns": 1790751139743126332
+      },
+      "runtime_session_id": "qa-a"
+    }
+  },
+  {
+    "event": "artifact.created",
+    "payload": {
+      "artifact_id": "office-85c657a89c8346e28456dac7629380cb-办公演示.pptx",
+      "filename": "办公演示.pptx",
+      "kind": "file",
+      "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/85c657a89c8346e28456dac7629380cb/editable/办公演示.pptx",
+      "size": 28292,
+      "media_kind": "office",
+      "source": "office",
+      "verified": true,
+      "tool_call_id": "qa-run-p1:browser",
+      "office": {
+        "job_id": "85c657a89c8346e28456dac7629380cb",
+        "revision": "6d0183a6ece2315757cf27b3c26d6f4af505c54e411d011adbaef8b06cd72f10",
+        "pdf": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/85c657a89c8346e28456dac7629380cb/preview/办公演示.pdf",
+        "pages": [
+          {
+            "page": 1,
+            "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/85c657a89c8346e28456dac7629380cb/preview/pages/page-0001.png",
+            "sha256": "1a73f0fa3e5c2bfb84005d319eb609001349a10798539adddae1522501da794c",
+            "width": 1440,
+            "height": 1080,
+            "text_length": 21
+          }
+        ],
+        "validation": {
+          "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/85c657a89c8346e28456dac7629380cb/editable/办公演示.pptx",
+          "revision": "6d0183a6ece2315757cf27b3c26d6f4af505c54e411d011adbaef8b06cd72f10",
+          "issues": [],
+          "slides": 1,
+          "design_audit": {
+            "status": "passed",
+            "issues": [],
+            "visual": "not_run",
+            "estimator": "advisory"
+          },
+          "status": "passed"
+        },
+        "visual": {
+          "status": "not_run",
+          "reviewed": [],
+          "total": 1
+        },
+        "delivery": null
+      },
+      "run_id": "qa-run-p1",
+      "runtime_session_id": "qa-a"
+    }
+  },
+  {
+    "event": "artifact.created",
+    "payload": {
+      "task_instance_uid": "",
+      "artifact_id": "file-6d6466364412c7f419d52afb",
+      "filename": "办公演示.pdf",
+      "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/85c657a89c8346e28456dac7629380cb/preview/办公演示.pdf",
+      "kind": "file",
+      "size": 23995,
+      "media_kind": "file",
+      "zip_images": [],
+      "source": "shell",
+      "run_id": "qa-run-p1",
+      "tool_call_id": "qa-run-p1:browser",
+      "verified": true,
+      "verification": {
+        "status": "exists",
+        "mtime_ns": 1790751141852635889
+      },
+      "runtime_session_id": "qa-a"
+    }
+  },
+  {
+    "event": "artifact.created",
+    "payload": {
+      "artifact_id": "office-3704a1accd69456288f59cc153ab80ba-办公销售.xlsx",
+      "filename": "办公销售.xlsx",
+      "kind": "file",
+      "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/3704a1accd69456288f59cc153ab80ba/editable/办公销售.xlsx",
+      "size": 4922,
+      "media_kind": "office",
+      "source": "office",
+      "verified": true,
+      "tool_call_id": "qa-run-p1:browser",
+      "office": {
+        "job_id": "3704a1accd69456288f59cc153ab80ba",
+        "revision": "2c685770fca47839dc7d815626f0503b3dad75d46be970e02e4ba5c64460ab75",
+        "pdf": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/3704a1accd69456288f59cc153ab80ba/preview/办公销售.pdf",
+        "pages": [
+          {
+            "page": 1,
+            "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/3704a1accd69456288f59cc153ab80ba/preview/pages/page-0001.png",
+            "sha256": "e24f5862829a6adfb27574b0174f8ce7ab43d96f6184c9f95802070174edff64",
+            "width": 1191,
+            "height": 1684,
+            "text_length": 32
+          }
+        ],
+        "validation": {
+          "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/3704a1accd69456288f59cc153ab80ba/editable/办公销售.xlsx",
+          "revision": "2c685770fca47839dc7d815626f0503b3dad75d46be970e02e4ba5c64460ab75",
+          "issues": [],
+          "design_audit": {
+            "status": "issues",
+            "sheets": [
+              {
+                "sheet": "Sheet",
+                "issues": [
+                  {
+                    "code": "EXCEL_PRINT_AREA_MISSING",
+                    "cell": "",
+                    "message": "未指定打印区域",
+                    "severity": "warning"
+                  }
+                ],
+                "status": "issues",
+                "visual": "not_run"
+              }
+            ],
+            "visual": "not_run"
+          },
+          "sheets": [
+            {
+              "name": "Sheet",
+              "rows": 4,
+              "columns": 2,
+              "state": "visible",
+              "print_area": ""
+            }
+          ],
+          "formula_count": 0,
+          "status": "passed"
+        },
+        "visual": {
+          "status": "not_run",
+          "reviewed": [],
+          "total": 1
+        },
+        "delivery": null
+      },
+      "run_id": "qa-run-p1",
+      "runtime_session_id": "qa-a"
+    }
+  },
+  {
+    "event": "artifact.created",
+    "payload": {
+      "task_instance_uid": "",
+      "artifact_id": "file-60b9d19e24ea34b24c4d8c6d",
+      "filename": "办公销售.pdf",
+      "path": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf/outputs/office/c38434c3ac42ee7f96a9ae05/3704a1accd69456288f59cc153ab80ba/preview/办公销售.pdf",
+      "kind": "file",
+      "size": 19363,
+      "media_kind": "file",
+      "zip_images": [],
+      "source": "shell",
+      "run_id": "qa-run-p1",
+      "tool_call_id": "qa-run-p1:browser",
+      "verified": true,
+      "verification": {
+        "status": "exists",
+        "mtime_ns": 1790751144340506407
+      },
+      "runtime_session_id": "qa-a"
+    }
+  },
+  {
+    "office": "all three generated/rendered",
+    "data": "/private/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-file-workspace-p1-k2m0n7jf"
+  }
+]

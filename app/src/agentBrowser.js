@@ -186,8 +186,10 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
       }
     }
   }
-  ws.onerror = () => notify(webContents, 'error', { message: 'CDP websocket 错误', targetId: actualTid })
+  const ownsStream = () => st ? streams.get(actualTid) === st : startingSockets.get(startKey) === ws
+  ws.onerror = () => { if (ownsStream()) notify(webContents, 'error', { message: 'CDP websocket 错误', targetId: actualTid }) }
   ws.onclose = () => {
+    const owned = ownsStream()
     for (const [, entry] of pending) {
       clearTimeout(entry.timer)
       entry.reject(new Error('CDP websocket 已断开'))
@@ -197,7 +199,7 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
       if (st.timer) clearInterval(st.timer)
       streams.delete(actualTid)
     }
-    notify(webContents, 'disconnected', { targetId: actualTid })
+    if (owned) notify(webContents, 'disconnected', { targetId: actualTid })
   }
 
   const send = (method, params = {}) => new Promise((resolve, reject) => {
@@ -237,7 +239,7 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
     try { ws.close() } catch {}
     throw error
   }
-  ws.onerror = () => notify(webContents, 'error', { message: 'CDP websocket 错误', targetId: actualTid })
+  ws.onerror = () => { if (ownsStream()) notify(webContents, 'error', { message: 'CDP websocket 错误', targetId: actualTid }) }
 
   try {
     await send('Page.enable')
@@ -296,6 +298,8 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
         } catch { /* 忽略单次尺寸回读失败 */ }
       }
       if (streams.get(actualTid) === st && webContents && !webContents.isDestroyed()) {
+        if (st.captureFailures >= 3) notify(webContents, 'connected', { url: st.targetUrl, targetId: actualTid })
+        st.captureFailures = 0
         webContents.send('agent:browser:frame', {
           targetId: actualTid,
           dataUrl: `data:image/jpeg;base64,${shot.data}`,
@@ -305,8 +309,10 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
           ts: Date.now(),
         })
       }
-    } catch {
-      // 单帧失败静默跳过,保持流存活
+    } catch (error) {
+      if (streams.get(actualTid) !== st || !webContents || webContents.isDestroyed()) return
+      st.captureFailures = (st.captureFailures || 0) + 1
+      if (st.captureFailures === 3) notify(webContents, 'error', { message: `画面暂未更新：${error?.message || '截图失败'}`, targetId: actualTid })
     } finally {
       st.capturing = false
     }

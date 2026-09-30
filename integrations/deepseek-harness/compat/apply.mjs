@@ -2,8 +2,9 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { mcpPagination, composerSubmit } from './backports/index.mjs'
+import { fileWorkspace } from './backports/file-workspace.mjs'
 const manifest = JSON.parse(readFileSync(new URL('./manifest.json', import.meta.url)))
-const transforms = { C01: mcpPagination, C02: composerSubmit }
+const transforms = { C01: mcpPagination, C02: composerSubmit, C03: fileWorkspace }
 const hash = text => createHash('sha256').update(text).digest('hex')
 // Preflight every new compatibility patch before any runtime writes.
 export function prepareCompatibility(root) {

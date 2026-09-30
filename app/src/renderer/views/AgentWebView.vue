@@ -79,7 +79,7 @@
           </section>
         </div>
       </div>
-      <SessionResources v-if="frameReady" ref="resourcesPanel" @compact-change="resourcesCompact = $event" :session-id="activeRuntimeSessionId" :conversation-phase="activeConversationPhase" :revision="props.resourceRevision" @download-log="exportSessionLog" />
+      <SessionResources v-if="frameReady" ref="resourcesPanel" @viewing-change="$emit('resource-viewing', $event)" @compact-change="resourcesCompact = $event; $emit('resource-compact', $event)" :session-id="activeRuntimeSessionId" :conversation-phase="activeConversationPhase" :revision="props.resourceRevision" @download-log="exportSessionLog" />
       <div v-if="fileDropOverlay" class="resource-drop-overlay" :style="fileDropOverlay" aria-hidden="true" />
     </div>
     <Teleport to="body">
@@ -180,7 +180,7 @@ const props = defineProps({
   resourceRevision: { type: Number, default: 0 },
 })
 
-const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav', 'runtime-session', 'repair-core', 'open-settings', 'shell-controls-change'])
+const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav', 'runtime-session', 'repair-core', 'open-settings', 'shell-controls-change', 'resource-viewing', 'resource-compact'])
 
 const resourcesPanel = ref(null)
 const resourcesCompact = ref(false)
@@ -611,11 +611,10 @@ function onWindowMessage(event) {
       window.cs.revealFile(p).catch(() => {})
     }
   } else if (data.__crawshrimp === 'open-file') {
-    // 会话内附件点击 → 系统默认应用打开
+    if (data.runtimeSessionId && data.runtimeSessionId !== activeRuntimeSessionId.value) return
+    // All attachment navigation joins the session workspace.
     const p = String(data.path || '').trim()
-    if (p && typeof window.cs?.openFile === 'function') {
-      window.cs.openFile(p).catch(() => {})
-    }
+    if (p) resourcesPanel.value?.openResource({ path: p, filename: p.replaceAll('\\', '/').split('/').pop(), kind: 'artifact' })
   } else if (data.__crawshrimp === 'upload-attachment') {
     // 会话界面拖入/粘贴文件 → 保存 + 注册为会话附件
     attachmentUploadQueue = attachmentUploadQueue.then(() => registerAttachmentFile(data.file, data.runtimeSessionId))
@@ -793,7 +792,15 @@ async function handlePickAttachments(runtimeSessionId = '') {
   }
 }
 
+function onOpenResource(event) {
+  const item = event.detail
+  if (item?.runtimeSessionId && item.runtimeSessionId !== activeRuntimeSessionId.value) return
+  resourcesPanel.value?.openResource(item)
+}
+function onBrowserActivity(event) { resourcesPanel.value?.followBrowserActivity(event.detail) }
 onMounted(() => {
+  window.addEventListener('cs-open-resource', onOpenResource)
+  window.addEventListener('cs-browser-activity', onBrowserActivity)
   loadRuntime()
   window.addEventListener('message', onWindowMessage)
   window.addEventListener('cs-archive-request', onArchiveRequest)
@@ -844,6 +851,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('cs-open-resource', onOpenResource)
+  window.removeEventListener('cs-browser-activity', onBrowserActivity)
   pollTimer?.()
   window.removeEventListener('message', onWindowMessage)
   window.removeEventListener('cs-archive-request', onArchiveRequest)

@@ -1,0 +1,87 @@
+[
+  {
+    "screenshot": "01-delivery-card"
+  },
+  {
+    "screenshot": "02-markdown-image-split"
+  },
+  {
+    "check": "stable DOM across split",
+    "passed": true
+  },
+  {
+    "screenshot": "03-csv-grid"
+  },
+  {
+    "screenshot": "04-csv-source"
+  },
+  {
+    "check": "iframe scroll retained across session switch",
+    "passed": true
+  },
+  {
+    "screenshot": "05-session-restored"
+  },
+  {
+    "check": "closing one tab preserves the other pane and scroll",
+    "passed": true
+  },
+  {
+    "screenshot": "06-office-docx"
+  },
+  {
+    "screenshot": "06-office-pptx"
+  },
+  {
+    "screenshot": "06-office-xlsx"
+  },
+  {
+    "screenshot": "07-pdf"
+  },
+  {
+    "check": "PDF refresh reads missing and restored file without cached success",
+    "passed": true
+  },
+  {
+    "screenshot": "08-large-file"
+  },
+  {
+    "check": "component reload persisted workspace",
+    "tabs": 7,
+    "passed": true
+  },
+  {
+    "screenshot": "09-narrow-window"
+  },
+  {
+    "screenshot": "13-missing-file"
+  },
+  {
+    "screenshot": "14-refresh-stale-isolation"
+  },
+  {
+    "check": "missing file, image zoom retention, refresh and late-response isolation",
+    "passed": true
+  },
+  {
+    "screenshot": "10-agent-example"
+  },
+  {
+    "screenshot": "11-agent-visible-iana"
+  },
+  {
+    "check": "Agent navigate/click/readback and production CDP stream share target",
+    "passed": true
+  },
+  {
+    "check": "stream reconnect retains target and sends no browser actions",
+    "passed": true
+  },
+  {
+    "screenshot": "12-browser-stream-handoff"
+  },
+  {
+    "check": "no renderer exceptions",
+    "passed": true
+  }
+]

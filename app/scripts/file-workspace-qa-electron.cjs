@@ -1,0 +1,13 @@
+const {app,BrowserWindow,ipcMain}=require('electron')
+const path=require('node:path'),os=require('node:os'),fs=require('node:fs')
+app.setPath('userData',fs.mkdtempSync(path.join(os.tmpdir(),'harness-p1-electron-')))
+const streams=require('../src/agentBrowser')
+app.whenReady().then(async()=>{
+ const win=new BrowserWindow({width:1600,height:980,show:true,title:process.env.FILE_WORKSPACE_QA_TITLE || '抓虾 P1 源码组件桌面验收',webPreferences:{preload:path.join(__dirname,'file-workspace-qa-preload.cjs'),contextIsolation:true,nodeIntegration:false}})
+ ipcMain.handle('qa:tabs',()=>streams.listAgentBrowserTabs())
+ ipcMain.handle('qa:start',(_,id)=>streams.startAgentBrowserStream(win.webContents,id))
+ ipcMain.handle('qa:stop',(_,id)=>streams.stopAgentBrowserStream(id))
+ await win.loadURL(`http://127.0.0.1:5173/dev/file-workspace.html?qaPort=${process.env.FILE_WORKSPACE_QA_PORT || '5189'}`)
+})
+app.on('window-all-closed',()=>app.quit())
+app.on('will-quit',()=>streams.stopAgentBrowserStream())

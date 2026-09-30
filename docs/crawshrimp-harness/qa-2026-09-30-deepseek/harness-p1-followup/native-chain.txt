@@ -1,0 +1,16 @@
+TAP version 13
+# Subtest: installed development native chat opener crosses real slot/shell source guards into the workspace
+ok 1 - installed development native chat opener crosses real slot/shell source guards into the workspace
+  ---
+  duration_ms: 3.770458
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 36.5865

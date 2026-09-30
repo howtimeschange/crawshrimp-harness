@@ -1,0 +1,79 @@
+{
+  "session": {
+    "session_id": "cs-web-47e4a6f2f7a7",
+    "runtime_session_id": "session-628e3d12-f579-4fa6-be30-c884495898c2",
+    "title": "本地文件预览验收测试",
+    "status": "idle"
+  },
+  "artifacts": [
+    {
+      "filename": "page-0002.png",
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/outputs/office/1d966744a6fce0bc910466ed/a9d4016d64b846c3a34a64aafe213473/preview/pages/page-0002.png",
+      "exists": true,
+      "size": 69173,
+      "source": "shell",
+      "office": null
+    },
+    {
+      "filename": "page-0001.png",
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/outputs/office/1d966744a6fce0bc910466ed/a9d4016d64b846c3a34a64aafe213473/preview/pages/page-0001.png",
+      "exists": true,
+      "size": 75972,
+      "source": "shell",
+      "office": null
+    },
+    {
+      "filename": "连续阅读.pdf",
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/outputs/office/1d966744a6fce0bc910466ed/a9d4016d64b846c3a34a64aafe213473/preview/连续阅读.pdf",
+      "exists": true,
+      "size": 67202,
+      "source": "shell",
+      "office": null
+    },
+    {
+      "filename": "连续阅读.docx",
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/outputs/office/1d966744a6fce0bc910466ed/a9d4016d64b846c3a34a64aafe213473/editable/连续阅读.docx",
+      "exists": true,
+      "size": 38942,
+      "source": "shell",
+      "office": null
+    },
+    {
+      "filename": "销售明细.csv",
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/侧栏验收/销售明细.csv",
+      "exists": true,
+      "size": 73,
+      "source": "shell",
+      "office": null
+    },
+    {
+      "filename": "销售摘要.md",
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/侧栏验收/销售摘要.md",
+      "exists": true,
+      "size": 472,
+      "source": "shell",
+      "office": null
+    },
+    {
+      "filename": "销售预览.html",
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/侧栏验收/销售预览.html",
+      "exists": true,
+      "size": 2744,
+      "source": "shell",
+      "office": null
+    },
+    {
+      "filename": "连续阅读.docx",
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/outputs/office/1d966744a6fce0bc910466ed/6008d30b517945bf9363f1eabaded7be/editable/连续阅读.docx",
+      "exists": true,
+      "size": 38942,
+      "source": "office",
+      "office": {
+        "job_id": "6008d30b517945bf9363f1eabaded7be",
+        "pages": 0,
+        "visual": null,
+        "delivery": null
+      }
+    }
+  ]
+}

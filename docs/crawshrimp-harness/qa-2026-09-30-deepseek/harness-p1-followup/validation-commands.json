@@ -1,0 +1,6 @@
+{
+  "node": "node --test app/src/sessionResources.test.js app/src/agentHarnessContracts.test.js app/src/browserPreviewCapture.test.js app/src/nativeResourceOpenBridge.test.js app/src/continuousPdfPreview.test.js app/src/renderer/utils/resourceWorkspace.test.js app/src/renderer/utils/browserPreviewStreams.test.js app/src/renderer/utils/documentPreview.test.js app/src/renderer/utils/artifactTime.test.js integrations/deepseek-harness/compat/compat.test.mjs integrations/deepseek-harness/compat/file-workspace.test.mjs integrations/deepseek-harness/crawshrimp-product-bridge/lib/context-tools.test.mjs",
+  "build": "cd app && npm run vite:build",
+  "desktop": "FILE_WORKSPACE_QA_PORT=5190 FILE_WORKSPACE_QA_OUTPUT=/Users/xingyicheng/Documents/crawshrimp-harness/docs/crawshrimp-harness/qa-2026-09-30-deepseek/harness-p1-followup NODE_PATH=/Users/xingyicheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules node scripts/file-workspace-desktop-qa.cjs",
+  "server": "FILE_WORKSPACE_QA_PORT=5190 FILE_WORKSPACE_QA_OUTPUT=/Users/xingyicheng/Documents/crawshrimp-harness/docs/crawshrimp-harness/qa-2026-09-30-deepseek/harness-p1-followup venv/bin/python scripts/file-workspace-qa-server.py"
+}

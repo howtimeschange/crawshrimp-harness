@@ -1,6 +1,7 @@
 <template>
   <Teleport to="body" :disabled="isDocked">
     <div
+      v-show="visible"
       class="agent-browser-window"
       :class="{ minimized, maximized, dragging, resizing, docked: isDocked }"
       :style="windowStyle"
@@ -70,6 +71,7 @@
         </button>
       </div>
 
+      <p v-if="activity?.active_tab_id === tabId && !compact" class="execution-context" :title="`run ${activity.run_id || ''} · ${activity.tool_call_id || ''}`">{{ activity.operation || '页面观察' }} · {{ activity.phase === 'uncertain' ? '结果待核实，恢复画面不会重放操作' : 'Agent 当前页面' }} · {{ activity.run_id?.slice(-8) }}</p>
       <div v-show="!minimized" class="browser-window-body">
         <div class="browser-frame">
           <img
@@ -122,6 +124,7 @@ import {
   IconX,
 } from '@tabler/icons-vue'
 
+import { setBrowserPreviewVisible } from '../../utils/browserPreviewStreams.js'
 const props = defineProps({
   // 菜单切换等场景由父级递增 → 自动最小化,避免浮动窗口盖住界面拦截点击
   minimizeSignal: { type: Number, default: 0 },
@@ -131,6 +134,8 @@ const props = defineProps({
   windowIndex: { type: Number, default: 0 },
   // floating: 自由浮窗; docked: 固定在会话右侧
   layout: { type: String, default: 'floating' },
+  visible: { type: Boolean, default: true },
+  activity: Object,
   compact: { type: Boolean, default: false },
   dockActionLabel: { type: String, default: '脱离为浮窗' },
 })
@@ -175,7 +180,6 @@ const saved = reactive({ x: 0, y: 0, w: DEFAULT_FLOAT_W, h: DEFAULT_FLOAT_H, min
 
 let offFrame = null
 let offStatus = null
-let started = false
 let drag = null
 let resize = null
 let interactionFrame = 0
@@ -398,6 +402,7 @@ const statusClass = computed(() => ({
   connected: 'connected',
   error: 'error',
   disconnected: 'disconnected',
+  paused: 'disconnected',
 }[statusState.value] || 'connecting'))
 
 const statusLabel = computed(() => ({
@@ -405,6 +410,7 @@ const statusLabel = computed(() => ({
   connected: '已连接',
   error: '错误',
   disconnected: '已断开',
+  paused: '画面已暂停',
 }[statusState.value] || '连接中'))
 
 const statusText = computed(() => {
@@ -412,50 +418,21 @@ const statusText = computed(() => {
   return statusLabel.value
 })
 
-async function start() {
-  if (streamDisposed || document.hidden || minimized.value) return
-  if (started || typeof window.cs?.startAgentBrowserStream !== 'function') return
-  started = true
-  statusState.value = 'connecting'
-  const result = await window.cs.startAgentBrowserStream(props.tabId)
-  if (!result?.ok) {
-    statusState.value = 'error'
-    statusMessage.value = result?.error || '浏览器流启动失败'
-    started = false
-  }
-}
-
-function restart() {
-  return syncStreamVisibility(true)
-}
-
+const streamOwner = Symbol('browser-preview')
 let streamDisposed = false
-let visibilityQueue = Promise.resolve()
+function restart() { return syncStreamVisibility(true) }
 function syncStreamVisibility(forceRestart = false) {
-  visibilityQueue = visibilityQueue.catch(() => {}).then(async () => {
-  if (forceRestart === true) {
-    await window.cs?.stopAgentBrowserStream?.(props.tabId)
-    frame.value = null
-    statusState.value = 'connecting'
-    started = false
-  }
-  if (streamDisposed || document.hidden || minimized.value) {
-    started = false
-    await window.cs?.stopAgentBrowserStream?.(props.tabId)
-  } else {
-    await start()
-    if (streamDisposed || document.hidden || minimized.value) {
-      started = false
-      await window.cs?.stopAgentBrowserStream?.(props.tabId)
-    }
-  }
+  if (forceRestart === true) { frame.value = null; statusState.value = 'connecting'; statusMessage.value = '' }
+  const visible = !streamDisposed && !document.hidden && !minimized.value && props.visible
+  if (!visible) statusState.value = 'paused'
+  else if (statusState.value === 'paused') { statusState.value = 'connecting'; statusMessage.value = '' }
+  return setBrowserPreviewVisible(props.tabId, streamOwner, visible, forceRestart === true).then(result => {
+    if (!streamDisposed && visible && props.visible && !document.hidden && !minimized.value && result?.ok === false) { statusState.value = 'error'; statusMessage.value = result?.error || '浏览器预览连接失败' }
   }).catch(error => {
-    started = false
-    if (!streamDisposed) { statusState.value = 'error'; statusMessage.value = error?.message || '浏览器预览连接失败' }
+    if (!streamDisposed && props.visible && !document.hidden && !minimized.value) { statusState.value = 'error'; statusMessage.value = error?.message || '浏览器预览连接失败' }
   })
-  return visibilityQueue
 }
-watch(minimized, () => syncStreamVisibility())
+watch([minimized, () => props.visible], () => syncStreamVisibility())
 onMounted(() => {
   document.addEventListener('visibilitychange', syncStreamVisibility)
   loadPrefs()
@@ -469,16 +446,17 @@ onMounted(() => {
     offFrame = window.cs.onAgentBrowserFrame((payload) => {
       if (String(payload?.targetId || '') !== String(props.tabId || '')) return
       frame.value = payload
+      if (!document.hidden && !minimized.value && props.visible) { statusState.value = 'connected'; statusMessage.value = '' }
       if (payload?.url) frameUrl.value = payload.url
     })
   }
   if (window.cs?.onAgentBrowserStatus) {
     offStatus = window.cs.onAgentBrowserStatus((payload) => {
       if (String(payload?.targetId || '') !== String(props.tabId || '')) return
-      statusState.value = payload?.state || 'connecting'
+      statusState.value = document.hidden || minimized.value || !props.visible ? 'paused' : payload?.state || 'connecting'
       if (payload?.message) statusMessage.value = payload.message
       if (payload?.url) frameUrl.value = payload.url
-      if (payload?.state === 'error' || payload?.state === 'disconnected') started = false
+
     })
   }
   syncStreamVisibility()
@@ -498,6 +476,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.execution-context{margin:0;padding:6px 10px;font-size:10px;color:var(--text3);border-bottom:1px solid var(--border)}
 .agent-browser-window {
   position: fixed;
   z-index: 1300;

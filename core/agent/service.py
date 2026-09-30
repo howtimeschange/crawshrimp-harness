@@ -1265,6 +1265,10 @@ class AgentService:
             event_payload = {**(payload or {}), "run_id": run.get("run_id")}
             if event_type == "browser.activity":
                 event_payload["tabs"] = self._session_browser_tabs(session_id, event_payload)
+                event_payload["source"] = "agent"
+                event_payload["runtime_session_id"] = run.get("runtime_session_id") or ""
+                event_payload["task_instance_uid"] = run.get("task_instance_uid") or ""
+                event_payload["tool_call_id"] = mcp_gateway.ctx.current_tool_call_id
             future = asyncio.run_coroutine_threadsafe(
                 self.broadcast(session_id, _seq(session_id), event_type, event_payload), loop)
 
@@ -2904,6 +2908,7 @@ class AgentService:
 
     async def _broadcast_run_artifacts(self, run_id: str, session_id: str) -> None:
         """任务执行完成后,把产物以附件形式推送到聊天(流程 1)。"""
+        # Shell manifests are projected at tool/result; adapter collection is optional.
         if not mcp_gateway.ctx.list_task_artifacts:
             return
         payloads = await asyncio.to_thread(self._collect_run_artifacts, run_id)
@@ -2939,6 +2944,9 @@ class AgentService:
             # Only structured tool envelopes can carry artifact evidence.
             if not isinstance(envelope, dict):
                 continue
+            from core.agent.artifact_delivery import collect_tool_deliveries
+            for item in collect_tool_deliveries(call, _json.dumps(envelope)):
+                payloads.append(item)
             evidence = envelope.get("evidence")
             if not isinstance(evidence, dict):
                 continue
@@ -2946,7 +2954,7 @@ class AgentService:
             if not uid or uid in seen:
                 continue
             seen.add(uid)
-            for artifact in (mcp_gateway.ctx.list_task_artifacts(uid) or []):
+            for artifact in (mcp_gateway.ctx.list_task_artifacts(uid) or []) if mcp_gateway.ctx.list_task_artifacts else []:
                 path = artifact.get("path") or ""
                 size = 0
                 if path:
@@ -2954,6 +2962,8 @@ class AgentService:
                         size = _os.path.getsize(path)
                     except OSError:
                         size = 0
+                if not path or not _os.path.isfile(path):
+                    continue
                 filename = artifact.get("label") or (path.split("/")[-1] if path else "")
                 media_kind, zip_images = _classify_artifact_media(filename, path)
                 payloads.append({
@@ -2962,7 +2972,8 @@ class AgentService:
                     "kind": artifact.get("kind") or "",
                     "path": path,
                     "size": size,
-                    "task_instance_uid": uid,
+                    "task_instance_uid": uid, "source": "adapter", "verified": True,
+                    "run_id": run_id, "tool_call_id": call.get("tool_call_id"),
                     # 会话内直接显示:媒体类型 + zip 内图片条目清单(最多 20 张,不解压字节)
                     "media_kind": media_kind,
                     "zip_images": zip_images,
@@ -3237,6 +3248,13 @@ class AgentService:
                 if tool_call:
                     db.update_tool_call(tool_call["tool_call_id"], result_json={"text": safe_result_text[:4000]},
                                         status="succeeded", finished_at=_now_iso())
+                if tool_call and result_text.lstrip().startswith("{") and not any(
+                    block.get("isError") for block in _as_dict(data.get("message")).get("content", []) if isinstance(block, dict)
+                ):
+                    from core.agent.artifact_delivery import collect_tool_deliveries
+                    deliveries = await asyncio.to_thread(collect_tool_deliveries, tool_call, result_text, mcp_gateway.ctx.workspace_root)
+                    for artifact in deliveries:
+                        await self.broadcast(session_id, _seq(session_id), "artifact.created", artifact)
                 await self.broadcast(session_id, _seq(session_id), "tool.completed", {
                     "run_id": run_id, "dsh_call_id": call_id, "result": safe_result_text[:2000],
                 })

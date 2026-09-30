@@ -1231,6 +1231,7 @@ def session_resources(runtime_session_id: str) -> dict:
     from pathlib import Path
     artifacts, tabs, image_calls = {}, {}, {}
     active = ""
+    activity = None
     for row in db.list_session_resource_events(runtime_session_id):
         data = json.loads(row["payload_json"])
         if row["event_type"] == "artifact.created":
@@ -1254,6 +1255,8 @@ def session_resources(runtime_session_id: str) -> dict:
                 if tab.get("id"):
                     tabs[tab["id"]] = tab
             active = data.get("active_tab_id") or active
+            if data.get("source") == "agent":
+                activity = {**data, "created_at": row["created_at"]}
     # Office render jobs freeze a new copy in a different job directory. Present
     # those revisions as one document, preferring the latest usable preview.
     documents = {}
@@ -1268,10 +1271,18 @@ def session_resources(runtime_session_id: str) -> dict:
             if rank(previous) > rank(item):
                 continue
         documents[key] = item
+    for item in documents.values():
+        try:
+            path = Path(item.get("path") or "")
+            item["exists"] = path.is_file()
+            if item["exists"]:
+                item["size"] = path.stat().st_size
+        except OSError:
+            item["exists"] = False
     delivered_calls = {item.get("tool_call_id") for item in artifacts.values() if item.get("media_kind") == "image"}
     return {"artifacts": list(reversed(list(documents.values()))),
             "imageGenerations": [value for key, value in image_calls.items() if key in delivered_calls],
-            "tabs": list(tabs.values()), "activeTabId": active}
+            "tabs": list(tabs.values()), "activeTabId": active, "browserActivity": activity}
 
 
 class SessionPageRequest(BaseModel):

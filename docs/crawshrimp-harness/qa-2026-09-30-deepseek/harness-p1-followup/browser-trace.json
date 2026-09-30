@@ -1,0 +1,261 @@
+[
+  {
+    "event": "browser.activity",
+    "payload": {
+      "operation": "observe",
+      "phase": "started",
+      "active_tab_id": "6F46D3E6C2779E163A1DF416331C9B53",
+      "tabs": [
+        {
+          "id": "6F46D3E6C2779E163A1DF416331C9B53",
+          "url": "https://www.iana.org/help/example-domains",
+          "title": "Example Domains"
+        }
+      ],
+      "run_id": "qa-run-p1",
+      "runtime_session_id": "qa-a",
+      "source": "agent",
+      "tool_call_id": "qa-run-p1:browser"
+    }
+  },
+  {
+    "event": "browser.activity",
+    "payload": {
+      "operation": "observe",
+      "phase": "started",
+      "active_tab_id": "6F46D3E6C2779E163A1DF416331C9B53",
+      "tabs": [
+        {
+          "id": "6F46D3E6C2779E163A1DF416331C9B53",
+          "url": "https://www.iana.org/help/example-domains",
+          "title": "Example Domains"
+        }
+      ],
+      "run_id": "qa-run-p1",
+      "runtime_session_id": "qa-a",
+      "source": "agent",
+      "tool_call_id": "qa-run-p1:browser"
+    }
+  },
+  {
+    "operation": "verify",
+    "result": {
+      "ok": true,
+      "status": "ready",
+      "data": {
+        "tab_url": "https://www.iana.org/help/example-domains",
+        "value": {
+          "url": "https://www.iana.org/help/example-domains",
+          "title": "Example Domains"
+        }
+      },
+      "error": null,
+      "evidence": {
+        "task_instance_uid": null,
+        "artifact_ids": []
+      },
+      "verification": {
+        "ok": true,
+        "status": "ready",
+        "data": {
+          "ok": true,
+          "value": true
+        },
+        "error": null,
+        "evidence": {
+          "task_instance_uid": null,
+          "artifact_ids": []
+        }
+      }
+    },
+    "target_id": "6F46D3E6C2779E163A1DF416331C9B53"
+  },
+  {
+    "event": "browser.activity",
+    "payload": {
+      "operation": "observe",
+      "phase": "started",
+      "active_tab_id": "6F46D3E6C2779E163A1DF416331C9B53",
+      "tabs": [
+        {
+          "id": "6F46D3E6C2779E163A1DF416331C9B53",
+          "url": "https://www.iana.org/help/example-domains",
+          "title": "Example Domains"
+        }
+      ],
+      "run_id": "qa-run-p1",
+      "runtime_session_id": "qa-a",
+      "source": "agent",
+      "tool_call_id": "qa-run-p1:browser"
+    }
+  },
+  {
+    "event": "browser.activity",
+    "payload": {
+      "operation": "navigate",
+      "phase": "completed",
+      "active_tab_id": "6F46D3E6C2779E163A1DF416331C9B53",
+      "tabs": [
+        {
+          "id": "6F46D3E6C2779E163A1DF416331C9B53",
+          "url": "",
+          "title": "Example Domains"
+        }
+      ],
+      "run_id": "qa-run-p1",
+      "runtime_session_id": "qa-a",
+      "source": "agent",
+      "tool_call_id": "qa-run-p1:browser"
+    }
+  },
+  {
+    "operation": "navigate",
+    "result": {
+      "ok": true,
+      "status": "ready",
+      "data": {
+        "navigated": true,
+        "url": "https://example.com",
+        "tab_id": "6F46D3E6C2779E163A1DF416331C9B53"
+      },
+      "error": null,
+      "evidence": {
+        "task_instance_uid": null,
+        "artifact_ids": []
+      }
+    },
+    "target_id": "6F46D3E6C2779E163A1DF416331C9B53"
+  },
+  {
+    "event": "browser.activity",
+    "payload": {
+      "operation": "observe",
+      "phase": "started",
+      "active_tab_id": "6F46D3E6C2779E163A1DF416331C9B53",
+      "tabs": [
+        {
+          "id": "6F46D3E6C2779E163A1DF416331C9B53",
+          "url": "https://example.com/",
+          "title": "Example Domain"
+        }
+      ],
+      "run_id": "qa-run-p1",
+      "runtime_session_id": "qa-a",
+      "source": "agent",
+      "tool_call_id": "qa-run-p1:browser"
+    }
+  },
+  {
+    "event": "browser.activity",
+    "payload": {
+      "operation": "click",
+      "phase": "completed",
+      "active_tab_id": "6F46D3E6C2779E163A1DF416331C9B53",
+      "tabs": [
+        {
+          "id": "6F46D3E6C2779E163A1DF416331C9B53",
+          "url": "https://example.com/",
+          "title": "Example Domain"
+        }
+      ],
+      "run_id": "qa-run-p1",
+      "runtime_session_id": "qa-a",
+      "source": "agent",
+      "tool_call_id": "qa-run-p1:browser"
+    }
+  },
+  {
+    "operation": "click",
+    "result": {
+      "ok": true,
+      "status": "ready",
+      "data": {
+        "action": "click",
+        "result": {
+          "clicked": true,
+          "tag": "a",
+          "text": "Learn more"
+        },
+        "tab_id": "6F46D3E6C2779E163A1DF416331C9B53",
+        "tab_url": "https://example.com/"
+      },
+      "error": null,
+      "evidence": {
+        "task_instance_uid": null,
+        "artifact_ids": []
+      }
+    },
+    "target_id": "6F46D3E6C2779E163A1DF416331C9B53"
+  },
+  {
+    "event": "browser.activity",
+    "payload": {
+      "operation": "observe",
+      "phase": "started",
+      "active_tab_id": "6F46D3E6C2779E163A1DF416331C9B53",
+      "tabs": [
+        {
+          "id": "6F46D3E6C2779E163A1DF416331C9B53",
+          "url": "https://www.iana.org/help/example-domains",
+          "title": "Example Domains"
+        }
+      ],
+      "run_id": "qa-run-p1",
+      "runtime_session_id": "qa-a",
+      "source": "agent",
+      "tool_call_id": "qa-run-p1:browser"
+    }
+  },
+  {
+    "event": "browser.activity",
+    "payload": {
+      "operation": "observe",
+      "phase": "started",
+      "active_tab_id": "6F46D3E6C2779E163A1DF416331C9B53",
+      "tabs": [
+        {
+          "id": "6F46D3E6C2779E163A1DF416331C9B53",
+          "url": "https://www.iana.org/help/example-domains",
+          "title": "Example Domains"
+        }
+      ],
+      "run_id": "qa-run-p1",
+      "runtime_session_id": "qa-a",
+      "source": "agent",
+      "tool_call_id": "qa-run-p1:browser"
+    }
+  },
+  {
+    "operation": "verify",
+    "result": {
+      "ok": true,
+      "status": "ready",
+      "data": {
+        "tab_url": "https://www.iana.org/help/example-domains",
+        "value": {
+          "url": "https://www.iana.org/help/example-domains",
+          "title": "Example Domains"
+        }
+      },
+      "error": null,
+      "evidence": {
+        "task_instance_uid": null,
+        "artifact_ids": []
+      },
+      "verification": {
+        "ok": true,
+        "status": "ready",
+        "data": {
+          "ok": true,
+          "value": true
+        },
+        "error": null,
+        "evidence": {
+          "task_instance_uid": null,
+          "artifact_ids": []
+        }
+      }
+    },
+    "target_id": "6F46D3E6C2779E163A1DF416331C9B53"
+  }
+]

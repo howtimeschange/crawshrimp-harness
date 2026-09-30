@@ -1,0 +1,307 @@
+{
+  "runs": [
+    {
+      "run_id": "run-web-58de2fb7ec83",
+      "status": "completed",
+      "model_id": "deepseek-flash",
+      "provider_id": "crawshrimp-deepseek-official",
+      "error_code": null,
+      "created_at": "2026-09-30T17:19:34.335927",
+      "finished_at": "2026-09-30T09:20:51.502446+00:00"
+    }
+  ],
+  "tool_calls": [
+    {
+      "tool_name": "mcp__crawshrimp__office_runtime_info",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__skill_list",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "bash",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__skill_read",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__skill_read",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__skill_read",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__skill_read",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "todo_write",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "bash",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "write",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "write",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "write",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__office_run",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "bash",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__office_job",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__office_validate",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "todo_write",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__office_render",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__office_job",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "bash",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__office_job",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__office_preview_read",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__office_review_record",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__office_preview_read",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__office_review_record",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__office_deliver",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "mcp__crawshrimp__artifact_present",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "tool_name": "todo_write",
+      "status": "succeeded",
+      "error_code": null
+    }
+  ],
+  "artifact_events": 19,
+  "files": [
+    {
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/outputs/office/1d966744a6fce0bc910466ed/6008d30b517945bf9363f1eabaded7be/editable/连续阅读.docx",
+      "size": 38942,
+      "sha256": "70a41dfbc442d03bfb45c50e780fb61d7aaf5ef5a95efd8f138f75bc85e4a1f8",
+      "source": "office",
+      "office_delivery": null,
+      "office_visual": null
+    },
+    {
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/outputs/office/1d966744a6fce0bc910466ed/a9d4016d64b846c3a34a64aafe213473/editable/连续阅读.docx",
+      "size": 38942,
+      "sha256": "70a41dfbc442d03bfb45c50e780fb61d7aaf5ef5a95efd8f138f75bc85e4a1f8",
+      "source": "office",
+      "office_delivery": null,
+      "office_visual": {
+        "status": "not_run",
+        "reviewed": [],
+        "total": 2
+      }
+    },
+    {
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/outputs/office/1d966744a6fce0bc910466ed/a9d4016d64b846c3a34a64aafe213473/editable/连续阅读.docx",
+      "size": 38942,
+      "sha256": "70a41dfbc442d03bfb45c50e780fb61d7aaf5ef5a95efd8f138f75bc85e4a1f8",
+      "source": "office",
+      "office_delivery": null,
+      "office_visual": {
+        "status": "partial",
+        "reviewed": [
+          1
+        ],
+        "total": 2
+      }
+    },
+    {
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/outputs/office/1d966744a6fce0bc910466ed/a9d4016d64b846c3a34a64aafe213473/editable/连续阅读.docx",
+      "size": 38942,
+      "sha256": "70a41dfbc442d03bfb45c50e780fb61d7aaf5ef5a95efd8f138f75bc85e4a1f8",
+      "source": "office",
+      "office_delivery": null,
+      "office_visual": {
+        "status": "passed",
+        "reviewed": [
+          1,
+          2
+        ],
+        "total": 2
+      }
+    },
+    {
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/outputs/office/1d966744a6fce0bc910466ed/a9d4016d64b846c3a34a64aafe213473/editable/连续阅读.docx",
+      "size": 38942,
+      "sha256": "70a41dfbc442d03bfb45c50e780fb61d7aaf5ef5a95efd8f138f75bc85e4a1f8",
+      "source": "office",
+      "office_delivery": {
+        "status": "final",
+        "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/outputs/office/1d966744a6fce0bc910466ed/a9d4016d64b846c3a34a64aafe213473/editable/连续阅读.docx",
+        "sha256": "70a41dfbc442d03bfb45c50e780fb61d7aaf5ef5a95efd8f138f75bc85e4a1f8",
+        "requires_file_return": false
+      },
+      "office_visual": {
+        "status": "passed",
+        "reviewed": [
+          1,
+          2
+        ],
+        "total": 2
+      }
+    },
+    {
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/侧栏验收/销售预览.html",
+      "size": 2744,
+      "sha256": "6c70fbe33c7c33cd1880606446d3d6d7256d5eb0e84ea60a112475cb84936245",
+      "source": "shell",
+      "office_delivery": null,
+      "office_visual": null
+    },
+    {
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/侧栏验收/销售摘要.md",
+      "size": 472,
+      "sha256": "47ed0f320e31f0b5f60a78e435b5f1c830c09e6d72a3a7ca6176a57215084be0",
+      "source": "shell",
+      "office_delivery": null,
+      "office_visual": null
+    },
+    {
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/侧栏验收/销售明细.csv",
+      "size": 73,
+      "sha256": "fc6b99c062d084a81ddcd29bb78c4935499a9be791afc683f6442087f099a103",
+      "source": "shell",
+      "office_delivery": null,
+      "office_visual": null
+    },
+    {
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/outputs/office/1d966744a6fce0bc910466ed/a9d4016d64b846c3a34a64aafe213473/editable/连续阅读.docx",
+      "size": 38942,
+      "sha256": "70a41dfbc442d03bfb45c50e780fb61d7aaf5ef5a95efd8f138f75bc85e4a1f8",
+      "source": "shell",
+      "office_delivery": null,
+      "office_visual": null
+    },
+    {
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/outputs/office/1d966744a6fce0bc910466ed/a9d4016d64b846c3a34a64aafe213473/preview/连续阅读.pdf",
+      "size": 67202,
+      "sha256": "96cab1751665dfd2337652551742022bfef4edafc37d88156a9074ae8b1b1035",
+      "source": "shell",
+      "office_delivery": null,
+      "office_visual": null
+    },
+    {
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/侧栏验收/销售预览.html",
+      "size": 2744,
+      "sha256": "6c70fbe33c7c33cd1880606446d3d6d7256d5eb0e84ea60a112475cb84936245",
+      "source": "shell",
+      "office_delivery": null,
+      "office_visual": null
+    },
+    {
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/侧栏验收/销售摘要.md",
+      "size": 472,
+      "sha256": "47ed0f320e31f0b5f60a78e435b5f1c830c09e6d72a3a7ca6176a57215084be0",
+      "source": "shell",
+      "office_delivery": null,
+      "office_visual": null
+    },
+    {
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/侧栏验收/销售明细.csv",
+      "size": 73,
+      "sha256": "fc6b99c062d084a81ddcd29bb78c4935499a9be791afc683f6442087f099a103",
+      "source": "shell",
+      "office_delivery": null,
+      "office_visual": null
+    },
+    {
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/outputs/office/1d966744a6fce0bc910466ed/a9d4016d64b846c3a34a64aafe213473/editable/连续阅读.docx",
+      "size": 38942,
+      "sha256": "70a41dfbc442d03bfb45c50e780fb61d7aaf5ef5a95efd8f138f75bc85e4a1f8",
+      "source": "shell",
+      "office_delivery": null,
+      "office_visual": null
+    },
+    {
+      "path": "/private/tmp/harness-real-dev-20260930/data/agent/workspace/outputs/office/1d966744a6fce0bc910466ed/a9d4016d64b846c3a34a64aafe213473/preview/连续阅读.pdf",
+      "size": 67202,
+      "sha256": "96cab1751665dfd2337652551742022bfef4edafc37d88156a9074ae8b1b1035",
+      "source": "shell",
+      "office_delivery": null,
+      "office_visual": null
+    }
+  ]
+}

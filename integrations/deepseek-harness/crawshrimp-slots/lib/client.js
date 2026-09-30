@@ -908,7 +908,7 @@ window.__ModuleLoader__.load({
         img.alt = artifact.filename || '生成图片'
         img.decoding = 'async'
         preview.appendChild(img)
-        preview.addEventListener('click', () => previewArchiveImage(urls.file, artifact.filename))
+        preview.addEventListener('click', open)
         const actions = document.createElement('div')
         actions.className = 'cs-image-actions'
         for (const [label, glyph, action] of [
@@ -2501,6 +2501,9 @@ window.__ModuleLoader__.load({
 
     function apply(ctx) {
       crawshrimpContext = ctx
+      const openResource = (path, runtimeSessionId) => postToShell({ __crawshrimp: 'open-file', path, runtimeSessionId })
+      window.__crawshrimpOpenResource = openResource
+      ctx.on('dispose', () => { if (window.__crawshrimpOpenResource === openResource) delete window.__crawshrimpOpenResource })
       attachmentBridgeDisposed = false
       ctx.on('dispose', () => {
         attachmentBridgeDisposed = true

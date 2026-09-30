@@ -1707,6 +1707,26 @@ async def tool_fs_write(path: str, content: str) -> dict:
                 "message": "已写入并读回确认内容一致(经授权)"})
 
 
+def tool_artifact_present(paths: list[str]) -> dict:
+    """Register existing output files with provenance; performs no file writes."""
+    guard = _require_run()
+    if guard:
+        return guard
+    from core.agent.artifact_delivery import verified_artifact
+    artifacts = []
+    missing = []
+    for path in paths[:100]:
+        item = verified_artifact(path, source="shell", run_id=_run_id_or_none() or "",
+                                 tool_call_id=ctx.current_tool_call_id, workspace=ctx.workspace_root)
+        if item:
+            artifacts.append(item)
+            if ctx.emit_event:
+                ctx.emit_event("artifact.created", item)
+        else:
+            missing.append(path)
+    return _ok({"artifacts": artifacts, "missing": missing})
+
+
 def _decode_subprocess_output(value) -> str:
     if value is None:
         return ""
@@ -2425,7 +2445,7 @@ def _browser_tab() -> Optional[dict]:
     return None
 
 
-def _signal_browser_activity(tab: Optional[dict]) -> None:
+def _signal_browser_activity(tab: Optional[dict], operation: str = "observe", phase: str = "started") -> None:
     """只广播本 run grant 绑定的页面，禁止把其他会话的全局 tab 泄入窗口集合。"""
     if not ctx.emit_event or not tab:
         return
@@ -2435,6 +2455,7 @@ def _signal_browser_activity(tab: Optional[dict]) -> None:
         "title": str(tab.get("title") or ""),
     }]
     ctx.emit_event("browser.activity", {
+        "operation": operation, "phase": phase,
         "active_tab_id": str(tab.get("id") or ""),
         "tabs": tabs_snapshot,
     })
@@ -2626,10 +2647,16 @@ async def tool_browser_act(action: str, selector: str = "", text: str = "",
         if isinstance(result, dict) and result.get("credentialBlocked"):
             return _rejected("rejected", "INVALID_PARAMETERS",
                              "检测到凭证类输入框;仅在用户明确授权并设置 credential_authorized=true 后才可由智能体填写")
-        return _ok({"action": action, "result": result, "tab_url": (tab or {}).get("url", "")},
+        try:
+            current = await asyncio.to_thread(_current_cdp_tab_by_id, str(tab.get("id") or "")) if ctx.emit_event else None
+        except Exception:
+            current = None
+        _signal_browser_activity(current or tab, action, "completed")
+        return _ok({"action": action, "result": result, "tab_id": str(tab.get("id") or ""), "tab_url": (current or tab).get("url", "")},
                    evidence={"task_instance_uid": None, "artifact_ids": []})
     except Exception as exc:  # noqa: BLE001
-        return _failed("CONTEXT_REQUIRED", f"act 失败: {exc}")
+        _signal_browser_activity(tab, action, "uncertain")
+        return _failed("BROWSER_ACTION_UNCERTAIN", f"操作结果待核实；未自动重放: {exc}")
 
 
 async def tool_browser_verify(expression: str) -> dict:
@@ -2669,7 +2696,7 @@ async def tool_browser_navigate(url: str, new_tab: bool = False) -> dict:
             else:
                 ctx.grant = grant
             db.update_session(run["session_id"], browser_tab_id=tab_id)
-            _signal_browser_activity(tab)
+            _signal_browser_activity(tab, "navigate", "completed")
             return _ok({"navigated": True, "url": target, "tab_id": tab_id, "new_tab": True})
         except Exception as exc:
             return _browser_operation_failure("new_tab", exc)
@@ -2678,6 +2705,11 @@ async def tool_browser_navigate(url: str, new_tab: bool = False) -> dict:
         return guard
     try:
         await _browser_navigate_with_retry(client, tab, target)
+        try:
+            current = await asyncio.to_thread(_current_cdp_tab_by_id, str(tab.get("id") or "")) if ctx.emit_event else None
+        except Exception:
+            current = None
+        _signal_browser_activity(current or {**tab, "url": target}, "navigate", "completed")
         return _ok({"navigated": True, "url": target, "tab_id": str(tab.get("id") or "")},
                    evidence={"task_instance_uid": None, "artifact_ids": []})
     except Exception as exc:
@@ -2921,7 +2953,7 @@ EXPECTED_TOOLS = [
     "office_runtime_info", "office_run", "office_render", "office_job", "office_validate",
     "office_preview_read", "office_review_record", "office_deliver",
     "attachment_read",
-    "fs_read", "fs_list", "fs_write", "fs_exec",
+    "fs_read", "fs_list", "fs_write", "fs_exec", "artifact_present",
     "image_models", "image_generate", "image_assets", "video_models", "video_generate", "video_assets",
     "repo_install", "repo_update", "repo_list", "repo_learn",
     "automation_list", "automation_get", "automation_create", "automation_update",
@@ -3051,6 +3083,7 @@ def create_agent_mcp_server() -> MCPServer:
     mcp.add_tool(tool_attachment_read, name="attachment_read", description="读取用户上传的附件(文本/表格预览;图片返回元数据)")
     mcp.add_tool(tool_fs_read, name="fs_read", description="读取本机任意文本文件(用户已授权智能体全盘读取;大文件/二进制受限)")
     mcp.add_tool(tool_fs_list, name="fs_list", description="列出本机目录内容(名称/类型/大小)")
+    mcp.add_tool(tool_artifact_present, name="artifact_present", description="显式交付已生成文件；shell/bash 完成后传绝对路径列表，确认文件存在并登记会话产物。不存在的文件不会登记。")
     mcp.add_tool(tool_fs_write, name="fs_write", description="写本机文件(全面开放;写操作经审批卡授权,审计保留)")
     mcp.add_tool(tool_fs_exec, name="fs_exec", description="执行本机命令(用户已授权全局访问;经审批卡授权,审计保留)")
 

@@ -1,0 +1,8 @@
+{
+  "qa_server_pid": 67993,
+  "vite_pid": 64361,
+  "processes_stopped": true,
+  "created_browser_target_cleanup": "QA server shutdown awaits close_tab_async for owned_tab only",
+  "test_files": "retained in isolated temporary directory",
+  "source_components_only": true
+}

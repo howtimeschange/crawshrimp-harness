@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { liveSessionBrowserPages, isClosedBrowserPageError } from './renderer/utils/sessionBrowserPages.js'
+import { resourceId, restoreWorkspace } from './renderer/utils/resourceWorkspace.js'
 import { documentKind } from './renderer/utils/documentPreview.js'
 import { formatArtifactAge, sortArtifactsByUpdated, isOfficeDocument } from './renderer/utils/artifactTime.js'
 
@@ -13,7 +14,7 @@ function harness({ sessionId = 'a', storage = new Map() } = {}) {
   const pointerEvents = new Map()
   const props = { sessionId, conversationPhase: 'active' }
   const context = {
-    formatArtifactAge, sortArtifactsByUpdated, isOfficeDocument, documentKind, liveSessionBrowserPages, isClosedBrowserPageError,
+    resourceId, restoreWorkspace, formatArtifactAge, sortArtifactsByUpdated, isOfficeDocument, documentKind, liveSessionBrowserPages, isClosedBrowserPageError,
     defineAsyncComponent: () => ({}),
     document: { getElementById: () => null },
     nextTick: fn => Promise.resolve().then(fn),
@@ -27,7 +28,7 @@ function harness({ sessionId = 'a', storage = new Map() } = {}) {
       listAgentBrowserTabs: async () => ({ ok: true, tabs: [{ id: 'one' }, { id: 'two' }] }),
     } },
   }
-  vm.runInNewContext(script + '\nglobalThis.h = { syncSessionPanel, refresh, opened, selection, artifacts, tabs, unseen, openBrowser, back, width, adjustWidth, miniTab, browserReady, resize, onViewportResize, togglePanel, compactOpen, searching, query, toggleSearch, closeSearch, searchInput, searchButton, filteredTabs, filteredArtifacts };', context)
+  vm.runInNewContext(script + '\nglobalThis.h = { dragOverResource, dropTarget, clearTabDrag, activePaneTab, switchPane, changeBrowserLayout, collapseBrowser, resizeSplit, startTabDrag, dropResource, tabArrow, splitRatio, draggedTab, retainedTabs, syncSessionPanel, refresh, workTabs, activeIds, split, focusedPane, effectiveSplit, openResource, closeResource, toggleSplit, followBrowserActivity, opened, selection, artifacts, tabs, unseen, openBrowser, back, width, adjustWidth, miniTab, browserReady, resize, onViewportResize, togglePanel, compactOpen, searching, query, toggleSearch, closeSearch, searchInput, searchButton, filteredTabs, filteredArtifacts };', context)
   return { ...context.h, props, requests, pointerEvents, viewport: context.window, storage,
     enterSession(id, _old, phase = id ? 'active' : 'hero') { props.sessionId = id; props.conversationPhase = phase; context.h.syncSessionPanel() },
   }
@@ -199,41 +200,24 @@ test('half-screen dragging keeps pointer capture across the chat iframe and clea
 })
 
 
-test('shrinking to a small window collapses resources, and growing does not force them open', async () => {
-  const h = harness()
-  h.tabs.value = [{ id: 'one' }, { id: 'two' }]; await h.openBrowser('one')
-  h.viewport.innerWidth = 1100
-  h.onViewportResize()
-  assert.equal(h.opened.value, false)
-  assert.equal(h.selection.value.id, 'one')
-  h.viewport.innerWidth = 1600
-  h.onViewportResize()
-  assert.equal(h.opened.value, false)
-  h.togglePanel()
-  assert.equal(h.opened.value, true)
+test('shrinking and growing retain the selected resource', async () => {
+  const h = harness(); h.tabs.value = [{ id: 'one' }, { id: 'two' }]; await h.openBrowser('one')
+  h.viewport.innerWidth = 1100; h.onViewportResize(); assert.equal(h.opened.value, true)
+  h.viewport.innerWidth = 1600; h.onViewportResize(); assert.equal(h.opened.value, true)
   assert.equal(h.selection.value.id, 'one')
 })
-
-test('short windows collapse too, while manual reopening at the same size stays available', () => {
-  const h = harness()
-  h.viewport.innerHeight = 580
-  h.onViewportResize()
-  assert.equal(h.opened.value, false)
-  h.togglePanel()
-  h.onViewportResize()
-  assert.equal(h.opened.value, true)
-  h.viewport.innerHeight = 560
-  h.onViewportResize()
-  assert.equal(h.opened.value, false)
+test('short windows preserve explicit collapse choices', () => {
+  const h = harness(); h.viewport.innerHeight = 580; h.onViewportResize()
+  assert.equal(h.opened.value, false); h.togglePanel(); h.onViewportResize(); assert.equal(h.opened.value, true)
+  h.viewport.innerHeight = 560; h.onViewportResize(); assert.equal(h.opened.value, true)
 })
 
-
-test('switching browser presentation unmounts the old stream before starting the replacement', async () => {
+test('returning to inventory retains mounted browser tabs; visibility owns the stream', async () => {
   const h = harness()
   h.tabs.value = [{ id: 'one' }, { id: 'two' }]; await h.openBrowser('one')
   assert.equal(h.browserReady.value, true)
   h.back()
-  assert.equal(h.browserReady.value, false)
+  assert.equal(h.workTabs.value.length, 1)
   await Promise.resolve()
   assert.equal(h.browserReady.value, true)
 })
@@ -283,4 +267,101 @@ test('large resource collections remain fully searchable by title, path and URL'
   h.closeSearch()
   assert.equal(h.filteredTabs.value.length, 24)
   assert.equal(h.filteredArtifacts.value.length, 120)
+})
+
+
+test('same filename at different paths stays separate; close keeps other pane and restore retains modes', () => {
+  const h = harness(); h.enterSession('a')
+  h.openResource({ path: '/中文/a/report.csv', filename: 'report.csv' })
+  h.openResource({ path: '/中文/b/report.csv', filename: 'report.csv' })
+  assert.equal(h.workTabs.value.length, 2)
+  h.toggleSplit(); assert.equal(h.effectiveSplit.value, true)
+  h.workTabs.value[0].mode = 'source'; h.workTabs.value[1].zoom = 2
+  h.enterSession('b'); h.enterSession('a')
+  assert.equal(h.workTabs.value.length, 2); assert.equal(h.split.value, true)
+  assert.equal(h.workTabs.value[0].mode, 'source')
+  h.closeResource(h.workTabs.value[1]); assert.equal(h.workTabs.value.length, 1)
+  assert.equal(h.selection.value.path, '/中文/a/report.csv')
+})
+test('narrow split degrades without discarding tabs or selected pane', () => {
+  const h = harness(); h.enterSession('a')
+  h.openResource({ path: '/a.md', filename: 'a.md' }); h.openResource({ path: '/b.md', filename: 'b.md' }); h.toggleSplit()
+  h.viewport.innerWidth = 900; h.onViewportResize()
+  assert.equal(h.opened.value, true); assert.equal(h.effectiveSplit.value, false); assert.equal(h.workTabs.value.length, 2)
+  assert.equal(h.focusedPane.value, 1)
+})
+test('agent activity follows exact target and excludes other sessions without selecting or replaying actions', () => {
+  const h = harness(); h.enterSession('a')
+  h.followBrowserActivity({ source: 'agent', runtime_session_id: 'b', active_tab_id: 'private', tabs: [{ id: 'private' }] })
+  assert.equal(h.workTabs.value.length, 0)
+  h.followBrowserActivity({ source: 'agent', runtime_session_id: 'a', run_id: 'run', tool_call_id: 'call', active_tab_id: 'two', tabs: [{ id: 'two', url: 'https://example.com' }] })
+  assert.equal(h.selection.value.id, 'two'); assert.equal(h.requests.length, 1) // Only initial resource read.
+})
+
+test('polling the same browser event cannot reopen a preview after the user returns to resources', () => {
+  const h = harness(); h.enterSession('a')
+  const event = { source:'agent', runtime_session_id:'a', run_id:'r', tool_call_id:'c', operation:'click', phase:'completed', active_tab_id:'two', tabs:[{id:'two'}] }
+  h.followBrowserActivity(event); h.back()
+  h.followBrowserActivity({...event, created_at:'2026-09-30T14:00:00'})
+  assert.equal(h.selection.value, null)
+})
+
+
+test('drag moves a tab across panes without replacing its retained renderer and restores ratio', () => {
+  const h = harness(); h.enterSession('a')
+  h.openResource({path:'/a.md',filename:'a.md'}); h.openResource({path:'/b.csv',filename:'b.csv'})
+  h.toggleSplit()
+  const a = h.workTabs.value.find(t => t.path === '/a.md')
+  const b = h.workTabs.value.find(t => t.path === '/b.csv')
+  h.draggedTab.value = a.key; h.dropResource({},1,b)
+  assert.equal(a.pane,1); assert.equal(h.activeIds.value[0],''); assert.equal(h.activeIds.value[1],a.key)
+  assert.equal(h.retainedTabs.value.find(t => t.key === a.key),a)
+  assert.deepEqual(Array.from(h.workTabs.value,t=>t.path),['/a.md','/b.csv'])
+  h.tabArrow({altKey:true},a,-1)
+  assert.equal(a.pane,0); assert.equal(h.activeIds.value[1],b.key)
+  h.splitRatio.value=.64; h.enterSession('b'); h.enterSession('a')
+  assert.equal(h.splitRatio.value,.64)
+})
+
+test('foreign drops do not add resources or corrupt active tabs', () => {
+  const h = harness(); h.enterSession('a'); h.openResource({path:'/a.md',filename:'a.md'})
+  h.draggedTab.value = 'foreign'; h.dropResource({},1)
+  assert.equal(h.workTabs.value.length,1); assert.equal(h.workTabs.value[0].pane,0)
+})
+
+
+test('drop insertion supports both edges and clears stale drags on session switch', () => {
+  const h = harness(); h.enterSession('a')
+  for (const name of ['a','b','c']) h.openResource({path:`/${name}.md`,filename:`${name}.md`})
+  const [a,b,c] = h.workTabs.value
+  h.draggedTab.value = a.key; h.dropTarget.value = {pane:0,key:b.key,after:true}; h.dropResource({},0,b)
+  assert.deepEqual(Array.from(h.workTabs.value,t=>t.path),['/b.md','/a.md','/c.md'])
+  h.draggedTab.value = c.key; h.dropTarget.value = {pane:0,key:b.key,after:false}; h.dropResource({},0,b)
+  assert.deepEqual(Array.from(h.workTabs.value,t=>t.path),['/c.md','/b.md','/a.md'])
+  h.draggedTab.value = a.key; h.enterSession('b'); assert.equal(h.draggedTab.value,null); assert.equal(h.dropTarget.value,null)
+})
+test('drag feedback accepts only a local tab and identifies the insertion edge', () => {
+  const h = harness(); h.enterSession('a'); h.openResource({path:'/a.md',filename:'a.md'})
+  const item=h.workTabs.value[0]; let prevented=0
+  const event={preventDefault:()=>prevented++,clientX:80,dataTransfer:{},currentTarget:{getBoundingClientRect:()=>({left:0,width:100}),closest:()=>null}}
+  h.dragOverResource(event,1,item); assert.equal(prevented,0)
+  h.draggedTab.value=item.key; h.dragOverResource(event,1,item)
+  assert.equal(prevented,1); assert.equal(h.dropTarget.value.after,true); assert.equal(event.dataTransfer.dropEffect,'move')
+})
+test('floating browser persists per session, excludes duplicate mini and agent updates retain its layout', () => {
+  const h=harness();h.enterSession('a');h.tabs.value=[{id:'one',url:'https://example.com'}]
+  h.openResource({...h.tabs.value[0],kind:'browser'}); const tab=h.workTabs.value[0]
+  h.changeBrowserLayout(tab,'floating');assert.equal(h.selection.value,null);assert.equal(h.miniTab.value,undefined)
+  h.followBrowserActivity({source:'agent',runtime_session_id:'a',active_tab_id:'one',tabs:[{id:'one',url:'https://iana.org'}],operation:'click',phase:'completed'})
+  assert.equal(tab.layout,'floating');assert.equal(tab.url,'https://iana.org');assert.equal(h.selection.value,null)
+  h.enterSession('b');h.enterSession('a');assert.equal(h.workTabs.value[0].layout,'floating')
+  h.changeBrowserLayout(h.workTabs.value[0],'docked');assert.equal(h.selection.value.layout,'docked')
+  h.collapseBrowser(h.workTabs.value[0]);assert.equal(h.selection.value,null)
+})
+test('split resize cleans global handlers on cancellation and clamps ratio', () => {
+  const h=harness(); let captured=false
+  const target={parentElement:{getBoundingClientRect:()=>({left:100,width:800})},setPointerCapture:()=>captured=true,hasPointerCapture:()=>captured,releasePointerCapture:()=>captured=false}
+  h.resizeSplit({button:0,pointerId:1,currentTarget:target,preventDefault(){}})
+  h.pointerEvents.get('pointermove')({clientX:850});assert.equal(h.splitRatio.value,.7)
+  h.pointerEvents.get('pointercancel')();assert.equal(captured,false);assert.equal(h.pointerEvents.size,0)
 })

@@ -8,7 +8,7 @@ export function documentKind(name = '') {
   return ''
 }
 export async function readDocumentText(url, signal) {
-  const response = await fetch(url, { signal, headers: { Range: `bytes=0-${TEXT_LIMIT - 1}` } })
+  const response = await fetch(url, { signal, cache: 'no-store', headers: { Range: `bytes=0-${TEXT_LIMIT - 1}` } })
   if (!response.ok) throw new Error('文件不存在或无法读取')
   const reader = response.body.getReader(), chunks = []
   let size = 0, overflow = false

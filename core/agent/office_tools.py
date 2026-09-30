@@ -42,7 +42,7 @@ def publish(data: dict) -> list[str]:
             continue
         payload = {"artifact_id": f"office-{data['job_id']}-{path.name}", "filename": path.name,
                    "kind": "file", "path": str(path), "size": path.stat().st_size,
-                   "media_kind": "office", "tool_call_id": gw.ctx.current_tool_call_id,
+                   "media_kind": "office", "source": "office", "verified": True, "tool_call_id": gw.ctx.current_tool_call_id,
                    "office": {"job_id": data["job_id"], "revision": result.get("revision"),
                               "pdf": result.get("pdf"), "pages": result.get("pages", []),
                               "validation": result.get("validation"), "visual": result.get("visual"),

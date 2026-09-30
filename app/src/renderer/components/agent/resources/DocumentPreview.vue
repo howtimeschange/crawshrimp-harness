@@ -1,13 +1,12 @@
 <template>
   <div class="document-preview">
-    <PdfPreview v-if="kind === 'pdf'" :path="path" />
+    <PdfPreview :active="active" v-if="kind === 'pdf'" :key="revision" :path="path" />
     <template v-else>
       <p v-if="loading" role="status">正在加载文档…</p>
       <p v-else-if="error" role="alert">{{ error }}，可使用系统打开。</p>
       <template v-else>
         <p v-if="truncated" class="preview-notice">仅预览前 256 KB，完整内容请使用系统打开。</p>
         <template v-if="kind === 'html' || kind === 'markdown'">
-          <p class="preview-notice">{{ kind === 'html' ? 'HTML 静态预览' : 'Markdown 预览' }} · 脚本、外部资源与链接跳转已禁用</p>
           <p v-if="warnings.length" class="preview-notice">{{ warnings.join('；') }}</p>
           <iframe :class="{ 'markdown-preview-frame': kind === 'markdown' }" title="文档静态预览" sandbox="" referrerpolicy="no-referrer" :srcdoc="srcdoc"></iframe>
         </template>
@@ -27,7 +26,7 @@ import hljs from 'highlight.js/lib/common'
 import PdfPreview from './PdfPreview.vue'
 import { readDocumentText } from '../../../utils/documentPreview.js'
 import { resourceLoader, prepareStaticHtml } from '../../../utils/staticPreview.js'
-const props = defineProps({ path: String, filename: String, kind: String, revision: [String, Number] })
+const props = defineProps({ active: {type:Boolean,default:true}, path: String, filename: String, kind: String, revision: [String, Number] })
 const loading = ref(false), error = ref(''), text = ref(''), truncated = ref(false), srcdoc = ref(''), warnings = ref([]), copied = ref(false)
 const aliases = { py: 'python', js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript', md: 'markdown', yml: 'yaml', sh: 'bash' }
 const language = computed(() => { const ext = props.filename?.split('.').pop().toLowerCase(); const lang = aliases[ext] || ext; return hljs.getLanguage(lang || '') ? lang : '' })

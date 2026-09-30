@@ -64,7 +64,7 @@ export async function prepareStaticHtml(text, load, signal, options = {}) {
       continue
     }
     if (el.tagName === 'STYLE') el.textContent = await safeCss(el.textContent, load, '', warnings)
-    if (el.hasAttribute('style')) el.setAttribute('style', await safeCss(`x{${el.getAttribute('style')}}`, load, '', warnings).replace(/^x\{|\}$/g, ''))
+    if (el.hasAttribute('style')) el.setAttribute('style', (await safeCss(`x{${el.getAttribute('style')}}`, load, '', warnings)).replace(/^x\{|\}$/g, ''))
     if (el.tagName === 'IMG') {
       try { const resource = await load(el.getAttribute('src')); if (!resource.mime.startsWith('image/')) throw new Error(); el.setAttribute('src', resource.url) }
       catch { el.removeAttribute('src'); warnings.add('部分图片缺失或被阻止') }
@@ -80,5 +80,5 @@ export async function prepareStaticHtml(text, load, signal, options = {}) {
 @media(prefers-color-scheme:dark){:root{--paper:#1c1c24;--ink:#e7e7ef;--muted:#a1a1b1;--code:#242430;--line:#353541;--link:#90b5ff}}
 html,body{background:var(--paper);color:var(--ink)}pre,code{background:var(--code);border-radius:6px}pre{border:1px solid var(--line)}:not(pre)>code{padding:2px 5px}td,th{border-color:var(--line)}th{background:var(--code)}a{color:var(--link)}blockquote{margin:16px 0;padding-left:14px;border-left:3px solid var(--line);color:var(--muted)}hr{border:0;border-top:1px solid var(--line)}
 ` : ''
-  return { srcdoc: `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>body{margin:20px;overflow-wrap:anywhere;font:14px/1.65 system-ui;color:#222;background:#fff}img{max-width:100%;height:auto}pre{overflow:auto;background:#f5f5f5;padding:12px}table{border-collapse:collapse}td,th{border:1px solid #ddd;padding:6px}a{color:#5265ae}${markdownTheme}</style></head><body>${container.innerHTML}</body></html>`, warnings: [...warnings] }
+  return { srcdoc: `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>body{margin:20px;overflow-wrap:anywhere;font:14px/1.65 system-ui;color:#222;background:#fff}img{max-width:100%;height:auto}pre{overflow:auto;background:#f5f5f5;padding:12px}table{border-collapse:collapse;display:block;max-width:100%;overflow-x:auto}td,th{border:1px solid #ddd;padding:6px}a{color:#5265ae}${markdownTheme}</style></head><body>${container.innerHTML}</body></html>`, warnings: [...warnings] }
 }

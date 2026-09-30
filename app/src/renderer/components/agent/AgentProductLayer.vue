@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visibleCards.length" class="agent-product-layer">
+  <div v-if="visibleCards.length" class="agent-product-layer" :class="{ 'beside-resources': resourceCompact }">
     <div v-for="card in visibleCards" :key="card.uid" class="product-card" :class="card.kind">
       <!-- 任务卡 -->
       <template v-if="card.kind === 'task'">
@@ -13,21 +13,6 @@
         <div v-if="card.step" class="product-card-meta">当前步骤:{{ card.step }}</div>
         <div class="product-card-actions">
           <button class="product-btn" type="button" @click="openTask(card)">在任务中心打开</button>
-        </div>
-      </template>
-
-      <!-- 产物卡 -->
-      <template v-else-if="card.kind === 'artifact'">
-        <div class="product-card-head">
-          <span class="product-card-icon">📎</span>
-          <span class="product-card-title">任务产物</span>
-          <button class="product-card-close" type="button" title="关闭" @click="dismiss(card)">×</button>
-        </div>
-        <div class="product-card-name">{{ card.filename }}</div>
-        <div class="product-card-meta">{{ formatSize(card.size) }} · {{ card.taskInstanceUid }}</div>
-        <div class="product-card-actions">
-          <button class="product-btn" type="button" @click="openArtifact(card)">打开</button>
-          <button class="product-btn" type="button" @click="revealArtifact(card)">定位</button>
         </div>
       </template>
 
@@ -55,6 +40,7 @@ const OUTPUT_BUDGET_ERROR_CODE = 'OUTPUT_BUDGET_REACHED'
 const OUTPUT_BUDGET_NOTICE = '内容较长，已自动分段输出并达到单轮安全上限。当前内容已保留；如需更多内容，可缩小范围或发送“继续”。'
 
 const props = defineProps({
+  resourceCompact: { type: Boolean, default: false },
   activeRuntimeSessionId: { type: String, default: '' },
 })
 
@@ -62,7 +48,7 @@ const emit = defineEmits(['open-task-instance', 'browser-auto-open', 'browser-op
 
 const cards = ref([])
 const visibleCards = computed(() => cards.value.filter((card) =>
-  card.kind !== 'artifact' && (card.global || (props.activeRuntimeSessionId && card.runtimeSessionId === props.activeRuntimeSessionId))
+  card.global || (props.activeRuntimeSessionId && card.runtimeSessionId === props.activeRuntimeSessionId)
 ).slice(-4))
 let stopEvents = null
 let taskPollTimer = null
@@ -98,21 +84,6 @@ async function pollTaskStatuses() {
       card.status = result.status || card.status
       card.step = result.current_step || ''
       card.title = result.title || card.title || ''
-      if (card.status === 'completed' && Array.isArray(result.artifacts) && result.artifacts.length) {
-        for (const item of result.artifacts.slice(0, 3)) {
-          const filename = item.label || item.filename || ''
-          if (filename) {
-            pushCard({
-              kind: 'artifact',
-              artifactId: item.id,
-              filename,
-              path: item.path || '',
-              size: item.size || 0,
-              taskInstanceUid: card.taskInstanceUid,
-            }, card.runtimeSessionId)
-          }
-        }
-      }
     } catch { /* 后端暂时不可达,下轮重试 */ }
   }
   } finally { taskPollInFlight = false }
@@ -146,9 +117,6 @@ function pushCard(card, runtimeSessionId = props.activeRuntimeSessionId, global 
   if (dupKey) {
     cards.value = cards.value.filter((c) => !(c.kind === 'task' && c.taskInstanceUid === dupKey && c.runtimeSessionId === card.runtimeSessionId))
   }
-  if (card.kind === 'artifact') {
-    cards.value = cards.value.filter((c) => c.kind !== 'artifact' || c.runtimeSessionId !== card.runtimeSessionId || !sameArtifact(c, card))
-  }
   if (card.global && card.kind === 'approval') {
     cards.value = cards.value.filter((c) => !(c.global && c.kind === 'approval' &&
       (c.approvalId === card.approvalId || c.runtimeSessionId === card.runtimeSessionId)))
@@ -171,29 +139,8 @@ function openApprovalSession(card) {
   postToSession({ __crawshrimp: 'open-runtime-session', runtimeSessionId: card.runtimeSessionId })
 }
 
-function formatSize(size) {
-  const n = Number(size) || 0
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / 1024 / 1024).toFixed(1)} MB`
-}
-
 function openTask(card) {
   if (card.taskInstanceUid) emit('open-task-instance', card.taskInstanceUid)
-}
-
-async function openArtifact(card) {
-  if (!card.path) return
-  try { await window.cs.openFile(card.path) } catch (error) {
-    pushCard({ kind: 'notice', text: `打开失败:${error?.message || error}` })
-  }
-}
-
-async function revealArtifact(card) {
-  if (!card.path) return
-  try { await window.cs.revealFile(card.path) } catch (error) {
-    pushCard({ kind: 'notice', text: `定位失败:${error?.message || error}` })
-  }
 }
 
 function handleEvent(eventType, data) {
@@ -233,15 +180,7 @@ function handleEvent(eventType, data) {
       break
     }
     case 'artifact.created': {
-      if (data?.media_kind !== 'image') pushCard({
-        kind: 'artifact',
-        artifactId: data?.artifact_id,
-        filename: data?.filename || `artifact-${data?.artifact_id}`,
-        path: data?.path || '',
-        size: data?.size || 0,
-        taskInstanceUid: data?.task_instance_uid || '',
-      }, runtimeSessionId)
-      // 会话内直接显示:图片多图/视频可播放/附件可点击。
+      // 会话内保留图片和 ZIP 图片预览；文件通过原生链接与资源列表打开。
       // 直接 postMessage 到智能体会话 iframe(不经 App/props 中转,链路最短最稳)。
       rememberArtifact(data, runtimeSessionId)
       if (isActive) pushArtifactToSession(data, runtimeSessionId)
@@ -271,6 +210,7 @@ function handleEvent(eventType, data) {
     case 'browser.activity': {
       // 智能体正在调用浏览器工具 → 多窗口实时浏览器跟随会话/页面
       const tabs = Array.isArray(data?.tabs) ? data.tabs : []
+      if (isActive) window.dispatchEvent(new CustomEvent('cs-browser-activity', { detail: { ...data, runtime_session_id: runtimeSessionId } }))
       if (isActive && tabs.length) {
         emit('browser-open-tabs', { tabs, activeTabId: data?.active_tab_id || '' })
       } else if (isActive) {
@@ -485,6 +425,9 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
+.agent-product-layer.beside-resources{right:346px}
+@media(max-width:740px){.agent-product-layer.beside-resources{display:none}}
+
 .product-card {
   pointer-events: auto;
   background: var(--bg2);
@@ -516,7 +459,6 @@ onUnmounted(() => {
 }
 .product-card.approval .product-card-icon { background: rgba(251, 191, 36, 0.16); }
 .product-card.task .product-card-icon { background: rgba(96, 165, 250, 0.16); }
-.product-card.artifact .product-card-icon { background: rgba(74, 222, 128, 0.14); }
 .product-card.notice .product-card-icon { background: var(--orange-bg); }
 .product-card-title { flex: 1; font-size: 13px; font-weight: 600; color: var(--text); }
 .product-card-close {
@@ -534,7 +476,6 @@ onUnmounted(() => {
 .product-card-body { font-size: 12.5px; color: var(--text2); line-height: 1.5; word-break: break-all; }
 .product-card-risk { font-size: 12px; color: var(--yellow); }
 .product-card-uid, .product-card-meta { font-size: 12px; color: var(--text3); word-break: break-all; }
-.product-card-name { font-size: 13px; color: var(--text); word-break: break-all; }
 .product-card-status { font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
 .product-card-status.running { background: rgba(96, 165, 250, 0.16); color: var(--blue); }
 .product-card-status.completed { background: rgba(74, 222, 128, 0.14); color: var(--green); }

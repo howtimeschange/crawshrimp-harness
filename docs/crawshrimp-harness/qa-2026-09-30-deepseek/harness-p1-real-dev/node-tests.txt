@@ -1,0 +1,750 @@
+TAP version 13
+# Subtest: worker absolute timeout cancels only the active Session and keeps the IM Host alive
+ok 1 - worker absolute timeout cancels only the active Session and keeps the IM Host alive
+  ---
+  duration_ms: 0.694833
+  type: 'test'
+  ...
+# Subtest: worker auto-continues text output budgets without restarting the runtime
+ok 2 - worker auto-continues text output budgets without restarting the runtime
+  ---
+  duration_ms: 0.491208
+  type: 'test'
+  ...
+# Subtest: worker output protection defaults are long-form friendly and pressure-based
+ok 3 - worker output protection defaults are long-form friendly and pressure-based
+  ---
+  duration_ms: 0.613542
+  type: 'test'
+  ...
+# Subtest: worker keeps every mutable DSH runtime path under CRAWSHRIMP_DATA
+ok 4 - worker keeps every mutable DSH runtime path under CRAWSHRIMP_DATA
+  ---
+  duration_ms: 0.53
+  type: 'test'
+  ...
+# Subtest: worker compacts image-heavy user message events before FastAPI notifications
+ok 5 - worker compacts image-heavy user message events before FastAPI notifications
+  ---
+  duration_ms: 0.282542
+  type: 'test'
+  ...
+# Subtest: staged DSH rc.1 runtime applies the small verified 4.11 source overlay after a clean install
+ok 6 - staged DSH rc.1 runtime applies the small verified 4.11 source overlay after a clean install
+  ---
+  duration_ms: 0.884792
+  type: 'test'
+  ...
+# Subtest: dsh-im brief-card patch accepts fresh upstream and already-branded 4.11 approval text
+ok 7 - dsh-im brief-card patch accepts fresh upstream and already-branded 4.11 approval text
+  ---
+  duration_ms: 7.505834
+  type: 'test'
+  ...
+# Subtest: the runtime guard accepts both the source profile layout and the staged profile layout
+ok 8 - the runtime guard accepts both the source profile layout and the staged profile layout
+  ---
+  duration_ms: 157.9895
+  type: 'test'
+  ...
+# Subtest: runtime admits image prompts to the installed Vision bridge only for official DeepSeek Flash and Pro
+ok 9 - runtime admits image prompts to the installed Vision bridge only for official DeepSeek Flash and Pro
+  ---
+  duration_ms: 120.195875
+  type: 'test'
+  ...
+# Subtest: rc.1 Web native approval card exposes allow-all through the current Session command seam
+ok 10 - rc.1 Web native approval card exposes allow-all through the current Session command seam
+  ---
+  duration_ms: 118.478625
+  type: 'test'
+  ...
+# Subtest: DeepSeek Vision preflight audit retains structured fields in logger and stderr
+ok 11 - DeepSeek Vision preflight audit retains structured fields in logger and stderr
+  ---
+  duration_ms: 116.995209
+  type: 'test'
+  ...
+# Subtest: runtime suppresses native web registration even when an upstream preset mounts tool-web
+ok 12 - runtime suppresses native web registration even when an upstream preset mounts tool-web
+  ---
+  duration_ms: 147.063792
+  type: 'test'
+  ...
+# Subtest: session header guard rejects native web tools before a prompt can proceed
+ok 13 - session header guard rejects native web tools before a prompt can proceed
+  ---
+  duration_ms: 8.510792
+  type: 'test'
+  ...
+# Subtest: migration guard retains a real workspace write probe and strict user-image boundary
+ok 14 - migration guard retains a real workspace write probe and strict user-image boundary
+  ---
+  duration_ms: 0.258208
+  type: 'test'
+  ...
+# Subtest: Crawshrimp standard preset owns the effective persona and routes webpage work through the CDP skill
+ok 15 - Crawshrimp standard preset owns the effective persona and routes webpage work through the CDP skill
+  ---
+  duration_ms: 0.621542
+  type: 'test'
+  ...
+# Subtest: standard rc.1 Web profile retains the product operational surface without the parallel generic web route
+ok 16 - standard rc.1 Web profile retains the product operational surface without the parallel generic web route
+  ---
+  duration_ms: 0.666417
+  type: 'test'
+  ...
+# Subtest: rc.1 Web transport keeps image input and session-follow without reviving the old SDK patch
+ok 17 - rc.1 Web transport keeps image input and session-follow without reviving the old SDK patch
+  ---
+  duration_ms: 0.2085
+  type: 'test'
+  ...
+# Subtest: the Vision model is not forced onto a DeepSeek-only reasoning effort
+ok 18 - the Vision model is not forced onto a DeepSeek-only reasoning effort
+  ---
+  duration_ms: 0.099709
+  type: 'test'
+  ...
+# Subtest: rc.1 Session follow projects inner events from live envelopes and snapshot chunk rows
+ok 19 - rc.1 Session follow projects inner events from live envelopes and snapshot chunk rows
+  ---
+  duration_ms: 0.711583
+  type: 'test'
+  ...
+# Subtest: Web RPC reasserts a product session model through the authenticated Session API
+ok 20 - Web RPC reasserts a product session model through the authenticated Session API
+  ---
+  duration_ms: 6.048542
+  type: 'test'
+  ...
+# Subtest: Web startup diagnostics redact every one-time launch URL query parameter
+ok 21 - Web startup diagnostics redact every one-time launch URL query parameter
+  ---
+  duration_ms: 0.592875
+  type: 'test'
+  ...
+# Subtest: desktop dev shell patches DSH runtime dependencies before backend launch
+ok 22 - desktop dev shell patches DSH runtime dependencies before backend launch
+  ---
+  duration_ms: 0.250291
+  type: 'test'
+  ...
+# Subtest: product bridge leases the matching DSH session and honors its approval policy
+ok 23 - product bridge leases the matching DSH session and honors its approval policy
+  ---
+  duration_ms: 0.197625
+  type: 'test'
+  ...
+# Subtest: agent SSE consumers reconnect from the last persisted event id
+ok 24 - agent SSE consumers reconnect from the last persisted event id
+  ---
+  duration_ms: 0.149
+  type: 'test'
+  ...
+# Subtest: agent views present final output budget interruptions without calling them failures
+ok 25 - agent views present final output budget interruptions without calling them failures
+  ---
+  duration_ms: 0.123791
+  type: 'test'
+  ...
+# Subtest: authenticated Web transport cancels the active Session without restarting the IM Host
+ok 26 - authenticated Web transport cancels the active Session without restarting the IM Host
+  ---
+  duration_ms: 0.109042
+  type: 'test'
+  ...
+# Subtest: automatic continuations use the trusted private Host entry and keep their product event private
+ok 27 - automatic continuations use the trusted private Host entry and keep their product event private
+  ---
+  duration_ms: 0.097459
+  type: 'test'
+  ...
+# Subtest: agent iframe reloads when runtime generation changes on the same web URL
+ok 28 - agent iframe reloads when runtime generation changes on the same web URL
+  ---
+  duration_ms: 0.089083
+  type: 'test'
+  ...
+# Subtest: agent iframe receives its URL through the main-process authentication bridge
+ok 29 - agent iframe receives its URL through the main-process authentication bridge
+  ---
+  duration_ms: 0.252083
+  type: 'test'
+  ...
+# Subtest: agent runtime failures leave the loading screen and expose a retry action
+ok 30 - agent runtime failures leave the loading screen and expose a retry action
+  ---
+  duration_ms: 0.146166
+  type: 'test'
+  ...
+# Subtest: agent runtime missing model keys suppresses upstream onboarding and defers Crawshrimp provider configuration to composer interaction
+ok 31 - agent runtime missing model keys suppresses upstream onboarding and defers Crawshrimp provider configuration to composer interaction
+  ---
+  duration_ms: 1.370041
+  type: 'test'
+  ...
+# Subtest: LLM provider settings save provider rows directly and keep the compact settings page
+ok 32 - LLM provider settings save provider rows directly and keep the compact settings page
+  ---
+  duration_ms: 0.716375
+  type: 'test'
+  ...
+# Subtest: LLM provider Semir logo has transparent outer corners
+ok 33 - LLM provider Semir logo has transparent outer corners
+  ---
+  duration_ms: 5.992708
+  type: 'test'
+  ...
+# Subtest: core status indicator debounces transient backend probe drops
+ok 34 - core status indicator debounces transient backend probe drops
+  ---
+  duration_ms: 0.192542
+  type: 'test'
+  ...
+# Subtest: browser windows are isolated per target and remove closed tabs
+ok 35 - browser windows are isolated per target and remove closed tabs
+  ---
+  duration_ms: 0.774625
+  type: 'test'
+  ...
+# Subtest: DSH attachment bridge sends regular files to Crawshrimp and images into DSH native drafts
+ok 36 - DSH attachment bridge sends regular files to Crawshrimp and images into DSH native drafts
+  ---
+  duration_ms: 2.324667
+  type: 'test'
+  ...
+# Subtest: the Crawshrimp attachment picker accepts images and documents without a native file filter
+ok 37 - the Crawshrimp attachment picker accepts images and documents without a native file filter
+  ---
+  duration_ms: 0.330959
+  type: 'test'
+  ...
+# Subtest: native Web sessions obtain a per-session shadow follow without a latest-run fallback
+ok 38 - native Web sessions obtain a per-session shadow follow without a latest-run fallback
+  ---
+  duration_ms: 0.678833
+  type: 'test'
+  ...
+# Subtest: native Web follow manager is required by development and packaged runtime manifests
+ok 39 - native Web follow manager is required by development and packaged runtime manifests
+  ---
+  duration_ms: 0.133958
+  type: 'test'
+  ...
+# Subtest: browser wait is explicitly local-only and does not request an act approval
+ok 40 - browser wait is explicitly local-only and does not request an act approval
+  ---
+  duration_ms: 0.24
+  type: 'test'
+  ...
+# Subtest: Crawshrimp running-status branding follows the semantic live region rather than a retired hash class
+ok 41 - Crawshrimp running-status branding follows the semantic live region rather than a retired hash class
+  ---
+  duration_ms: 0.298958
+  type: 'test'
+  ...
+# Subtest: DSH attachment bridge resets and retitles the native file-drop overlay
+ok 42 - DSH attachment bridge resets and retitles the native file-drop overlay
+  ---
+  duration_ms: 0.669417
+  type: 'test'
+  ...
+# Subtest: DSH Crawshrimp brand slots replace the official DeepSeek Harness wordmark
+ok 43 - DSH Crawshrimp brand slots replace the official DeepSeek Harness wordmark
+  ---
+  duration_ms: 0.687583
+  type: 'test'
+  ...
+# Subtest: agent persona introduces itself as Crawshrimp agent
+ok 44 - agent persona introduces itself as Crawshrimp agent
+  ---
+  duration_ms: 0.420458
+  type: 'test'
+  ...
+# Subtest: native DSH Web has one profile source of truth instead of a flat generated configuration
+ok 45 - native DSH Web has one profile source of truth instead of a flat generated configuration
+  ---
+  duration_ms: 0.107125
+  type: 'test'
+  ...
+# Subtest: DSH rc.1 profile graph pins the supported Web and ACP runtime closure
+ok 46 - DSH rc.1 profile graph pins the supported Web and ACP runtime closure
+  ---
+  duration_ms: 1.371334
+  type: 'test'
+  ...
+# Subtest: DSH rc.1 Web profile retains upstream directory selection and Crawshrimp workspace bridge
+ok 47 - DSH rc.1 Web profile retains upstream directory selection and Crawshrimp workspace bridge
+  ---
+  duration_ms: 0.550333
+  type: 'test'
+  ...
+# Subtest: DSH Web profile registers Crawshrimp providers through a persistent official profile
+ok 48 - DSH Web profile registers Crawshrimp providers through a persistent official profile
+  ---
+  duration_ms: 0.241625
+  type: 'test'
+  ...
+# Subtest: native DSH model discovery suppresses the duplicate upstream DeepSeek credential route
+ok 49 - native DSH model discovery suppresses the duplicate upstream DeepSeek credential route
+  ---
+  duration_ms: 0.287542
+  type: 'test'
+  ...
+# Subtest: development bridge never accepts API credentials from URL query
+ok 50 - development bridge never accepts API credentials from URL query
+  ---
+  duration_ms: 0.144958
+  type: 'test'
+  ...
+# Subtest: three consecutive capture failures show one error and a fresh frame clears it without browser actions
+ok 51 - three consecutive capture failures show one error and a fresh frame clears it without browser actions
+  ---
+  duration_ms: 1.446167
+  type: 'test'
+  ...
+# Subtest: late failed capture from a stopped stream cannot overwrite replacement status
+ok 52 - late failed capture from a stopped stream cannot overwrite replacement status
+  ---
+  duration_ms: 0.406584
+  type: 'test'
+  ...
+# Subtest: closed or failed old websocket cannot mark a replacement disconnected
+ok 53 - closed or failed old websocket cannot mark a replacement disconnected
+  ---
+  duration_ms: 1.233125
+  type: 'test'
+  ...
+# Subtest: continuous reader renders a visible page and releases raster when its tab is inactive
+ok 54 - continuous reader renders a visible page and releases raster when its tab is inactive
+  ---
+  duration_ms: 1.447958
+  type: 'test'
+  ...
+# Subtest: late PDF page resolution cannot repaint a hidden or canceled page
+ok 55 - late PDF page resolution cannot repaint a hidden or canceled page
+  ---
+  duration_ms: 0.584458
+  type: 'test'
+  ...
+# Subtest: image previews from other tools display without an image generation group
+ok 56 - image previews from other tools display without an image generation group
+  ---
+  duration_ms: 1.709041
+  type: 'test'
+  ...
+# Subtest: zip previews from other tools display without an image generation group
+ok 57 - zip previews from other tools display without an image generation group
+  ---
+  duration_ms: 0.722167
+  type: 'test'
+  ...
+# Subtest: explicit image generation delivery waits for its group before replay
+ok 58 - explicit image generation delivery waits for its group before replay
+  ---
+  duration_ms: 1.593625
+  type: 'test'
+  ...
+# Subtest: image results sit outside tool folding and are delivered only with the same turn final answer
+ok 59 - image results sit outside tool folding and are delivered only with the same turn final answer
+  ---
+  duration_ms: 0.991417
+  type: 'test'
+  ...
+# Subtest: multiple calls/images retain order and session switching removes and restores only owned delivery
+ok 60 - multiple calls/images retain order and session switching removes and restores only owned delivery
+  ---
+  duration_ms: 1.6425
+  type: 'test'
+  ...
+# Subtest: image card uses a preview button and line-icon file actions without the old emoji header
+ok 61 - image card uses a preview button and line-icon file actions without the old emoji header
+  ---
+  duration_ms: 0.809167
+  type: 'test'
+  ...
+# Subtest: nested tool history cannot hide the independent image result row
+ok 62 - nested tool history cannot hide the independent image result row
+  ---
+  duration_ms: 0.582625
+  type: 'test'
+  ...
+# Subtest: installed development native chat opener crosses real slot/shell source guards into the workspace
+ok 63 - installed development native chat opener crosses real slot/shell source guards into the workspace
+  ---
+  duration_ms: 2.309
+  type: 'test'
+  ...
+# (node:98353) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/xingyicheng/Documents/crawshrimp-harness/app/src/renderer/utils/artifactTime.test.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/xingyicheng/Documents/crawshrimp-harness/app/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: artifact age crosses minute, hour, day and 99-day boundaries
+ok 64 - artifact age crosses minute, hour, day and 99-day boundaries
+  ---
+  duration_ms: 1.491125
+  type: 'test'
+  ...
+# Subtest: timezone-free local events and explicit offsets preserve their meaning
+ok 65 - timezone-free local events and explicit offsets preserve their meaning
+  ---
+  duration_ms: 0.141125
+  type: 'test'
+  ...
+# Subtest: recent updates sort first regardless of original creation time, missing dates last
+ok 66 - recent updates sort first regardless of original creation time, missing dates last
+  ---
+  duration_ms: 0.850125
+  type: 'test'
+  ...
+# Subtest: Office job metadata does not route generated chart images to a zero-page document preview
+ok 67 - Office job metadata does not route generated chart images to a zero-page document preview
+  ---
+  duration_ms: 0.162541
+  type: 'test'
+  ...
+# (node:98354) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/xingyicheng/Documents/crawshrimp-harness/app/src/renderer/utils/browserPreviewStreams.test.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/xingyicheng/Documents/crawshrimp-harness/app/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: hidden retained panel cannot stop the compact or replacement consumer; recovery only changes stream
+ok 68 - hidden retained panel cannot stop the compact or replacement consumer; recovery only changes stream
+  ---
+  duration_ms: 0.792709
+  type: 'test'
+  ...
+# (node:98355) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/xingyicheng/Documents/crawshrimp-harness/app/src/renderer/utils/documentPreview.test.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/xingyicheng/Documents/crawshrimp-harness/app/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: full extensions route Markdown, HTML, PDF and code without truncating suffixes
+ok 69 - full extensions route Markdown, HTML, PDF and code without truncating suffixes
+  ---
+  duration_ms: 0.408625
+  type: 'test'
+  ...
+# Subtest: bounded text loading preserves UTF8 boundary and explicit truncation
+ok 70 - bounded text loading preserves UTF8 boundary and explicit truncation
+  ---
+  duration_ms: 11.733
+  type: 'test'
+  ...
+# Subtest: complete small text and failed read are distinguishable
+ok 71 - complete small text and failed read are distinguishable
+  ---
+  duration_ms: 0.575208
+  type: 'test'
+  ...
+# (node:98356) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/xingyicheng/Documents/crawshrimp-harness/app/src/renderer/utils/resourceWorkspace.test.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/xingyicheng/Documents/crawshrimp-harness/app/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: CSV preserves quoted separators, multiline values, CRLF, escaped quotes and empty cells
+ok 72 - CSV preserves quoted separators, multiline values, CRLF, escaped quotes and empty cells
+  ---
+  duration_ms: 0.666666
+  type: 'test'
+  ...
+# Subtest: CSV limits rows/columns and marks incomplete quoted records
+ok 73 - CSV limits rows/columns and marks incomplete quoted records
+  ---
+  duration_ms: 0.136625
+  type: 'test'
+  ...
+# Subtest: restoration migrates legacy selection, deduplicates paths and rejects malformed entries
+ok 74 - restoration migrates legacy selection, deduplicates paths and rejects malformed entries
+  ---
+  duration_ms: 0.190625
+  type: 'test'
+  ...
+# (node:98357) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/xingyicheng/Documents/crawshrimp-harness/app/src/sessionResources.test.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/xingyicheng/Documents/crawshrimp-harness/app/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: new-chat page stays collapsed and the first actual session opens by default
+ok 75 - new-chat page stays collapsed and the first actual session opens by default
+  ---
+  duration_ms: 2.250291
+  type: 'test'
+  ...
+# Subtest: each session restores the user choice across navigation and component reload
+ok 76 - each session restores the user choice across navigation and component reload
+  ---
+  duration_ms: 0.970375
+  type: 'test'
+  ...
+# Subtest: opening the blank page manually does not become the first session preference
+ok 77 - opening the blank page manually does not become the first session preference
+  ---
+  duration_ms: 0.399458
+  type: 'test'
+  ...
+# Subtest: a new session with an allocated ID stays closed until its first message activates it
+ok 78 - a new session with an allocated ID stays closed until its first message activates it
+  ---
+  duration_ms: 0.398792
+  type: 'test'
+  ...
+# Subtest: temporary hero/loading phases never overwrite the active session panel preference
+ok 79 - temporary hero/loading phases never overwrite the active session panel preference
+  ---
+  duration_ms: 0.857458
+  type: 'test'
+  ...
+# Subtest: the iframe publishes hero-to-active changes even when the session ID stays the same
+ok 80 - the iframe publishes hero-to-active changes even when the session ID stays the same
+  ---
+  duration_ms: 0.913584
+  type: 'test'
+  ...
+# Subtest: late resource response from another session cannot overwrite the active session
+ok 81 - late resource response from another session cannot overwrite the active session
+  ---
+  duration_ms: 0.453334
+  type: 'test'
+  ...
+# Subtest: first new artifact after an empty baseline marks the collapsed panel without opening it
+ok 82 - first new artifact after an empty baseline marks the collapsed panel without opening it
+  ---
+  duration_ms: 0.38
+  type: 'test'
+  ...
+# Subtest: browser activity updates both pages while preserving the page the user chose
+ok 83 - browser activity updates both pages while preserving the page the user chose
+  ---
+  duration_ms: 0.634917
+  type: 'test'
+  ...
+# Subtest: browser tab changes and compact mode preserve the user resized half-screen width
+ok 84 - browser tab changes and compact mode preserve the user resized half-screen width
+  ---
+  duration_ms: 0.5365
+  type: 'test'
+  ...
+# Subtest: resource updates show a mini page without opening a half-screen view
+ok 85 - resource updates show a mini page without opening a half-screen view
+  ---
+  duration_ms: 0.345041
+  type: 'test'
+  ...
+# Subtest: half-screen dragging keeps pointer capture across the chat iframe and cleans up on release
+ok 86 - half-screen dragging keeps pointer capture across the chat iframe and cleans up on release
+  ---
+  duration_ms: 0.338
+  type: 'test'
+  ...
+# Subtest: shrinking and growing retain the selected resource
+ok 87 - shrinking and growing retain the selected resource
+  ---
+  duration_ms: 0.275667
+  type: 'test'
+  ...
+# Subtest: short windows preserve explicit collapse choices
+ok 88 - short windows preserve explicit collapse choices
+  ---
+  duration_ms: 0.225875
+  type: 'test'
+  ...
+# Subtest: returning to inventory retains mounted browser tabs; visibility owns the stream
+ok 89 - returning to inventory retains mounted browser tabs; visibility owns the stream
+  ---
+  duration_ms: 0.25175
+  type: 'test'
+  ...
+# Subtest: compact layout reserves chat space only while the resource card is visible
+ok 90 - compact layout reserves chat space only while the resource card is visible
+  ---
+  duration_ms: 0.248625
+  type: 'test'
+  ...
+# Subtest: search opens with focus and closes with results and keyboard focus restored
+ok 91 - search opens with focus and closes with results and keyboard focus restored
+  ---
+  duration_ms: 0.249292
+  type: 'test'
+  ...
+# Subtest: large resource collections remain fully searchable by title, path and URL
+ok 92 - large resource collections remain fully searchable by title, path and URL
+  ---
+  duration_ms: 0.745708
+  type: 'test'
+  ...
+# Subtest: same filename at different paths stays separate; close keeps other pane and restore retains modes
+ok 93 - same filename at different paths stays separate; close keeps other pane and restore retains modes
+  ---
+  duration_ms: 0.571542
+  type: 'test'
+  ...
+# Subtest: narrow split degrades without discarding tabs or selected pane
+ok 94 - narrow split degrades without discarding tabs or selected pane
+  ---
+  duration_ms: 0.306583
+  type: 'test'
+  ...
+# Subtest: agent activity follows exact target and excludes other sessions without selecting or replaying actions
+ok 95 - agent activity follows exact target and excludes other sessions without selecting or replaying actions
+  ---
+  duration_ms: 0.309792
+  type: 'test'
+  ...
+# Subtest: polling the same browser event cannot reopen a preview after the user returns to resources
+ok 96 - polling the same browser event cannot reopen a preview after the user returns to resources
+  ---
+  duration_ms: 0.289542
+  type: 'test'
+  ...
+# Subtest: drag moves a tab across panes without replacing its retained renderer and restores ratio
+ok 97 - drag moves a tab across panes without replacing its retained renderer and restores ratio
+  ---
+  duration_ms: 0.506041
+  type: 'test'
+  ...
+# Subtest: foreign drops do not add resources or corrupt active tabs
+ok 98 - foreign drops do not add resources or corrupt active tabs
+  ---
+  duration_ms: 0.344041
+  type: 'test'
+  ...
+# Subtest: drop insertion supports both edges and clears stale drags on session switch
+ok 99 - drop insertion supports both edges and clears stale drags on session switch
+  ---
+  duration_ms: 0.352417
+  type: 'test'
+  ...
+# Subtest: drag feedback accepts only a local tab and identifies the insertion edge
+ok 100 - drag feedback accepts only a local tab and identifies the insertion edge
+  ---
+  duration_ms: 0.317125
+  type: 'test'
+  ...
+# Subtest: floating browser persists per session, excludes duplicate mini and agent updates retain its layout
+ok 101 - floating browser persists per session, excludes duplicate mini and agent updates retain its layout
+  ---
+  duration_ms: 0.344083
+  type: 'test'
+  ...
+# Subtest: split resize cleans global handlers on cancellation and clamps ratio
+ok 102 - split resize cleans global handlers on cancellation and clamps ratio
+  ---
+  duration_ms: 0.325792
+  type: 'test'
+  ...
+# Subtest: backports are idempotent and reject unknown source
+ok 103 - backports are idempotent and reject unknown source
+  ---
+  duration_ms: 1.107917
+  type: 'test'
+  ...
+# Subtest: normal pagination swaps only after all pages
+ok 104 - normal pagination swaps only after all pages
+  ---
+  duration_ms: 0.777666
+  type: 'test'
+  ...
+# Subtest: cycle A→A rejects and retains old tools
+ok 105 - cycle A→A rejects and retains old tools
+  ---
+  duration_ms: 0.3125
+  type: 'test'
+  ...
+# Subtest: cycle A→B→A rejects and retains old tools
+ok 106 - cycle A→B→A rejects and retains old tools
+  ---
+  duration_ms: 0.226333
+  type: 'test'
+  ...
+# Subtest: transport cancellation retains old generation
+ok 107 - transport cancellation retains old generation
+  ---
+  duration_ms: 0.284166
+  type: 'test'
+  ...
+# Subtest: button uses Enter policy queue/false
+ok 108 - button uses Enter policy queue/false
+  ---
+  duration_ms: 1.372708
+  type: 'test'
+  ...
+# Subtest: button uses Enter policy queue/true
+ok 109 - button uses Enter policy queue/true
+  ---
+  duration_ms: 0.892084
+  type: 'test'
+  ...
+# Subtest: button uses Enter policy steer/false
+ok 110 - button uses Enter policy steer/false
+  ---
+  duration_ms: 0.811958
+  type: 'test'
+  ...
+# Subtest: button uses Enter policy steer/true
+ok 111 - button uses Enter policy steer/true
+  ---
+  duration_ms: 0.908458
+  type: 'test'
+  ...
+# Subtest: native link callback uses resolved path and session; standalone and directory fall back
+ok 112 - native link callback uses resolved path and session; standalone and directory fall back
+  ---
+  duration_ms: 0.639584
+  type: 'test'
+  ...
+# Subtest: patched native opener routes files to the same panel and keeps directory/standalone fallback
+ok 113 - patched native opener routes files to the same panel and keeps directory/standalone fallback
+  ---
+  duration_ms: 0.476125
+  type: 'test'
+  ...
+# Subtest: unrelated tools are deferred; generic, skill and unknown extension tools remain
+ok 114 - unrelated tools are deferred; generic, skill and unknown extension tools remain
+  ---
+  duration_ms: 0.804042
+  type: 'test'
+  ...
+# Subtest: domain tool actually exposes callable registered schemas next request and never shrinks
+ok 115 - domain tool actually exposes callable registered schemas next request and never shrinks
+  ---
+  duration_ms: 3.839333
+  type: 'test'
+  ...
+# Subtest: empty discovery, unavailable domain and invalid input do not enable unrelated tools
+ok 116 - empty discovery, unavailable domain and invalid input do not enable unrelated tools
+  ---
+  duration_ms: 0.587333
+  type: 'test'
+  ...
+# Subtest: activation cannot leak across agents or bypass a pre-existing restricted registry
+ok 117 - activation cannot leak across agents or bypass a pre-existing restricted registry
+  ---
+  duration_ms: 0.645208
+  type: 'test'
+  ...
+# Subtest: resume preserves logged activation, including before next header; failed/forged results ignored
+ok 118 - resume preserves logged activation, including before next header; failed/forged results ignored
+  ---
+  duration_ms: 0.2305
+  type: 'test'
+  ...
+# Subtest: real Cordis scoped assembly exposes tools on the next request while restrictions and guards survive
+ok 119 - real Cordis scoped assembly exposes tools on the next request while restrictions and guards survive
+  ---
+  duration_ms: 6.172541
+  type: 'test'
+  ...
+# Subtest: every domain can be loaded together; script and skill tools keep their parameter schemas
+ok 120 - every domain can be loaded together; script and skill tools keep their parameter schemas
+  ---
+  duration_ms: 1.5245
+  type: 'test'
+  ...
+1..120
+# tests 120
+# suites 0
+# pass 120
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 759.905625

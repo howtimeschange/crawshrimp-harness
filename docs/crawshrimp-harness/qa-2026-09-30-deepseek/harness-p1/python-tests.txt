@@ -1,0 +1,24 @@
+........................................................................ [ 24%]
+........................................................................ [ 49%]
+........................................................................ [ 74%]
+........................................................................ [ 99%]
+.                                                                        [100%]
+=============================== warnings summary ===============================
+venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /Users/xingyicheng/Documents/crawshrimp-harness/venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+tests/test_office_font_preview.py::test_render_uses_localized_font_fallbacks_only_in_preview_input[docx-word_template]
+tests/test_office_font_preview.py::test_render_uses_localized_font_fallbacks_only_in_preview_input[docx-word_template]
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+tests/test_office_font_preview.py::test_render_uses_localized_font_fallbacks_only_in_preview_input[docx-word_template]
+tests/test_office_font_preview.py::test_render_uses_localized_font_fallbacks_only_in_preview_input[docx-word_template]
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+tests/test_office_font_preview.py::test_render_uses_localized_font_fallbacks_only_in_preview_input[docx-word_template]
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+289 passed, 6 warnings in 7.77s
+sys:1: DeprecationWarning: builtin type swigvarlink has no __module__ attribute

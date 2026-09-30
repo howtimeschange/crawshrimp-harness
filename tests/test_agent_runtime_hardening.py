@@ -717,6 +717,7 @@ def test_browser_activity_exposes_only_granted_tab():
     finally:
         mcp_gateway.ctx.emit_event = previous
     assert events == [("browser.activity", {
+        "operation": "observe", "phase": "started",
         "active_tab_id": "tab-a",
         "tabs": [{"id": "tab-a", "url": "https://a", "title": "A"}],
     })]

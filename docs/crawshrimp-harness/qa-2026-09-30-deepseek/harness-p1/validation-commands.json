@@ -1,0 +1,11 @@
+{
+  "node": "node --test app/src/sessionResources.test.js app/src/agentHarnessContracts.test.js app/src/renderer/utils/resourceWorkspace.test.js app/src/renderer/utils/browserPreviewStreams.test.js app/src/renderer/utils/documentPreview.test.js app/src/renderer/utils/artifactTime.test.js integrations/deepseek-harness/compat/compat.test.mjs integrations/deepseek-harness/compat/file-workspace.test.mjs integrations/deepseek-harness/crawshrimp-product-bridge/lib/context-tools.test.mjs",
+  "python": "venv/bin/python -m pytest -q tests/test_artifact_delivery.py tests/test_agent_runtime_hardening.py tests/test_agent_security_hardening.py tests/test_task_instance_artifacts.py tests/test_office_design.py tests/test_office_runtime.py tests/test_office_font_preview.py tests/test_office_windows_profile.py tests/test_browser_lazy_start.py tests/test_agent_automation_api.py tests/test_agent_automation_mcp.py",
+  "build": {
+    "cwd": "/Users/xingyicheng/Documents/crawshrimp-harness/app",
+    "command": "npm run vite:build"
+  },
+  "desktop": "NODE_PATH=/Users/xingyicheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules node scripts/file-workspace-desktop-qa.cjs",
+  "patch": "node integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs",
+  "diff": "git diff --check"
+}

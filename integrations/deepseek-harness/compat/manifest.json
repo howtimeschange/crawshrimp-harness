@@ -37,6 +37,20 @@
       "tests": "node --test compat/compat.test.mjs",
       "persistenceImpact": "none",
       "removeWhen": "integrated runtime supplies equivalent behavior and product regressions pass"
+    },
+    {
+      "id": "C03",
+      "package": "@deepseek-ai/dsh-client-ui-chat",
+      "version": "0.1.2-rc.1",
+      "file": "lib/client.js",
+      "upstreamSource": "Product-owned callback at ChatView openFile; interaction reference ui-sidebar-right at 639ed015397290b3745d163aafe02ffee4aa3f84",
+      "behavior": "Route embedded native message file links and produced-file chips into the Vue session workspace; retain standalone and directory system-open behavior",
+      "precondition": "exact version and unique source anchor",
+      "postcondition": "callback present and idempotent; opener fallback retained",
+      "order": "after historical product patches",
+      "tests": "node --test compat/file-workspace.test.mjs",
+      "persistenceImpact": "Vue sessionPanel.v2 extends legacy state with workTabs and activeIds",
+      "removeWhen": "native chat supports a product file opener without bundle patching"
     }
   ]
 }

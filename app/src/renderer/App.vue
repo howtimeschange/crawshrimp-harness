@@ -85,6 +85,7 @@
           :active-nav="currentView"
           :app-version="agentAppVersionLabel"
           :resource-revision="resourceRevision"
+          @resource-compact="resourceWorkspaceCompact = $event"
           @nav-select="onAgentNavSelect"
           @rail-metrics="onRailMetrics"
           @shell-controls-change="agentShellControlsVisible = $event"
@@ -168,8 +169,9 @@
           />
         </div>
       </div>
-      <!-- 全局产品事件浮层(审批/任务/产物卡,由 shell 渲染) -->
+      <!-- 全局产品事件浮层(审批/任务/运行提示,由 shell 渲染) -->
       <AgentProductLayer
+        :resource-compact="resourceWorkspaceCompact"
         :active-runtime-session-id="activeRuntimeSessionId"
         @open-task-instance="openTaskInstanceFromAgent"
         @resources-changed="resourceRevision += 1"
@@ -205,6 +207,7 @@ import AgentWebView from './views/AgentWebView.vue'
 import AgentProductLayer from './components/agent/AgentProductLayer.vue'
 import UpdateChangelogModal from './components/UpdateChangelogModal.vue'
 import AccountDialog from './components/AccountDialog.vue'
+const resourceWorkspaceCompact = ref(false)
 import DesktopStatusFooter from './components/DesktopStatusFooter.vue'
 import PackageIcon from './components/PackageIcon.vue'
 import { buildScriptGroups } from './utils/scriptGroups'
