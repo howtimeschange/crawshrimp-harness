@@ -1,0 +1,159 @@
+{
+  "runtime": "real source Electron + native DSH",
+  "checks": [
+    {
+      "file": "01-back",
+      "label": "返回会话资源列表",
+      "title": "返回会话资源列表",
+      "tooltip": "\"返回会话资源列表\"",
+      "opacity": "1",
+      "rect": {
+        "x": 571,
+        "y": 35.25,
+        "width": 53.28125,
+        "height": 30.5,
+        "top": 35.25,
+        "right": 624.28125,
+        "bottom": 65.75,
+        "left": 571
+      }
+    },
+    {
+      "file": "02-split",
+      "label": "双栏比较",
+      "title": "双栏比较 / 合并",
+      "tooltip": "\"双栏比较 / 合并\"",
+      "opacity": "1",
+      "rect": {
+        "x": 1170,
+        "y": 36.5,
+        "width": 28,
+        "height": 28,
+        "top": 36.5,
+        "right": 1198,
+        "bottom": 64.5,
+        "left": 1170
+      }
+    },
+    {
+      "file": "03-maximize",
+      "label": "最大化面板",
+      "title": "最大化面板",
+      "tooltip": "\"最大化面板\"",
+      "opacity": "1",
+      "rect": {
+        "x": 1206,
+        "y": 36.5,
+        "width": 28,
+        "height": 28,
+        "top": 36.5,
+        "right": 1234,
+        "bottom": 64.5,
+        "left": 1206
+      }
+    },
+    {
+      "file": "04-collapse",
+      "label": "收起会话面板",
+      "title": "收起会话面板",
+      "tooltip": "\"收起会话面板\"",
+      "opacity": "1",
+      "rect": {
+        "x": 1242,
+        "y": 36.5,
+        "width": 28,
+        "height": 28,
+        "top": 36.5,
+        "right": 1270,
+        "bottom": 64.5,
+        "left": 1242
+      }
+    },
+    {
+      "file": "05-restore",
+      "label": "还原面板大小",
+      "title": "还原面板大小",
+      "tooltip": "\"还原面板大小\"",
+      "opacity": "1",
+      "rect": {
+        "x": 1206,
+        "y": 36.5,
+        "width": 28,
+        "height": 28,
+        "top": 36.5,
+        "right": 1234,
+        "bottom": 64.5,
+        "left": 1206
+      }
+    },
+    {
+      "file": "06-merge",
+      "label": "合并为单栏",
+      "title": "合并为单栏",
+      "tooltip": "\"合并为单栏\"",
+      "opacity": "1",
+      "rect": {
+        "x": 1170,
+        "y": 36.5,
+        "width": 28,
+        "height": 28,
+        "top": 36.5,
+        "right": 1198,
+        "bottom": 64.5,
+        "left": 1170
+      }
+    },
+    {
+      "file": "07-switch-pane",
+      "label": "切换文件栏",
+      "title": "切换文件栏",
+      "tooltip": "\"切换文件栏\"",
+      "opacity": "1",
+      "rect": {
+        "x": 867,
+        "y": 35.25,
+        "width": 51,
+        "height": 30.5,
+        "top": 35.25,
+        "right": 918,
+        "bottom": 65.75,
+        "left": 867
+      }
+    },
+    {
+      "file": "08-search",
+      "label": "搜索会话资源",
+      "title": "搜索会话资源",
+      "tooltip": "\"搜索会话资源\"",
+      "opacity": "1",
+      "rect": {
+        "x": 1183,
+        "y": 96,
+        "width": 28,
+        "height": 28,
+        "top": 96,
+        "right": 1211,
+        "bottom": 124,
+        "left": 1183
+      }
+    },
+    {
+      "file": "09-resource-toggle",
+      "label": "收起会话资源",
+      "title": "收起会话资源",
+      "tooltip": "\"收起会话资源\"",
+      "opacity": "1",
+      "rect": {
+        "x": 1232,
+        "y": 37.5,
+        "width": 32,
+        "height": 32,
+        "top": 37.5,
+        "right": 1264,
+        "bottom": 69.5,
+        "left": 1232
+      }
+    }
+  ],
+  "previewLogExportCount": 0
+}
