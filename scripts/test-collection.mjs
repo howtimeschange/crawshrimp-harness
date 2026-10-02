@@ -17,7 +17,9 @@ export function walk(directory) {
 }
 const cliNames = ['DeepDrawCLI', 'bmall-cli', 'semir-yunpan-cli', 'tmall-cli']
 export const suites = {
-  app: { cwd: 'app', roots: ['app/src', 'app/scripts'], pattern: /\.test\.(?:js|mjs)$/, node: true },
+  // App contract tests patch the same installed DSH files. Keep files serial so
+  // one process cannot read another process's partially written overlay.
+  app: { cwd: 'app', roots: ['app/src', 'app/scripts'], pattern: /\.test\.(?:js|mjs)$/, node: true, nodeArgs: ['--test-concurrency=1'] },
   adapters: { cwd: '.', roots: ['tests'], pattern: /\.test\.js$/, node: true },
   integrations: { cwd: '.', roots: ['integrations'], pattern: /\.test\.(?:js|mjs)$/, node: true },
   python: { cwd: '.', roots: ['tests'], pattern: /\/(test_[^/]+|[^/]+_test)\.py$/, python: true },
@@ -102,7 +104,7 @@ export function run(name) {
   let command, options
   if (spec.python) { command = process.env.PYTHON || 'python'; options = ['-m', 'pytest', ...args, '-v'] }
   else if (spec.cli) { command = process.platform === 'win32' ? 'npm.cmd' : 'npm'; options = ['test', '--', ...args] }
-  else { command = process.execPath; options = ['--test', ...args] }
+  else { command = process.execPath; options = ['--test', ...(spec.nodeArgs || []), ...args] }
   console.log(`Collected ${files.length} files for ${name}`)
   const result = spawnSync(command, options, { cwd, stdio: 'inherit', env: process.env })
   if (result.error) throw result.error
