@@ -28,6 +28,9 @@ use `CRAWSHRIMP_PYTHON_EXECUTABLE`, never PATH Python or pip.
 `office-assets.json` pins LibreOffice 26.2.6 and Source Han Sans/Serif SC fonts.
 Archives and fonts are verified before extraction. Keep the complete LibreOffice
 layout and its upstream notices; font OFL notices are copied from `licenses/`.
+LibreOffice downloads retry transient failures, then try the manifest's GARR and
+RWTH mirrors. Every source must match the same pinned SHA256 before it enters the
+cache or is extracted; failed or mismatched partial downloads are discarded.
 Office documents use 思源黑体/思源宋体 family names; matplotlib registers the
 bundled font files using `core.office.runtime.configure_fonts()`.
 

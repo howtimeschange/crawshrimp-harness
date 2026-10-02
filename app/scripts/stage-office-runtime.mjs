@@ -2,9 +2,10 @@
 /** Build Harness-owned native Office assets from hash-pinned official archives. */
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, rmSync, readdirSync, renameSync } from 'node:fs'
-import { dirname, join, resolve, basename } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { downloadOfficeAsset } from './office-download.mjs'
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const manifestPath = join(repo, 'runtime-locks/office-assets.json')
@@ -23,13 +24,7 @@ const run = (cmd, args, options = {}) => {
   return result.stdout
 }
 async function download(entry, filename) {
-  mkdirSync(cache, { recursive: true })
-  const path = join(cache, filename || basename(new URL(entry.url).pathname))
-  if (existsSync(path) && sha(readFileSync(path)) === entry.sha256) return path
-  run('curl', ['--fail', '--location', '--retry', '2', '--connect-timeout', '20', '--max-time', '600', '-o', path + '.partial', entry.url])
-  if (sha(readFileSync(path + '.partial')) !== entry.sha256) throw new Error(`Office asset checksum mismatch: ${basename(path)}`)
-  renameSync(path + '.partial', path)
-  return path
+  return downloadOfficeAsset(entry, { cacheDirectory: cache, filename })
 }
 const previous = existsSync(join(root, 'runtime.json')) ? JSON.parse(readFileSync(join(root, 'runtime.json'))) : null
 if (previous?.stagingVersion === 2 && previous?.fingerprint === fingerprint && [previous.executable, ...previous.fonts,
