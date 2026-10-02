@@ -1,8 +1,10 @@
 import asyncio
 import json
+import pytest
 from pathlib import Path
 from core.agent.artifact_delivery import collect_tool_deliveries, verified_artifact
 from core.agent import mcp_gateway as gw
+from core.agent.service import _extract_tool_result_text
 
 
 def test_shell_manifest_requires_existing_file_and_success(tmp_path):
@@ -27,6 +29,36 @@ def test_write_and_adapter_structured_output(tmp_path):
     assert verified_artifact('result.md', source='shell', workspace=tmp_path)['path'] == str(file)
     assert verified_artifact(str(tmp_path), source='shell') is None
     assert collect_tool_deliveries({'tool_name':'fs_write'}, json.dumps({'ok':False, 'data':{'path':str(file)}})) == []
+
+
+def test_native_bash_direct_manifest_from_tool_result(tmp_path):
+    file = tmp_path / 'native-bash.csv'; file.write_text('id\n1\n')
+    # The native bash renderer returns stdout as text, without an fs_exec envelope.
+    stdout = json.dumps({'artifacts': [{'path': 'native-bash.csv'}]})
+    event = {'message': {'content': [{'type': 'tool-result', 'content': [{'type': 'text', 'text': stdout}]}]}}
+    rows = collect_tool_deliveries({'tool_name': 'bash', 'tool_call_id': 'native'}, _extract_tool_result_text(event), tmp_path)
+    assert len(rows) == 1
+    assert rows[0]['path'] == str(file.resolve()) and rows[0]['source'] == 'shell'
+    assert rows[0]['tool_call_id'] == 'native'
+    for marker in ('[exit code: 1]', '[stderr]\nvalidation failed', '[timed out after 1ms]'):
+        assert collect_tool_deliveries({'tool_name': 'bash'}, stdout + '\n' + marker, tmp_path) == []
+
+
+@pytest.mark.parametrize('failure', [{'status': 'failed'}, {'status': 'rejected'}, {'status': 'canceled'}, {'ok': False}, {'exit_code': 1}, {'exitCode': 1}])
+@pytest.mark.parametrize('layer', ['envelope', 'data', 'stdout', 'native-bash'])
+def test_failure_at_any_manifest_layer_rejects_existing_partial_output(tmp_path, failure, layer):
+    file = tmp_path / 'partial.csv'; file.write_text('id\n1\n')
+    manifest = {'artifacts': [{'path': str(file)}]}
+    name = 'fs_exec'
+    if layer == 'envelope':
+        result = {'ok': True, 'data': {'exit_code': 0, 'stdout': json.dumps(manifest)}, **failure}
+    elif layer == 'data':
+        result = {'ok': True, 'data': {'exit_code': 0, 'stdout': json.dumps(manifest), **failure}}
+    elif layer == 'stdout':
+        result = {'ok': True, 'data': {'exit_code': 0, 'stdout': json.dumps({**manifest, **failure})}}
+    else:
+        name = 'bash'; result = {**manifest, **failure}
+    assert collect_tool_deliveries({'tool_name': name}, json.dumps(result)) == []
 
 
 def test_explicit_present_registers_only_readback_outputs(monkeypatch, tmp_path):

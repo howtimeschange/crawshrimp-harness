@@ -32,6 +32,8 @@ export function collect(name, base = root) {
     .map(path => relative(base, path).replaceAll('\\', '/')).filter(path => spec.pattern.test('/' + path))
 }
 export const manual = {
+  'app/scripts/file-workspace-qa-electron.cjs': 'Manual desktop QA requires the Vite client, file-workspace QA server and a local CDP browser.',
+  'app/scripts/file-workspace-qa-preload.cjs': 'Preload bridge used by the manual file-workspace Electron QA entrypoint; not a standalone test.',
   'app/scripts/market-read-smoke.cjs': 'Live read-only cloud check requires a signed-in OS-encrypted desktop account.',
   'app/scripts/market-electron-smoke.cjs': 'Explicit live admin workflow publishes/approves/withdraws a QA package.',
   'app/scripts/market-lifecycle-local-smoke.cjs': 'Requires an authenticated cloud account and a matching approved example ZIP.',

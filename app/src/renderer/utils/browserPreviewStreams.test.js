@@ -76,3 +76,50 @@ test('replacement consumers retain the same queue during an unconfirmed stream s
   assert.deepEqual(calls, [['start', 'pending']])
   offNew(); await setBrowserPreviewVisible('pending', replacement, false, false, bridge)
 })
+
+test('a disconnected stream restarts when its mini preview hands off to a full panel', async () => {
+  const calls = [], seen = []
+  let status
+  const bridge = {
+    startAgentBrowserStream: async id => { calls.push(['start', id]); return { ok: true } },
+    stopAgentBrowserStream: async id => calls.push(['stop', id]),
+    onAgentBrowserStatus: fn => { status = fn },
+  }
+  const mini = Symbol(), full = Symbol()
+  const offMini = subscribeBrowserPreview('disconnected', mini, {}, bridge)
+  await setBrowserPreviewVisible('disconnected', mini, true, false, bridge)
+  status({ targetId: 'other', state: 'disconnected' })
+  await setBrowserPreviewVisible('disconnected', mini, true, false, bridge)
+  assert.equal(calls.length, 1)
+  status({ targetId: 'disconnected', state: 'disconnected' })
+  const offFull = subscribeBrowserPreview('disconnected', full, { onStatus: value => seen.push(value) }, bridge)
+  const show = setBrowserPreviewVisible('disconnected', full, true, false, bridge)
+  const hide = setBrowserPreviewVisible('disconnected', mini, false, false, bridge)
+  await Promise.all([show, hide])
+  assert.deepEqual(calls, [['start', 'disconnected'], ['start', 'disconnected']])
+  assert.equal(seen[0].state, 'disconnected')
+  offMini(); offFull(); await setBrowserPreviewVisible('disconnected', full, false, false, bridge)
+})
+
+test('a late start reply cannot revive a connection that already disconnected', async () => {
+  const calls = []
+  let status, finish
+  const bridge = {
+    startAgentBrowserStream: id => { calls.push(['start', id]); return calls.length === 1 ? new Promise(resolve => { finish = resolve }) : Promise.resolve({ ok: true }) },
+    stopAgentBrowserStream: async id => calls.push(['stop', id]),
+    onAgentBrowserStatus: fn => { status = fn },
+  }
+  const old = Symbol(), next = Symbol()
+  const offOld = subscribeBrowserPreview('start-disconnect', old, {}, bridge)
+  const start = setBrowserPreviewVisible('start-disconnect', old, true, false, bridge)
+  await new Promise(resolve => setImmediate(resolve))
+  status({ targetId: 'start-disconnect', state: 'disconnected' })
+  const offNext = subscribeBrowserPreview('start-disconnect', next, {}, bridge)
+  const show = setBrowserPreviewVisible('start-disconnect', next, true, false, bridge)
+  finish({ ok: true }); const [initial] = await Promise.all([start, show])
+  assert.equal(initial.ok, false, 'the disconnected start cannot claim a live connection')
+  assert.equal(calls.length, 2)
+  offOld(); offNext()
+  await setBrowserPreviewVisible('start-disconnect', old, false, false, bridge)
+  await setBrowserPreviewVisible('start-disconnect', next, false, false, bridge)
+})

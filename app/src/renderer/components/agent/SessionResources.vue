@@ -94,7 +94,7 @@ const artifacts = ref([]), tabs = ref([]), activeTabId = ref('')
 const closedBrowserIds = new Set()
 const unseen = ref(0), error = ref(''), loading = ref(false), busy = ref(false)
 const browserReady = ref(true)
-let generation = 0, timer, stopResize, stopSplitResize
+let generation = 0, browserActivityRevision = 0, timer, stopResize, stopSplitResize
 const states = new Map()
 let loadedOnce = false
 const stateKey = id => `crawshrimp.sessionPanel.v2.${id}`
@@ -267,6 +267,7 @@ function toggleSplit() {
 }
 function followBrowserActivity(activity) {
   if (!activity?.active_tab_id || activity.runtime_session_id && activity.runtime_session_id !== props.sessionId) return
+  browserActivityRevision++
   const old = browserActivity.value
   browserActivity.value = activity
   if (old && old.active_tab_id === activity.active_tab_id && old.tool_call_id === activity.tool_call_id && old.run_id === activity.run_id && old.operation === activity.operation && old.phase === activity.phase) return
@@ -280,6 +281,7 @@ function followBrowserActivity(activity) {
 async function refresh() {
   const id = props.sessionId; if (!id) return
   const token = ++generation; loading.value = true
+  const browserRevision = browserActivityRevision
   try {
     const data = await window.cs.agentApi('GET', `/agent/session-resources?runtime_session_id=${encodeURIComponent(id)}`)
     const live = await window.cs.listAgentBrowserTabs().catch(() => null)
@@ -295,6 +297,8 @@ async function refresh() {
       const updated = next.find(item => item.path === tab.path)
       if (tab.kind === 'artifact' && updated) Object.assign(tab, updated, { kind: 'artifact' })
     }
+    // Keep file updates, but do not roll back a browser event received during either read.
+    if (browserRevision !== browserActivityRevision) return
     if (data.browserActivity) { if (wasLoaded) followBrowserActivity(data.browserActivity); else browserActivity.value = data.browserActivity }
     if (live?.ok === true && Array.isArray(live.tabs)) {
       const liveIds = new Set(live.tabs.map(tab => tab.id))
@@ -344,6 +348,7 @@ function syncSessionPanel() {
   closedBrowserIds.clear()
   activeTabId.value = ''
   browserActivity.value = null
+  browserActivityRevision++
   generation++; artifacts.value = []; tabs.value = []; query.value = ''; searching.value = false; error.value = ''; unseen.value = 0; maximized.value = false
   const state = id ? readState(id) : null
   // DSH assigns IDs to blank sessions too. Only the rendered active phase

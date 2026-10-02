@@ -335,6 +335,11 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
         // exclude scrollbar gutters that are present in the screencast image.
         const loc = await send('Runtime.evaluate', { expression: 'location.href', returnByValue: true, awaitPromise: false })
         updateStreamUrl(st, loc?.result?.value)
+        // Static pages may never paint again after a transient CDP failure.
+        if (streams.get(actualTid) === st && !webContents.isDestroyed()) {
+          if (st.captureFailures >= 3) notify(webContents, 'connected', { url: st.targetUrl, targetId: actualTid })
+          st.captureFailures = 0
+        }
         return
       }
       st.width = Math.round(Number(view.clientWidth || st.width || 0))

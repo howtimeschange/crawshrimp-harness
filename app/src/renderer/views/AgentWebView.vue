@@ -612,9 +612,8 @@ function onWindowMessage(event) {
     }
   } else if (data.__crawshrimp === 'open-file') {
     if (data.runtimeSessionId && data.runtimeSessionId !== activeRuntimeSessionId.value) return
-    // All attachment navigation joins the session workspace.
     const p = String(data.path || '').trim()
-    if (p) resourcesPanel.value?.openResource({ path: p, filename: p.replaceAll('\\', '/').split('/').pop(), kind: 'artifact' })
+    if (p) return openWorkspaceResource(p)
   } else if (data.__crawshrimp === 'upload-attachment') {
     // 会话界面拖入/粘贴文件 → 保存 + 注册为会话附件
     attachmentUploadQueue = attachmentUploadQueue.then(() => registerAttachmentFile(data.file, data.runtimeSessionId))
@@ -637,6 +636,22 @@ function onWindowMessage(event) {
 }
 
 const MAX_ATTACHMENT_BYTES = 200 * 1024 * 1024
+async function openWorkspaceResource(filePath) {
+  const sessionId = activeRuntimeSessionId.value
+  try {
+    const stat = await window.cs.statFile(filePath)
+    if (sessionId !== activeRuntimeSessionId.value) return
+    if (stat?.isDirectory) {
+      const result = await window.cs.openFile(filePath)
+      if (result?.ok === false || typeof result === 'string' && result) throw new Error(result.error || result)
+    } else {
+      resourcesPanel.value?.openResource({ path: filePath, filename: filePath.replaceAll('\\', '/').split('/').pop(), kind: 'artifact' })
+    }
+  } catch (error) {
+    if (sessionId === activeRuntimeSessionId.value) resourcesPanel.value?.showError(`打开资源失败：${error.message || error}`)
+  }
+}
+
 const IMAGE_MIME_PREFIX = 'image/'
 
 function isImageLikeFile(file) {

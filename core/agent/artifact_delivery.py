@@ -33,26 +33,34 @@ def verified_artifact(raw, *, source: str, run_id: str = '', tool_call_id: str =
             'verification': {'status': 'exists', 'mtime_ns': stat.st_mtime_ns}}
 
 
+def _successful_manifest(data):
+    return (isinstance(data, dict) and data.get('ok') is not False
+            and data.get('status') not in ('failed', 'rejected', 'canceled')
+            and data.get('exit_code') in (None, 0) and data.get('exitCode') in (None, 0))
+
+
 def collect_tool_deliveries(call: dict, result_text: str, workspace=None):
     try:
         envelope = json.loads(result_text)
     except (ValueError, TypeError):
         return []
-    if not isinstance(envelope, dict) or envelope.get('ok') is False or envelope.get('status') in ('failed', 'rejected', 'canceled'):
+    if not _successful_manifest(envelope):
         return []
     name = str(call.get('tool_name') or '').split('__')[-1]
     data = envelope.get('data') if isinstance(envelope.get('data'), dict) else envelope
     if name in ('fs_exec', 'bash', 'shell'):
         # Commands can explicitly print a JSON manifest. Ordinary output is not a delivery claim.
-        if data.get('exit_code') not in (None, 0):
+        if not _successful_manifest(data):
             return []
-        try:
-            data = json.loads(data.get('stdout') or data.get('output') or '{}')
-        except (ValueError, TypeError):
+        if 'stdout' in data or 'output' in data:
+            try:
+                data = json.loads(data.get('stdout') or data.get('output') or '{}')
+            except (ValueError, TypeError):
+                return []
+        elif name != 'bash':
             return []
-        if not isinstance(data, dict) or envelope.get('ok') is False or data.get('ok') is False:
-            return []
-    if data.get('exit_code') not in (None, 0):
+        # Native bash renders stdout directly; it is already decoded above.
+    if not _successful_manifest(data):
         return []
     source = 'shell' if name in ('fs_exec', 'bash', 'shell', 'fs_write', 'write', 'artifact_present') else 'adapter'
     candidates = data.get('artifacts') or data.get('output_files') or data.get('files') or []

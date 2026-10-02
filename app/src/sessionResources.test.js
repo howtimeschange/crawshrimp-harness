@@ -28,7 +28,7 @@ function harness({ sessionId = 'a', storage = new Map() } = {}) {
       listAgentBrowserTabs: async () => ({ ok: true, tabs: [{ id: 'one' }, { id: 'two' }] }),
     } },
   }
-  vm.runInNewContext(script + '\nglobalThis.h = { dragOverResource, dropTarget, clearTabDrag, activePaneTab, switchPane, changeBrowserLayout, collapseBrowser, resizeSplit, startTabDrag, dropResource, tabArrow, splitRatio, draggedTab, retainedTabs, syncSessionPanel, refresh, workTabs, activeIds, split, focusedPane, effectiveSplit, openResource, closeResource, toggleSplit, followBrowserActivity, opened, selection, artifacts, tabs, unseen, openBrowser, back, width, adjustWidth, miniTab, browserReady, resize, onViewportResize, togglePanel, compactOpen, searching, query, toggleSearch, closeSearch, searchInput, searchButton, filteredTabs, filteredArtifacts };', context)
+  vm.runInNewContext(script + '\nglobalThis.h = { dragOverResource, dropTarget, clearTabDrag, activePaneTab, switchPane, changeBrowserLayout, collapseBrowser, resizeSplit, startTabDrag, dropResource, tabArrow, splitRatio, draggedTab, retainedTabs, syncSessionPanel, refresh, workTabs, activeIds, split, focusedPane, effectiveSplit, openResource, closeResource, toggleSplit, followBrowserActivity, browserActivity, activeTabId, opened, selection, artifacts, tabs, unseen, openBrowser, back, width, adjustWidth, miniTab, browserReady, resize, onViewportResize, togglePanel, compactOpen, searching, query, toggleSearch, closeSearch, searchInput, searchButton, filteredTabs, filteredArtifacts };', context)
   return { ...context.h, props, requests, pointerEvents, viewport: context.window, storage,
     enterSession(id, _old, phase = id ? 'active' : 'hero') { props.sessionId = id; props.conversationPhase = phase; context.h.syncSessionPanel() },
   }
@@ -304,6 +304,45 @@ test('polling the same browser event cannot reopen a preview after the user retu
   h.followBrowserActivity(event); h.back()
   h.followBrowserActivity({...event, created_at:'2026-09-30T14:00:00'})
   assert.equal(h.selection.value, null)
+})
+
+for (const firstLoad of [true, false]) {
+  test(`late browser snapshot cannot replace live activity or remove its new page (first load: ${firstLoad})`, async () => {
+    const h = harness()
+    const old = { source: 'agent', runtime_session_id: 'a', run_id: 'r', tool_call_id: 'old', operation: 'navigate', phase: 'completed', active_tab_id: 'one', tabs: [{ id: 'one' }] }
+    if (!firstLoad) {
+      const initial = h.refresh()
+      h.requests[0]({ artifacts: [], tabs: old.tabs, activeTabId: 'one', browserActivity: old })
+      await initial
+    }
+    const pending = h.refresh()
+    h.followBrowserActivity({ ...old, tool_call_id: 'new', active_tab_id: 'two', tabs: [{ id: 'two', url: 'https://new.test' }] })
+    h.requests.at(-1)({ artifacts: [{ path: '/fresh.csv' }], tabs: old.tabs, activeTabId: 'one', browserActivity: old })
+    await pending
+    assert.equal(h.selection.value.id, 'two')
+    assert.equal(h.browserActivity.value.tool_call_id, 'new')
+    assert.equal(h.activeTabId.value, 'two')
+    assert.ok(h.tabs.value.some(tab => tab.id === 'two'))
+    assert.equal(h.artifacts.value[0].path, '/fresh.csv', 'file refreshes still apply')
+    const fresh = h.refresh()
+    h.requests.at(-1)({ artifacts: [], tabs: [{ id: 'one' }, { id: 'two' }], activeTabId: 'two', browserActivity: h.browserActivity.value })
+    await fresh
+    assert.equal(h.selection.value.id, 'two')
+  })
+}
+
+test('browser activity received during the live CDP list read also supersedes the HTTP snapshot', async () => {
+  const h = harness()
+  let finish
+  h.viewport.cs.listAgentBrowserTabs = () => new Promise(resolve => { finish = resolve })
+  const pending = h.refresh()
+  h.requests[0]({ artifacts: [], tabs: [{ id: 'one' }], activeTabId: 'one' })
+  while (!finish) await Promise.resolve()
+  h.followBrowserActivity({ source: 'agent', runtime_session_id: 'a', active_tab_id: 'two', tabs: [{ id: 'two' }] })
+  finish({ ok: true, tabs: [{ id: 'one' }] }); await pending
+  assert.equal(h.selection.value.id, 'two')
+  assert.equal(h.activeTabId.value, 'two')
+  assert.ok(h.tabs.value.some(tab => tab.id === 'two'))
 })
 
 

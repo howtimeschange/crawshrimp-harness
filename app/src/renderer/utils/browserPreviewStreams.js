@@ -4,7 +4,7 @@ const targets = new Map()
 function targetState(id) {
   let state = targets.get(id)
   if (!state) {
-    state = { owners: new Set(), consumers: new Map(), queue: Promise.resolve(), pending: 0, started: false, restart: false, frame: null, status: null }
+    state = { owners: new Set(), consumers: new Map(), queue: Promise.resolve(), pending: 0, started: false, disconnectRevision: 0, restart: false, frame: null, status: null }
     targets.set(id, state)
   }
   return state
@@ -34,6 +34,11 @@ export function subscribeBrowserPreview(id, owner, consumer, bridge = window.cs)
     })
     state.offStatus = bridge?.onAgentBrowserStatus?.(payload => {
       if (!matches(payload) || !state.owners.size) return
+      if (!payload.metadataOnly && payload.state === 'disconnected') {
+        state.started = false
+        state.disconnectRevision++
+        state.frame = null
+      }
       state.status = payload.metadataOnly ? { ...state.status, url: payload.url } : payload
       if (state.frame && typeof payload.url === 'string') state.frame = { ...state.frame, url: payload.url }
       for (const callbacks of state.consumers.values()) callbacks.onStatus?.(payload)
@@ -54,9 +59,10 @@ export function setBrowserPreviewVisible(id, owner, visible, restart = false, br
       await bridge?.stopAgentBrowserStream?.(id); state.started = false
     }
     if (state.owners.size && !state.started) {
+      const revision = state.disconnectRevision
       const result = await bridge?.startAgentBrowserStream?.(id)
-      state.started = Boolean(result?.ok)
-      return result
+      state.started = Boolean(result?.ok) && revision === state.disconnectRevision
+      return result?.ok && !state.started ? { ...result, ok: false, error: '浏览器预览连接已断开，请重新打开' } : result
     }
     if (visible && state.owners.has(owner)) replay(state, state.consumers.get(owner))
     return { ok: true }
