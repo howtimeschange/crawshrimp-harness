@@ -4,12 +4,12 @@ This checklist is the required evidence record before claiming Crawshrimp Harnes
 
 ## Release Identity
 
-- Release scope (`PATCH` / `MINOR` / `MAJOR`): `PATCH`
-- Version selection rationale: 修复现有模型推理等级兼容、Default / Off 请求语义及森马网关能力配置；未新增独立功能或改变产品架构，按维护级 PATCH 发布。
-- Target version selected under the [release versioning policy](release-versioning.md): `v0.2.3`
+- Release scope (`PATCH` / `MINOR` / `MAJOR`): `MINOR`
+- Version selection rationale: 新增会话文件工作区、浏览器预览手动交互和归档会话恢复，扩展用户可独立使用的功能；沿用现有 Electron / DSH / FastAPI 架构，按功能级 MINOR 发布并将 PATCH 归零。
+- Target version selected under the [release versioning policy](release-versioning.md): `v0.3.0`
 - Source commit: `PENDING`
-- Old version under test: `PENDING` (previous published release: `v0.2.2`)
-- New version under test: `v0.2.3`
+- Old version under test: `PENDING` (previous published release: `v0.2.3`)
+- New version under test: `v0.3.0`
 - GitHub main build run ID: `PENDING`
 - GitHub tag build run ID: `PENDING`
 - Formal release URL: `PENDING`

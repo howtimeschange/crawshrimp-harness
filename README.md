@@ -10,6 +10,8 @@ Harness 面向个人本地使用：本地功能免登录，设置中的个人账
 
 ## 当前形态
 
+- 会话文件工作区支持持久标签、双栏比较、连续 Office / PDF 阅读及预览状态恢复。
+- 会话浏览器支持内嵌和浮窗预览、鼠标键盘输入；设置页支持查看与恢复归档会话。
 - Electron 43.1.0 主进程启动 FastAPI、托管 Chrome 和 Node Worker。
 - FastAPI 默认监听 `127.0.0.1:18765`；冲突时在 `+1..+100` 内漂移。
 - MCP 网关使用 `API + 200`；DSH Web host 使用 `API + 300`，并按 `window.__DSH_BOOT__` 特征回查真实端口。
@@ -18,6 +20,15 @@ Harness 面向个人本地使用：本地功能免登录，设置中的个人账
 - macOS arm64/x64 可构建；Windows unpacked 可在 macOS 验证，NSIS 安装器应在 Windows 构建机生成。
 
 ## 版本记录
+
+### v0.3.0
+
+- 新增会话文件工作区：统一打开附件、文件链接和生成产物，支持持久标签、拖动排序、双栏比较及会话间布局恢复。
+- Office / PDF 支持连续逐页阅读，切换标签或收起面板时保留阅读位置；音视频隐藏时暂停。
+- 新增实时浏览器手动交互，支持鼠标、滚轮、键盘和输入法，在内嵌面板与浮窗间切换；使用 CDP 合成器推送画面，并在不支持时回退到截图。
+- 设置页新增归档会话列表与恢复入口；改进附件上传、粘贴和会话绑定，并校验视频模型配置。
+- 修复静态页面在短暂 CDP 故障后无法交互、断线后的预览交接不重连，以及迟到资源快照切回旧页面的问题；避免遗留按键和鼠标按下状态。
+- 保留目录链接的系统打开行为，支持原生 bash 的显式 JSON 产物清单，并统一过滤失败的交付声明；补齐 CI 测试收集和相关回归。
 
 ### v0.2.3
 
@@ -304,7 +315,7 @@ npm --prefix app run build:win
 
 独立仓库 `howtimeschange/crawshrimp-harness` 的正式客户端使用 GitHub Release 元数据用于应用内更新。本仓构建不发布到 `https://updates.crawshrimp.com/`，也不刷新主项目的 `desktop-latest`。
 
-v0.2.3 安装包在发布 CI 成功后提供于 [v0.2.3 Release](https://github.com/howtimeschange/crawshrimp-harness/releases/tag/v0.2.3)。
+v0.3.0 安装包在发布 CI 成功后提供于 [v0.3.0 Release](https://github.com/howtimeschange/crawshrimp-harness/releases/tag/v0.3.0)。
 
 升级不需要卸载旧版：
 
