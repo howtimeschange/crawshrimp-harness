@@ -6,7 +6,7 @@
     <small v-if="unseen" class="unseen-count">{{ unseen }}</small>
   </button>
   </div>
-  <aside v-show="opened" class="session-resources" :class="{ viewing: selection, maximized, compact: !selection }" :style="{ width: maximized ? undefined : selection ? `${width}px` : '300px' }" aria-label="会话资源">
+  <aside class="session-resources" :class="{ collapsed: !opened, viewing: selection, maximized, compact: !selection }" :inert="!opened" :aria-hidden="!opened" :style="{ width: maximized ? undefined : selection ? `${width}px` : '300px' }" aria-label="会话资源">
     <div v-if="selection && !maximized" class="resource-resizer" role="separator" aria-label="调整会话面板宽度" aria-orientation="vertical" :aria-valuenow="Math.round(width)" :aria-valuemin="320" :aria-valuemax="900" tabindex="0" @pointerdown="resize" @keydown.left.prevent="adjustWidth(20)" @keydown.right.prevent="adjustWidth(-20)"></div>
     <div class="resource-card">
     <header>
@@ -384,6 +384,8 @@ onUnmounted(() => { emit('viewing-change', false); window.removeEventListener('r
 .resource-card{position:relative;display:contents}.compact .resource-card{position:relative;display:flex;flex-direction:column;min-height:0;flex:0 1 auto;border:1px solid var(--border);border-radius:14px;background:var(--bg2);box-shadow:0 4px 18px #0000000a;overflow:hidden}
 .viewing header{height:38px;padding:0 10px}.viewing .browser-tabs{padding-top:4px}.viewing .browser-tab>[role=tab]{padding-top:8px;padding-bottom:8px}
 .session-resources.maximized{position:absolute;inset:0 0 0 auto;width:calc(100% - 280px);max-width:100%;z-index:19}
+/* Preserve iframe layout while returning the panel's space to the conversation. */
+.session-resources.collapsed{position:absolute;right:0;top:0;bottom:0;visibility:hidden;pointer-events:none}
 .compact header{height:42px;border-bottom:0}.compact .resource-search{padding-top:0}.compact .resource-search input{background:var(--bg);font-size:12px}.compact .resource-list{flex:0 1 auto;min-height:0;max-height:calc(100vh - 330px)}.compact .resource-row{min-height:30px}.compact .resource-main{padding:5px 4px;gap:7px}.compact .type-icon{width:25px}.compact .resource-name{line-height:20px}.closed-label{flex:none;font-size:10px}
 .browser-mini{position:relative;align-self:flex-end;width:230px;max-width:100%;flex:0 0 144px;height:144px;margin:0;border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--bg)}
 .browser-mini :deep(.agent-browser-window){height:119px}.mini-expand{position:absolute;inset:0 0 24px;z-index:2;border-radius:0;display:flex;align-items:center;justify-content:center}.mini-expand span{opacity:0;background:var(--bg2);padding:7px 10px;border-radius:8px;box-shadow:0 2px 8px #0002}.mini-expand:hover{background:#00000012}.mini-expand:hover span,.mini-expand:focus-visible span{opacity:1}.mini-caption{position:absolute;bottom:0;left:0;right:0;height:24px;padding:0 8px;display:flex;align-items:center;gap:6px;background:var(--bg);font-size:11px}.mini-caption>span{flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}

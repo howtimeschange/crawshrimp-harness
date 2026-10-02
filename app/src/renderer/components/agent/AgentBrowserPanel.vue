@@ -79,7 +79,7 @@
         <div class="browser-frame" :class="{ interactive: canInteract }"
           @pointerdown="onBrowserPointerDown" @pointermove="onBrowserPointerMove"
           @pointerup="onBrowserPointerUp" @pointercancel="releaseBrowserInput"
-          @lostpointercapture="releaseBrowserInput" @wheel="onBrowserWheel" @contextmenu.prevent>
+          @lostpointercapture="onBrowserPointerCaptureLost" @wheel="onBrowserWheel" @contextmenu.prevent>
           <img
             v-if="frame"
             class="browser-frame-img"
@@ -140,7 +140,7 @@ import {
   IconX,
 } from '@tabler/icons-vue'
 
-import { setBrowserPreviewVisible } from '../../utils/browserPreviewStreams.js'
+import { setBrowserPreviewVisible, subscribeBrowserPreview } from '../../utils/browserPreviewStreams.js'
 import { browserPoint, browserModifiers, browserButton, browserWheel, createBrowserInputQueue } from '../../utils/browserInput.js'
 const props = defineProps({
   // 菜单切换等场景由父级递增 → 自动最小化,避免浮动窗口盖住界面拦截点击
@@ -179,7 +179,7 @@ function makeInputQueue() {
   const targetId = props.tabId
   return createBrowserInputQueue(event => window.cs?.sendAgentBrowserInput?.(targetId, event) || Promise.resolve({ ok: false, error: '当前客户端不支持浏览器输入，请重启开发客户端' }), message => {
     inputError.value = message
-    window.cs?.sendAgentBrowserInput?.(targetId, { kind: 'release' }).catch(() => {})
+    sendInputRelease(targetId)
   })
 }
 function sendBrowserInput(event) {
@@ -188,7 +188,7 @@ function sendBrowserInput(event) {
   inputQueue.push(event)
 }
 async function openNativeBrowser() {
-  releaseBrowserInput()
+  releaseBrowserInput(true)
   try {
     const result = await window.cs.showAgentBrowserNative(props.tabId)
     if (result?.ok === false) inputError.value = result.error
@@ -260,26 +260,39 @@ function onBrowserPaste(e) {
   if (text) sendBrowserInput({ kind: 'text', text })
   e.target.value = ''
 }
-function releaseBrowserInput() {
+function onBrowserPointerCaptureLost(event) {
+  if (pointer?.id === event.pointerId) releaseBrowserInput()
+}
+function sendInputRelease(targetId) {
+  if (targetId) Promise.resolve(window.cs?.sendAgentBrowserInput?.(targetId, { kind: 'release' })).catch(() => {})
+}
+function releaseBrowserInput(force = false) {
   const held = pointer
   const hadInput = !!held || remoteKeys.size > 0
   pointer = null; remoteKeys.clear(); composing = false
   if (inputSink.value) inputSink.value.value = ''
   if (held) safelyReleasePointerCapture(held.target, held.id)
-  if (hadInput) inputQueue.push({ kind: 'release' })
+  if (force === true) {
+    // Local key/pointer state may already be empty while their up events are
+    // still queued. The backend serializes this release after in-flight input.
+    inputQueue.clear()
+    sendInputRelease(props.tabId)
+  } else if (hadInput) inputQueue.push({ kind: 'release' })
 }
 function disposeBrowserInput(targetId) {
   inputQueue.dispose()
   releaseBrowserInput()
   // A queued release would be discarded during teardown. Send it directly to
   // the old target; the backend orders it after input already in flight.
-  if (targetId) window.cs?.sendAgentBrowserInput?.(targetId, { kind: 'release' }).catch(() => {})
+  sendInputRelease(targetId)
 }
 watch(() => props.tabId, (_, oldTargetId) => {
   disposeBrowserInput(oldTargetId); inputQueue = makeInputQueue()
-  displayedFrame.value = null; frame.value = null
+  displayedFrame.value = null; frame.value = null; frameUrl.value = ''
+  statusState.value = 'connecting'; statusMessage.value = ''
+  if (offPreview) { offPreview(); offPreview = bindPreview(); setBrowserPreviewVisible(oldTargetId, streamOwner, false); syncStreamVisibility() }
 })
-watch(canInteract, active => { if (!active) { inputQueue.clear(); inputSink.value?.blur(); releaseBrowserInput() } })
+watch(canInteract, active => { if (!active) { releaseBrowserInput(true); inputSink.value?.blur() } })
 
 watch(() => props.minimizeSignal, (count) => {
   if (isDocked.value) return
@@ -306,8 +319,7 @@ const win = reactive({
 })
 const saved = reactive({ x: 0, y: 0, w: DEFAULT_FLOAT_W, h: DEFAULT_FLOAT_H, minimized: false, maximized: false })
 
-let offFrame = null
-let offStatus = null
+let offPreview = null
 let drag = null
 let resize = null
 let interactionFrame = 0
@@ -561,8 +573,25 @@ function syncStreamVisibility(forceRestart = false) {
   })
 }
 watch([minimized, () => props.visible], () => syncStreamVisibility())
+function onWindowBlur() { releaseBrowserInput(true) }
+function bindPreview() {
+  return subscribeBrowserPreview(props.tabId, streamOwner, {
+    onFrame(payload) {
+      frame.value = payload
+      if (!document.hidden && !minimized.value && props.visible) { statusState.value = 'connected'; statusMessage.value = '' }
+      if (typeof payload?.url === 'string') frameUrl.value = payload.url
+    },
+    onStatus(payload) {
+      if (!payload?.metadataOnly) {
+        statusState.value = document.hidden || minimized.value || !props.visible ? 'paused' : payload?.state || 'connecting'
+        statusMessage.value = payload?.message || ''
+      }
+      if (typeof payload?.url === 'string') frameUrl.value = payload.url
+    },
+  })
+}
 onMounted(() => {
-  window.addEventListener('blur', releaseBrowserInput)
+  window.addEventListener('blur', onWindowBlur)
   document.addEventListener('visibilitychange', syncStreamVisibility)
   loadPrefs()
   if (isDocked.value) {
@@ -571,33 +600,16 @@ onMounted(() => {
   } else {
     placeDefault()
   }
-  if (window.cs?.onAgentBrowserFrame) {
-    offFrame = window.cs.onAgentBrowserFrame((payload) => {
-      if (String(payload?.targetId || '') !== String(props.tabId || '')) return
-      frame.value = payload
-      if (!document.hidden && !minimized.value && props.visible) { statusState.value = 'connected'; statusMessage.value = '' }
-      if (payload?.url) frameUrl.value = payload.url
-    })
-  }
-  if (window.cs?.onAgentBrowserStatus) {
-    offStatus = window.cs.onAgentBrowserStatus((payload) => {
-      if (String(payload?.targetId || '') !== String(props.tabId || '')) return
-      statusState.value = document.hidden || minimized.value || !props.visible ? 'paused' : payload?.state || 'connecting'
-      if (payload?.message) statusMessage.value = payload.message
-      if (payload?.url) frameUrl.value = payload.url
-
-    })
-  }
+  offPreview = bindPreview()
   syncStreamVisibility()
 })
 
 onUnmounted(() => {
-  window.removeEventListener('blur', releaseBrowserInput)
+  window.removeEventListener('blur', onWindowBlur)
   disposeBrowserInput(props.tabId)
   streamDisposed = true
   document.removeEventListener('visibilitychange', syncStreamVisibility)
-  offFrame?.()
-  offStatus?.()
+  offPreview?.()
   stopInteractions({ save: false })
   dragging.value = false
   resizing.value = false
@@ -865,6 +877,9 @@ onUnmounted(() => {
   border-top: 1px solid var(--border);
   background: var(--bg2);
   flex: none;
+}
+.agent-browser-window:not(.docked):not(.maximized) .browser-window-foot {
+  padding-right: 32px;
 }
 .url {
   flex: 1;

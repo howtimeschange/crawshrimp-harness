@@ -23,8 +23,8 @@
         <p v-if="loading" role="status">正在读取图片…</p>
         <div v-else class="image-scroll" tabindex="0" aria-label="图片预览"><img v-if="url" :src="url" :alt="item.filename" :style="{ width: `${zoom * 100}%`, maxWidth: 'none' }" @error="error = '文件无法加载，可能已移动或删除'" /></div>
       </template>
-      <video v-else-if="type === 'video' && url" :src="url" controls />
-      <audio v-else-if="type === 'audio' && url" :src="url" controls />
+      <video v-else-if="type === 'video' && url" ref="mediaElement" :src="url" controls @play="pauseInactiveMedia" />
+      <audio v-else-if="type === 'audio' && url" ref="mediaElement" :src="url" controls @play="pauseInactiveMedia" />
     </div>
   </div>
 </template>
@@ -40,6 +40,9 @@ const emit = defineEmits(['update:mode', 'update:zoom'])
 const type = computed(() => previewType(props.item)), office = computed(() => isOfficeDocument(props.item))
 const views = computed(() => office.value || documentKind(props.item.filename) === 'pdf' || type.value === 'video' || type.value === 'audio' || type.value === 'image' ? [] : [{ id: 'preview', label: type.value === 'table' ? '表格' : '预览' }, { id: 'source', label: '原文' }])
 const revision = ref(0), url = ref(''), rows = ref([]), loading = ref(false), error = ref(''), truncated = ref(false)
+const mediaElement = ref(null)
+function pauseInactiveMedia() { if (!props.active) mediaElement.value?.pause() }
+watch(() => props.active, pauseInactiveMedia, { flush: 'sync' })
 const setZoom = value => emit('update:zoom', Math.max(.25, Math.min(4, value)))
 let blobUrl = ''
 function releaseBlob() { if (blobUrl) URL.revokeObjectURL(blobUrl); blobUrl = '' }
@@ -65,7 +68,7 @@ watch(() => [props.item.path, props.item.updated_at, revision.value], async (_, 
   } catch (e) { if (!signal.aborted) error.value = `预览失败：${e.message}` }
   finally { if (!signal.aborted) loading.value = false }
 }, { immediate: true })
-onUnmounted(releaseBlob)
+onUnmounted(() => { mediaElement.value?.pause(); releaseBlob() })
 async function fileAction(action) { try { if (action === 'openFile' && props.item.filename?.endsWith('.zip')) action = 'revealFile'; const result = await window.cs[action](props.item.path); if (result?.ok === false || typeof result === 'string' && result) throw new Error(result.error || result) } catch (e) { error.value = `操作失败：${e.message}` } }
 </script>
 <style scoped>

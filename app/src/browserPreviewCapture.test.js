@@ -5,13 +5,15 @@ const vm = require('node:vm')
 const source = readFileSync(new URL('./agentBrowser.js', `file://${__filename}`), 'utf8')
 function captureHarness() {
   const notifications = [], frames = [], commands = [], streams = new Map()
-  const st = { width: 800, height: 600, frameCount: 0, targetUrl: 'https://example.com', ws: {readyState:1} }
-  const mode = { fail: false, reject: null }, webContents = { isDestroyed: () => false, send: (name,payload) => frames.push(payload) }
+  const st = { targetId: 'owned', width: 800, height: 600, frameCount: 0, targetUrl: 'https://example.com', ws: {readyState:1} }
+  const mode = { fail: false, reject: null }, webContents = { isDestroyed: () => false, send: (name,payload) => (name.endsWith('status') ? notifications : frames).push(payload) }
+  st.webContents = webContents
   streams.set('owned',st)
+  const updateStreamUrl = vm.runInNewContext(source.slice(source.indexOf('function updateStreamUrl('), source.indexOf('\nfunction dispatchAgentBrowserInput')) + '; updateStreamUrl', { streams })
   let tick
   const body = source.slice(source.indexOf('  st.timer = setInterval(async () => {'),source.indexOf("\n  notify(webContents, 'connected', { url: target.url"))
   vm.runInNewContext(body, { st, streams, actualTid:'owned', webContents, target:{url:'https://example.com'}, WebSocket:{OPEN:1}, FRAME_INTERVAL_MS:800, SCREENSHOT_QUALITY:55,
-    setInterval: fn => {tick=fn;return 1}, notify: (wc,state,data)=>notifications.push({state,...data}),
+    setInterval: fn => {tick=fn;return 1}, updateStreamUrl, notify: (wc,state,data)=>notifications.push({state,...data}),
     send: async method => { commands.push(method); if (method==='Page.captureScreenshot') { if(mode.reject) return new Promise((resolve,reject)=>mode.reject(reject)); if(mode.fail) throw new Error('capture timeout'); return {data:'frame'} } return method==='Runtime.evaluate' ? {result:{value:'https://iana.org'}} : {cssVisualViewport:{clientWidth:800,clientHeight:600}} }
   })
   return {tick,mode,st,streams,notifications,frames,commands}
@@ -38,6 +40,17 @@ test('compositor streaming keeps the timer for metadata without polling screensh
   assert.ok(!h.commands.includes('Page.captureScreenshot'))
   assert.ok(h.commands.includes('Page.getLayoutMetrics'))
   assert.ok(h.commands.includes('Runtime.evaluate'))
+  assert.equal(h.st.targetUrl, 'https://iana.org')
+  assert.equal(h.notifications.length, 1, 'unchanged URL does not repeatedly publish metadata')
+  assert.equal(h.notifications[0].metadataOnly, true)
+  assert.equal(h.notifications[0].url, 'https://iana.org')
+  assert.equal(h.frames.length, 0, 'address updates must not manufacture a new image')
+})
+test('late URL reads cannot update a replacement stream or publish metadata', async () => {
+  const h = captureHarness(); h.st.screencastStarted = true
+  h.streams.set('owned', {})
+  await h.tick()
+  assert.equal(h.notifications.length, 0); assert.equal(h.st.targetUrl, 'https://example.com')
 })
 test('screencast acknowledges late frames but only publishes the currently owned target', async () => {
   const sent = [], frames = [], streams = new Map()

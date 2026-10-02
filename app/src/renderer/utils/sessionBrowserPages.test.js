@@ -3,20 +3,28 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { liveSessionBrowserPages, isClosedBrowserPageError } from './sessionBrowserPages.js'
+import { resourceId, restoreWorkspace } from './resourceWorkspace.js'
+import { formatArtifactAge, sortArtifactsByUpdated } from './artifactTime.js'
 
 const source = readFileSync(new URL('../components/agent/SessionResources.vue', import.meta.url), 'utf8')
+const script = source.split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm, '')
 function harness({ api = async () => ({}), list = async () => ({ok:true,tabs:[]}) } = {}) {
   const ref = value => ({value})
+  const props = { sessionId: 'session-a', conversationPhase: 'active' }
   const context = {
-    props:{sessionId:'session-a'}, tabs:ref([{id:'closed',title:'Old page'}]), activeTabId:ref('closed'), selection:ref(null),
-    closedBrowserIds:new Set(), error:ref(''), generation:0, previewGeneration:0, loading:ref(false), artifacts:ref([]),
-    loadedOnce:true, opened:ref(true), unseen:ref(0), window:{cs:{agentApi:api,listAgentBrowserTabs:list}},
-    back(){context.selection.value=null;context.error.value=''}, prepareBrowserTransition(){},nextTick(){},
-    liveSessionBrowserPages,isClosedBrowserPageError,
+    defineProps: () => props, defineEmits: () => {}, defineExpose: () => {}, ref,
+    computed: fn => ({ get value() { return fn() } }), watch() {}, onMounted() {}, onUnmounted() {},
+    nextTick: fn => Promise.resolve().then(fn), setInterval: () => 1, clearInterval() {}, setTimeout, clearTimeout,
+    window: { innerWidth: 1400, innerHeight: 900, cs: {agentApi:api,listAgentBrowserTabs:list} },
+    document: { getElementById: () => null }, localStorage: { getItem: () => null, setItem() {} },
+    liveSessionBrowserPages, isClosedBrowserPageError, resourceId, restoreWorkspace, formatArtifactAge, sortArtifactsByUpdated,
   }
-  vm.runInNewContext(source.slice(source.indexOf('function forgetBrowserPage('),source.indexOf('function focusSelectedTab(')),context)
-  vm.runInNewContext(source.slice(source.indexOf('async function refresh()'),source.indexOf('async function newPage()')),context)
-  return context
+  vm.runInNewContext(script + `
+    loadedOnce = true; opened.value = true;
+    tabs.value = [{ id: 'closed', title: 'Old page' }]; activeTabId.value = 'closed';
+    globalThis.h = { tabs, activeTabId, selection, closedBrowserIds, error, refresh, openBrowser, openResource, forgetBrowserPage, workTabs, retainedTabs };
+  `, context)
+  return { ...context.h, props }
 }
 
 test('only live pages owned by this session appear, with current metadata', () => {
@@ -30,7 +38,7 @@ test('temporary connection failure preserves pages but cannot resurrect known cl
 })
 test('refresh removes closed page and exits its selected preview', async () => {
   const h=harness({api:async()=>({tabs:[{id:'closed'}],activeTabId:'closed'})})
-  h.selection.value={kind:'browser',id:'closed'}
+  h.openResource({kind:'browser',id:'closed'})
   await h.refresh()
   assert.equal(h.tabs.value.length,0)
   assert.equal(h.activeTabId.value,'')

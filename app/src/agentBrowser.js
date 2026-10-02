@@ -95,6 +95,16 @@ function publishScreencastFrame(st, webContents, params) {
   } catch { /* Renderer may disappear between the ownership check and send. */ }
 }
 
+function updateStreamUrl(st, url) {
+  if (typeof url !== 'string' || url === st.targetUrl || streams.get(st.targetId) !== st) return
+  st.targetUrl = url
+  // Route changes can occur without a compositor frame. Publish only metadata,
+  // leaving the consumer's connection/error state and visible image intact.
+  try {
+    if (!st.webContents.isDestroyed()) st.webContents.send('agent:browser:status', { targetId: st.targetId, url, metadataOnly: true })
+  } catch { /* Renderer may disappear between the ownership check and send. */ }
+}
+
 function dispatchAgentBrowserInput(webContents, payload) {
   // No implicit current/first-page fallback: manual input must target its visible stream.
   const st = payload?.targetId && streams.get(String(payload.targetId))
@@ -221,9 +231,12 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
       // 实时跟进页面导航:只取主 frame(parentId 为空)的 URL,窗口地址栏即时刷新
       const frame = msg.params?.frame
       const url = frame?.url
-      if (url && url !== 'about:blank' && !frame.parentId && st) {
-        st.targetUrl = url
+      if (url && !frame.parentId && st) {
+        st.mainFrameId = frame.id
+        updateStreamUrl(st, url)
       }
+    } else if (msg && msg.method === 'Page.navigatedWithinDocument' && st && msg.params?.frameId === st.mainFrameId) {
+      updateStreamUrl(st, msg.params.url)
     }
   }
   const ownsStream = () => st ? streams.get(actualTid) === st : startingSockets.get(startKey) === ws
@@ -298,6 +311,7 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
   st = { ws, webContents, timer: null, targetUrl: target.url || '', targetId: actualTid,
     send, frameCount: 0, capturing: false, ...viewport }
   streams.set(actualTid, st)
+  try { st.mainFrameId = (await send('Page.getFrameTree'))?.frameTree?.frame?.id } catch { /* URL polling remains available. */ }
   st.input = createBrowserInputSession(send, () => streams.get(actualTid) === st && !webContents.isDestroyed() && ws.readyState === WebSocket.OPEN, () => st)
   // 在 stream 正式登记前始终保留 starting socket。这样用户恰好在
   // websocket open 与 Page.enable 之间关闭窗口时，stop 仍能取消启动。
@@ -320,7 +334,7 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
         // Keep the dimensions carried by the visible frame. Layout metrics can
         // exclude scrollbar gutters that are present in the screencast image.
         const loc = await send('Runtime.evaluate', { expression: 'location.href', returnByValue: true, awaitPromise: false })
-        if (typeof loc?.result?.value === 'string') st.targetUrl = loc.result.value
+        updateStreamUrl(st, loc?.result?.value)
         return
       }
       st.width = Math.round(Number(view.clientWidth || st.width || 0))
@@ -341,7 +355,7 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
             awaitPromise: false,
           })
           const href = loc?.result?.value
-          if (typeof href === 'string' && href && href !== 'about:blank') st.targetUrl = href
+          updateStreamUrl(st, href)
         } catch { /* 忽略单次 URL 回读失败 */ }
         try {
           const metrics = await send('Page.getLayoutMetrics')

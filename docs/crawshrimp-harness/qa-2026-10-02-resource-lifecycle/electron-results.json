@@ -1,0 +1,108 @@
+{
+  "checks": {
+    "staticHandoff": {
+      "before": 1,
+      "after": 1,
+      "images": 1,
+      "status": "已连接"
+    },
+    "route": {
+      "remote": "about:blank#without-paint",
+      "backend": "about:blank#without-paint",
+      "visible": "about:blank#without-paint",
+      "frames": 1
+    },
+    "clicks": {
+      "normal": 1,
+      "afterScale15": 2
+    },
+    "release": {
+      "input": [
+        {
+          "kind": "mouse",
+          "type": "mouseMoved",
+          "x": 99.99996112410429,
+          "y": 149.999974178296,
+          "button": "none",
+          "buttons": 0,
+          "modifiers": 0
+        },
+        {
+          "kind": "mouse",
+          "type": "mousePressed",
+          "x": 99.99996112410429,
+          "y": 149.999974178296,
+          "button": "left",
+          "buttons": 1,
+          "clickCount": 1,
+          "modifiers": 0
+        },
+        {
+          "kind": "release"
+        }
+      ],
+      "remote": [
+        "mousedown",
+        "mouseup"
+      ],
+      "active": true
+    },
+    "keyRelease": [
+      "keydown",
+      "keyup"
+    ],
+    "scroll-md": {
+      "scrollBefore": 500,
+      "scrollAfter": 500,
+      "chatBefore": 770,
+      "chatAfter": 1400,
+      "collapsed": {
+        "inert": true,
+        "hidden": "hidden",
+        "height": 896
+      }
+    },
+    "scroll-html": {
+      "scrollBefore": 500,
+      "scrollAfter": 500,
+      "chatBefore": 770,
+      "chatAfter": 1400,
+      "collapsed": {
+        "inert": true,
+        "hidden": "hidden",
+        "height": 896
+      }
+    },
+    "audio": {
+      "audioTime": 1.22291,
+      "pausedTime": {
+        "paused": true,
+        "time": 1.226709
+      },
+      "restored": {
+        "paused": true,
+        "time": 1.226709
+      }
+    },
+    "video": {
+      "paused": true,
+      "time": 0.102713
+    },
+    "floating": {
+      "restored": true,
+      "hiddenOnCollapse": true
+    },
+    "fallback": {
+      "screenshots": 2,
+      "active": true
+    }
+  },
+  "errors": [],
+  "environment": {
+    "electron": "43.1.0",
+    "cdpPort": 51007,
+    "vitePort": 51048,
+    "temp": "/var/folders/kk/y55jpfk113xcv1bjkn7ypr680000gn/T/harness-lifecycle-electron-YtjnH6"
+  },
+  "passed": true
+}
