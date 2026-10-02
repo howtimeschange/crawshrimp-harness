@@ -1,9 +1,10 @@
 'use strict'
 
 /**
- * Agent 实时浏览器视图(CDP screencast-lite)。
+ * Agent 实时浏览器视图与手动输入(CDP screencast)。
  *
- * 连接抓虾托管 Chrome 的 9222 CDP 端点,定时 Page.captureScreenshot,
+ * 连接抓虾托管 Chrome 的 CDP 端点，由合成器持续推送画面，
+ * 不支持 screencast 的浏览器才回退到定时 Page.captureScreenshot，
  * 以 JPEG dataURL 推送给渲染端(agent:browser:frame),供智能体页右侧
  * 浏览器面板实时展示网页自动化过程。
  *
@@ -16,6 +17,7 @@
 
 const http = require('node:http')
 const { resolveCdpPort } = require('./cdpPort')
+const { createBrowserInputSession } = require('./browserInput')
 
 const CDP_PORT = resolveCdpPort()
 const CDP_HTTP_TIMEOUT_MS = 3000
@@ -23,6 +25,7 @@ const CDP_WS_TIMEOUT_MS = 5000
 const CDP_COMMAND_TIMEOUT_MS = 5000
 const FRAME_INTERVAL_MS = 800
 const SCREENSHOT_QUALITY = 55
+const STREAM_QUALITY = 75
 
 /** @type {Map<string, { ws: WebSocket, timer: NodeJS.Timeout | null, targetUrl: string, targetId: string, send: (method: string, params?: object) => Promise<any> }>} */
 const streams = new Map()
@@ -69,6 +72,47 @@ function notify(webContents, state, extra = {}) {
 }
 
 const canceledStarts = new Set()
+function closeStream(st) {
+  if (st.timer) clearInterval(st.timer)
+  const close = () => { try { st.ws.close() } catch {} }
+  if (st.input) st.input.dispose().finally(close)
+  else close()
+}
+
+function publishScreencastFrame(st, webContents, params) {
+  // Acknowledge every received frame, including a late frame from a stopped stream.
+  st.send('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {})
+  if (streams.get(st.targetId) !== st || webContents.isDestroyed()) return
+  const meta = params.metadata || {}
+  const scale = Number(meta.pageScaleFactor) || 1
+  const width = Math.round(Number(meta.deviceWidth) / scale) || st.width
+  const height = Math.round((Number(meta.deviceHeight) - Number(meta.offsetTop || 0)) / scale) || st.height
+  st.width = width; st.height = height
+  st.liveFrames = (st.liveFrames || 0) + 1
+  st.captureFailures = 0
+  try {
+    webContents.send('agent:browser:frame', { targetId: st.targetId, dataUrl: `data:image/jpeg;base64,${params.data}`, url: st.targetUrl, width, height, ts: Date.now() })
+  } catch { /* Renderer may disappear between the ownership check and send. */ }
+}
+
+function dispatchAgentBrowserInput(webContents, payload) {
+  // No implicit current/first-page fallback: manual input must target its visible stream.
+  const st = payload?.targetId && streams.get(String(payload.targetId))
+  if (!st || st.webContents !== webContents || webContents?.isDestroyed() || st.ws.readyState !== WebSocket.OPEN) return Promise.resolve({ ok: false, error: '浏览器画面未连接，请重新打开' })
+  return st.input.dispatch(payload.event)
+}
+
+async function showAgentBrowserNative(webContents, targetId) {
+  const st = targetId && streams.get(String(targetId))
+  if (!st || st.webContents !== webContents || webContents?.isDestroyed() || st.ws.readyState !== WebSocket.OPEN) return { ok: false, error: '浏览器页面已关闭，请重新打开' }
+  try {
+    const window = await st.send('Browser.getWindowForTarget', { targetId: st.targetId })
+    if (window.bounds?.windowState === 'minimized') await st.send('Browser.setWindowBounds', { windowId: window.windowId, bounds: { windowState: 'normal' } })
+    await st.send('Page.bringToFront')
+    return { ok: true, windowId: window.windowId, targetId: st.targetId, url: st.targetUrl }
+  } catch (error) { return { ok: false, error: `打开浏览器窗口失败：${error.message || error}` } }
+}
+
 function stopAgentBrowserStream(targetId) {
   if (targetId) {
     const startKey = String(targetId)
@@ -81,10 +125,7 @@ function stopAgentBrowserStream(targetId) {
     const stopped = streams.get(String(targetId))
     if (!stopped) return { ok: true, stopped: Boolean(startingSocket) }
     streams.delete(String(targetId))
-    if (stopped.timer) clearInterval(stopped.timer)
-    try {
-      if (stopped.ws && stopped.ws.readyState === WebSocket.OPEN) stopped.ws.close()
-    } catch {}
+    closeStream(stopped)
     return { ok: true, stopped: true, targetId: String(targetId) }
   }
   for (const key of startingByTarget.keys()) canceledStarts.add(key)
@@ -94,10 +135,7 @@ function stopAgentBrowserStream(targetId) {
   startingSockets.clear()
   let count = 0
   for (const [, st] of streams) {
-    if (st.timer) clearInterval(st.timer)
-    try {
-      if (st.ws && st.ws.readyState === WebSocket.OPEN) st.ws.close()
-    } catch {}
+    closeStream(st)
     count += 1
   }
   streams.clear()
@@ -177,6 +215,8 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
       clearTimeout(timer)
       if (msg.error) reject(new Error(msg.error.message || 'CDP 命令失败'))
       else resolve(msg.result)
+    } else if (msg && msg.method === 'Page.screencastFrame' && st) {
+      publishScreencastFrame(st, webContents, msg.params || {})
     } else if (msg && msg.method === 'Page.frameNavigated') {
       // 实时跟进页面导航:只取主 frame(parentId 为空)的 URL,窗口地址栏即时刷新
       const frame = msg.params?.frame
@@ -255,12 +295,18 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
     viewport = { width: Math.round(Number(visual.clientWidth || 0)), height: Math.round(Number(visual.clientHeight || 0)) }
   } catch { /* 首帧仍可继续 */ }
 
-  st = { ws, timer: null, targetUrl: target.url || '', targetId: actualTid,
+  st = { ws, webContents, timer: null, targetUrl: target.url || '', targetId: actualTid,
     send, frameCount: 0, capturing: false, ...viewport }
   streams.set(actualTid, st)
+  st.input = createBrowserInputSession(send, () => streams.get(actualTid) === st && !webContents.isDestroyed() && ws.readyState === WebSocket.OPEN, () => st)
   // 在 stream 正式登记前始终保留 starting socket。这样用户恰好在
   // websocket open 与 Page.enable 之间关闭窗口时，stop 仍能取消启动。
   startingSockets.delete(startKey)
+  try {
+    await send('Page.startScreencast', { format: 'jpeg', quality: STREAM_QUALITY, maxWidth: 1920, maxHeight: 1440, everyNthFrame: 1 })
+    st.screencastStarted = true
+  } catch { st.screencastStarted = false }
+  if (streams.get(actualTid) !== st) return { ok: false, canceled: true, targetId: actualTid }
   st.timer = setInterval(async () => {
     if (st !== streams.get(actualTid)) return
     if (st.ws.readyState !== WebSocket.OPEN) return
@@ -270,6 +316,13 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
     try {
       const layout = await send('Page.getLayoutMetrics')
       const view = layout?.cssVisualViewport || layout?.visualViewport || {}
+      if (st.screencastStarted) {
+        // Keep the dimensions carried by the visible frame. Layout metrics can
+        // exclude scrollbar gutters that are present in the screencast image.
+        const loc = await send('Runtime.evaluate', { expression: 'location.href', returnByValue: true, awaitPromise: false })
+        if (typeof loc?.result?.value === 'string') st.targetUrl = loc.result.value
+        return
+      }
       st.width = Math.round(Number(view.clientWidth || st.width || 0))
       st.height = Math.round(Number(view.clientHeight || st.height || 0))
       const shot = await send('Page.captureScreenshot', {
@@ -327,4 +380,6 @@ module.exports = {
   stopAgentBrowserStream,
   getAgentBrowserState,
   listAgentBrowserTabs,
+  dispatchAgentBrowserInput,
+  showAgentBrowserNative,
 }

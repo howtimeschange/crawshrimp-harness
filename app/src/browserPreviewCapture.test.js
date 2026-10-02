@@ -30,6 +30,29 @@ test('late failed capture from a stopped stream cannot overwrite replacement sta
   h.streams.set('owned',{});reject(new Error('old capture'))
   await pending;assert.equal(h.notifications.length,0);assert.equal(h.frames.length,0)
 })
+test('compositor streaming keeps the timer for metadata without polling screenshots', async () => {
+  const h = captureHarness(); h.st.screencastStarted = true
+  h.st.width = 815
+  await h.tick(); await h.tick()
+  assert.equal(h.st.width, 815, 'layout metrics must not remove a visible scrollbar gutter from input coordinates')
+  assert.ok(!h.commands.includes('Page.captureScreenshot'))
+  assert.ok(h.commands.includes('Page.getLayoutMetrics'))
+  assert.ok(h.commands.includes('Runtime.evaluate'))
+})
+test('screencast acknowledges late frames but only publishes the currently owned target', async () => {
+  const sent = [], frames = [], streams = new Map()
+  const st = { targetId: 'owned', targetUrl: 'https://example.com', width: 1200, height: 900, send: async (method, params) => sent.push([method, params]) }
+  const webContents = { isDestroyed: () => false, send: (_, frame) => frames.push(frame) }
+  streams.set('owned', st)
+  const body = source.slice(source.indexOf('function publishScreencastFrame'), source.indexOf('\nfunction dispatchAgentBrowserInput'))
+  const publish = vm.runInNewContext(body + '; publishScreencastFrame', { streams, Date })
+  publish(st, webContents, { sessionId: 12, data: 'jpeg', metadata: { deviceWidth: 1200, deviceHeight: 900, pageScaleFactor: 1, offsetTop: 0 } })
+  assert.equal(frames.length, 1); assert.equal(frames[0].width, 1200); assert.equal(frames[0].targetId, 'owned')
+  streams.set('owned', {})
+  publish(st, webContents, { sessionId: 13, data: 'late' })
+  assert.equal(frames.length, 1); assert.equal(sent.length, 2)
+  assert.equal(sent[1][0], 'Page.screencastFrameAck'); assert.equal(sent[1][1].sessionId, 13)
+})
 test('closed or failed old websocket cannot mark a replacement disconnected',()=>{
   const notifications=[],st={},ws={},streams=new Map([['owned',st]])
   const body=source.slice(source.indexOf('  const ownsStream ='),source.indexOf('\n  const send ='))

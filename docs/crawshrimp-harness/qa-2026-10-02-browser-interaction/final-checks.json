@@ -1,0 +1,28 @@
+{
+  "checks": [
+    "scaled single click",
+    "double click",
+    "hover",
+    "English and Chinese text",
+    "select all and replace",
+    "backspace",
+    "tab focus",
+    "enter button",
+    "textarea newline",
+    "drag",
+    "black margin ignores input",
+    "wheel scroll",
+    "click after scroll",
+    "copy to system clipboard",
+    "native paste",
+    "Chromium IME commit once",
+    "floating scaled click",
+    "maximized floating click",
+    "unowned target rejected",
+    "held Shift released on layout switch",
+    "resized native viewport click",
+    "link navigation and URL update"
+  ],
+  "url": "http://127.0.0.1:18869/next",
+  "errors": []
+}

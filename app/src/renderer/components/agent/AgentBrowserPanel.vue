@@ -23,6 +23,9 @@
         </span>
         <span v-if="frameUrl && !minimized" class="browser-window-url" :title="frameUrl">{{ frameUrl }}</span>
         <span class="browser-window-spacer"></span>
+        <button class="win-btn" type="button" title="在原生浏览器中操作" aria-label="在原生浏览器中操作" @pointerdown.stop @click="openNativeBrowser">
+          <IconBrowser :size="15" :stroke-width="2.2" aria-hidden="true" />
+        </button>
         <button
           class="win-btn layout-btn"
           type="button"
@@ -73,14 +76,25 @@
 
       <p v-if="activity?.active_tab_id === tabId && !compact" class="execution-context" :title="`run ${activity.run_id || ''} · ${activity.tool_call_id || ''}`">{{ activity.operation || '页面观察' }} · {{ activity.phase === 'uncertain' ? '结果待核实，恢复画面不会重放操作' : 'Agent 当前页面' }} · {{ activity.run_id?.slice(-8) }}</p>
       <div v-show="!minimized" class="browser-window-body">
-        <div class="browser-frame">
+        <div class="browser-frame" :class="{ interactive: canInteract }"
+          @pointerdown="onBrowserPointerDown" @pointermove="onBrowserPointerMove"
+          @pointerup="onBrowserPointerUp" @pointercancel="releaseBrowserInput"
+          @lostpointercapture="releaseBrowserInput" @wheel="onBrowserWheel" @contextmenu.prevent>
           <img
             v-if="frame"
             class="browser-frame-img"
+            ref="frameImage"
             :src="frame.dataUrl"
             alt="浏览器实时画面"
+            draggable="false"
+            @load="displayedFrame = frame"
           />
-          <div v-else class="browser-frame-placeholder">
+          <textarea v-if="!compact" ref="inputSink" class="browser-input-sink" aria-label="浏览器页面键盘输入"
+            autocomplete="off" autocapitalize="off" spellcheck="false"
+            @keydown="onBrowserKeyDown" @keyup="onBrowserKeyUp" @input="onBrowserText"
+            @compositionstart="composing = true" @compositionend="onBrowserCompositionEnd"
+            @paste="onBrowserPaste" @blur="releaseBrowserInput" />
+          <div v-if="!frame" class="browser-frame-placeholder">
             <template v-if="statusState === 'error'">
               <div class="placeholder-icon">⚠️</div>
               <div class="placeholder-text">{{ statusMessage || '无法连接 9222 CDP 浏览器' }}</div>
@@ -92,6 +106,7 @@
             </template>
           </div>
         </div>
+        <p v-if="inputError && !compact" class="browser-input-error" role="alert">{{ inputError }}</p>
         <div v-if="!compact" class="browser-window-foot">
           <span class="url" :title="frameUrl">{{ frameUrl || '—' }}</span>
           <span v-if="frame" class="frame-meta">{{ frame.width }}×{{ frame.height }}</span>
@@ -116,6 +131,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   IconArrowsMaximize,
   IconArrowsMinimize,
+  IconBrowser,
   IconDeviceDesktop,
   IconExternalLink,
   IconLayoutSidebarRight,
@@ -125,6 +141,7 @@ import {
 } from '@tabler/icons-vue'
 
 import { setBrowserPreviewVisible } from '../../utils/browserPreviewStreams.js'
+import { browserPoint, browserModifiers, browserButton, browserWheel, createBrowserInputQueue } from '../../utils/browserInput.js'
 const props = defineProps({
   // 菜单切换等场景由父级递增 → 自动最小化,避免浮动窗口盖住界面拦截点击
   minimizeSignal: { type: Number, default: 0 },
@@ -152,6 +169,117 @@ const dragging = ref(false)
 const resizing = ref(false)
 const isDocked = computed(() => props.layout === 'docked')
 const layoutActionLabel = computed(() => (isDocked.value ? props.dockActionLabel : '固定到右侧'))
+const frameImage = ref(null), inputSink = ref(null), displayedFrame = ref(null), inputError = ref('')
+const canInteract = computed(() => !props.compact && props.visible && !minimized.value && statusState.value === 'connected' && !!displayedFrame.value && !!props.tabId)
+let composing = false, compositionCommit = '', pointer = null
+let lastClick = null
+const remoteKeys = new Set()
+let inputQueue = makeInputQueue()
+function makeInputQueue() {
+  const targetId = props.tabId
+  return createBrowserInputQueue(event => window.cs?.sendAgentBrowserInput?.(targetId, event) || Promise.resolve({ ok: false, error: '当前客户端不支持浏览器输入，请重启开发客户端' }), message => {
+    inputError.value = message
+    window.cs?.sendAgentBrowserInput?.(targetId, { kind: 'release' }).catch(() => {})
+  })
+}
+function sendBrowserInput(event) {
+  if (!canInteract.value || document.hidden) return
+  inputError.value = ''
+  inputQueue.push(event)
+}
+async function openNativeBrowser() {
+  releaseBrowserInput()
+  try {
+    const result = await window.cs.showAgentBrowserNative(props.tabId)
+    if (result?.ok === false) inputError.value = result.error
+  } catch (error) { inputError.value = error.message || '打开浏览器窗口失败' }
+}
+function onBrowserPointerDown(e) {
+  if (!canInteract.value || e.button > 2) return
+  const point = browserPoint(e, frameImage.value, displayedFrame.value)
+  if (!point) return
+  e.preventDefault()
+  inputSink.value?.focus({ preventScroll: true })
+  const repeated = lastClick && lastClick.button === e.button && e.timeStamp - lastClick.time < 500 && Math.hypot(point.x - lastClick.x, point.y - lastClick.y) < 5
+  const clickCount = repeated ? lastClick.count % 3 + 1 : 1
+  lastClick = { ...point, button: e.button, time: e.timeStamp, count: clickCount }
+  pointer = { id: e.pointerId, target: e.currentTarget, button: browserButton(e.button), clickCount }
+  safelySetPointerCapture(e.currentTarget, e.pointerId)
+  sendBrowserInput({ kind: 'mouse', type: 'mousePressed', ...point, button: pointer.button, buttons: e.buttons, clickCount: pointer.clickCount, modifiers: browserModifiers(e) })
+}
+function onBrowserPointerMove(e) {
+  const point = browserPoint(e, frameImage.value, displayedFrame.value, !!pointer)
+  if (!point) return
+  sendBrowserInput({ kind: 'mouse', type: 'mouseMoved', ...point, button: pointer?.button || 'none', buttons: e.buttons & 7, modifiers: browserModifiers(e) })
+}
+function onBrowserPointerUp(e) {
+  if (!pointer || pointer.id !== e.pointerId) return
+  const point = browserPoint(e, frameImage.value, displayedFrame.value, true), held = pointer
+  pointer = null
+  if (point) sendBrowserInput({ kind: 'mouse', type: 'mouseReleased', ...point, button: held.button, buttons: e.buttons & 7, clickCount: held.clickCount, modifiers: browserModifiers(e) })
+  safelyReleasePointerCapture(held.target, held.id)
+}
+function onBrowserWheel(e) {
+  if (!canInteract.value) return
+  const point = browserPoint(e, frameImage.value, displayedFrame.value)
+  if (!point) return
+  e.preventDefault()
+  sendBrowserInput({ kind: 'wheel', ...point, ...browserWheel(e, displayedFrame.value.height), modifiers: browserModifiers(e) })
+}
+function onBrowserKeyDown(e) {
+  if (!canInteract.value || e.isComposing || composing || e.keyCode === 229) return
+  // Native paste delivers clipboard text to this textarea; do not also paste remotely.
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') return
+  const command = (e.metaKey || e.ctrlKey) ? ({ a: 'selectAll', c: 'copy', x: 'cut' })[e.key.toLowerCase()] : undefined
+  if (e.key.length > 1 || e.metaKey || e.ctrlKey) e.preventDefault()
+  remoteKeys.add(e.code)
+  sendBrowserInput({ kind: 'key', type: 'rawKeyDown', key: e.key, code: e.code, keyCode: e.keyCode, modifiers: browserModifiers(e), repeat: e.repeat, command })
+}
+function onBrowserKeyUp(e) {
+  if (!remoteKeys.delete(e.code)) return
+  e.preventDefault()
+  sendBrowserInput({ kind: 'key', type: 'keyUp', key: e.key, code: e.code, keyCode: e.keyCode, modifiers: browserModifiers(e) })
+}
+function onBrowserText(e) {
+  if (e.isComposing || composing) return
+  const text = e.data || e.target.value
+  e.target.value = ''
+  if (text && text !== compositionCommit) sendBrowserInput({ kind: 'text', text })
+  compositionCommit = ''
+}
+function onBrowserCompositionEnd(e) {
+  composing = false
+  compositionCommit = e.data || ''
+  if (compositionCommit) sendBrowserInput({ kind: 'text', text: compositionCommit })
+  e.target.value = ''
+  setTimeout(() => { compositionCommit = '' }, 0)
+}
+function onBrowserPaste(e) {
+  e.preventDefault()
+  const text = e.clipboardData?.getData('text/plain')
+  if (text) sendBrowserInput({ kind: 'text', text })
+  e.target.value = ''
+}
+function releaseBrowserInput() {
+  const held = pointer
+  const hadInput = !!held || remoteKeys.size > 0
+  pointer = null; remoteKeys.clear(); composing = false
+  if (inputSink.value) inputSink.value.value = ''
+  if (held) safelyReleasePointerCapture(held.target, held.id)
+  if (hadInput) inputQueue.push({ kind: 'release' })
+}
+function disposeBrowserInput(targetId) {
+  inputQueue.dispose()
+  releaseBrowserInput()
+  // A queued release would be discarded during teardown. Send it directly to
+  // the old target; the backend orders it after input already in flight.
+  if (targetId) window.cs?.sendAgentBrowserInput?.(targetId, { kind: 'release' }).catch(() => {})
+}
+watch(() => props.tabId, (_, oldTargetId) => {
+  disposeBrowserInput(oldTargetId); inputQueue = makeInputQueue()
+  displayedFrame.value = null; frame.value = null
+})
+watch(canInteract, active => { if (!active) { inputQueue.clear(); inputSink.value?.blur(); releaseBrowserInput() } })
 
 watch(() => props.minimizeSignal, (count) => {
   if (isDocked.value) return
@@ -434,6 +562,7 @@ function syncStreamVisibility(forceRestart = false) {
 }
 watch([minimized, () => props.visible], () => syncStreamVisibility())
 onMounted(() => {
+  window.addEventListener('blur', releaseBrowserInput)
   document.addEventListener('visibilitychange', syncStreamVisibility)
   loadPrefs()
   if (isDocked.value) {
@@ -463,6 +592,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('blur', releaseBrowserInput)
+  disposeBrowserInput(props.tabId)
   streamDisposed = true
   document.removeEventListener('visibilitychange', syncStreamVisibility)
   offFrame?.()
@@ -512,6 +643,8 @@ onUnmounted(() => {
   transition: none;
 }
 .browser-window-head {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -621,8 +754,8 @@ onUnmounted(() => {
   border-color: color-mix(in srgb, var(--red) 68%, #fff 10%);
   color: #fff;
 }
-.layout-btn::before,
-.layout-btn::after {
+.win-btn::before,
+.win-btn::after {
   position: absolute;
   right: 0;
   opacity: 0;
@@ -630,7 +763,7 @@ onUnmounted(() => {
   transition: opacity 120ms ease, transform 120ms ease;
   z-index: 4;
 }
-.layout-btn::before {
+.win-btn::before {
   content: '';
   top: calc(100% + 3px);
   width: 8px;
@@ -641,8 +774,8 @@ onUnmounted(() => {
   border-bottom: none;
   transform: translate(-8px, -1px) rotate(45deg);
 }
-.layout-btn::after {
-  content: attr(data-tooltip);
+.win-btn::after {
+  content: attr(title);
   top: calc(100% + 7px);
   min-width: max-content;
   max-width: 160px;
@@ -656,15 +789,16 @@ onUnmounted(() => {
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.34);
   transform: translateY(-2px);
 }
-.layout-btn:hover::before,
-.layout-btn:hover::after,
-.layout-btn:focus-visible::before,
-.layout-btn:focus-visible::after {
+.layout-btn::after { content: attr(data-tooltip); }
+.win-btn:hover::before,
+.win-btn:hover::after,
+.win-btn:focus-visible::before,
+.win-btn:focus-visible::after {
   opacity: 1;
   transform: translateY(0);
 }
-.layout-btn:hover::before,
-.layout-btn:focus-visible::before {
+.win-btn:hover::before,
+.win-btn:focus-visible::before {
   transform: translate(-8px, -1px) rotate(45deg);
 }
 .browser-window-body {
@@ -689,6 +823,10 @@ onUnmounted(() => {
   object-fit: contain;
   image-rendering: auto;
 }
+.browser-frame.interactive { touch-action: none; }
+.browser-frame.interactive:focus-within { box-shadow: inset 0 0 0 2px var(--orange,#ff6b2b); }
+.browser-input-sink { position: absolute; bottom: 0; left: 0; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; resize: none; pointer-events: none; }
+.browser-input-error { margin: 0; padding: 6px 10px; color: var(--red,#c66750); font-size: 11px; }
 .browser-frame-placeholder {
   display: flex;
   flex-direction: column;

@@ -1,0 +1,12 @@
+{
+  "url": "http://127.0.0.1:5173/",
+  "targetId": "008EE8D810D04E1EED9635C4C2A014BD",
+  "status": "已连接",
+  "native": {
+    "ok": true,
+    "windowId": 1298119608,
+    "targetId": "008EE8D810D04E1EED9635C4C2A014BD",
+    "url": "http://127.0.0.1:18869/"
+  },
+  "recovery": "After fresh source launch, reload shell, select acceptance session, refresh preview"
+}

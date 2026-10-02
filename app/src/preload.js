@@ -535,6 +535,8 @@ contextBridge.exposeInMainWorld('cs', {
   stopAgentBrowserStream: (targetId) => ipcRenderer.invoke('agent:browser:stream:stop', { targetId: String(targetId || '') }),
   listAgentBrowserTabs: () => ipcRenderer.invoke('agent:browser:tabs'),
   getAgentBrowserStreamState: () => ipcRenderer.invoke('agent:browser:stream:state'),
+  sendAgentBrowserInput: (targetId, event) => ipcRenderer.invoke('agent:browser:input', { targetId: String(targetId || ''), event }),
+  showAgentBrowserNative: (targetId) => ipcRenderer.invoke('agent:browser:native', { targetId: String(targetId || '') }),
   onAgentBrowserFrame: (cb) => {
     const listener = (_, payload) => cb(payload || {})
     ipcRenderer.on('agent:browser:frame', listener)

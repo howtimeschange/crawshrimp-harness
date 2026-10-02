@@ -50,6 +50,8 @@ const {
   stopAgentBrowserStream,
   getAgentBrowserState,
   listAgentBrowserTabs,
+  dispatchAgentBrowserInput,
+  showAgentBrowserNative,
 } = require('./agentBrowser')
 const { requestBackendHealth } = require('./backendHealth')
 const { configureSingleInstance } = require('./singleInstance')
@@ -2717,6 +2719,8 @@ secureHandle('agent:browser:stream:start', async (_, payload = {}) => {
 secureHandle('agent:browser:stream:stop', async (_, payload = {}) => stopAgentBrowserStream(payload?.targetId || ''))
 secureHandle('agent:browser:tabs', async () => listAgentBrowserTabs())
 secureHandle('agent:browser:stream:state', async () => getAgentBrowserState())
+secureHandle('agent:browser:input', (event, payload = {}) => dispatchAgentBrowserInput(event.sender, payload))
+secureHandle('agent:browser:native', (event, payload = {}) => showAgentBrowserNative(event.sender, payload.targetId))
 
 // Resolve browser-owned dropped paths in the trusted shell. Directories stay
 // references; never try to read them as bytes or recursively upload them.

@@ -1,0 +1,11 @@
+{
+  "beforeFocus": {
+    "shellWindowFocused": true,
+    "remoteFocused": true
+  },
+  "afterFocus": {
+    "shellWindowFocused": false,
+    "remoteFocused": true,
+    "targetId": "008EE8D810D04E1EED9635C4C2A014BD"
+  }
+}

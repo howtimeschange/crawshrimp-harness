@@ -1,0 +1,21 @@
+<!doctype html><meta charset="utf-8"><title>浏览器交互验收</title>
+<style>body{font:24px system-ui;margin:30px;background:#f6f8fb;color:#193c50}button,input,textarea,select{font:24px system-ui;margin:10px;padding:15px}header{position:sticky;top:0;background:#f6f8fb;padding:5px;z-index:2;border-bottom:2px solid #9ac}#hover:hover{background:#fc9}#drag{width:150px;height:70px;background:#cfd;touch-action:none}#bottom{margin-top:1000px;background:#dfd;padding:20px}textarea{display:block}#state{font-size:18px;height:24px;white-space:nowrap;overflow:hidden}</style>
+<header><h1>真实浏览器交互验收</h1><div id="state">准备就绪</div></header>
+<button id="click">点击计数</button><button id="double">双击</button><button id="hover">鼠标悬停</button><br>
+<input id="text" placeholder="输入中文与英文"><button id="submit">读取输入</button>
+<textarea id="multiline" placeholder="回车换行测试"></textarea>
+<select id="select"><option>选项一</option><option>选项二</option></select>
+<div id="drag">拖动此区域</div><a id="link" href="/next">打开下一页</a>
+<div id="bottom">滚动到底部<button id="bottomClick">底部点击</button></div>
+<script>
+window.state={clicks:0,doubles:0,hover:0,drag:0,submit:'',keys:[],bottom:0};
+const show=()=>document.querySelector('#state').textContent=JSON.stringify(state);
+document.querySelector('#click').onclick=()=>{state.clicks++;show()};
+document.querySelector('#double').ondblclick=()=>{state.doubles++;show()};
+document.querySelector('#hover').onmouseenter=()=>{state.hover++;show()};
+document.querySelector('#submit').onclick=()=>{state.submit=document.querySelector('#text').value;show()};
+document.querySelector('#bottomClick').onclick=()=>{state.bottom++;show()};
+document.addEventListener('keydown',e=>{state.keys.push(e.key);show()});
+let held=false;document.querySelector('#drag').onpointerdown=()=>held=true;
+document.onpointerup=()=>held=false;document.onpointermove=e=>{if(held){state.drag++;show()}};
+</script>

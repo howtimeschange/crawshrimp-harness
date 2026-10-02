@@ -1,0 +1,32 @@
+{
+  "checks": [
+    "scaled single click",
+    "double click",
+    "hover",
+    "English and Chinese text",
+    "select all and replace",
+    "backspace",
+    "tab focus",
+    "enter button",
+    "textarea newline",
+    "drag",
+    "black margin ignores input",
+    "wheel scroll",
+    "click after scroll",
+    "copy to system clipboard",
+    "native paste",
+    "Chromium IME commit once",
+    "floating scaled click",
+    "maximized floating click",
+    "unowned target rejected"
+  ],
+  "performance": {
+    "frames": 294,
+    "decodedFrames": 294,
+    "durationMs": 3000,
+    "fps": 98,
+    "p50IntervalMs": 10,
+    "p95IntervalMs": 11.800000011920929
+  },
+  "errors": []
+}

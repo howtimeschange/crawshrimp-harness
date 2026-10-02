@@ -1,0 +1,32 @@
+{
+  "before": {
+    "windowId": 1298119608,
+    "bounds": {
+      "left": 60,
+      "top": 51,
+      "width": 1200,
+      "height": 984,
+      "windowState": "normal"
+    }
+  },
+  "result": {
+    "ok": true,
+    "windowId": 1298119608,
+    "targetId": "008EE8D810D04E1EED9635C4C2A014BD",
+    "url": "http://127.0.0.1:18869/"
+  },
+  "after": {
+    "windowId": 1298119608,
+    "bounds": {
+      "left": 60,
+      "top": 51,
+      "width": 1200,
+      "height": 984,
+      "windowState": "normal"
+    }
+  },
+  "targetId": "008EE8D810D04E1EED9635C4C2A014BD",
+  "pageCount": 1,
+  "text": "粘贴测试🙂中文",
+  "selectMirror": "Native select keyboard selection did not change the value; popup mirroring not supported"
+}
