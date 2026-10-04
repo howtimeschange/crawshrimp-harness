@@ -21,6 +21,13 @@ Harness 面向个人本地使用：本地功能免登录，设置中的个人账
 
 ## 版本记录
 
+### v0.3.1
+
+- 修复后台及最小化 Chrome 页面操作时的 CDP 输入超时，并确保切换到后台标签后及时显示首帧；页面焦点模拟不移动系统鼠标、不恢复最小化窗口。
+- 输入失败后清理鼠标、按键、输入法和排队事件，避免旧标签的迟到结果干扰当前操作。
+- 恢复缺少预览信息的 PPTX、DOCX、XLSX 文件预览，支持从已有作业找回页面或后台生成预览，并保留原文件。
+- 修复 Office 标签切换后的图片重载与过期请求覆盖问题，完善错误反馈和重试。
+
 ### v0.3.0
 
 - 新增会话文件工作区：统一打开附件、文件链接和生成产物，支持持久标签、拖动排序、双栏比较及会话间布局恢复。
@@ -315,7 +322,7 @@ npm --prefix app run build:win
 
 独立仓库 `howtimeschange/crawshrimp-harness` 的正式客户端使用 GitHub Release 元数据用于应用内更新。本仓构建不发布到 `https://updates.crawshrimp.com/`，也不刷新主项目的 `desktop-latest`。
 
-v0.3.0 安装包在发布 CI 成功后提供于 [v0.3.0 Release](https://github.com/howtimeschange/crawshrimp-harness/releases/tag/v0.3.0)。
+v0.3.1 安装包在发布 CI 成功后提供于 [v0.3.1 Release](https://github.com/howtimeschange/crawshrimp-harness/releases/tag/v0.3.1)。
 
 升级不需要卸载旧版：
 
