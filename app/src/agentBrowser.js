@@ -105,6 +105,16 @@ function updateStreamUrl(st, url) {
   } catch { /* Renderer may disappear between the ownership check and send. */ }
 }
 
+async function sendInteractiveCommand(st, method, params) {
+  // A screencast does not make a hidden/occluded Chrome widget visible. Mouse
+  // movement ACKs and wheel visual-state callbacks can then wait indefinitely.
+  // Focus emulation keeps this page rendering without raising its native window.
+  // Reassert for each input: a closing older CDP session can reset widget focus.
+  // Chrome removes this session's emulation when its WebSocket is closed.
+  await st.send('Emulation.setFocusEmulationEnabled', { enabled: true })
+  return st.send(method, params)
+}
+
 function dispatchAgentBrowserInput(webContents, payload) {
   // No implicit current/first-page fallback: manual input must target its visible stream.
   const st = payload?.targetId && streams.get(String(payload.targetId))
@@ -296,6 +306,9 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
 
   try {
     await send('Page.enable')
+    // A background tab may have no surface to supply even the first frame.
+    // Make its widget render before measuring or starting the visible preview.
+    await send('Emulation.setFocusEmulationEnabled', { enabled: true })
   } catch (error) {
     try { ws.close() } catch {}
     throw error
@@ -312,7 +325,7 @@ async function doStartAgentBrowserStream(webContents, tid, startKey) {
     send, frameCount: 0, capturing: false, ...viewport }
   streams.set(actualTid, st)
   try { st.mainFrameId = (await send('Page.getFrameTree'))?.frameTree?.frame?.id } catch { /* URL polling remains available. */ }
-  st.input = createBrowserInputSession(send, () => streams.get(actualTid) === st && !webContents.isDestroyed() && ws.readyState === WebSocket.OPEN, () => st)
+  st.input = createBrowserInputSession((method, params) => sendInteractiveCommand(st, method, params), () => streams.get(actualTid) === st && !webContents.isDestroyed() && ws.readyState === WebSocket.OPEN, () => st)
   // 在 stream 正式登记前始终保留 starting socket。这样用户恰好在
   // websocket open 与 Page.enable 之间关闭窗口时，stop 仍能取消启动。
   startingSockets.delete(startKey)

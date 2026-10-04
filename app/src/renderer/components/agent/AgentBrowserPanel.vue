@@ -177,10 +177,17 @@ const remoteKeys = new Set()
 let inputQueue = makeInputQueue()
 function makeInputQueue() {
   const targetId = props.tabId
-  return createBrowserInputQueue(event => window.cs?.sendAgentBrowserInput?.(targetId, event) || Promise.resolve({ ok: false, error: '当前客户端不支持浏览器输入，请重启开发客户端' }), message => {
+  let queue
+  queue = createBrowserInputQueue(event => window.cs?.sendAgentBrowserInput?.(targetId, event) || Promise.resolve({ ok: false, error: '当前客户端不支持浏览器输入，请重启开发客户端' }), message => {
+    if (queue !== inputQueue) return
+    if (targetId !== props.tabId) {
+      sendInputRelease(targetId)
+      return
+    }
     inputError.value = message
-    sendInputRelease(targetId)
+    releaseBrowserInput(true)
   })
+  return queue
 }
 function sendBrowserInput(event) {
   if (!canInteract.value || document.hidden) return

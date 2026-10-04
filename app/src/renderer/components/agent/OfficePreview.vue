@@ -1,18 +1,43 @@
 <template>
   <div class="office-preview">
-    <p class="office-status" role="status">{{ status }}</p>
-    <OfficePagePreview :active="active" v-for="(item, index) in pages" :key="`${item.path}:${office.revision || ''}:${revision || 0}`" :item="item" :number="index + 1" :revision="`${office.revision || ''}:${revision || 0}`" />
-    <p v-if="!pages.length">文档正在制作，尚未生成逐页预览。这不代表文件为空，可点击上方按钮打开原件。</p>
+    <p v-if="error" class="office-error" role="alert">{{ error }}</p>
+    <p v-else class="office-status" role="status">{{ status }}</p>
+    <OfficePagePreview :active="active" v-for="(item, index) in pages" :key="`${item.path}:${resolvedOffice?.revision || ''}:${revision || 0}`" :item="item" :number="index + 1" :revision="`${resolvedOffice?.revision || ''}:${revision || 0}`" />
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import OfficePagePreview from './resources/OfficePagePreview.vue'
-const props = defineProps({ active: {type:Boolean,default:true}, office: { type: Object, required: true }, path: { type: String, default: '' }, revision: Number })
-const pages = computed(() => props.office.pages || [])
+import { resolveOfficePreview } from '../../utils/officePreview.js'
+const props = defineProps({ active: {type:Boolean,default:true}, office: Object, path: { type: String, default: '' }, updatedAt: { type: String, default: '' }, revision: Number })
+const resolvedOffice = ref(null), loading = ref(false), error = ref('')
+let loadedPath, loadedRevision, loadedMetadata, loadedUpdatedAt, forceResolve = false
+const pages = computed(() => resolvedOffice.value?.pages || [])
+watch(() => [props.path, props.revision, props.office, props.updatedAt, props.active], async (_, __, cleanup) => {
+  const controller = new AbortController(), signal = controller.signal
+  cleanup(() => controller.abort())
+  if (loadedPath !== props.path || loadedRevision !== props.revision || loadedMetadata !== props.office || loadedUpdatedAt !== props.updatedAt) {
+    forceResolve = Boolean(props.revision) || (loadedPath === props.path && loadedMetadata === props.office && loadedUpdatedAt !== props.updatedAt)
+    resolvedOffice.value = null
+    loadedPath = props.path; loadedRevision = props.revision; loadedMetadata = props.office; loadedUpdatedAt = props.updatedAt
+  }
+  loading.value = false; error.value = ''
+  if (resolvedOffice.value?.pages?.length) return
+  // Preserve already published previews. A manual reread resolves the current
+  // file revision through the same path as a message link or restored tab.
+  if (props.office?.pages?.length && !forceResolve) { resolvedOffice.value = props.office; return }
+  if (!props.active || !props.path) return
+  loading.value = true
+  try {
+    const office = await resolveOfficePreview(props.path, { api: (...args) => window.cs.agentApi(...args), signal })
+    if (!signal.aborted) resolvedOffice.value = office
+  } catch (e) { if (!signal.aborted) error.value = `预览失败：${e.message}` }
+  finally { if (!signal.aborted) loading.value = false }
+}, { immediate: true })
 const status = computed(() => {
-  const visual = props.office.visual
+  if (loading.value) return '正在生成文档预览…'
+  const visual = resolvedOffice.value?.visual
   const count = visual?.reviewed?.length || 0
   if (visual?.status === 'passed') return `已完成 ${count} 页视觉检查`
   if (visual?.status === 'issues') return '视觉检查发现问题，请查看会话中的检查结果'
@@ -22,5 +47,5 @@ const status = computed(() => {
 </script>
 
 <style scoped>
-.office-status{font-size:12px;color:var(--text3);line-height:1.6;margin:10px 2px}img{display:block;max-width:100%;height:auto;margin:12px auto;box-shadow:0 1px 8px #0002}
+.office-status,.office-error{font-size:12px;color:var(--text3);line-height:1.6;margin:10px 2px}.office-error{color:#c66750}
 </style>

@@ -66,6 +66,11 @@ class ArtifactSignRequest(BaseModel):
     entry: str = ""
 
 
+class OfficePreviewRequest(BaseModel):
+    path: str
+    job_id: str = ""
+
+
 class PreviewResourceRequest(BaseModel):
     document: str
     relative: str
@@ -408,6 +413,12 @@ _MEDIA_AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg"}
 def preview_resource(req: PreviewResourceRequest) -> dict:
     from core.agent.preview_resources import read_preview_resource
     return read_preview_resource(req.document, req.relative)
+
+
+@router.post("/artifacts/office-preview")
+def office_preview(req: OfficePreviewRequest) -> dict:
+    from core.office.preview import resolve
+    return resolve(_artifact_path_safe(req.path), req.job_id or None)
 
 
 @router.post("/artifacts/sign")

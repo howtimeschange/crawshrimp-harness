@@ -28,5 +28,9 @@ export function sortArtifactsByUpdated(items) {
 }
 
 export function isOfficeDocument(item) {
-  return Boolean(item?.office && /\.(docx|pptx|xlsx)$/i.test(item.filename || item.path || ''))
+  return Boolean(item?.office && isOfficeFile(item))
+}
+
+export function isOfficeFile(item) {
+  return /\.(docx|pptx|xlsx)$/i.test(item?.filename || item?.path || '')
 }

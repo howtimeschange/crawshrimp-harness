@@ -8,7 +8,7 @@
     </div>
     <p v-if="error" class="preview-error" role="alert">{{ error }}</p>
     <div class="preview-content">
-      <OfficePreview :active="active" v-if="office" :office="item.office" :path="item.path" :revision="revision" />
+      <OfficePreview :active="active" v-if="office" :office="item.office" :path="item.path" :updated-at="item.updated_at || ''" :revision="revision" />
       <p v-else-if="type === 'document' && !documentKind(item.filename)" class="notice">此文件暂不支持内置预览，请使用系统打开。</p>
       <DocumentPreview :active="active" v-else-if="type === 'document' || mode === 'source'" :path="item.path" :filename="item.filename" :kind="mode === 'source' ? 'code' : documentKind(item.filename)" :revision="`${item.updated_at || ''}:${revision}`" />
       <template v-else-if="type === 'table'">
@@ -33,11 +33,11 @@ import { computed, ref, watch, onUnmounted } from 'vue'
 import DocumentPreview from './DocumentPreview.vue'
 import OfficePreview from '../OfficePreview.vue'
 import { documentKind, readDocumentText } from '../../../utils/documentPreview.js'
-import { isOfficeDocument } from '../../../utils/artifactTime.js'
+import { isOfficeFile } from '../../../utils/artifactTime.js'
 import { previewType, parseDelimited } from '../../../utils/resourceWorkspace.js'
 const props = defineProps({ active: {type:Boolean,default:true}, item: Object, mode: { type: String, default: 'preview' }, zoom: { type: Number, default: 1 } })
 const emit = defineEmits(['update:mode', 'update:zoom'])
-const type = computed(() => previewType(props.item)), office = computed(() => isOfficeDocument(props.item))
+const type = computed(() => previewType(props.item)), office = computed(() => isOfficeFile(props.item))
 const views = computed(() => office.value || documentKind(props.item.filename) === 'pdf' || type.value === 'video' || type.value === 'audio' || type.value === 'image' ? [] : [{ id: 'preview', label: type.value === 'table' ? '表格' : '预览' }, { id: 'source', label: '原文' }])
 const revision = ref(0), url = ref(''), rows = ref([]), loading = ref(false), error = ref(''), truncated = ref(false)
 const mediaElement = ref(null)
