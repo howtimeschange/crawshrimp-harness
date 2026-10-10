@@ -17,7 +17,7 @@ from core.ai_image_service import (
 )
 from core.config import load_config
 from core.llm_gateway import (
-    BUILTIN_LLM_PROVIDERS,
+    builtin_llm_providers,
     custom_llm_providers,
     model_has_configured_key,
     official_real_model,
@@ -89,13 +89,15 @@ AI_IMAGE_MODEL_SPECS = (
 def _llm_provider_maps(config: Mapping[str, Any]) -> tuple[dict[str, dict], dict[str, str]]:
     providers_by_model: dict[str, dict] = {}
     labels_by_model: dict[str, str] = {}
-    for provider in BUILTIN_LLM_PROVIDERS:
+    for provider in builtin_llm_providers(dict(config)):
         for model_id in provider.get("models") or ():
             providers_by_model.setdefault(str(model_id), provider)
             labels_by_model.setdefault(str(model_id), {
                 "deepseek-official-flash": "DeepSeek V4.1 Flash",
                 "deepseek-official-v4-pro": "DeepSeek V4 Pro",
             }.get(str(model_id), str(model_id)))
+        for model in provider["model_overrides"]:
+            labels_by_model[model["id"]] = model["label"]
     for provider in custom_llm_providers(dict(config), include_secrets=False):
         for model in provider.get("models") or []:
             model_id = _compact(model.get("id"))
@@ -110,8 +112,8 @@ def _llm_models(config: Mapping[str, Any]) -> list[dict]:
     providers_by_model, labels_by_model = _llm_provider_maps(config)
     default_model = select_default_model(dict(config))
     models = []
-    for model_id in agent_capable_model_ids():
-        cap = model_capabilities(model_id)
+    for model_id in agent_capable_model_ids(dict(config)):
+        cap = model_capabilities(model_id, dict(config))
         provider = providers_by_model.get(model_id) or {}
         provider_id = _compact(provider.get("id")) or resolve_provider_for_model(model_id, dict(config))
         models.append({

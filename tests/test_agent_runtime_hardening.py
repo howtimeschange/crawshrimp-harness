@@ -2301,17 +2301,17 @@ def test_subprocess_output_decoder_falls_back_to_local_encoding(monkeypatch):
     assert _decode_subprocess_output("中文".encode("gbk")) == "中文"
 
 
-def test_dsh_web_profile_preserves_product_model_catalog_without_widening_text_only_models():
+def test_dsh_web_profile_forwards_images_to_all_configured_models():
     from core.agent.cordis_config import model_capabilities
 
     assert model_capabilities("gpt-5.5")["input_modalities"] == ["text", "image"]
     assert model_capabilities("deepseek-official-flash")["input_modalities"] == ["text", "image"]
     assert model_capabilities("glm-official-5.3-flash")["input_modalities"] == ["text", "image"]
-    assert "input_modalities" not in model_capabilities("deepseek-v4-pro")
+    assert model_capabilities("deepseek-v4-pro")["input_modalities"] == ["text", "image"]
 
     profile = (Path(__file__).resolve().parents[1] / "integrations" / "deepseek-harness" / "profile" / "web" / "cordis.patch.yml").read_text(encoding="utf-8")
     assert re.search(r"id: gpt-5\.5[\s\S]*input: \[text, image\]", profile)
-    assert re.search(r"id: deepseek-v4-pro[\s\S]*input: \[text\]", profile)
+    assert re.search(r"id: deepseek-v4-pro[\s\S]*input: \[text, image\]", profile)
     assert re.search(r"id: deepseek-flash[\s\S]*input: \[text, image\]", profile)
     assert re.search(r"crawshrimp-glm-official:[\s\S]*id: glm-official-5\.3-flash[\s\S]*input: \[text, image\]", profile)
 

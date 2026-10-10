@@ -19,7 +19,7 @@ from urllib.request import Request, urlopen
 from core.config import load_config
 
 
-OVERSEAS_OPENAI_BASE_URL = "https://ai-aigw.semir.com/overseas-openai-vip/v1"
+OVERSEAS_OPENAI_BASE_URL = "https://ai-aigw.semir.com/overseas-openai-codex/v1"
 OVERSEAS_ANTHROPIC_BASE_URL = "https://ai-aigw.semir.com/overseas-anthropic-vip"
 DOMESTIC_OPENAI_BASE_URL = "https://ai-aigw.semir.com/bailian-codingplan/v1"
 SEMIR_DEEPSEEK_REASONING_MODELS = frozenset(("deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4.1-flash"))
@@ -78,7 +78,9 @@ _DEEPSEEK_OFFICIAL_REAL_MODELS = {
 
 def deepseek_official_real_model(model_id: str) -> str:
     """产品内 ID → DeepSeek 官方 API 真实模型名。"""
-    return _DEEPSEEK_OFFICIAL_REAL_MODELS.get(model_id, model_id)
+    if model_id in _DEEPSEEK_OFFICIAL_REAL_MODELS:
+        return _DEEPSEEK_OFFICIAL_REAL_MODELS[model_id]
+    return "deepseek-" + model_id[len("deepseek-official-"):] if model_id.startswith("deepseek-official-") else model_id
 
 
 GLM_OFFICIAL_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
@@ -96,7 +98,9 @@ _GLM_OFFICIAL_REAL_MODELS = {
 
 def glm_official_real_model(model_id: str) -> str:
     """产品内 ID → GLM 官方 API 真实模型名。"""
-    return _GLM_OFFICIAL_REAL_MODELS.get(model_id, model_id)
+    if model_id in _GLM_OFFICIAL_REAL_MODELS:
+        return _GLM_OFFICIAL_REAL_MODELS[model_id]
+    return "glm-" + model_id[len("glm-official-"):] if model_id.startswith("glm-official-") else model_id
 
 
 def official_real_model(model_id: str) -> str:
@@ -306,9 +310,9 @@ def _provider_by_id(provider_id: str) -> dict | None:
     return None
 
 
-def _provider_for_builtin_model(model_id: str) -> dict | None:
+def _provider_for_builtin_model(model_id: str, config: dict | None = None) -> dict | None:
     selected = normalize_deepseek_model_id(_compact(model_id))
-    for provider in BUILTIN_LLM_PROVIDERS:
+    for provider in builtin_llm_providers(config):
         if selected in provider["models"]:
             return provider
     return None
@@ -369,7 +373,7 @@ def _normalize_protocol(value: Any) -> str:
     return "anthropic" if _compact(value).lower() == "anthropic" else "openai"
 
 
-def _normalize_custom_models(value: Any) -> list[dict[str, Any]]:
+def _normalize_custom_models(value: Any, *, preserve_default_reasoning: bool = False) -> list[dict[str, Any]]:
     raw = value if isinstance(value, list) else []
     models: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -389,11 +393,14 @@ def _normalize_custom_models(value: Any) -> list[dict[str, Any]]:
             "label": _compact(model.get("label") or model.get("name")) or model_id,
             "context_window": int(model.get("context_window") or model.get("contextWindow") or 256000),
             "max_output_tokens": int(model.get("max_output_tokens") or model.get("maxTokens") or 32768),
-            "supports_tools": bool(model.get("supports_tools", model.get("supportsTools", True))),
-            "input_modalities": list(model.get("input_modalities") or model.get("input") or ["text"]),
+            # Always offer tools and forward images. Legacy flags must not
+            # hide a configured model or silently omit an attachment.
+            "supports_tools": True,
+            "input_modalities": ["text", "image"],
             **({"reasoning_protocol": model["reasoning_protocol"],
                 "reasoning_efforts": [level for level in REASONING_LEVELS if level in (model.get("reasoning_efforts") or [])]}
-               if model.get("reasoning_protocol") in ("deepseek", "openai") else {}),
+               if model.get("reasoning_protocol") in ("deepseek", "openai") else
+               {"reasoning_protocol": "default"} if preserve_default_reasoning and model.get("reasoning_protocol") == "default" else {}),
         })
     return models
 
@@ -435,13 +442,49 @@ def _custom_provider_for_model(model_id: str, config: dict | None = None) -> dic
     return None
 
 
+def builtin_provider_model_overrides(config: dict | None = None) -> dict[str, list[dict[str, Any]]]:
+    raw = _llm_settings(config).get("builtin_provider_models")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        provider["id"]: _normalize_custom_models(raw[provider["id"]], preserve_default_reasoning=True)
+        for provider in BUILTIN_LLM_PROVIDERS
+        if provider["id"] in raw
+    }
+
+
+def builtin_llm_providers(config: dict | None = None) -> tuple[dict[str, Any], ...]:
+    """Use saved model lists without changing the built-in route's credentials."""
+    overrides = builtin_provider_model_overrides(config)
+    return tuple({
+        **provider,
+        "models": tuple(model["id"] for model in overrides[provider["id"]]) if provider["id"] in overrides else provider["models"],
+        "preset_models": provider["models"],
+        "model_overrides": overrides.get(provider["id"], []),
+    } for provider in BUILTIN_LLM_PROVIDERS)
+
+
+def builtin_provider_default_models() -> dict[str, list[dict[str, Any]]]:
+    from core.agent.cordis_config import MODEL_CAPABILITIES
+
+    labels = {"deepseek-official-flash": "DeepSeek V4.1 Flash", "deepseek-official-v4-pro": "DeepSeek V4 Pro"}
+    return {provider["id"]: [{
+        "id": model_id,
+        "label": labels.get(model_id, model_id),
+        **MODEL_CAPABILITIES.get(model_id, {"context_window": 64000, "max_output_tokens": 8192, "supports_tools": False}),
+        "supports_tools": True,
+        "input_modalities": ["text", "image"],
+    } for model_id in provider["models"]] for provider in BUILTIN_LLM_PROVIDERS}
+
+
 def all_supported_model_ids(config: dict | None = None) -> tuple[str, ...]:
+    builtin = [model_id for provider in builtin_llm_providers(config) for model_id in provider["models"]]
     custom = [
         model["id"]
         for provider in custom_llm_providers(config, include_secrets=False)
         for model in provider.get("models") or []
     ]
-    return (*SUPPORTED_MODELS, *tuple(mid for mid in custom if mid not in SUPPORTED_MODELS))
+    return tuple(dict.fromkeys((*builtin, *custom)))
 
 
 def custom_provider_key_env(provider_id: str) -> str:
@@ -487,7 +530,7 @@ def model_has_configured_key(model_id: str, config: dict | None = None) -> bool:
     selected = normalize_deepseek_model_id(_compact(model_id))
     cfg = config if isinstance(config, dict) else load_config()
     llm = _llm_settings(cfg)
-    provider = _provider_for_builtin_model(selected)
+    provider = _provider_for_builtin_model(selected, cfg)
     if provider and _key_for_builtin_provider(provider, llm):
         return True
     custom = _custom_provider_for_model(selected, cfg)
@@ -507,10 +550,11 @@ def custom_provider_for_configured_model(model_id: str, config: dict | None = No
     return None
 
 
-def builtin_provider_has_configured_key(model_id: str, config: dict | None = None) -> bool:
+def builtin_provider_has_configured_key(model_id: str, config: dict | None = None, provider_id: str | None = None) -> bool:
     selected = normalize_deepseek_model_id(_compact(model_id))
     cfg = config if isinstance(config, dict) else load_config()
-    provider = _provider_for_builtin_model(selected)
+    provider = next((item for item in builtin_llm_providers(cfg)
+                     if selected in item["models"] and (provider_id is None or item["id"] == provider_id)), None)
     if not provider:
         return False
     llm = _llm_settings(cfg)
@@ -531,7 +575,7 @@ def select_default_model(config: dict | None = None) -> str:
         for provider in custom_llm_providers(cfg)
         for model in provider.get("models") or []
     ]
-    for candidate in (DEFAULT_MODEL, GATEWAY_FALLBACK_MODEL, *custom_candidates, *SUPPORTED_MODELS):
+    for candidate in (DEFAULT_MODEL, GATEWAY_FALLBACK_MODEL, *custom_candidates, *supported):
         if candidate != configured and model_has_configured_key(candidate, cfg):
             return candidate
     return configured
@@ -544,7 +588,7 @@ def route_for_model(model_id: str, config: dict | None = None) -> LlmRoute:
     if selected not in all_supported_model_ids(cfg):
         raise LlmConfigurationError(f"不支持的文本模型：{selected}")
 
-    provider = _provider_for_builtin_model(selected)
+    provider = _provider_for_builtin_model(selected, cfg)
     custom = None
     if provider and not _key_for_builtin_provider(provider, llm):
         custom = custom_provider_for_configured_model(selected, cfg)

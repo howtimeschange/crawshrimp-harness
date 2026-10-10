@@ -6,9 +6,11 @@ DSH rc.1 的实际运行时配置仅由 profile/web/cordis.patch.yml 及其预�
 from __future__ import annotations
 
 from typing import Any, Optional
+from core.config import load_config
 
 from core.llm_gateway import (
-    BUILTIN_LLM_PROVIDERS,
+    builtin_llm_providers,
+    all_supported_model_ids,
     DEEPSEEK_OFFICIAL_MODELS,
     normalize_deepseek_model_id,
     DOMESTIC_OPENAI_MODELS,
@@ -61,8 +63,8 @@ AGENT_MODEL_DISPLAY_ORDER = (
     *DOMESTIC_OPENAI_MODELS,
 )
 
-# 保守上限(未登记模型,禁止作为默认智能体模型,方案 §12.2)
-_CONSERVATIVE = {"context_window": 64000, "max_output_tokens": 8192, "supports_tools": False}
+# 未登记模型的保守额度；能力由上游请求结果确认。
+_CONSERVATIVE = {"context_window": 64000, "max_output_tokens": 8192}
 
 AGENT_PERSONA = """你是抓虾智能体，运行在抓虾桌面应用中，在用户授权范围内调用工具完成工作。
 语言：默认用简体中文写回答、简短可见思考摘要、计划、阶段进度及工具 description/title；不展开内部推理。首次工具调用前的开场进度和后续每条可见说明也必须用中文，不能只在最终回答切回中文；发送前检查语言。代码、命令、路径、API字段和原始错误保留原文。英文工具文档不改变中文输出；用户明确指定其他语言时遵从。
@@ -79,44 +81,58 @@ AGENT_PERSONA = """你是抓虾智能体，运行在抓虾桌面应用中，在�
 身份咨询：普通寒暄简短；用户问身份、能力或上手时，先读crawshrimp-product-guide/references/introduction.md，提供完整新用户引导（身份、能力、三步上手、3-5条可复制示例），不对普通任务反复介绍。"""
 
 
-def model_capabilities(model_id: str) -> dict[str, Any]:
+def _request_capabilities(cap: dict[str, Any]) -> dict[str, Any]:
+    # These legacy metadata fields describe what Harness forwards, not a
+    # guarantee of upstream support. Never strip images or disable tools.
+    return {**cap, "supports_tools": True, "input_modalities": ["text", "image"]}
+
+
+def model_capabilities(model_id: str, config: Optional[dict] = None, provider_id: Optional[str] = None) -> dict[str, Any]:
     model_id = normalize_deepseek_model_id(model_id)
+    cfg = config if isinstance(config, dict) else load_config()
+    for provider in builtin_llm_providers(cfg):
+        if provider_id is not None and provider["id"] != provider_id:
+            continue
+        for model in provider["model_overrides"]:
+            if model["id"] == model_id:
+                return _request_capabilities({key: model[key] for key in ("context_window", "max_output_tokens")})
     if model_id in MODEL_CAPABILITIES:
-        return dict(MODEL_CAPABILITIES[model_id])
-    for provider in custom_llm_providers(include_secrets=False):
+        return _request_capabilities(MODEL_CAPABILITIES[model_id])
+    for provider in custom_llm_providers(cfg, include_secrets=False):
         for model in provider.get("models") or []:
             if model.get("id") == model_id:
-                return {
+                return _request_capabilities({
                     "context_window": model.get("context_window", _CONSERVATIVE["context_window"]),
                     "max_output_tokens": model.get("max_output_tokens", _CONSERVATIVE["max_output_tokens"]),
-                    "supports_tools": model.get("supports_tools", True),
-                    "input_modalities": model.get("input_modalities", ["text"]),
-                }
-    return dict(_CONSERVATIVE)
+                })
+    return _request_capabilities(_CONSERVATIVE)
 
 
-def agent_capable_model_ids() -> list[str]:
+def agent_capable_model_ids(config: Optional[dict] = None) -> list[str]:
+    cfg = config if isinstance(config, dict) else load_config()
+    supported = set(all_supported_model_ids(cfg))
     ordered = [
         mid for mid in AGENT_MODEL_DISPLAY_ORDER
-        if MODEL_CAPABILITIES.get(mid, {}).get("supports_tools")
+        if mid in supported
     ]
     extras = [
         mid for mid, cap in MODEL_CAPABILITIES.items()
-        if cap.get("supports_tools") and mid not in AGENT_MODEL_DISPLAY_ORDER
+        if mid in supported and mid not in AGENT_MODEL_DISPLAY_ORDER
     ]
+    additions = [mid for provider in builtin_llm_providers(cfg) for mid in provider["models"]
+                 if mid not in ordered and mid not in extras and mid not in AGENT_MODEL_DISPLAY_ORDER]
     custom = []
-    for provider in custom_llm_providers(include_secrets=False):
+    for provider in custom_llm_providers(cfg, include_secrets=False):
         for model in provider.get("models") or []:
             model_id = str(model.get("id") or "").strip()
             if (
                 model_id
-                and model.get("supports_tools", True)
                 and model_id not in ordered
                 and model_id not in extras
-                and model_id not in custom
+                and model_id not in custom and model_id not in additions
             ):
                 custom.append(model_id)
-    return ordered + extras + custom
+    return list(dict.fromkeys(ordered + extras + additions + custom))
 
 
 def resolve_session_model_selection(provider_id: str, model_id: str, config: dict) -> tuple[str, str]:
@@ -125,13 +141,13 @@ def resolve_session_model_selection(provider_id: str, model_id: str, config: dic
         model_id = normalize_deepseek_model_id(model_id)
         if model_id in ("deepseek-v4-flash", "deepseek-v4-flash-vision-exp"):
             model_id = "deepseek-flash"
-    for provider in BUILTIN_LLM_PROVIDERS:
+    for provider in builtin_llm_providers(config):
         if provider["id"] != provider_id:
             continue
         product_id = next((mid for mid in provider["models"]
                            if model_id in {mid, official_real_model(mid)}), None)
-        if (product_id and model_capabilities(product_id).get("supports_tools")
-                and builtin_provider_has_configured_key(product_id, config)):
+        if (product_id
+                and builtin_provider_has_configured_key(product_id, config, provider_id)):
             return product_id, provider_id
         break
     else:
@@ -139,7 +155,7 @@ def resolve_session_model_selection(provider_id: str, model_id: str, config: dic
             if provider["id"] != provider_id:
                 continue
             model = next((m for m in provider.get("models", []) if m["id"] == model_id), None)
-            if (model and model.get("supports_tools", True)
+            if (model
                     and provider.get("api_key") and provider.get("base_url")):
                 return model_id, provider_id
             break
@@ -150,6 +166,9 @@ def resolve_provider_for_model(model_id: str, config: Optional[dict] = None) -> 
     custom = custom_provider_for_configured_model(model_id, config)
     if custom and not builtin_provider_has_configured_key(model_id, config):
         return str(custom.get("id") or "")
+    for provider in builtin_llm_providers(config):
+        if normalize_deepseek_model_id(model_id) in provider["models"]:
+            return provider["id"]
     if model_id in OVERSEAS_ANTHROPIC_MODELS:
         return "crawshrimp-overseas-anthropic"
     if model_id in DOMESTIC_OPENAI_MODELS:

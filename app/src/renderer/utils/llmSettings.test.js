@@ -15,6 +15,11 @@ import {
   GLM_OFFICIAL_MODELS_UI,
   LLM_BUILTIN_PROVIDERS,
   LLM_CUSTOM_PROVIDERS_FIELD,
+  LLM_BUILTIN_PROVIDER_MODELS_FIELD,
+  normalizeBuiltinProviderModels,
+  builtinLlmProviderModelIds,
+  builtinLlmProviderModels,
+  mergeDiscoveredLlmModels,
   LLM_DEFAULTS,
   LLM_MASKED_CREDENTIAL_VALUE,
   LLM_MODELS,
@@ -171,7 +176,7 @@ test('LLM settings patch is structured-clone safe when custom models are reactiv
 
   const patch = buildLlmSettingsPatch(cfg)
   assert.doesNotThrow(() => structuredClone(patch))
-  assert.deepEqual(patch[LLM_CUSTOM_PROVIDERS_FIELD][0].models[0].input_modalities, ['text'])
+  assert.deepEqual(patch[LLM_CUSTOM_PROVIDERS_FIELD][0].models[0].input_modalities, ['text', 'image'])
 })
 
 test('DeepSeek official configured badge uses backend boolean without receiving the key', () => {
@@ -218,7 +223,7 @@ test('saved official Flash defaults migrate without renaming gateway models', as
 })
 
 
-test('custom models default to 256K/32K and preserve edited budgets and capabilities', () => {
+test('custom models default to 256K/32K and preserve edited budgets', () => {
   const defaults = mergeCustomLlmModelDraft('example-model')
   assert.equal(defaults[0].context_window, 256000)
   assert.equal(defaults[0].max_output_tokens, 32768)
@@ -230,4 +235,112 @@ test('custom models default to 256K/32K and preserve edited budgets and capabili
   for (const value of [0, -1, 1.5, Infinity, '', 512000]) {
     assert.ok(customLlmBudgetError([{ ...edited[0], max_output_tokens: value }]))
   }
+})
+
+test('built-in model lists replace presets and save metadata without copying credentials', () => {
+  const provider = LLM_BUILTIN_PROVIDERS.find(item => item.id === 'crawshrimp-overseas-openai')
+  const cfg = reactive({
+    [OVERSEAS_OPENAI_API_KEY_FIELD]: LLM_MASKED_CREDENTIAL_VALUE,
+    [LLM_BUILTIN_PROVIDER_MODELS_FIELD]: {
+      [provider.id]: [{ id: 'future-model', label: '自定义模型', context_window: 512000, max_output_tokens: 48000,
+        input_modalities: ['text', 'image'], reasoning_protocol: 'openai', reasoning_efforts: ['low', 'high'], api_key: 'must-not-copy' }],
+      unknown: [{ id: 'ignored' }],
+    },
+  })
+  const ids = builtinLlmProviderModelIds(provider, cfg)
+  assert.deepEqual(ids, ['future-model'])
+  const saved = structuredClone(buildLlmSettingsPatch(cfg))
+  assert.equal(saved[OVERSEAS_OPENAI_API_KEY_FIELD], undefined)
+  assert.equal(saved[LLM_BUILTIN_PROVIDER_MODELS_FIELD].unknown, undefined)
+  const model = saved[LLM_BUILTIN_PROVIDER_MODELS_FIELD][provider.id][0]
+  assert.equal(model.label, '自定义模型')
+  assert.equal(model.context_window, 512000)
+  assert.deepEqual(model.reasoning_efforts, ['low', 'high'])
+  assert.equal(model.api_key, undefined)
+  cfg[LLM_BUILTIN_PROVIDER_MODELS_FIELD][provider.id] = [{ id: provider.models[0].value }]
+  assert.equal(builtinLlmProviderModelIds(provider, cfg).length, 1)
+  cfg[LLM_BUILTIN_PROVIDER_MODELS_FIELD][provider.id] = []
+  assert.deepEqual(normalizeBuiltinProviderModels(cfg[LLM_BUILTIN_PROVIDER_MODELS_FIELD]), { [provider.id]: [] })
+  assert.deepEqual(builtinLlmProviderModelIds(provider, cfg), [])
+})
+
+test('each preset supports editing, deletion, empty lists and restoring accurate defaults', () => {
+  for (const provider of LLM_BUILTIN_PROVIDERS) {
+    const defaults = builtinLlmProviderModels(provider)
+    const edited = [{ ...defaults[0], label: 'Edited', context_window: 2000000, reasoning_protocol: 'default' },
+      { id: 'new-model', context_window: 512000, max_output_tokens: 48000 }]
+    const cfg = {
+      [LLM_BUILTIN_PROVIDER_MODELS_FIELD]: { [provider.id]: edited },
+      'ai.llm.builtin_provider_model_defaults': { [provider.id]: defaults.map(model => ({ ...model, context_window: 1234567 })) },
+    }
+    assert.deepEqual(builtinLlmProviderModelIds(provider, cfg), [defaults[0].id, 'new-model'])
+    assert.equal(builtinLlmProviderModels(provider, cfg)[0].label, 'Edited')
+    assert.equal(mergeCustomLlmModelDraft(defaults[0].id, edited, true)[0].reasoning_protocol, 'default')
+    assert.equal(builtinLlmProviderModels(provider, cfg, true)[0].context_window, 1234567)
+    cfg[LLM_BUILTIN_PROVIDER_MODELS_FIELD][provider.id] = builtinLlmProviderModels(provider, cfg, true)
+    assert.deepEqual(builtinLlmProviderModelIds(provider, cfg), defaults.map(model => model.id))
+  }
+})
+
+test('importing only selected discovered models preserves edits and avoids duplicates', () => {
+  const existing = mergeCustomLlmModelDraft('first')
+  existing[0].context_window = 512000
+  existing[0].reasoning_protocol = 'default'
+  const discovered = [{ id: 'first', context_window: 2000000 }, { id: 'second' }, { id: 'third' }]
+  const merged = mergeDiscoveredLlmModels(existing, discovered, ['first', 'second'])
+  assert.deepEqual(merged.map(model => model.id), ['first', 'second'])
+  assert.equal(merged[0].context_window, 512000)
+  assert.equal(merged[0].reasoning_protocol, 'default')
+  assert.equal(buildLlmSettingsPatch({ 'ai.llm.default_model': '' })['ai.llm.default_model'], '')
+})
+
+test('all preset requests forward images and enable tools', () => {
+  const defaults = LLM_BUILTIN_PROVIDERS.flatMap(provider => builtinLlmProviderModels(provider))
+  const byId = new Map(defaults.map(model => [model.id, model]))
+  for (const model of defaults.filter(model => /^(gpt-|gemini-|claude-)/.test(model.id))) {
+    assert.deepEqual(model.input_modalities, ['text', 'image'], model.id)
+    assert.equal(model.supports_tools, true)
+  }
+  assert.equal(byId.get('gpt-6.1-sol').max_output_tokens, 65536)
+  assert.equal(byId.get('gemini-3.5-flash').context_window, 1000000)
+  assert.equal(byId.get('claude-sonnet-5').max_output_tokens, 64000)
+  assert.deepEqual(byId.get('deepseek-official-flash').input_modalities, ['text', 'image'])
+  assert.equal(byId.get('deepseek-official-flash').max_output_tokens, 393216)
+  assert.deepEqual(byId.get('glm-official-5.3-flash').input_modalities, ['text', 'image'])
+  assert.equal(byId.get('glm-official-5.3-flash').max_output_tokens, 8192)
+  for (const id of ['deepseek-official-v4-pro', 'glm-official-5.3', 'glm-official-5.2']) {
+    assert.deepEqual(byId.get(id).input_modalities, ['text', 'image'], id)
+  }
+})
+
+test('backend and saved budgets take precedence while legacy image flags cannot drop attachments', () => {
+  const provider = LLM_BUILTIN_PROVIDERS.find(item => item.id === 'crawshrimp-overseas-openai')
+  const cfg = {
+    'ai.llm.builtin_provider_model_defaults': { [provider.id]: [
+      { id: 'gpt-6.1-sol', input_modalities: ['text'], max_output_tokens: 48000 },
+    ] },
+  }
+  const backend = builtinLlmProviderModels(provider, cfg)[0]
+  assert.deepEqual(backend.input_modalities, ['text', 'image'])
+  assert.equal(backend.max_output_tokens, 48000)
+  assert.equal(backend.context_window, 256000)
+  cfg[LLM_BUILTIN_PROVIDER_MODELS_FIELD] = { [provider.id]: [{ ...backend, max_output_tokens: 32000 }] }
+  const saved = builtinLlmProviderModels(provider, cfg)[0]
+  assert.deepEqual(saved.input_modalities, ['text', 'image'])
+  assert.equal(saved.max_output_tokens, 32000)
+  assert.deepEqual(builtinLlmProviderModels(provider, cfg, true)[0], backend)
+})
+
+test('known and custom model additions both forward images while preserving budget defaults', () => {
+  const added = mergeCustomLlmModelDraft('gpt-6.1-sol\nunknown-vision-name', [], true)
+  assert.deepEqual(added[0].input_modalities, ['text', 'image'])
+  assert.equal(added[0].max_output_tokens, 65536)
+  assert.deepEqual(added[1].input_modalities, ['text', 'image'])
+  const edited = [{ ...added[0], input_modalities: ['text'] }]
+  assert.deepEqual(mergeCustomLlmModelDraft('gpt-6.1-sol', edited, true)[0].input_modalities, ['text', 'image'])
+  const legacy = [{ id: 'old-custom', supports_tools: false, input_modalities: ['text'], max_output_tokens: 48000 }]
+  const migrated = mergeCustomLlmModelDraft('old-custom', legacy)[0]
+  assert.equal(migrated.supports_tools, true)
+  assert.deepEqual(migrated.input_modalities, ['text', 'image'])
+  assert.equal(migrated.max_output_tokens, 48000)
 })

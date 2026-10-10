@@ -61,7 +61,7 @@ class AiSettingsConfigTests(unittest.TestCase):
         self.assertEqual(llm["api_key"], "")
         self.assertEqual(llm["deepseek_api_key"], "")
         self.assertEqual(llm["glm_api_key"], "")
-        self.assertEqual(llm["overseas_openai_base_url"], "https://ai-aigw.semir.com/overseas-openai-vip/v1")
+        self.assertEqual(llm["overseas_openai_base_url"], "https://ai-aigw.semir.com/overseas-openai-codex/v1")
         self.assertEqual(llm["overseas_anthropic_base_url"], "https://ai-aigw.semir.com/overseas-anthropic-vip")
         self.assertEqual(llm["domestic_base_url"], "https://ai-aigw.semir.com/bailian-codingplan/v1")
         self.assertEqual(llm["deepseek_base_url"], "https://api.deepseek.com")

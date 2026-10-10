@@ -31,7 +31,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable, List, Mapping, Optional
+from typing import Any, Callable, List, Mapping, Optional
 from urllib.parse import urlencode, parse_qs, urlparse, unquote
 from uuid import uuid4
 
@@ -14492,6 +14492,7 @@ _LLM_RUNTIME_SETTING_FIELDS = frozenset({
     "glm_base_url",
     "default_model",
     "custom_providers",
+    "builtin_provider_models",
 })
 _LLM_MASKED_CREDENTIAL = "••••••••••••••••••••••••••••••••"
 
@@ -14568,6 +14569,8 @@ def _public_settings() -> dict:
     }
     public_custom_llm_providers = _public_custom_llm_providers(source_llm)
     public_llm["custom_providers"] = public_custom_llm_providers
+    public_llm["builtin_provider_models"] = llm_gateway.builtin_provider_model_overrides(saved)
+    public_llm["builtin_provider_model_defaults"] = llm_gateway.builtin_provider_default_models()
     public_llm["configured"] = bool(
         str(source_llm.get("api_key") or "").strip()
         or str(source_llm.get("overseas_openai_api_key") or "").strip()
@@ -14585,6 +14588,51 @@ def _public_settings() -> dict:
     ai["llm"] = public_llm
     public["ai"] = ai
     return public
+
+
+def _normalize_builtin_provider_models_setting(value: Any) -> dict:
+    if not isinstance(value, dict):
+        raise HTTPException(422, "内置 Provider 的自定义模型配置必须为对象")
+    try:
+        known_providers = {provider["id"] for provider in llm_gateway.BUILTIN_LLM_PROVIDERS}
+        for provider_id, models in value.items():
+            if provider_id not in known_providers:
+                continue
+            if not isinstance(models, list):
+                raise HTTPException(422, "Provider 的模型配置必须为列表")
+            for model in models:
+                if not isinstance(model, dict):
+                    continue
+                for names in (("context_window", "contextWindow"), ("max_output_tokens", "maxTokens")):
+                    budget = next((model[name] for name in names if name in model), None)
+                    if budget is not None and (isinstance(budget, bool) or float(budget) != int(budget) or int(budget) <= 0):
+                        raise ValueError("Invalid model budget")
+        normalized = llm_gateway.builtin_provider_model_overrides({"ai": {"llm": {"builtin_provider_models": value}}})
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise HTTPException(422, "模型上下文和输出上限必须为正整数") from exc
+    for models in normalized.values():
+        for model in models:
+            if not 0 < model["max_output_tokens"] < model["context_window"]:
+                raise HTTPException(422, f"{model['id']}：输出上限必须大于 0 且小于上下文")
+            if model.get("reasoning_protocol") in ("openai", "deepseek") and not any(
+                level != "off" for level in model.get("reasoning_efforts", [])
+            ):
+                raise HTTPException(422, f"{model['id']}：请至少选择一个供应商支持的推理等级")
+    return normalized
+
+
+class LlmModelDiscoveryRequest(BaseModel):
+    base_url: str = ""
+    api_key: str = ""
+
+
+@app.post("/agent/providers/{provider_id}/discover-models")
+def discover_llm_provider_models(provider_id: str, request: LlmModelDiscoveryRequest):
+    from core.llm_model_discovery import ModelDiscoveryError, discover_builtin_provider_models
+    try:
+        return discover_builtin_provider_models(provider_id, load_config(), base_url=request.base_url, api_key=request.api_key)
+    except ModelDiscoveryError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 def _safe_settings_write_patch(cfg: dict) -> dict:
@@ -14608,11 +14656,14 @@ def _safe_settings_write_patch(cfg: dict) -> dict:
     patch.pop("ai.llm.domestic_configured", None)
     patch.pop("ai.llm.deepseek_configured", None)
     patch.pop("ai.llm.glm_configured", None)
+    patch.pop("ai.llm.builtin_provider_model_defaults", None)
     if isinstance(patch.get("ai.llm.custom_providers"), list):
         patch["ai.llm.custom_providers"] = _merge_custom_llm_provider_secrets(
             patch.get("ai.llm.custom_providers"),
             source_llm,
         )
+    if "ai.llm.builtin_provider_models" in patch:
+        patch["ai.llm.builtin_provider_models"] = _normalize_builtin_provider_models_setting(patch["ai.llm.builtin_provider_models"])
     ai = patch.get("ai") if isinstance(patch.get("ai"), dict) else None
     video = ai.get("video") if isinstance(ai, dict) and isinstance(ai.get("video"), dict) else None
     if isinstance(video, dict):
@@ -14625,6 +14676,9 @@ def _safe_settings_write_patch(cfg: dict) -> dict:
         video.pop("bailian_upload_configured", None)
     llm = ai.get("llm") if isinstance(ai, dict) and isinstance(ai.get("llm"), dict) else None
     if isinstance(llm, dict):
+        llm.pop("builtin_provider_model_defaults", None)
+        if "builtin_provider_models" in llm:
+            llm["builtin_provider_models"] = _normalize_builtin_provider_models_setting(llm["builtin_provider_models"])
         for field in _LLM_PRIVATE_SETTING_FIELDS:
             if field in llm and not str(llm.get(field) or "").strip():
                 llm.pop(field, None)

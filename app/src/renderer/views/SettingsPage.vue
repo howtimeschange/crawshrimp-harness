@@ -800,7 +800,7 @@
 
     <Teleport to="body">
       <div v-if="llmProviderModal.open" class="settings-modal-backdrop" @click.self="closeLlmProviderModal">
-        <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="llm-provider-modal-title">
+        <section class="settings-modal llm-provider-modal" role="dialog" aria-modal="true" aria-labelledby="llm-provider-modal-title">
           <header class="settings-modal-head">
             <div>
               <p class="panel-kicker">{{ llmProviderModal.isNew ? '新增 Provider' : '编辑 Provider' }}</p>
@@ -809,7 +809,15 @@
             <button class="btn-ghost compact" type="button" @click="closeLlmProviderModal">关闭</button>
           </header>
 
+          <nav class="llm-provider-tabs" role="tablist" aria-label="Provider 配置">
+            <button id="llm-connection-tab" type="button" role="tab" :aria-selected="llmProviderModal.tab === 'connection'" aria-controls="llm-connection-panel" :tabindex="llmProviderModal.tab === 'connection' ? 0 : -1"
+              @click="llmProviderModal.tab = 'connection'" @keydown.right.prevent="switchLlmProviderTab('models')">连接配置</button>
+            <button id="llm-models-tab" type="button" role="tab" :aria-selected="llmProviderModal.tab === 'models'" aria-controls="llm-models-panel" :tabindex="llmProviderModal.tab === 'models' ? 0 : -1"
+              @click="llmProviderModal.tab = 'models'" @keydown.left.prevent="switchLlmProviderTab('connection')">模型管理 <span>{{ llmProviderDraft.models.length }}</span></button>
+          </nav>
+
           <div class="settings-modal-body">
+            <section v-show="llmProviderModal.tab === 'connection'" id="llm-connection-panel" class="llm-connection-panel" role="tabpanel" aria-labelledby="llm-connection-tab">
             <div class="split-fields">
               <div class="field">
                 <label>Provider 名称</label>
@@ -847,48 +855,6 @@
               <p class="field-hint">保存后立即落盘，页面只显示“已配 Key”，不会把真实密钥读回设置页。</p>
             </div>
 
-            <div v-if="llmProviderModal.isBuiltin" class="field">
-              <label>模型</label>
-              <div class="llm-model-chips">
-                <span v-for="model in llmProviderDraft.modelIds" :key="model" class="chip">{{ model }}</span>
-              </div>
-            </div>
-
-            <div v-else class="field">
-              <label>模型 ID</label>
-              <textarea
-                v-model="llmProviderDraft.modelsText"
-                class="textarea"
-                rows="3"
-                placeholder="每行一个模型 ID，例如：&#10;gpt-5.5&#10;claude-sonnet-5"
-              ></textarea>
-              <p class="field-hint">新模型默认上下文 256,000、输出上限 32,768 tokens，可按供应商支持的额度分别调整。</p>
-              <div v-for="model in llmProviderDraft.models" :key="model.id" class="custom-model-budget">
-                <strong>{{ model.id }}</strong>
-                <label>上下文（tokens）
-                  <input v-model.number="model.context_window" class="input" type="number" min="1" step="1" :aria-label="`${model.id} 上下文 tokens`" />
-                </label>
-                <label>输出上限（tokens）
-                  <input v-model.number="model.max_output_tokens" class="input" type="number" min="1" step="1" :aria-label="`${model.id} 输出上限 tokens`" />
-                </label>
-                <label v-if="llmProviderDraft.protocol === 'openai'">推理控制（可选）
-                  <select :value="model.reasoning_protocol || 'default'" class="select" :aria-label="`${model.id} 推理协议`"
-                    @change="model.reasoning_protocol = $event.target.value; model.reasoning_efforts = []">
-                    <option value="default">默认（不传推理参数）</option>
-                    <option value="deepseek">DeepSeek 推理协议</option>
-                    <option value="openai">OpenAI reasoning_effort</option>
-                  </select>
-                </label>
-                <div v-if="llmProviderDraft.protocol === 'openai' && ['deepseek', 'openai'].includes(model.reasoning_protocol)" class="custom-model-reasoning">
-                  <span>供应商支持的推理等级</span>
-                  <label v-for="level in (model.reasoning_protocol === 'deepseek' ? ['off', 'low', 'medium', 'high', 'xhigh', 'max'] : ['low', 'medium', 'high', 'xhigh', 'max'])" :key="level">
-                    <input v-model="model.reasoning_efforts" type="checkbox" :value="level" :aria-label="`${model.id} 推理等级 ${level}`" />{{ level === 'off' ? 'Off（关闭思考）' : level }}
-                  </label>
-                  <p class="field-hint">只勾选供应商确认支持的档位。Default 不传控制参数；Off 明确关闭思考。</p>
-                </div>
-              </div>
-            </div>
-
             <section
               v-if="llmProviderModal.providerId === 'crawshrimp-deepseek-official'"
               class="key-reset-guide"
@@ -906,6 +872,80 @@
                 <li>回到这里，把新 Key 粘贴到“API Key”。</li>
                 <li>点击“保存 Provider”；旧 Key 会被覆盖，保存后只显示“已配 Key”。</li>
               </ol>
+            </section>
+            </section>
+
+            <section v-show="llmProviderModal.tab === 'models'" id="llm-models-panel" class="llm-models-panel" role="tabpanel" aria-labelledby="llm-models-tab">
+              <div class="llm-model-toolbar">
+                <div>
+                  <h4>模型管理</h4>
+                  <p class="field-hint">选择左侧模型，编辑右侧参数。所有模型共用此 Provider 的连接配置。</p>
+                </div>
+                <div class="llm-model-toolbar-actions">
+                  <button v-if="canDiscoverLlmModels" class="btn-ghost compact" type="button" :disabled="llmProviderModal.discovering || llmProviderModal.saving" @click="discoverLlmModels">{{ llmProviderModal.discovering ? '获取中…' : '获取最新模型' }}</button>
+                  <button v-if="llmProviderModal.isBuiltin" class="btn-ghost compact" type="button" @click="restoreLlmPresetModels">恢复预设模型</button>
+                </div>
+              </div>
+
+              <p v-if="llmProviderModal.discoveryError" class="inline-msg err">{{ llmProviderModal.discoveryError }}</p>
+              <section v-if="llmProviderModal.discoveredModels.length" class="llm-model-discovery" aria-label="获取到的模型">
+                <div class="llm-model-editor-head">
+                  <strong>获取到 {{ llmProviderModal.discoveredModels.length }} 个模型</strong>
+                  <button class="btn-ghost compact" type="button" :disabled="!llmProviderModal.selectedDiscoveredIds.length" @click="addDiscoveredLlmModels">添加所选模型</button>
+                </div>
+                <p class="field-hint">{{ llmProviderModal.discoveryNotice }} <a :href="llmProviderModal.discoverySourceUrl" target="_blank" rel="noopener noreferrer">查看来源</a></p>
+                <div class="llm-discovered-models">
+                  <label v-for="model in llmProviderModal.discoveredModels" :key="model.id">
+                    <input v-model="llmProviderModal.selectedDiscoveredIds" type="checkbox" :value="model.id" :disabled="llmProviderDraft.models.some(item => item.id === model.id)" />
+                    {{ model.label || model.id }}<span v-if="llmProviderDraft.models.some(item => item.id === model.id)">（已添加）</span>
+                  </label>
+                </div>
+              </section>
+
+              <div class="llm-model-add-row">
+                <input v-model="llmProviderModal.newModelId" class="input" aria-label="新增模型 ID" placeholder="输入模型 ID，例如 gpt-6.1-sol" @keydown.enter.prevent="addLlmDraftModel" />
+                <button class="btn-orange compact" type="button" :disabled="!llmProviderModal.newModelId.trim()" @click="addLlmDraftModel">新增模型</button>
+              </div>
+
+              <div class="llm-model-workspace">
+                <aside class="llm-model-sidebar" aria-label="已添加模型">
+                  <p class="llm-model-list-caption">已添加模型 · {{ llmProviderDraft.models.length }}</p>
+                  <div class="llm-model-list">
+                    <button v-for="model in llmProviderDraft.models" :key="model.id" type="button" :class="['llm-model-list-item', { active: selectedLlmDraftModel?.id === model.id }]" :aria-pressed="selectedLlmDraftModel?.id === model.id" :aria-label="`配置模型 ${model.id}`" @click="llmProviderModal.selectedModelId = model.id">
+                      <strong>{{ model.label || model.id }}</strong><span>{{ model.id }}</span>
+                    </button>
+                    <p v-if="!llmProviderDraft.models.length" class="field-hint llm-model-list-empty">尚未添加模型</p>
+                  </div>
+                </aside>
+
+                <section v-if="selectedLlmDraftModel" class="llm-model-detail" aria-label="模型参数">
+                  <header class="llm-model-detail-head">
+                    <div><h4>{{ selectedLlmDraftModel.label || selectedLlmDraftModel.id }}</h4><p>{{ selectedLlmDraftModel.id }}</p></div>
+                    <button class="btn-danger compact" type="button" :aria-label="`删除模型 ${selectedLlmDraftModel.id}`" @click="removeLlmDraftModel(selectedLlmDraftModel.id)">删除模型</button>
+                  </header>
+
+                  <div class="llm-model-details-grid">
+                    <label class="field">模型名称<input v-model="selectedLlmDraftModel.label" class="input" :aria-label="`${selectedLlmDraftModel.id} 模型名称`" /></label>
+                    <label class="field">模型 ID<input :value="selectedLlmDraftModel.id" class="input" :aria-label="`${selectedLlmDraftModel.id} 模型 ID`" @change="renameLlmDraftModel(selectedLlmDraftModel.id, $event.target)" /></label>
+                    <label class="field">上下文（tokens）<input v-model.number="selectedLlmDraftModel.context_window" class="input" type="number" min="1" step="1" :aria-label="`${selectedLlmDraftModel.id} 上下文 tokens`" /></label>
+                    <label class="field">输出上限（tokens）<input v-model.number="selectedLlmDraftModel.max_output_tokens" class="input" type="number" min="1" step="1" :aria-label="`${selectedLlmDraftModel.id} 输出上限 tokens`" /></label>
+                  </div>
+
+                  <div v-if="llmProviderDraft.protocol === 'openai'" class="field llm-model-reasoning-field">
+                    <label :for="`reasoning-${selectedLlmDraftModel.id}`">推理设置</label>
+                    <select :id="`reasoning-${selectedLlmDraftModel.id}`" :value="selectedLlmDraftModel.reasoning_protocol || (isLlmPresetModel(selectedLlmDraftModel.id) ? 'inherit' : 'default')" class="select" :aria-label="`${selectedLlmDraftModel.id} 推理协议`" @change="selectedLlmDraftModel.reasoning_protocol = $event.target.value; selectedLlmDraftModel.reasoning_efforts = []">
+                      <option v-if="isLlmPresetModel(selectedLlmDraftModel.id)" value="inherit">沿用预设推理设置</option><option value="default">默认（不传推理参数）</option><option value="deepseek">DeepSeek 推理协议</option><option value="openai">OpenAI reasoning_effort</option>
+                    </select>
+                    <fieldset v-if="['deepseek', 'openai'].includes(selectedLlmDraftModel.reasoning_protocol)" class="llm-model-reasoning-levels"><legend>支持的推理等级</legend>
+                      <label v-for="level in (selectedLlmDraftModel.reasoning_protocol === 'deepseek' ? ['off', 'low', 'medium', 'high', 'xhigh', 'max'] : ['low', 'medium', 'high', 'xhigh', 'max'])" :key="level"><input v-model="selectedLlmDraftModel.reasoning_efforts" type="checkbox" :value="level" :aria-label="`${selectedLlmDraftModel.id} 推理等级 ${level}`" />{{ level === 'off' ? 'Off' : level }}</label>
+                    </fieldset>
+                    <p class="field-hint">只选择供应商支持的协议和档位。新模型的上下文和输出额度请核对后设置。</p>
+                  </div>
+                </section>
+                <div v-else class="llm-model-detail llm-model-empty"><h4>添加第一个模型</h4><p class="field-hint">在上方输入模型 ID，或获取最新模型后选择添加。</p></div>
+              </div>
+
+              <details class="llm-batch-models"><summary>批量编辑模型 ID</summary><textarea v-model="llmProviderDraft.modelsText" class="textarea" rows="4" aria-label="批量模型 ID" placeholder="每行一个模型 ID"></textarea><p class="field-hint">每行一个模型 ID；移除一行即可删除。清空列表会停用此 Provider 的全部模型。</p></details>
             </section>
 
             <p v-if="llmProviderModal.error" class="inline-msg err">{{ llmProviderModal.error }}</p>
@@ -925,7 +965,7 @@
 
 <script setup>
 import { requestArchivedSessions } from '../utils/archivedSessions.mjs'
-import { computed, defineComponent, h, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import AccountPanel from '../components/AccountPanel.vue'
 import AutomationPermissionsPanel from '../components/AutomationPermissionsPanel.vue'
 import { IconExternalLink } from '@tabler/icons-vue'
@@ -945,6 +985,10 @@ import {
   LLM_BUILTIN_PROVIDERS,
   LLM_CREDENTIAL_FIELDS,
   LLM_CUSTOM_PROVIDERS_FIELD,
+  LLM_BUILTIN_PROVIDER_MODELS_FIELD,
+  normalizeBuiltinProviderModels,
+  builtinLlmProviderModels,
+  builtinLlmProviderModelIds,
   DEEPSEEK_PLATFORM_URL,
   LLM_DEFAULTS,
   normalizeDeepSeekModelId,
@@ -957,6 +1001,7 @@ import {
   normalizeCustomLlmProviders,
   normalizeLlmProtocol,
   mergeCustomLlmModelDraft,
+  mergeDiscoveredLlmModels,
   customLlmBudgetError,
 } from '../utils/llmSettings.mjs'
 // Keep provider branding available even when a running renderer outlives a build's asset files.
@@ -1121,7 +1166,18 @@ const llmProviderModal = reactive({
   providerId: '',
   error: '',
   saving: false,
+  tab: 'connection',
+  selectedModelId: '',
+  newModelId: '',
+  discovering: false,
+  discoveryError: '',
+  discoveredModels: [],
+  selectedDiscoveredIds: [],
+  discoveryNotice: '',
+  discoverySourceUrl: '',
 })
+let llmDiscoveryRequestId = 0
+const canDiscoverLlmModels = computed(() => ['crawshrimp-deepseek-official', 'crawshrimp-glm-official'].includes(llmProviderModal.providerId))
 const llmProviderDraft = reactive({
   id: '',
   name: '',
@@ -1133,11 +1189,10 @@ const llmProviderDraft = reactive({
   modelIds: [],
   configured: false,
 })
+const selectedLlmDraftModel = computed(() => llmProviderDraft.models.find(model => model.id === llmProviderModal.selectedModelId) || llmProviderDraft.models[0] || null)
 
 watch(() => llmProviderDraft.modelsText, (text) => {
-  if (!llmProviderModal.isBuiltin) {
-    llmProviderDraft.models = mergeCustomLlmModelDraft(text, llmProviderDraft.models)
-  }
+  llmProviderDraft.models = mergeCustomLlmModelDraft(text, llmProviderDraft.models, llmProviderModal.isBuiltin)
 })
 
 const saveState = reactive({})
@@ -1300,7 +1355,7 @@ const failedProviderLogos = ref({})
 const llmProviders = computed(() => {
   const defaultModel = String(cfg.value['ai.llm.default_model'] || '').trim()
   const builtinRows = LLM_BUILTIN_PROVIDERS.map((provider) => {
-    const modelIds = provider.models.map(model => model.value || model.id).filter(Boolean)
+    const modelIds = builtinLlmProviderModelIds(provider, cfg.value)
     return {
       id: provider.id,
       name: provider.name,
@@ -1358,21 +1413,22 @@ function isMaskedLlmCredential(value) {
 function llmProviderModelIds(provider) {
   if (!provider) return []
   if (provider.kind === 'builtin' || provider.baseUrlField) {
-    return provider.models.map(model => model.value || model.id).filter(Boolean)
+    return builtinLlmProviderModelIds(provider, cfg.value)
   }
   return normalizeCustomLlmProviders([provider])[0]?.models.map(model => model.id) || []
 }
 
 function firstAvailableLlmModel() {
-  for (const provider of LLM_BUILTIN_PROVIDERS) {
-    const model = llmProviderModelIds(provider)[0]
-    if (model) return model
+  const providers = [...LLM_BUILTIN_PROVIDERS, ...customLlmProviders.value]
+  for (const configuredOnly of [true, false]) {
+    for (const provider of providers) {
+      const configured = provider.baseUrlField ? llmProviderConfigured(cfg.value, provider) : provider.configured
+      if (configuredOnly && !configured) continue
+      const model = llmProviderModelIds(provider)[0]
+      if (model) return model
+    }
   }
-  for (const provider of customLlmProviders.value) {
-    const model = llmProviderModelIds(provider)[0]
-    if (model) return model
-  }
-  return LLM_DEFAULTS['ai.llm.default_model']
+  return ''
 }
 
 async function setLlmDefaultModel(modelId) {
@@ -1398,6 +1454,8 @@ function slugifyLlmProviderId(value) {
 }
 
 function openLlmProviderModal(providerId = '') {
+  llmDiscoveryRequestId += 1
+  Object.assign(llmProviderModal, { tab: 'connection', selectedModelId: '', newModelId: '', discovering: false, discoveryError: '', discoveredModels: [], selectedDiscoveredIds: [], discoveryNotice: '', discoverySourceUrl: '' })
   const builtin = LLM_BUILTIN_PROVIDERS.find(provider => provider.id === providerId)
   const custom = customLlmProviders.value.find(provider => provider.id === providerId)
   llmProviderModal.open = true
@@ -1407,15 +1465,16 @@ function openLlmProviderModal(providerId = '') {
   llmProviderModal.error = ''
   if (builtin) {
     const configured = llmProviderConfigured(cfg.value, builtin)
-    const modelIds = llmProviderModelIds(builtin)
+    const models = builtinLlmProviderModels(builtin, cfg.value)
     Object.assign(llmProviderDraft, {
+      models: models.map(model => ({ ...model, input_modalities: [...model.input_modalities], reasoning_efforts: [...(model.reasoning_efforts || [])] })),
       id: builtin.id,
       name: builtin.name,
       protocol: builtin.protocol,
       baseUrl: cfg.value[builtin.baseUrlField] || builtin.defaultBaseUrl,
       apiKey: cfg.value[builtin.apiKeyField] || (configured ? LLM_MASKED_CREDENTIAL_VALUE : ''),
-      modelsText: modelIds.join('\n'),
-      modelIds,
+      modelsText: models.map(model => model.id).join('\n'),
+      modelIds: models.map(model => model.id),
       configured,
     })
     return
@@ -1448,9 +1507,97 @@ function openLlmProviderModal(providerId = '') {
   })
 }
 
+function removeLlmDraftModel(modelId) {
+  llmProviderDraft.models = llmProviderDraft.models.filter(model => model.id !== modelId)
+  llmProviderDraft.modelsText = llmProviderDraft.models.map(model => model.id).join('\n')
+}
+
+function switchLlmProviderTab(tab) {
+  llmProviderModal.tab = tab
+  nextTick(() => document.getElementById(tab === 'models' ? 'llm-models-tab' : 'llm-connection-tab')?.focus())
+}
+
+function addLlmDraftModel() {
+  const id = llmProviderModal.newModelId.trim()
+  if (!id) return
+  if (llmProviderDraft.models.some(model => model.id === id)) {
+    llmProviderModal.error = '这个模型 ID 已存在。'
+    llmProviderModal.selectedModelId = id
+    return
+  }
+  llmProviderModal.error = ''
+  llmProviderDraft.models = mergeCustomLlmModelDraft([...llmProviderDraft.models.map(model => model.id), id].join('\n'), llmProviderDraft.models, llmProviderModal.isBuiltin)
+  llmProviderDraft.modelsText = llmProviderDraft.models.map(model => model.id).join('\n')
+  llmProviderModal.selectedModelId = id
+  llmProviderModal.newModelId = ''
+}
+
+function renameLlmDraftModel(previousId, input) {
+  const id = input.value.trim()
+  if (!id || llmProviderDraft.models.some(model => model.id === id && model.id !== previousId)) {
+    llmProviderModal.error = id ? '这个模型 ID 已存在。' : '模型 ID 不能为空。'
+    input.value = previousId
+    return
+  }
+  llmProviderModal.error = ''
+  const model = llmProviderDraft.models.find(model => model.id === previousId)
+  if (!model) return
+  if (model.label === previousId) model.label = id
+  model.id = id
+  llmProviderModal.selectedModelId = id
+  llmProviderDraft.modelsText = llmProviderDraft.models.map(model => model.id).join('\n')
+}
+
+function restoreLlmPresetModels() {
+  const builtin = LLM_BUILTIN_PROVIDERS.find(provider => provider.id === llmProviderDraft.id)
+  if (!builtin) return
+  const models = builtinLlmProviderModels(builtin, cfg.value, true)
+  llmProviderDraft.models = models
+  llmProviderDraft.modelsText = models.map(model => model.id).join('\n')
+}
+
+function isLlmPresetModel(modelId) {
+  const builtin = LLM_BUILTIN_PROVIDERS.find(provider => provider.id === llmProviderDraft.id)
+  return Boolean(builtin && builtinLlmProviderModels(builtin, cfg.value, true).some(model => model.id === modelId))
+}
+
+async function discoverLlmModels() {
+  if (!canDiscoverLlmModels.value || llmProviderModal.discovering) return
+  const requestId = ++llmDiscoveryRequestId
+  llmProviderModal.discovering = true
+  llmProviderModal.discoveryError = ''
+  llmProviderModal.discoveredModels = []
+  llmProviderModal.selectedDiscoveredIds = []
+  const payload = { base_url: String(llmProviderDraft.baseUrl || '').trim() }
+  const key = String(llmProviderDraft.apiKey || '').trim()
+  if (key && !isMaskedLlmCredential(key)) payload.api_key = key
+  try {
+    const result = await window.cs.agentApi('POST', `/agent/providers/${llmProviderModal.providerId}/discover-models`, payload)
+    if (requestId !== llmDiscoveryRequestId || !llmProviderModal.open) return
+    llmProviderModal.discoveredModels = result.models || []
+    llmProviderModal.selectedDiscoveredIds = llmProviderModal.discoveredModels
+      .filter(model => !llmProviderDraft.models.some(item => item.id === model.id)).map(model => model.id)
+    llmProviderModal.discoveryNotice = result.notice || ''
+    llmProviderModal.discoverySourceUrl = result.source_url || ''
+  } catch (error) {
+    if (requestId === llmDiscoveryRequestId && llmProviderModal.open) llmProviderModal.discoveryError = error.message || String(error)
+  } finally {
+    if (requestId === llmDiscoveryRequestId) llmProviderModal.discovering = false
+  }
+}
+
+function addDiscoveredLlmModels() {
+  const current = mergeCustomLlmModelDraft(llmProviderDraft.modelsText, llmProviderDraft.models, true)
+  const models = mergeDiscoveredLlmModels(current, llmProviderModal.discoveredModels, llmProviderModal.selectedDiscoveredIds)
+  llmProviderDraft.models = models
+  llmProviderDraft.modelsText = models.map(model => model.id).join('\n')
+  llmProviderModal.selectedDiscoveredIds = []
+}
+
 function closeLlmProviderModal(options = {}) {
   if (llmProviderModal.saving && !options.force) return
   llmProviderModal.open = false
+  llmDiscoveryRequestId += 1
   llmProviderModal.error = ''
 }
 
@@ -1462,30 +1609,42 @@ async function applyLlmProviderDraft() {
   const baseUrl = String(llmProviderDraft.baseUrl || '').trim()
   const apiKey = String(llmProviderDraft.apiKey || '').trim()
   if (!name) {
+    llmProviderModal.tab = 'connection'
     llmProviderModal.error = '请填写 Provider 名称。'
     return
   }
   if (!baseUrl) {
+    llmProviderModal.tab = 'connection'
     llmProviderModal.error = '请填写 Base URL。'
     return
   }
   const previousCfg = clonePlain(cfg.value)
   const builtin = LLM_BUILTIN_PROVIDERS.find(provider => provider.id === llmProviderDraft.id)
+  const models = mergeCustomLlmModelDraft(llmProviderDraft.modelsText, llmProviderDraft.models, Boolean(builtin))
+  const budgetError = customLlmBudgetError(models, protocol)
+  if (budgetError) {
+    llmProviderModal.tab = 'models'
+    llmProviderModal.error = budgetError
+    return
+  }
   if (builtin) {
     cfg.value[builtin.baseUrlField] = baseUrl
+    cfg.value[LLM_BUILTIN_PROVIDER_MODELS_FIELD] = {
+      ...normalizeBuiltinProviderModels(cfg.value[LLM_BUILTIN_PROVIDER_MODELS_FIELD]),
+      [builtin.id]: models,
+    }
     if (apiKey) cfg.value[builtin.apiKeyField] = apiKey
     if (apiKey && !isMaskedLlmCredential(apiKey)) cfg.value[builtin.configuredField] = true
+    const defaultModel = String(cfg.value['ai.llm.default_model'] || '').trim()
+    if (!defaultModel || ![...LLM_BUILTIN_PROVIDERS, ...customLlmProviders.value].some(provider => llmProviderModelIds(provider).includes(defaultModel))) {
+      cfg.value['ai.llm.default_model'] = firstAvailableLlmModel()
+    }
     await saveLlmProviderDraft(previousCfg)
     return
   }
 
-  const budgetError = customLlmBudgetError(llmProviderDraft.models, protocol)
-  if (budgetError) {
-    llmProviderModal.error = budgetError
-    return
-  }
-  const models = mergeCustomLlmModelDraft(llmProviderDraft.modelsText, llmProviderDraft.models)
   if (!models.length) {
+    llmProviderModal.tab = 'models'
     llmProviderModal.error = '请至少填写一个模型 ID。'
     return
   }
@@ -1642,6 +1801,12 @@ function flattenSettings(source, prefix = '', target = {}) {
 
 function normalizedSettings(raw) {
   const flat = flattenSettings(raw || {})
+  flat[LLM_BUILTIN_PROVIDER_MODELS_FIELD] = normalizeBuiltinProviderModels(
+    raw?.[LLM_BUILTIN_PROVIDER_MODELS_FIELD] || raw?.ai?.llm?.builtin_provider_models,
+  )
+  flat['ai.llm.builtin_provider_model_defaults'] = normalizeBuiltinProviderModels(
+    raw?.['ai.llm.builtin_provider_model_defaults'] || raw?.ai?.llm?.builtin_provider_model_defaults,
+  )
   flat['ai.llm.default_model'] = normalizeDeepSeekModelId(flat['ai.llm.default_model'])
   if (!flat['ai.woka.base_url']) flat['ai.woka.base_url'] = 'https://4.0.wk-best.com/v1'
   if (!flat['ai.woka.gemini_base_url']) flat['ai.woka.gemini_base_url'] = 'https://4.0.wk-best.com/v1beta'
@@ -1974,14 +2139,65 @@ watch(imSettingsUrl, () => {
 
 <style scoped src="./settingsPanel.css"></style>
 <style scoped>
-.custom-model-budget { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px 0; }
-.custom-model-budget > strong { grid-column: 1 / -1; overflow-wrap: anywhere; }
-.custom-model-budget label { min-width: 0; }
-.custom-model-budget input { margin-top: 6px; }
-.custom-model-reasoning { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px 16px; }
-.custom-model-reasoning > span, .custom-model-reasoning > p { flex-basis: 100%; }
-.custom-model-reasoning label { display: inline-flex; align-items: center; gap: 6px; }
-.custom-model-reasoning input { margin: 0; }
+.llm-model-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.llm-model-editor-head strong { overflow-wrap: anywhere; min-width: 0; }
+.llm-provider-modal { width: min(960px, calc(100vw - 36px)); height: min(760px, calc(100vh - 56px)); }
+.llm-provider-modal .settings-modal-body { flex: 1; padding: 22px; }
+.llm-provider-tabs { display: flex; gap: 24px; padding: 0 22px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.llm-provider-tabs button { display: inline-flex; align-items: center; gap: 8px; padding: 14px 0 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--text3); font: inherit; font-weight: 650; cursor: pointer; }
+.llm-provider-tabs button[aria-selected="true"] { color: var(--orange-text); border-bottom-color: var(--orange); }
+.llm-provider-tabs button span { padding: 2px 6px; border-radius: 4px; background: var(--bg3); color: var(--text2); font-size: 11px; font-variant-numeric: tabular-nums; }
+.llm-provider-tabs button:focus-visible, .llm-model-list-item:focus-visible, .llm-batch-models summary:focus-visible { outline: 2px solid var(--orange); outline-offset: 3px; }
+.llm-connection-panel { display: flex; flex-direction: column; gap: 20px; width: min(100%, 680px); }
+.llm-models-panel { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.llm-model-toolbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.llm-model-toolbar h4, .llm-model-detail h4 { margin: 0; font-size: 15px; color: var(--text); }
+.llm-model-toolbar .field-hint { margin: 6px 0 0; }
+.llm-model-toolbar-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.llm-model-add-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+.llm-model-workspace { display: grid; grid-template-columns: 240px minmax(0, 1fr); border: 1px solid var(--border); border-radius: 8px; min-height: 380px; overflow: hidden; }
+.llm-model-sidebar { min-width: 0; border-right: 1px solid var(--border); background: var(--bg3); }
+.llm-model-list-caption { margin: 0; padding: 16px; color: var(--text3); font-size: 12px; font-weight: 650; }
+.llm-model-list { display: flex; flex-direction: column; gap: 4px; padding: 0 8px 10px; max-height: 400px; overflow-y: auto; }
+.llm-model-list-item { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; width: 100%; min-height: 58px; padding: 11px 12px; border: 1px solid transparent; border-radius: 6px; background: transparent; text-align: left; cursor: pointer; color: var(--text2); }
+.llm-model-list-item strong, .llm-model-list-item span { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.llm-model-list-item strong { font-size: 13px; font-weight: 600; }
+.llm-model-list-item span { font-size: 11px; color: var(--text3); }
+.llm-model-list-item.active { background: var(--bg2); border-color: var(--border-strong); color: var(--orange-text); }
+.llm-model-list-empty { padding: 8px; }
+.llm-model-detail { min-width: 0; padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+.llm-model-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.llm-model-detail-head > div { min-width: 0; }
+.llm-model-detail-head h4 { overflow-wrap: anywhere; }
+.llm-model-detail-head p { margin: 6px 0 0; font-size: 12px; color: var(--text3); overflow-wrap: anywhere; }
+.llm-model-detail-head button { flex-shrink: 0; }
+.llm-model-details-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.llm-model-details-grid .field { margin: 0; min-width: 0; }
+.llm-model-details-grid input { margin-top: 2px; }
+.llm-model-reasoning-levels { margin: 0; padding: 0; border: 0; min-width: 0; }
+.llm-model-reasoning-levels legend { margin-bottom: 10px; color: var(--text2); font-size: 12px; font-weight: 650; }
+.llm-model-reasoning-field { margin: 0; }
+.llm-model-reasoning-levels { display: flex; flex-wrap: wrap; gap: 12px 16px; padding-top: 10px; }
+.llm-model-reasoning-levels label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.llm-model-reasoning-levels input { margin: 0; }
+.llm-model-empty { justify-content: center; align-items: center; text-align: center; }
+.llm-batch-models { font-size: 12px; color: var(--text3); }
+.llm-batch-models summary { cursor: pointer; width: fit-content; }
+.llm-batch-models textarea { margin-top: 12px; }
+.llm-model-discovery { padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg3); }
+.llm-model-discovery > .field-hint { margin: 8px 0; }
+.llm-discovered-models { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; max-height: 180px; overflow-y: auto; }
+.llm-discovered-models label { display: inline-flex; align-items: center; gap: 6px; overflow-wrap: anywhere; font-size: 12px; }
+@media (max-width: 760px) {
+  .llm-provider-modal .settings-modal-body { padding: 16px; }
+  .llm-model-toolbar { flex-direction: column; }
+  .llm-model-toolbar-actions { flex-wrap: wrap; }
+  .llm-model-workspace { grid-template-columns: 1fr; }
+  .llm-model-sidebar { border-right: 0; border-bottom: 1px solid var(--border); }
+  .llm-model-list { max-height: 160px; }
+  .llm-model-detail { padding: 16px; }
+  .llm-model-details-grid, .llm-model-capabilities, .llm-discovered-models { grid-template-columns: 1fr; }
+}
 
 .view {
   height: 100%;

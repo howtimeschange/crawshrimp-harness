@@ -59,7 +59,7 @@
             name: DeepSeek V4 Pro
             contextWindow: 1000000
             maxTokens: 393216
-            input: [text]
+            input: [text, image]
             compat:
               thinkingFormat: deepseek
               supportsReasoningEffort: true
@@ -73,7 +73,7 @@
         displayName: 抓虾-海外 OpenAI
         apiKeyEnv: CRAWSHRIMP_OVERSEAS_OPENAI_API_KEY
         api: openai-completions
-        baseURL: !!js process.env.CRAWSHRIMP_OVERSEAS_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/overseas-openai-vip/v1'
+        baseURL: !!js process.env.CRAWSHRIMP_OVERSEAS_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/overseas-openai-codex/v1'
         models:
           - id: gpt-6.1-sol
             contextWindow: 256000
@@ -138,19 +138,19 @@
           - id: qwen3.8-max
             contextWindow: 256000
             maxTokens: 32768
-            input: [text]
+            input: [text, image]
           - id: qwen3.8-max-preview
             contextWindow: 256000
             maxTokens: 32768
-            input: [text]
+            input: [text, image]
           - id: qwen3.7-plus
             contextWindow: 256000
             maxTokens: 32768
-            input: [text]
+            input: [text, image]
           - id: deepseek-v4.1-flash
             contextWindow: 256000
             maxTokens: 32768
-            input: [text]
+            input: [text, image]
             reasoningEfforts: !!js "(process.env.CRAWSHRIMP_DOMESTIC_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/bailian-codingplan/v1').replace(/\\/$/, '') === 'https://ai-aigw.semir.com/bailian-codingplan/v1' ? { off:'off', low:'low', high:'high', max:'max' } : false"
             compat:
               thinkingFormat: deepseek
@@ -159,7 +159,7 @@
           - id: deepseek-v4-flash
             contextWindow: 256000
             maxTokens: 32768
-            input: [text]
+            input: [text, image]
             reasoningEfforts: !!js "(process.env.CRAWSHRIMP_DOMESTIC_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/bailian-codingplan/v1').replace(/\\/$/, '') === 'https://ai-aigw.semir.com/bailian-codingplan/v1' ? { off:'off', low:'low', high:'high', max:'max' } : false"
             compat:
               thinkingFormat: deepseek
@@ -168,7 +168,7 @@
           - id: deepseek-v4-pro
             contextWindow: 256000
             maxTokens: 32768
-            input: [text]
+            input: [text, image]
             reasoningEfforts: !!js "(process.env.CRAWSHRIMP_DOMESTIC_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/bailian-codingplan/v1').replace(/\\/$/, '') === 'https://ai-aigw.semir.com/bailian-codingplan/v1' ? { off:'off', low:'low', high:'high', max:'max' } : false"
             compat:
               thinkingFormat: deepseek
@@ -177,15 +177,15 @@
           - id: glm-5.2
             contextWindow: 256000
             maxTokens: 32768
-            input: [text]
+            input: [text, image]
           - id: kimi-k3
             contextWindow: 256000
             maxTokens: 32768
-            input: [text]
+            input: [text, image]
           - id: kimi-k2.7-code
             contextWindow: 256000
             maxTokens: 32768
-            input: [text]
+            input: [text, image]
       crawshrimp-glm-official:
         displayName: 智谱官方
         apiKeyEnv: CRAWSHRIMP_GLM_API_KEY
@@ -199,11 +199,11 @@
           - id: glm-official-5.3
             contextWindow: 128000
             maxTokens: 16384
-            input: [text]
+            input: [text, image]
           - id: glm-official-5.2
             contextWindow: 128000
             maxTokens: 16384
-            input: [text]
+            input: [text, image]
 
 - id: session-persistence-jsonl
   config:

@@ -17,9 +17,10 @@ export const GLM_BASE_URL_FIELD = 'ai.llm.glm_base_url'
 export const GLM_OFFICIAL_BASE_URL_DEFAULT = 'https://open.bigmodel.cn/api/paas/v4'
 
 export const LLM_CUSTOM_PROVIDERS_FIELD = 'ai.llm.custom_providers'
+export const LLM_BUILTIN_PROVIDER_MODELS_FIELD = 'ai.llm.builtin_provider_models'
 
 export const LLM_DEFAULTS = Object.freeze({
-  'ai.llm.overseas_openai_base_url': 'https://ai-aigw.semir.com/overseas-openai-vip/v1',
+  'ai.llm.overseas_openai_base_url': 'https://ai-aigw.semir.com/overseas-openai-codex/v1',
   'ai.llm.overseas_anthropic_base_url': 'https://ai-aigw.semir.com/overseas-anthropic-vip',
   'ai.llm.domestic_base_url': 'https://ai-aigw.semir.com/bailian-codingplan/v1',
   'ai.llm.deepseek_base_url': DEEPSEEK_OFFICIAL_BASE_URL_DEFAULT,
@@ -27,7 +28,20 @@ export const LLM_DEFAULTS = Object.freeze({
   'ai.llm.default_model': 'deepseek-official-flash',
 })
 
+// Keep renderer fallback presets aligned with core.agent.cordis_config.MODEL_CAPABILITIES.
+// Saved budgets and reasoning settings take precedence; capabilities do not gate requests.
+function presetModels(models, contextWindow, maxOutputTokens) {
+  return models.map(model => ({
+    ...model,
+    context_window: contextWindow,
+    max_output_tokens: maxOutputTokens,
+    supports_tools: true,
+    input_modalities: ['text', 'image'],
+  }))
+}
+
 const OVERSEAS_OPENAI_MODELS = Object.freeze([
+  ...presetModels([
   { value: 'gpt-6.1-sol', label: '海外 · GPT-6.1 Sol' },
   { value: 'gpt-6-astra', label: '海外 · GPT-6 Astra' },
   { value: 'gpt-6-sol', label: '海外 · GPT-6 Sol' },
@@ -36,16 +50,19 @@ const OVERSEAS_OPENAI_MODELS = Object.freeze([
   { value: 'gpt-5.6-terra', label: '海外 · GPT-5.6 Terra' },
   { value: 'gpt-5.6-luna', label: '海外 · GPT-5.6 Luna' },
   { value: 'gpt-5.5', label: '海外 · GPT-5.5' },
+  ], 256000, 65536),
+  ...presetModels([
   { value: 'gemini-3.1-pro-preview', label: '海外 · Gemini 3.1 Pro Preview' },
   { value: 'gemini-3.5-flash', label: '海外 · Gemini 3.5 Flash' },
+  ], 1000000, 65536),
 ])
 
-const OVERSEAS_ANTHROPIC_MODELS = Object.freeze([
+const OVERSEAS_ANTHROPIC_MODELS = Object.freeze(presetModels([
   { value: 'claude-opus-4-8', label: '海外 · Claude Opus 4.8' },
   { value: 'claude-sonnet-5', label: '海外 · Claude Sonnet 5' },
-])
+], 256000, 64000))
 
-const DOMESTIC_OPENAI_MODELS = Object.freeze([
+const DOMESTIC_OPENAI_MODELS = Object.freeze(presetModels([
   { value: 'qwen3.8-max', label: '国内 · Qwen 3.8 Max' },
   { value: 'qwen3.8-max-preview', label: '国内 · Qwen 3.8 Max Preview' },
   { value: 'qwen3.7-plus', label: '国内 · Qwen 3.7 Plus' },
@@ -55,17 +72,25 @@ const DOMESTIC_OPENAI_MODELS = Object.freeze([
   { value: 'glm-5.2', label: '国内 · GLM 5.2' },
   { value: 'kimi-k3', label: '国内 · Kimi K3' },
   { value: 'kimi-k2.7-code', label: '国内 · Kimi K2.7 Code' },
-])
+], 256000, 32768))
 
 export const DEEPSEEK_OFFICIAL_MODELS_UI = Object.freeze([
+  ...presetModels([
   { value: 'deepseek-official-flash', label: 'DeepSeek 官方 · V4.1 Flash' },
+  ], 1000000, 393216),
+  ...presetModels([
   { value: 'deepseek-official-v4-pro', label: 'DeepSeek 官方 · V4 Pro' },
+  ], 1000000, 393216),
 ])
 
 export const GLM_OFFICIAL_MODELS_UI = Object.freeze([
+  ...presetModels([
   { value: 'glm-official-5.3-flash', label: '智谱官方 · GLM-5.3-Flash' },
+  ], 128000, 8192),
+  ...presetModels([
   { value: 'glm-official-5.3', label: '智谱官方 · GLM-5.3' },
   { value: 'glm-official-5.2', label: '智谱官方 · GLM-5.2' },
+  ], 128000, 16384),
 ])
 
 export const LLM_BUILTIN_PROVIDERS = Object.freeze([
@@ -162,6 +187,7 @@ export const LLM_PANEL_FIELDS = Object.freeze([
   ...LLM_CREDENTIAL_FIELDS,
   ...Object.keys(LLM_DEFAULTS),
   LLM_CUSTOM_PROVIDERS_FIELD,
+  LLM_BUILTIN_PROVIDER_MODELS_FIELD,
 ])
 
 export function isMaskedCredential(value) {
@@ -185,7 +211,7 @@ export function parseLlmModelsText(text = '') {
     .map(id => ({ id, label: id }))
 }
 
-function normalizeModelEntries(models = []) {
+function normalizeModelEntries(models = [], preserveDefaultReasoning = false) {
   const raw = Array.isArray(models) ? models : parseLlmModelsText(models)
   const seen = new Set()
   const normalized = []
@@ -194,31 +220,54 @@ function normalizeModelEntries(models = []) {
     const id = String(model.id || model.value || '').trim()
     if (!id || seen.has(id)) continue
     seen.add(id)
-    const inputModalities = Array.isArray(model.input_modalities)
-      ? model.input_modalities
-      : (Array.isArray(model.input) ? model.input : ['text'])
-    const normalizedInputModalities = inputModalities.map(item => String(item || '').trim()).filter(Boolean)
     normalized.push({
       id,
       label: String(model.label || model.name || id).trim(),
       context_window: Number(model.context_window || model.contextWindow || 256000) || 256000,
       max_output_tokens: Number(model.max_output_tokens || model.maxTokens || 32768) || 32768,
-      supports_tools: model.supports_tools !== false && model.supportsTools !== false,
-      input_modalities: normalizedInputModalities.length ? normalizedInputModalities : ['text'],
+      // Legacy capability flags no longer gate requests; the upstream decides.
+      supports_tools: true,
+      input_modalities: ['text', 'image'],
       ...(['deepseek', 'openai'].includes(model.reasoning_protocol) ? {
         reasoning_protocol: model.reasoning_protocol,
         reasoning_efforts: ['off', 'low', 'medium', 'high', 'xhigh', 'max'].filter(level =>
           (model.reasoning_efforts || []).includes(level) && (level !== 'off' || model.reasoning_protocol === 'deepseek')),
-      } : {}),
+      } : (preserveDefaultReasoning && model.reasoning_protocol === 'default' ? { reasoning_protocol: 'default' } : {})),
     })
   }
   return normalized
 }
 
 // Preserve per-model capabilities when editing a provider's name, key or model list.
-export function mergeCustomLlmModelDraft(text, existing = []) {
+export function mergeCustomLlmModelDraft(text, existing = [], preserveDefaultReasoning = false) {
   const previous = new Map(existing.map(model => [model.id, model]))
-  return normalizeModelEntries(parseLlmModelsText(text).map(model => previous.get(model.id) || model))
+  const presets = new Map(preserveDefaultReasoning ? LLM_MODELS.map(model => [model.value, model]) : [])
+  return normalizeModelEntries(parseLlmModelsText(text).map(model => previous.get(model.id) || presets.get(model.id) || model), preserveDefaultReasoning)
+}
+
+export function mergeDiscoveredLlmModels(existing = [], discovered = [], selectedIds = []) {
+  const selected = new Set(selectedIds)
+  const ids = new Set(existing.map(model => model.id))
+  return normalizeModelEntries([...existing, ...discovered.filter(model => selected.has(model.id) && !ids.has(model.id))], true)
+}
+
+export function normalizeBuiltinProviderModels(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  return Object.fromEntries(LLM_BUILTIN_PROVIDERS
+    .filter(provider => Object.prototype.hasOwnProperty.call(source, provider.id))
+    .map(provider => [provider.id, normalizeModelEntries(source[provider.id], true)]))
+}
+
+export function builtinLlmProviderModels(provider, cfg = {}, preset = false) {
+  const saved = normalizeBuiltinProviderModels(cfg[LLM_BUILTIN_PROVIDER_MODELS_FIELD])
+  if (!preset && Object.prototype.hasOwnProperty.call(saved, provider.id)) return saved[provider.id]
+  const defaults = cfg['ai.llm.builtin_provider_model_defaults']?.[provider.id] || provider.models
+  const presets = new Map(provider.models.map(model => [model.value, model]))
+  return normalizeModelEntries(defaults.map(model => ({ ...presets.get(model.id || model.value), ...model })), true)
+}
+
+export function builtinLlmProviderModelIds(provider, cfg = {}) {
+  return builtinLlmProviderModels(provider, cfg).map(model => model.id)
 }
 
 export function customLlmBudgetError(models, protocol = 'openai') {
@@ -300,9 +349,9 @@ function sanitizeCustomProviderForPatch(provider = {}) {
 export function buildLlmSettingsPatch(cfg = {}) {
   const patch = {}
   for (const key of LLM_PANEL_FIELDS) {
-    if (key === LLM_CUSTOM_PROVIDERS_FIELD) continue
+    if ([LLM_CUSTOM_PROVIDERS_FIELD, LLM_BUILTIN_PROVIDER_MODELS_FIELD].includes(key)) continue
     const value = String(cfg?.[key] ?? '').trim()
-    if (!value) continue
+    if (!value && !(key === 'ai.llm.default_model' && Object.prototype.hasOwnProperty.call(cfg, key))) continue
     if (LLM_CREDENTIAL_FIELDS.includes(key) && isMaskedCredential(value)) continue
     patch[key] = value
   }
@@ -310,6 +359,9 @@ export function buildLlmSettingsPatch(cfg = {}) {
     patch[LLM_CUSTOM_PROVIDERS_FIELD] = normalizeCustomLlmProviders(cfg[LLM_CUSTOM_PROVIDERS_FIELD])
       .map(sanitizeCustomProviderForPatch)
       .filter(Boolean)
+  }
+  if (Object.prototype.hasOwnProperty.call(cfg, LLM_BUILTIN_PROVIDER_MODELS_FIELD)) {
+    patch[LLM_BUILTIN_PROVIDER_MODELS_FIELD] = normalizeBuiltinProviderModels(cfg[LLM_BUILTIN_PROVIDER_MODELS_FIELD])
   }
   return patch
 }

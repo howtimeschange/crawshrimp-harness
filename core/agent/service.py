@@ -27,8 +27,11 @@ from core.agent.redaction import REDACTED, redact_text as _redact_secret_text, r
 from core.agent.cordis_config import AGENT_PERSONA, resolve_provider_for_model, resolve_session_model_selection, model_capabilities
 from core.llm_gateway import (
     BUILTIN_LLM_PROVIDERS,
+    builtin_llm_providers,
+    reasoning_runtime_fields,
     DEFAULT_MODEL,
     any_llm_api_key_configured,
+    all_supported_model_ids,
     custom_providers_runtime_payload,
     deepseek_api_key_configured,
     glm_api_key_configured,
@@ -541,7 +544,7 @@ def _resolve_configured_generation_model(
             # default, but never route the same model via a different provider.
             if model_has_configured_key(requested_model, cfg):
                 raise AgentModelConfigurationError(str(exc)) from exc
-    if not requested_model or not model_capabilities(requested_model).get("supports_tools"):
+    if not requested_model or requested_model not in all_supported_model_ids(cfg):
         requested_model = select_default_model(cfg)
     if model_has_configured_key(requested_model, cfg):
         return requested_model, resolve_provider_for_model(requested_model, cfg)
@@ -549,7 +552,6 @@ def _resolve_configured_generation_model(
     fallback_model = select_default_model(cfg)
     if (
         fallback_model != requested_model
-        and model_capabilities(fallback_model).get("supports_tools")
         and model_has_configured_key(fallback_model, cfg)
     ):
         return fallback_model, resolve_provider_for_model(fallback_model, cfg)
@@ -620,13 +622,14 @@ def _dsh_llm_pi_ai_settings(
     llm = (cfg.get("ai") or {}).get("llm") or {}
     llm = llm if isinstance(llm, dict) else {}
     providers: dict[str, Any] = {}
-    for provider in BUILTIN_LLM_PROVIDERS:
+    for provider in builtin_llm_providers(cfg):
         provider_id = str(provider.get("id") or "").strip()
-        if not provider_id:
+        if not provider_id or not provider["models"]:
             continue
         models = []
+        overrides = {model["id"]: model for model in provider["model_overrides"]}
         for model_id in provider.get("models") or []:
-            cap = model_capabilities(str(model_id))
+            cap = model_capabilities(str(model_id), cfg, provider_id)
             runtime_model_id = official_real_model(str(model_id)) if (
                 provider.get("official_deepseek") or provider.get("official_glm")
             ) else str(model_id)
@@ -634,11 +637,11 @@ def _dsh_llm_pi_ai_settings(
                 "id": runtime_model_id,
                 "contextWindow": int(cap.get("context_window") or 64000),
                 "maxTokens": int(cap.get("max_output_tokens") or 8192),
-                "input": list(cap.get("input_modalities") or ["text"]),
+                "input": ["text", "image"],
             }
-            if provider.get("official_deepseek"):
+            if provider.get("official_deepseek") and model_id in provider["preset_models"]:
                 model["reasoningEfforts"] = {"off": "off", "low": "low", "high": "high", "max": "max"}
-            if provider.get("official_deepseek"):
+            if provider.get("official_deepseek") and model_id in provider["preset_models"]:
                 model["name"] = "DeepSeek V4.1 Flash" if runtime_model_id == "deepseek-flash" else "DeepSeek V4 Pro"
                 model["compat"] = {"thinkingFormat": "deepseek", "supportsReasoningEffort": True, "requiresReasoningContentOnAssistantMessages": True}
             models.append(model)
@@ -650,6 +653,17 @@ def _dsh_llm_pi_ai_settings(
         if provider_id == "crawshrimp-domestic-openai":
             for model in models:
                 model.update(semir_deepseek_reasoning_fields(base_url, model["id"]))
+        for model_id, spec in overrides.items():
+            wire_id = official_real_model(model_id) if provider.get("official_deepseek") or provider.get("official_glm") else model_id
+            model = next((item for item in models if item["id"] == wire_id), None)
+            if model is not None:
+                model["name"] = spec["label"]
+                if "reasoning_protocol" in spec or model_id not in provider["preset_models"]:
+                    model.pop("compat", None)
+                    model.update(reasoning_runtime_fields(
+                        spec.get("reasoning_protocol", "default") if provider["protocol"] == "openai" else "default",
+                        spec.get("reasoning_efforts") or [],
+                    ))
         entry: dict[str, Any] = {
             "displayName": str(provider.get("display_name") or provider_id),
             "apiKeyEnv": str(provider.get("api_key_env") or ""),
@@ -667,7 +681,7 @@ def _dsh_llm_pi_ai_settings(
             "apiKeyEnv": _compact_text(provider.get("apiKeyEnv")),
             "api": "anthropic-messages" if provider.get("api") == "anthropic-messages" else "openai-completions",
             "baseURL": _compact_text(provider.get("baseURL")),
-            "models": list(provider.get("models") or []),
+            "models": [{**model, "input": ["text", "image"]} for model in provider.get("models") or []],
         }
     return {"providers": providers}
 
@@ -2239,7 +2253,7 @@ class AgentService:
                     raise AgentModelConfigurationError(str(exc)) from exc
             if session and session.get("model_id") and model_has_configured_key(session["model_id"], cfg):
                 model_id = session["model_id"]
-        if not model_capabilities(model_id).get("supports_tools"):
+        if model_id not in all_supported_model_ids(cfg):
             model_id = select_default_model(cfg)
         return model_id, resolve_provider_for_model(model_id, cfg)
 
@@ -2714,7 +2728,7 @@ class AgentService:
                     model["maxTokens"]
                     for profile in custom_providers if profile["id"] == provider_id
                     for model in profile["models"] if model["id"] == runtime_model_id
-                ), model_capabilities(model_id).get("max_output_tokens", 8192)),
+                ), model_capabilities(model_id, cfg, provider_id).get("max_output_tokens", 8192)),
                 # Keep the DSH session and Web profile on the same product
                 # workspace so native Web can discover it and render approvals.
                 "cwd": str(agent_dir / "workspace"),

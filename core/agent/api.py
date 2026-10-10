@@ -124,13 +124,13 @@ def list_agent_models() -> dict:
 
     cfg = load_config()
     models = []
-    for model_id in agent_capable_model_ids():
-        cap = model_capabilities(model_id)
+    for model_id in agent_capable_model_ids(cfg):
+        cap = model_capabilities(model_id, cfg)
         if not model_has_configured_key(model_id, cfg):
             continue
         models.append({
             "model_id": model_id,
-            "route": resolve_provider_for_model(model_id),
+            "route": resolve_provider_for_model(model_id, cfg),
             "context_window": cap.get("context_window"),
             "max_output_tokens": cap.get("max_output_tokens"),
         })
@@ -146,18 +146,17 @@ def list_crawshrimp_model_catalog() -> dict:
 
 @router.patch("/sessions/{session_id}/model")
 def set_session_model(session_id: str, req: SessionModelRequest) -> dict:
-    from core.agent.cordis_config import model_capabilities
     from core.config import load_config
-    from core.llm_gateway import model_has_configured_key
+    from core.llm_gateway import all_supported_model_ids, model_has_configured_key
 
     session = db.get_session(session_id)
     if not session:
         raise HTTPException(404, "会话不存在")
     model_id = str(req.model_id or "").strip()
-    cap = model_capabilities(model_id)
-    if not cap.get("supports_tools"):
-        raise HTTPException(422, f"模型不可用于智能体: {model_id}")
-    if not model_has_configured_key(model_id, load_config()):
+    cfg = load_config()
+    if model_id not in all_supported_model_ids(cfg):
+        raise HTTPException(422, f"模型未添加到供应商: {model_id}")
+    if not model_has_configured_key(model_id, cfg):
         raise HTTPException(422, f"模型未配置 API Key: {model_id}")
     db.update_session(session_id, model_id=model_id)
     service = get_agent_service()
