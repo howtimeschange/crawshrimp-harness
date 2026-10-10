@@ -28,7 +28,10 @@ export const LLM_DEFAULTS = Object.freeze({
 })
 
 const OVERSEAS_OPENAI_MODELS = Object.freeze([
+  { value: 'gpt-6.1-sol', label: '海外 · GPT-6.1 Sol' },
   { value: 'gpt-6-astra', label: '海外 · GPT-6 Astra' },
+  { value: 'gpt-6-sol', label: '海外 · GPT-6 Sol' },
+  { value: 'gpt-6-luna', label: '海外 · GPT-6 Luna' },
   { value: 'gpt-5.6-sol', label: '海外 · GPT-5.6 Sol' },
   { value: 'gpt-5.6-terra', label: '海外 · GPT-5.6 Terra' },
   { value: 'gpt-5.6-luna', label: '海外 · GPT-5.6 Luna' },

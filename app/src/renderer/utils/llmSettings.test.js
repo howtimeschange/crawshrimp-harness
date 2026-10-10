@@ -51,7 +51,7 @@ test('LLM settings expose all configured gateway defaults and supported model id
   assert.equal(LLM_DEFAULTS['ai.llm.deepseek_base_url'], 'https://api.deepseek.com')
   assert.equal(LLM_DEFAULTS['ai.llm.glm_base_url'], GLM_OFFICIAL_BASE_URL_DEFAULT)
   assert.equal(DEEPSEEK_PLATFORM_URL, 'https://platform.deepseek.com/')
-  assert.equal(LLM_MODELS.length, 23)
+  assert.equal(LLM_MODELS.length, 26)
   assert.deepEqual(
     LLM_MODELS.map(item => item.value),
     [
@@ -60,7 +60,10 @@ test('LLM settings expose all configured gateway defaults and supported model id
       'glm-official-5.3-flash',
       'glm-official-5.3',
       'glm-official-5.2',
+      'gpt-6.1-sol',
       'gpt-6-astra',
+      'gpt-6-sol',
+      'gpt-6-luna',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',

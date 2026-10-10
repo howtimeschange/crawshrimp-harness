@@ -2945,7 +2945,8 @@ def test_dsh_settings_sync_writes_runtime_provider_profiles_without_secrets(tmp_
     }
     assert "deepseek-flash" in [item["id"] for item in providers["crawshrimp-deepseek-official"]["models"]]
     assert "glm-5.3-flash" in [item["id"] for item in providers["crawshrimp-glm-official"]["models"]]
-    assert "gpt-6-astra" in [item["id"] for item in providers["crawshrimp-overseas-openai"]["models"]]
+    overseas_model_ids = {item["id"] for item in providers["crawshrimp-overseas-openai"]["models"]}
+    assert {"gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"} <= overseas_model_ids
     assert "deepseek-v4-flash" in [item["id"] for item in providers["crawshrimp-domestic-openai"]["models"]]
     assert "kimi-k3" in [item["id"] for item in providers["crawshrimp-domestic-openai"]["models"]]
     assert providers["custom-1xm"]["apiKeyEnv"] == "CRAWSHRIMP_CUSTOM_LLM_KEY_CUSTOM_1XM"

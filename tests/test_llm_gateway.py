@@ -78,19 +78,21 @@ class LlmGatewayTests(unittest.TestCase):
                 self.assertEqual(route.base_url, "https://domestic.example/v1")
                 self.assertEqual(route.api_key, "unit-key")
 
-    def test_astra_uses_overseas_openai_credentials_and_preserves_wire_id(self):
+    def test_gpt_6_series_uses_overseas_openai_credentials_and_preserves_wire_ids(self):
         from core.agent.cordis_config import resolve_session_model_selection
-        cfg = {"ai": {"llm": {"overseas_openai_api_key": "astra-unit-key"}}}
+        cfg = {"ai": {"llm": {"overseas_openai_api_key": "overseas-unit-key"}}}
         with patch.dict(os.environ, {}, clear=True):
-            route = llm_gateway.route_for_model("gpt-6-astra", cfg)
-            self.assertEqual(route.model_id, "gpt-6-astra")
-            self.assertEqual(route.protocol, "openai")
-            self.assertEqual(route.base_url, llm_gateway.OVERSEAS_OPENAI_BASE_URL)
-            self.assertEqual(route.api_key, "astra-unit-key")
-            self.assertEqual(resolve_session_model_selection("crawshrimp-overseas-openai", "gpt-6-astra", cfg),
-                             ("gpt-6-astra", "crawshrimp-overseas-openai"))
-            with self.assertRaises(ValueError):
-                resolve_session_model_selection("crawshrimp-domestic-openai", "gpt-6-astra", cfg)
+            for model_id in ("gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"):
+                with self.subTest(model_id=model_id):
+                    route = llm_gateway.route_for_model(model_id, cfg)
+                    self.assertEqual(route.model_id, model_id)
+                    self.assertEqual(route.protocol, "openai")
+                    self.assertEqual(route.base_url, llm_gateway.OVERSEAS_OPENAI_BASE_URL)
+                    self.assertEqual(route.api_key, "overseas-unit-key")
+                    self.assertEqual(resolve_session_model_selection("crawshrimp-overseas-openai", model_id, cfg),
+                                     (model_id, "crawshrimp-overseas-openai"))
+                    with self.assertRaises(ValueError):
+                        resolve_session_model_selection("crawshrimp-domestic-openai", model_id, cfg)
 
     def test_deepseek_official_routes_use_dedicated_key_and_real_model_names(self):
         config = self.config()

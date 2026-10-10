@@ -24,7 +24,10 @@ from core.llm_gateway import (
 # 模型能力登记(服务端共享能力表,方案 §12.2)
 MODEL_CAPABILITIES: dict[str, dict[str, Any]] = {
     # Conservative local budgets, not the gateway's advertised maximum limits.
+    "gpt-6.1-sol": {"context_window": 256000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
     "gpt-6-astra": {"context_window": 256000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "gpt-6-sol": {"context_window": 256000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
+    "gpt-6-luna": {"context_window": 256000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
     "gpt-5.6-terra": {"context_window": 256000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
     "gpt-5.6-sol": {"context_window": 256000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
     "gpt-5.6-luna": {"context_window": 256000, "max_output_tokens": 65536, "supports_tools": True, "input_modalities": ["text", "image"]},
