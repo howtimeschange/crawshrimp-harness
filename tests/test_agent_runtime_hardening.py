@@ -2301,7 +2301,7 @@ def test_subprocess_output_decoder_falls_back_to_local_encoding(monkeypatch):
     assert _decode_subprocess_output("中文".encode("gbk")) == "中文"
 
 
-def test_dsh_web_profile_forwards_images_to_all_configured_models():
+def test_dsh_web_profile_retains_official_pro_vision_bridge_and_other_image_routes():
     from core.agent.cordis_config import model_capabilities
 
     assert model_capabilities("gpt-5.5")["input_modalities"] == ["text", "image"]
@@ -2311,9 +2311,49 @@ def test_dsh_web_profile_forwards_images_to_all_configured_models():
 
     profile = (Path(__file__).resolve().parents[1] / "integrations" / "deepseek-harness" / "profile" / "web" / "cordis.patch.yml").read_text(encoding="utf-8")
     assert re.search(r"id: gpt-5\.5[\s\S]*input: \[text, image\]", profile)
-    assert re.search(r"id: deepseek-v4-pro[\s\S]*input: \[text, image\]", profile)
+    official_block = profile.split("crawshrimp-deepseek-official:", 1)[1].split("crawshrimp-overseas-openai:", 1)[0]
+    pro_block = official_block.split("- id: deepseek-v4-pro", 1)[1]
+    assert "input: [text]" in pro_block
+    assert "input: [text, image]" not in pro_block
     assert re.search(r"id: deepseek-flash[\s\S]*input: \[text, image\]", profile)
     assert re.search(r"crawshrimp-glm-official:[\s\S]*id: glm-official-5\.3-flash[\s\S]*input: \[text, image\]", profile)
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_dsh_runtime_official_pro_keeps_paired_flash_vision_transport(tmp_path, override):
+    from core.agent.cordis_config import model_capabilities
+    from core.agent.service import _dsh_llm_pi_ai_settings, _sync_dsh_default_model_settings
+
+    cfg = {"ai": {"llm": {}}}
+    if override:
+        cfg["ai"]["llm"]["builtin_provider_models"] = {
+            "crawshrimp-deepseek-official": [
+                {"id": "deepseek-official-v4-pro", "label": "Edited Pro", "context_window": 512000},
+                {"id": "deepseek-official-flash"},
+            ],
+        }
+    custom = [{"id": "custom-pro", "models": [{"id": "deepseek-v4-pro"}]}]
+    settings = _dsh_llm_pi_ai_settings(cfg, custom)
+    official = settings["providers"]["crawshrimp-deepseek-official"]
+    pro = next(model for model in official["models"] if model["id"] == "deepseek-v4-pro")
+    flash = next(model for model in official["models"] if model["id"] == "deepseek-flash")
+    assert pro["input"] == ["text"]
+    assert flash["input"] == ["text", "image"]
+    assert model_capabilities("deepseek-official-v4-pro", cfg)["input_modalities"] == ["text", "image"]
+    if override:
+        assert pro["name"] == "Edited Pro"
+        assert pro["contextWindow"] == 512000
+    # The compatibility bridge belongs to the official provider. Unrelated
+    # routes with the same model ID keep the current direct-image transport.
+    for provider_id in ("custom-pro", "crawshrimp-domestic-openai"):
+        other = next(model for model in settings["providers"][provider_id]["models"] if model["id"] == "deepseek-v4-pro")
+        assert other["input"] == ["text", "image"]
+    _sync_dsh_default_model_settings(tmp_path, "crawshrimp-deepseek-official", "deepseek-official-v4-pro", cfg, custom)
+    import yaml
+
+    saved = yaml.safe_load((tmp_path / "dsh-home/settings.yaml").read_text())
+    saved_models = saved["llm-pi-ai"]["providers"]["crawshrimp-deepseek-official"]["models"]
+    assert next(model for model in saved_models if model["id"] == "deepseek-v4-pro")["input"] == ["text"]
 
 
 def test_dsh_native_deepseek_route_is_hidden_in_favor_of_crawshrimp_route():

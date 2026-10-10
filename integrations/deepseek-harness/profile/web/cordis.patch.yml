@@ -59,7 +59,8 @@
             name: DeepSeek V4 Pro
             contextWindow: 1000000
             maxTokens: 393216
-            input: [text, image]
+            # Paired Flash supplies image descriptions through the Vision bridge.
+            input: [text]
             compat:
               thinkingFormat: deepseek
               supportsReasoningEffort: true

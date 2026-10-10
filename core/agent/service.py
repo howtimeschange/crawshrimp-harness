@@ -633,11 +633,16 @@ def _dsh_llm_pi_ai_settings(
             runtime_model_id = official_real_model(str(model_id)) if (
                 provider.get("official_deepseek") or provider.get("official_glm")
             ) else str(model_id)
+            uses_pro_vision_bridge = provider.get("official_deepseek") and runtime_model_id == "deepseek-v4-pro"
             model = {
                 "id": runtime_model_id,
                 "contextWindow": int(cap.get("context_window") or 64000),
                 "maxTokens": int(cap.get("max_output_tokens") or 8192),
-                "input": ["text", "image"],
+                # The official Pro route consumes image descriptions from its
+                # paired Flash model. Keep its wire input text-only so the
+                # installed Vision bridge runs; the adapter exposes the paired
+                # image capability to the UI and image-returning tools.
+                "input": ["text"] if uses_pro_vision_bridge else ["text", "image"],
             }
             if provider.get("official_deepseek") and model_id in provider["preset_models"]:
                 model["reasoningEfforts"] = {"off": "off", "low": "low", "high": "high", "max": "max"}
