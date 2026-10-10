@@ -22,6 +22,7 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from mcp.server.mcpserver import MCPServer
@@ -32,6 +33,7 @@ from core.agent import db
 from core.agent.cdp import CdpClient
 from core.agent.cordis_config import model_capabilities
 from core.agent.redaction import contains_redaction, redact_value
+from core.automation_policy import infer_automation_permission_mode
 from core.automation_program import ProgramValidationError, evaluate_program
 from core.automation_program_proofs import consume_program_test_proof, issue_program_test_proof
 
@@ -52,6 +54,38 @@ SENSITIVE_COLUMN_PATTERNS = [
     re.compile(r"key|token|secret|password|cookie|authorization", re.I),
     re.compile(r"^手机号$|^mobile$|^phone$|^身份证$|^id_card$|^card_no$", re.I),
 ]
+
+
+def _normalized_http_url(value: Any) -> str:
+    text = str(value or "").strip()
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return text
+
+
+def _same_browser_origin(left: str, right: str) -> bool:
+    left_parsed = urlparse(left)
+    right_parsed = urlparse(right)
+    return (
+        left_parsed.scheme in {"http", "https"}
+        and right_parsed.scheme in {"http", "https"}
+        and left_parsed.scheme == right_parsed.scheme
+        and left_parsed.netloc.lower() == right_parsed.netloc.lower()
+    )
+
+
+def _automation_browser_url(policy: Mapping[str, Any] | None = None) -> str:
+    source = policy if isinstance(policy, Mapping) else ctx.automation_policy
+    if not isinstance(source, Mapping):
+        return ""
+    nested = source.get("execution_policy") if isinstance(source.get("execution_policy"), Mapping) else {}
+    return _normalized_http_url(source.get("browser_url")) or _normalized_http_url(nested.get("browser_url"))
+
+
+def _automation_browser_target_allowed(target: str, policy: Mapping[str, Any] | None = None) -> bool:
+    authorized = _automation_browser_url(policy)
+    return bool(authorized and _same_browser_origin(authorized, target))
 
 
 def _ok(data: Any = None, status: str = "ready", evidence: Optional[dict] = None) -> dict:
@@ -299,6 +333,16 @@ def tool_automation_create(values: dict) -> dict:
     payload, error = _automation_json_object(values, field_name="values")
     if error:
         return error
+    payload.setdefault("automation_kind", "scheduled")
+    raw_policy = payload.get("execution_policy")
+    policy_for_mode = raw_policy if isinstance(raw_policy, Mapping) else {}
+    inferred_permission_mode = infer_automation_permission_mode(
+        policy_for_mode,
+        automation_kind=str(payload.get("automation_kind") or "scheduled"),
+        has_program="program" in payload and payload.get("program") is not None,
+    )
+    if inferred_permission_mode == "session":
+        payload["execution_policy"] = {**dict(policy_for_mode), "permission_mode": "session"}
     restriction_error = _retain_automation_policy_restrictions(payload, creating=True)
     if restriction_error:
         return restriction_error
@@ -334,12 +378,26 @@ def tool_automation_create(values: dict) -> dict:
         } if isinstance(execution_policy.get("toolset"), (list, tuple, set)) else set()
         if requested_tools & BROWSER_AUTOMATION_TOOLS:
             tab_id = str((ctx.grant or {}).get("tab_id") or "").strip()
-            if not tab_id:
+            browser_url = _normalized_http_url(execution_policy.get("browser_url"))
+            if tab_id and not browser_url:
+                browser_url = _normalized_http_url((ctx.grant or {}).get("url_prefix"))
+                if not browser_url:
+                    try:
+                        tab = _current_cdp_tab_by_id(tab_id)
+                        browser_url = _normalized_http_url((tab or {}).get("url"))
+                    except Exception:
+                        browser_url = ""
+            if tab_id:
+                execution_policy["browser_tab_id"] = tab_id
+                if browser_url:
+                    execution_policy["browser_url"] = browser_url
+            elif "browser_navigate" in requested_tools and browser_url:
+                execution_policy["browser_url"] = browser_url
+            else:
                 return _failed(
                     "AUTOMATION_BROWSER_CONTEXT_REQUIRED",
-                    "使用浏览器工具的自动化必须从当前对话绑定一个已授权页面",
+                    "使用浏览器工具的自动化必须绑定当前已授权页面，或同时授权 browser_navigate 并提供有效 browser_url",
                 )
-            execution_policy["browser_tab_id"] = tab_id
         payload["execution_policy"] = execution_policy
     proof_error = _consume_automation_program_test_proof(payload)
     if proof_error:
@@ -364,13 +422,14 @@ def automation_create_tool_description(now: Optional[datetime] = None) -> str:
     """
     return """创建自动化；理解用户自然语言，不要求用户提供JSON。参数只有values对象。不要为猜字段调用fs_read、fs_list、fs_exec、browser_*、script_* 或 repo_*或扫描源码；本合同已给出必要字段。业务示例按需读crawshrimp-product-guide/references/automation.md。
 时间：今天/明天/几点/几分钟后先automation_current_time，换算未来ISO-8601（+08:00）；已过期则澄清，不猜日期。
-values必填title、objective_prompt、automation_kind、context_mode（isolated/inherited）、execution_policy；enabled=true。具体条数/字段/交付条件用execution_policy.verification_schema（JSON Schema）约束，提交验证必须满足。
-- 一次性：automation_kind="scheduled"，schedule={"kind":"at","value":"未来ISO-8601","timezone":"Asia/Shanghai"}，context_mode="isolated"，无需Program。
-- 每小时同步等固定周期：automation_kind="scheduled"，schedule={"kind":"every","interval_seconds":3600,"timezone":"Asia/Shanghai"}（每天86400）；无需 Program、无需automation_program_test，直到暂停。
+普通定时只需填写title、objective_prompt、schedule；automation_kind默认scheduled，execution_policy默认{"permission_mode":"session"}，context_mode默认inherited，沿用创建会话的模型、工具和权限按时继续执行。用户明确要求“专用/隔离执行会话”时才填context_mode="isolated"，仍是固定专用会话连续执行，不是每次触发新建会话。enabled默认true。具体条数/字段/交付条件若必须由自动化验证，可用execution_policy.verification_schema（JSON Schema）约束，提交验证必须满足。
+- 一次性：schedule={"kind":"at","value":"未来ISO-8601","timezone":"Asia/Shanghai"}，无需Program。
+- 每小时同步等固定周期：schedule={"kind":"every","interval_seconds":3600,"timezone":"Asia/Shanghai"}（每天86400）；无需 Program、无需automation_program_test，直到暂停。
 - 仅条件闭环用automation_kind="loop"，loop_policy含cycle_interval_seconds/max_cycles/failure_threshold；受限program先automation_program_test验证代表性facts/checkpoint，返回的短时program_test_proof原样放入values才可保存/启用。
 授权：创建时一次确定目标、动作、保存位置及是否外发；用户已明确要求的操作即为授权，缺失信息合并询问，仅新增范围再确认。不要为所有任务默认填一组 allow_*=false；未涉及开关可省略，开关必须布尔值，用户明确false必须保留。矛盾草案不保存，模型填错false不成为用户禁令，可按已确认需求纠正重试。
-策略：execution_policy.toolset列工具；需普通对话确认的动作还须allowed_risks（仅read_only/local_write/external_write/destructive），二者共同限制无人值守动作。无副作用提醒（如本地自动化验收提醒）仅["automation_record_verification"]，allowed_risks=[]，allow_browser/allow_filesystem/allow_network/allow_external_messages/allow_script_publish=false，不增加服务或脚本。
-网页同步：已授权页面最多先browser_observe一次识别，仅对象不明才问。默认toolset为browser_observe、automation_record_verification；筛选/查询/翻页授权browser_act，下拉用action="select",selector,text，查询翻页用click。CSV授权fs_write与local_write，独立回读再加fs_read；指定绝对路径保留，相对路径在任务工作区。命令/脚本不能保证网络/外发细分限制，保存CSV优先fs_write。禁止外发时browser_eval/browser_verify仅无副作用读取。
+高级策略：只有用户明确要求独立收窄权限、loop Program、严格验证 schema 或兼容旧策略时，才填execution_policy.permission_mode="scoped"并列toolset/native_toolset/allowed_risks。execution_policy.toolset列MCP工具，必须包含执行和恢复所需工具（例如网页巡检含browser_navigate以便tab关闭后按browser_url恢复）；execution_policy.native_toolset单独列DSH原生工具exact list（read/read_image/glob/grep/skill/write/edit/str_replace_editor/bash/pwsh/web_search/web_fetch/crawshrimp_tool_domains/enable_tools），不会进入MCP工具清单。需普通对话确认的动作还须allowed_risks（仅read_only/local_write/external_write/destructive），二者共同限制无人值守动作。native读文件/元数据需read_only；native写文件需local_write；web_search/web_fetch需read_only且allow_network=true；bash/pwsh需local_write与external_write且allow_filesystem=true、allow_network=true，任何明确allow_*=false都会限制shell。loop Program的branch.allowed_tools与branch.allowed_native_tools只会取Automation策略交集，分支要用native工具必须显式列allowed_native_tools。无副作用提醒若选择scoped，toolset仅["automation_record_verification"]，allowed_risks=[]，allow_browser/allow_filesystem/allow_network/allow_external_messages/allow_script_publish=false，不增加服务或脚本。
+已有脚本按时执行：普通做法是在objective_prompt写清楚“到点调用现有script_run/task_run及参数”，使用session permission沿用会话权限；Controller只调度一次普通Agent Turn，不直接伪造脚本执行成功，实际成功与失败由到点后的工具调用和终态投影决定。
+网页同步：普通session定时不填写toolset/browser_url等独立权限字段；把目标URL、筛选条件、交付方式写进objective_prompt，到点后由固定会话沿用当前DeepSeek模型、工具和预授权执行。只有用户明确选择scoped高级策略、loop Program或旧白名单模式时，才在execution_policy.toolset中列browser_observe/browser_navigate/automation_record_verification，并在execution_policy.browser_url保存已确认目标URL；tab关闭时browser_navigate可按同源URL恢复独立页面。scoped下筛选、查询、翻页、滚动若需要browser_act，allowed_risks必须包含local_write；local_write在这里表示允许本地页面动作，不等于允许外发，外发仍需external_write且受allow_external_messages约束。下拉用action="select",selector,text，查询翻页用click。CSV授权fs_write与local_write，独立回读再加fs_read；指定绝对路径保留，相对路径在任务工作区。命令/脚本不能保证网络/外发细分限制，保存CSV优先fs_write。禁止外发时browser_eval/browser_verify仅无副作用读取。
 联网与外发不同：allow_external_messages仅外部渠道；当前会话automation_record_verification回执不是外发。需要外发则创建时确认渠道、收件人和内容；未要求则不加消息工具/external_write。“不外发”不能转成allow_network=false，网页采集填写此开关时须true，本地页访问也不是断网。
 默认中文摘要回创建会话，不建archive.md、不读写历史、不扫描技能；新增对比才加automation_state_get读小型last_snapshot，automation_record_verification的result.state写回（≤16KiB）。仅用户要求归档/展开页面才授对应权限，回执如实说明文件是否写入。
 成功即确认标题、周期/时间、时区和权限；除非明确立即运行/验收，不run_now或等待。立即运行计入loop上限须count_toward_max_cycles=true；等待使用automation_wait_run（≤60秒）。自然触发用automation_wait_next(after_run_uid=上次游标)后wait_run，不用run_now冒充或固定sleep。"""
@@ -2677,9 +2736,27 @@ async def tool_browser_navigate(url: str, new_tab: bool = False) -> dict:
     guard = _require_run()
     if guard:
         return guard
-    if new_tab or not (ctx.grant or {}).get("tab_id"):
-        if isinstance(ctx.automation_policy, Mapping):
-            return _failed("AUTOMATION_BROWSER_CONTEXT_REQUIRED", "自动化只能使用创建时绑定的页面")
+    automation_policy = ctx.automation_policy
+    grant_tab_id = str((ctx.grant or {}).get("tab_id") or "").strip()
+    bound_tab = None
+    if isinstance(automation_policy, Mapping) and grant_tab_id:
+        try:
+            bound_tab = _current_cdp_tab_by_id(grant_tab_id)
+        except CdpTargetDiscoveryError as exc:
+            return _failed("CONTEXT_REQUIRED", f"CDP target discovery unavailable: {exc}")
+    authorized_browser_url = _automation_browser_url(automation_policy if isinstance(automation_policy, Mapping) else None)
+    if isinstance(automation_policy, Mapping) and authorized_browser_url and not _automation_browser_target_allowed(target, automation_policy):
+        return _failed(
+            "AUTOMATION_BROWSER_URL_DENIED",
+            "目标 URL 超出当前 Automation 已授权的 browser_url 同源范围",
+        )
+    needs_new_tab = bool(new_tab or not grant_tab_id)
+    if isinstance(automation_policy, Mapping) and grant_tab_id and bound_tab is None:
+        needs_new_tab = True
+
+    if needs_new_tab:
+        if isinstance(automation_policy, Mapping) and not authorized_browser_url:
+            return _failed("AUTOMATION_BROWSER_CONTEXT_REQUIRED", "自动化缺少已授权 browser_url，不能创建或恢复页面")
         from core.cdp_bridge import get_bridge
         try:
             # Never retry an uncertain tab creation or touch another session's tab.
@@ -3067,7 +3144,7 @@ def create_agent_mcp_server() -> MCPServer:
                  description="页面操作:click(selector 或 text)/type/select(下拉选项文字或值)/scroll/wait;需本次运行授权。type 凭证字段默认阻断;仅当用户明确授权并给出内容时传 credential_authorized=true")
     mcp.add_tool(tool_browser_verify, name="browser_verify", description="断言页面 JS 表达式布尔结果")
     mcp.add_tool(tool_browser_navigate, name="browser_navigate",
-                 description="导航 http(s) URL；未绑定时自动创建本会话独立页面，new_tab=true 显式另开；后续轮次复用该会话精确绑定，页面关闭不回退其他会话。自动化只能使用创建时绑定页面")
+                 description="导航 http(s) URL；未绑定时自动创建本会话独立页面，new_tab=true 显式另开；后续轮次复用该会话精确绑定，页面关闭不回退其他会话。自动化可按已保存 browser_url 的同源范围创建或恢复自己的独立页面")
     mcp.add_tool(tool_browser_capture_requests, name="browser_capture_requests",
                  description="短时捕获网络请求(URL/method/body 摘要,限量)")
     mcp.add_tool(tool_script_list, name="script_list", description="列出抓虾现有的全部脚本(与 tasks_search 同目录)")

@@ -1,0 +1,407 @@
+Collected 11 files for integrations
+TAP version 13
+# Subtest: createVideoTask posts payload to Bailian video synthesis endpoint
+ok 1 - createVideoTask posts payload to Bailian video synthesis endpoint
+  ---
+  duration_ms: 14.649125
+  type: 'test'
+  ...
+# Subtest: baseUrl can already include api version without double-appending
+ok 2 - baseUrl can already include api version without double-appending
+  ---
+  duration_ms: 0.641833
+  type: 'test'
+  ...
+# Subtest: createVideoTask enables DashScope OSS resolution for temporary oss media URLs
+ok 3 - createVideoTask enables DashScope OSS resolution for temporary oss media URLs
+  ---
+  duration_ms: 0.541084
+  type: 'test'
+  ...
+# Subtest: getVideoTask fetches Bailian task by path id
+ok 4 - getVideoTask fetches Bailian task by path id
+  ---
+  duration_ms: 0.510209
+  type: 'test'
+  ...
+# Subtest: pollVideoTask stops on Bailian terminal status
+ok 5 - pollVideoTask stops on Bailian terminal status
+  ---
+  duration_ms: 4.507375
+  type: 'test'
+  ...
+# Subtest: validateBailianTaskPayload accepts HappyHorse examples
+ok 6 - validateBailianTaskPayload accepts HappyHorse examples
+  ---
+  duration_ms: 3.481417
+  type: 'test'
+  ...
+# Subtest: validateBailianTaskPayload accepts Bailian gateway model examples
+ok 7 - validateBailianTaskPayload accepts Bailian gateway model examples
+  ---
+  duration_ms: 1.960416
+  type: 'test'
+  ...
+# Subtest: validateBailianTaskPayload rejects invalid Kling parameter names and missing aspect ratio
+ok 8 - validateBailianTaskPayload rejects invalid Kling parameter names and missing aspect ratio
+  ---
+  duration_ms: 0.4705
+  type: 'test'
+  ...
+# Subtest: validateBailianTaskPayload rejects incomplete PixVerse motion-control inputs
+ok 9 - validateBailianTaskPayload rejects incomplete PixVerse motion-control inputs
+  ---
+  duration_ms: 0.31975
+  type: 'test'
+  ...
+# Subtest: validateBailianTaskPayload rejects image-to-video ratio
+ok 10 - validateBailianTaskPayload rejects image-to-video ratio
+  ---
+  duration_ms: 0.624
+  type: 'test'
+  ...
+# Subtest: validateBailianTaskPayload limits reference images to nine
+ok 11 - validateBailianTaskPayload limits reference images to nine
+  ---
+  duration_ms: 0.2205
+  type: 'test'
+  ...
+# Subtest: isBailianTerminalStatus identifies Bailian task terminal states
+ok 12 - isBailianTerminalStatus identifies Bailian task terminal states
+  ---
+  duration_ms: 0.048666
+  type: 'test'
+  ...
+# Subtest: getBailianConfig builds workspace and legacy endpoints
+ok 13 - getBailianConfig builds workspace and legacy endpoints
+  ---
+  duration_ms: 0.076292
+  type: 'test'
+  ...
+# Subtest: backports are idempotent and reject unknown source
+ok 14 - backports are idempotent and reject unknown source
+  ---
+  duration_ms: 1.347417
+  type: 'test'
+  ...
+# Subtest: normal pagination swaps only after all pages
+ok 15 - normal pagination swaps only after all pages
+  ---
+  duration_ms: 1.336792
+  type: 'test'
+  ...
+# Subtest: cycle A→A rejects and retains old tools
+ok 16 - cycle A→A rejects and retains old tools
+  ---
+  duration_ms: 0.56275
+  type: 'test'
+  ...
+# Subtest: cycle A→B→A rejects and retains old tools
+ok 17 - cycle A→B→A rejects and retains old tools
+  ---
+  duration_ms: 0.3085
+  type: 'test'
+  ...
+# Subtest: transport cancellation retains old generation
+ok 18 - transport cancellation retains old generation
+  ---
+  duration_ms: 0.434834
+  type: 'test'
+  ...
+# Subtest: button uses Enter policy queue/false
+ok 19 - button uses Enter policy queue/false
+  ---
+  duration_ms: 1.654792
+  type: 'test'
+  ...
+# Subtest: button uses Enter policy queue/true
+ok 20 - button uses Enter policy queue/true
+  ---
+  duration_ms: 1.079292
+  type: 'test'
+  ...
+# Subtest: button uses Enter policy steer/false
+ok 21 - button uses Enter policy steer/false
+  ---
+  duration_ms: 1.002
+  type: 'test'
+  ...
+# Subtest: button uses Enter policy steer/true
+ok 22 - button uses Enter policy steer/true
+  ---
+  duration_ms: 1.237625
+  type: 'test'
+  ...
+# Subtest: native link callback uses resolved path and session; standalone and directory fall back
+ok 23 - native link callback uses resolved path and session; standalone and directory fall back
+  ---
+  duration_ms: 0.819292
+  type: 'test'
+  ...
+# Subtest: patched native opener routes files to the same panel and keeps directory/standalone fallback
+ok 24 - patched native opener routes files to the same panel and keeps directory/standalone fallback
+  ---
+  duration_ms: 0.491333
+  type: 'test'
+  ...
+# Subtest: native_toolset authorizes exact native tools without changing ordinary next flow
+ok 25 - native_toolset authorizes exact native tools without changing ordinary next flow
+  ---
+  duration_ms: 1.880041
+  type: 'test'
+  ...
+# Subtest: native policy denies missing tools, false flags, wrong risks, and delegation
+ok 26 - native policy denies missing tools, false flags, wrong risks, and delegation
+  ---
+  duration_ms: 0.663416
+  type: 'test'
+  ...
+# Subtest: legacy policy without native_toolset keeps previous native-tool behavior
+ok 27 - legacy policy without native_toolset keeps previous native-tool behavior
+  ---
+  duration_ms: 0.087791
+  type: 'test'
+  ...
+# Subtest: legacy policy snapshot keeps legacy behavior through the real hook
+ok 28 - legacy policy snapshot keeps legacy behavior through the real hook
+  ---
+  duration_ms: 0.159542
+  type: 'test'
+  ...
+# Subtest: real hook denies unauthorized native tools and monotonic cleanup preserves newer run snapshots
+ok 29 - real hook denies unauthorized native tools and monotonic cleanup preserves newer run snapshots
+  ---
+  duration_ms: 1.011375
+  type: 'test'
+  ...
+# Subtest: real Cordis Tools execution skips downstream ask on native allow while guards still apply
+ok 30 - real Cordis Tools execution skips downstream ask on native allow while guards still apply
+  ---
+  duration_ms: 16.440416
+  type: 'test'
+  ...
+# Subtest: unrelated tools are deferred; generic, skill and unknown extension tools remain
+ok 31 - unrelated tools are deferred; generic, skill and unknown extension tools remain
+  ---
+  duration_ms: 1.242958
+  type: 'test'
+  ...
+# Subtest: domain tool actually exposes callable registered schemas next request and never shrinks
+ok 32 - domain tool actually exposes callable registered schemas next request and never shrinks
+  ---
+  duration_ms: 6.743792
+  type: 'test'
+  ...
+# Subtest: empty discovery, unavailable domain and invalid input do not enable unrelated tools
+ok 33 - empty discovery, unavailable domain and invalid input do not enable unrelated tools
+  ---
+  duration_ms: 0.67375
+  type: 'test'
+  ...
+# Subtest: activation cannot leak across agents or bypass a pre-existing restricted registry
+ok 34 - activation cannot leak across agents or bypass a pre-existing restricted registry
+  ---
+  duration_ms: 1.847459
+  type: 'test'
+  ...
+# Subtest: resume preserves logged activation, including before next header; failed/forged results ignored
+ok 35 - resume preserves logged activation, including before next header; failed/forged results ignored
+  ---
+  duration_ms: 0.2665
+  type: 'test'
+  ...
+# Subtest: real Cordis scoped assembly exposes tools on the next request while restrictions and guards survive
+ok 36 - real Cordis scoped assembly exposes tools on the next request while restrictions and guards survive
+  ---
+  duration_ms: 11.397125
+  type: 'test'
+  ...
+# Subtest: every domain can be loaded together; script and skill tools keep their parameter schemas
+ok 37 - every domain can be loaded together; script and skill tools keep their parameter schemas
+  ---
+  duration_ms: 2.528334
+  type: 'test'
+  ...
+# Subtest: archive/restore preserves workspace membership and survives persisted readback
+ok 38 - archive/restore preserves workspace membership and survives persisted readback
+  ---
+  duration_ms: 2.504834
+  type: 'test'
+  ...
+# Subtest: all shipped patches are idempotent and client bundles parse
+ok 39 - all shipped patches are idempotent and client bundles parse
+  ---
+  duration_ms: 3.159625
+  type: 'test'
+  ...
+# Subtest: archive action waits for confirmation; cancellation sends no request; failures retain dialog
+ok 40 - archive action waits for confirmation; cancellation sends no request; failures retain dialog
+  ---
+  duration_ms: 2.019167
+  type: 'test'
+  ...
+# Subtest: archive dialog points to shell settings without registering a DSH settings section
+ok 41 - archive dialog points to shell settings without registering a DSH settings section
+  ---
+  duration_ms: 0.720125
+  type: 'test'
+  ...
+# Subtest: browser wire schema preserves restore flag instead of silently archiving again
+ok 42 - browser wire schema preserves restore flag instead of silently archiving again
+  ---
+  duration_ms: 36.145791
+  type: 'test'
+  ...
+# Subtest: patched workspace create performs a real atomic write probe and leaves no residue
+ok 43 - patched workspace create performs a real atomic write probe and leaves no residue
+  ---
+  duration_ms: 11.950917
+  type: 'test'
+  ...
+# Subtest: patched workspace create rejects a directory that exists but is not writable
+ok 44 - patched workspace create rejects a directory that exists but is not writable
+  ---
+  duration_ms: 1.198708
+  type: 'test'
+  ...
+# Subtest: projection preserves model provenance but omits prompt and tool contents
+ok 45 - projection preserves model provenance but omits prompt and tool contents
+  ---
+  duration_ms: 0.675834
+  type: 'test'
+  ...
+# Subtest: projection keeps authoritative tool result and assistant data intact
+ok 46 - projection keeps authoritative tool result and assistant data intact
+  ---
+  duration_ms: 0.136333
+  type: 'test'
+  ...
+# Subtest: request metadata is not mislabeled as model history bytes
+ok 47 - request metadata is not mislabeled as model history bytes
+  ---
+  duration_ms: 0.101916
+  type: 'test'
+  ...
+# Subtest: repairs legacy receipts and subsequent turns without changing content or seq
+ok 48 - repairs legacy receipts and subsequent turns without changing content or seq
+  ---
+  duration_ms: 1.228041
+  type: 'test'
+  ...
+# Subtest: rejects unrelated malformed history
+ok 49 - rejects unrelated malformed history
+  ---
+  duration_ms: 0.254167
+  type: 'test'
+  ...
+# Subtest: disk repair backs up original bytes and produces readable, idempotent history
+ok 50 - disk repair backs up original bytes and produces readable, idempotent history
+  ---
+  duration_ms: 39.31275
+  type: 'test'
+  ...
+# Subtest: fresh Web profiles copy both the product preset composition and metadata, idempotently
+ok 51 - fresh Web profiles copy both the product preset composition and metadata, idempotently
+  ---
+  duration_ms: 12.453709
+  type: 'test'
+  ...
+# Subtest: createSession retains the preset migration guard
+ok 52 - createSession retains the preset migration guard
+  ---
+  duration_ms: 15.4885
+  type: 'test'
+  ...
+# Subtest: native Web follow closes and rejects when the socket never sends its first snapshot
+ok 53 - native Web follow closes and rejects when the socket never sends its first snapshot
+  ---
+  duration_ms: 27.952916
+  type: 'test'
+  ...
+# Subtest: output continuation sends the runtime token and a text-only body to the private Host route
+ok 54 - output continuation sends the runtime token and a text-only body to the private Host route
+  ---
+  duration_ms: 4.378125
+  type: 'test'
+  ...
+# Subtest: background model selection uses the default-preserving product route
+ok 55 - background model selection uses the default-preserving product route
+  ---
+  duration_ms: 2.675416
+  type: 'test'
+  ...
+# Subtest: createVideoTask posts payload to Ark task endpoint
+ok 56 - createVideoTask posts payload to Ark task endpoint
+  ---
+  duration_ms: 15.026667
+  type: 'test'
+  ...
+# Subtest: getVideoTask fetches task by path id
+ok 57 - getVideoTask fetches task by path id
+  ---
+  duration_ms: 0.399125
+  type: 'test'
+  ...
+# Subtest: createVideoTask preserves a Seedance gateway base URL that already includes /api/v3
+ok 58 - createVideoTask preserves a Seedance gateway base URL that already includes /api/v3
+  ---
+  duration_ms: 0.330125
+  type: 'test'
+  ...
+# Subtest: pollVideoTask stops on terminal status
+ok 59 - pollVideoTask stops on terminal status
+  ---
+  duration_ms: 4.460042
+  type: 'test'
+  ...
+# Subtest: validateTaskPayload requires model and content
+ok 60 - validateTaskPayload requires model and content
+  ---
+  duration_ms: 0.386
+  type: 'test'
+  ...
+# Subtest: isTerminalStatus identifies Ark task terminal states
+ok 61 - isTerminalStatus identifies Ark task terminal states
+  ---
+  duration_ms: 0.075042
+  type: 'test'
+  ...
+# Subtest: getArkConfig accepts Seedance gateway aliases
+ok 62 - getArkConfig accepts Seedance gateway aliases
+  ---
+  duration_ms: 0.142125
+  type: 'test'
+  ...
+# Subtest: getArkConfig accepts Doubao Seedance aliases
+ok 63 - getArkConfig accepts Doubao Seedance aliases
+  ---
+  duration_ms: 0.066958
+  type: 'test'
+  ...
+# Subtest: example Seedance 2.0 payload matches the task shape
+ok 64 - example Seedance 2.0 payload matches the task shape
+  ---
+  duration_ms: 2.428458
+  type: 'test'
+  ...
+# Subtest: rejects prose, credentials and unsupported schemes before any request
+ok 65 - rejects prose, credentials and unsupported schemes before any request
+  ---
+  duration_ms: 1.173208
+  type: 'test'
+  ...
+# Subtest: 403 gives actionable gateway diagnostics without claiming the credential is invalid or retrying
+ok 66 - 403 gives actionable gateway diagnostics without claiming the credential is invalid or retrying
+  ---
+  duration_ms: 0.628791
+  type: 'test'
+  ...
+1..66
+# tests 66
+# suites 0
+# pass 66
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 172.832291

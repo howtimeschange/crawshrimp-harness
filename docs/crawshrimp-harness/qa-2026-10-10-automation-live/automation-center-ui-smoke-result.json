@@ -1,0 +1,76 @@
+{
+  "ok": true,
+  "checks": {
+    "fixedSessionCopyVisible": true,
+    "quickScopeCopyVisible": true,
+    "scheduledIsolated": true,
+    "browserUrlSaved": true,
+    "requiredMcpPresent": true,
+    "requiredNativePresent": true,
+    "risksPresent": true,
+    "flagsEnabled": true,
+    "sourceSessionOmitted": true
+  },
+  "payload": {
+    "title": "UI smoke 定时任务",
+    "objective_prompt": "验证自动化中心 UI payload",
+    "automation_kind": "scheduled",
+    "context_mode": "isolated",
+    "schedule": {
+      "timezone": "Asia/Shanghai",
+      "kind": "every",
+      "interval_seconds": 3600
+    },
+    "loop_policy": {
+      "cycle_interval_seconds": 1800,
+      "max_cycles": 0,
+      "failure_threshold": 3
+    },
+    "execution_policy": {
+      "toolset": [
+        "automation_record_observation",
+        "automation_record_verification",
+        "browser_navigate",
+        "browser_observe",
+        "browser_eval",
+        "browser_act",
+        "browser_verify",
+        "fs_read",
+        "fs_list",
+        "fs_write",
+        "skill_list",
+        "skill_read",
+        "fs_exec"
+      ],
+      "native_toolset": [
+        "read",
+        "read_image",
+        "write",
+        "edit",
+        "str_replace_editor",
+        "glob",
+        "grep",
+        "skill",
+        "bash",
+        "pwsh"
+      ],
+      "browser_url": "https://example.com/automation-smoke",
+      "allowed_risks": [
+        "read_only",
+        "local_write",
+        "external_write"
+      ],
+      "allow_browser": true,
+      "allow_filesystem": true,
+      "allow_network": true,
+      "allow_external_messages": true,
+      "allow_script_publish": true,
+      "timeout_seconds": 300,
+      "max_retries": 1
+    },
+    "enabled": false
+  },
+  "text": "智能体自动化\n\n让智能体按时间或闭环条件执行；条件只选择分支，权限仍受此自动化的策略约束。\n\n从智能体对话创建\n高级配置\n刷新\n\n自动化已保存。\n\n自动化\n触发\n上下文 / 状态\nProgram / checkpoint\n操作\nUI smoke 定时任务\n未设置目标\n固定间隔\n下一次：2099/1/1 00:00:00\n固定专用会话\n已暂停\nv-\n-\n运行一次\n复制为新 Automation\n恢复\n编辑\n归档\nUI smoke 定时任务 · 最近运行证据\n\n只展示已持久化的事实、分支、验证和需要人工复核的原因。\n\n刷新运行记录\n暂无运行记录",
+  "screenshot": "/Users/xingyicheng/Documents/crawshrimp-harness/docs/crawshrimp-harness/qa-2026-10-10-automation-live/automation-center-ui-smoke.png",
+  "base": "http://127.0.0.1:5174"
+}

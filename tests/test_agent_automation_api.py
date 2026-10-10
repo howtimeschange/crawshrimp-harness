@@ -409,3 +409,108 @@ def test_automation_runs_expose_persisted_resource_links(monkeypatch, tmp_path):
         ("agent_run", "agent-run-1"),
         ("artifact", "artifact-1"),
     }
+
+
+def test_http_plain_session_automation_defaults_to_inherited_with_source_session(monkeypatch, tmp_path):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    controller = AutomationController(None, sched_module)
+    monkeypatch.setattr(api_server, "get_automation_controller", lambda: controller)
+    agent_db.create_session("source-session", "runtime-source", "创建会话")
+
+    response = _request("POST", "/automations", json={
+        "title": "HTTP 普通定时",
+        "objective_prompt": "沿用来源会话执行",
+        "automation_kind": "scheduled",
+        "source_session_id": "source-session",
+        "schedule": {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+        "enabled": False,
+    })
+
+    assert response.status_code == 201, response.text
+    automation = response.json()["automation"]
+    assert automation["context_mode"] == "inherited"
+    assert automation["source_runtime_session_id"] == "runtime-source"
+    assert automation["execution_policy"] == {"permission_mode": "session"}
+
+
+def test_http_isolated_session_automation_can_create_without_source_session(monkeypatch, tmp_path):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    controller = AutomationController(None, sched_module)
+    monkeypatch.setattr(api_server, "get_automation_controller", lambda: controller)
+
+    response = _request("POST", "/automations", json={
+        "title": "HTTP 专用会话普通定时",
+        "objective_prompt": "使用专用执行会话自己的默认设置",
+        "automation_kind": "scheduled",
+        "context_mode": "isolated",
+        "schedule": {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+        "execution_policy": {"permission_mode": "session", "timeout_seconds": 600},
+        "enabled": False,
+    })
+
+    assert response.status_code == 201, response.text
+    automation = response.json()["automation"]
+    assert automation["context_mode"] == "isolated"
+    assert automation["source_session_id"] == ""
+    assert automation["source_runtime_session_id"] == ""
+    assert automation["execution_policy"] == {"permission_mode": "session", "timeout_seconds": 600}
+
+
+def test_http_plain_session_automation_without_source_session_is_rejected(monkeypatch, tmp_path):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    controller = AutomationController(None, sched_module)
+    monkeypatch.setattr(api_server, "get_automation_controller", lambda: controller)
+
+    response = _request("POST", "/automations", json={
+        "title": "HTTP 缺少来源",
+        "objective_prompt": "不应获得孤立广权",
+        "automation_kind": "scheduled",
+        "schedule": {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+        "enabled": False,
+    })
+
+    assert response.status_code == 422
+    assert "source_session_id" in response.json()["detail"]
+
+
+def test_http_scoped_automation_without_context_keeps_legacy_isolated_default(monkeypatch, tmp_path):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    controller = AutomationController(None, sched_module)
+    monkeypatch.setattr(api_server, "get_automation_controller", lambda: controller)
+
+    response = _request("POST", "/automations", json={
+        "title": "HTTP 旧 scoped",
+        "objective_prompt": "按旧策略执行",
+        "automation_kind": "scheduled",
+        "schedule": {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+        "execution_policy": {"toolset": ["automation_record_verification"]},
+        "enabled": False,
+    })
+
+    assert response.status_code == 201, response.text
+    automation = response.json()["automation"]
+    assert automation["context_mode"] == "isolated"
+    assert automation["execution_policy"] == {"toolset": ["automation_record_verification"]}
+
+
+def test_http_timeout_only_policy_defaults_to_session_with_source_session(monkeypatch, tmp_path):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    controller = AutomationController(None, sched_module)
+    monkeypatch.setattr(api_server, "get_automation_controller", lambda: controller)
+    agent_db.create_session("source-session", "runtime-source", "创建会话")
+
+    response = _request("POST", "/automations", json={
+        "title": "HTTP timeout 普通定时",
+        "objective_prompt": "沿用来源会话执行",
+        "automation_kind": "scheduled",
+        "source_session_id": "source-session",
+        "context_mode": "inherited",
+        "schedule": {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+        "execution_policy": {"timeout_seconds": 600},
+        "enabled": False,
+    })
+
+    assert response.status_code == 201, response.text
+    automation = response.json()["automation"]
+    assert automation["context_mode"] == "inherited"
+    assert automation["execution_policy"] == {"timeout_seconds": 600, "permission_mode": "session"}

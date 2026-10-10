@@ -1,0 +1,13 @@
+Collected 5 files for tmall-cli
+
+> tmall-cli@0.1.0 test
+> vitest run tests/adapters.test.ts tests/executor.test.ts tests/manifest.test.ts tests/redaction.test.ts tests/risk.test.ts
+
+
+ RUN  v4.1.10 /Users/xingyicheng/Documents/crawshrimp-harness/skills/cli/tmall-cli
+
+
+ Test Files  5 passed (5)
+      Tests  20 passed (20)
+   Start at  16:38:03
+   Duration  235ms (transform 289ms, setup 0ms, import 390ms, tests 31ms, environment 0ms)

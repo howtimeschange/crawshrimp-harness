@@ -1,0 +1,1489 @@
+$ node scripts/test-collection.mjs run DeepDrawCLI
+Collected 31 files for DeepDrawCLI
+
+> deepdraw-cli@0.1.0 test
+> node --import tsx --test tests/api-registry.test.ts tests/approval.test.ts tests/auth-config-cli.test.ts tests/balabala-ai-audit.test.ts tests/balabala-database-rules.test.ts tests/balabala-field-rules.test.ts tests/balabala-fields.test.ts tests/balabala-importers.test.ts tests/balabala-publish-safety.test.ts tests/balabala-readback.test.ts tests/balabala-remote-targets.test.ts tests/balabala-size-charts.test.ts tests/balabala-stateful-cli.test.ts tests/balabala-trade-selection.test.ts tests/balabala-trade-tree.test.ts tests/balabala-workflow.test.ts tests/config-credentials.test.ts tests/deepdraw-call.test.ts tests/docs.test.ts tests/java-adapter.test.ts tests/java-product-incremental-bridge.test.ts tests/java-sdk-version.test.ts tests/java-sku-color-bridge.test.ts tests/product-payload.test.ts tests/result-redaction.test.ts tests/rule-snapshot.test.ts tests/scaffold.test.ts tests/semantic-commands.test.ts tests/signer.test.ts tests/workflow-engine.test.ts tests/workflow-store.test.ts
+
+TAP version 13
+# Subtest: registry covers every dp api in the stable reference
+ok 1 - registry covers every dp api in the stable reference
+  ---
+  duration_ms: 5.928291
+  type: 'test'
+  ...
+# Subtest: every registered api has a deepdraw call route and risk metadata
+ok 2 - every registered api has a deepdraw call route and risk metadata
+  ---
+  duration_ms: 0.338959
+  type: 'test'
+  ...
+# Subtest: deepdraw call --help returns call-specific usage
+ok 3 - deepdraw call --help returns call-specific usage
+  ---
+  duration_ms: 4.301417
+  type: 'test'
+  ...
+# Subtest: deepdraw call rejects unknown api names
+ok 4 - deepdraw call rejects unknown api names
+  ---
+  duration_ms: 3.218958
+  type: 'test'
+  ...
+# Subtest: deepdraw call returns known api dry-run json
+ok 5 - deepdraw call returns known api dry-run json
+  ---
+  duration_ms: 0.665417
+  type: 'test'
+  ...
+# Subtest: deepdraw call returns product detail dry-run json
+ok 6 - deepdraw call returns product detail dry-run json
+  ---
+  duration_ms: 0.121709
+  type: 'test'
+  ...
+# Subtest: merchant metadata APIs include required merchant id
+ok 7 - merchant metadata APIs include required merchant id
+  ---
+  duration_ms: 0.166708
+  type: 'test'
+  ...
+# Subtest: trade category metadata includes documented required merchant id
+ok 8 - trade category metadata includes documented required merchant id
+  ---
+  duration_ms: 0.085958
+  type: 'test'
+  ...
+# Subtest: trade fields metadata includes documented required merchant and trade ids
+ok 9 - trade fields metadata includes documented required merchant and trade ids
+  ---
+  duration_ms: 0.195709
+  type: 'test'
+  ...
+# Subtest: product create metadata includes documented merchant, trade, and product payload
+ok 10 - product create metadata includes documented merchant, trade, and product payload
+  ---
+  duration_ms: 0.306167
+  type: 'test'
+  ...
+# Subtest: SKU color incremental update metadata uses the 1.6.25 Java SDK bridge
+ok 11 - SKU color incremental update metadata uses the 1.6.25 Java SDK bridge
+  ---
+  duration_ms: 0.117583
+  type: 'test'
+  ...
+# Subtest: product resource metadata matches documented optional filters
+ok 12 - product resource metadata matches documented optional filters
+  ---
+  duration_ms: 0.07275
+  type: 'test'
+  ...
+# Subtest: product search metadata matches documented filters
+ok 13 - product search metadata matches documented filters
+  ---
+  duration_ms: 0.056167
+  type: 'test'
+  ...
+# Subtest: product basic search metadata matches documented filters
+ok 14 - product basic search metadata matches documented filters
+  ---
+  duration_ms: 0.076125
+  type: 'test'
+  ...
+# Subtest: product detail metadata matches SDK and update record filters
+ok 15 - product detail metadata matches SDK and update record filters
+  ---
+  duration_ms: 0.043833
+  type: 'test'
+  ...
+# Subtest: feature pictures metadata matches documented lookup and image filters
+ok 16 - feature pictures metadata matches documented lookup and image filters
+  ---
+  duration_ms: 0.040792
+  type: 'test'
+  ...
+# Subtest: distribution metadata uses documented required product id
+ok 17 - distribution metadata uses documented required product id
+  ---
+  duration_ms: 0.02725
+  type: 'test'
+  ...
+# Subtest: image retrieval metadata reflects merchant id plus url or img inputs
+ok 18 - image retrieval metadata reflects merchant id plus url or img inputs
+  ---
+  duration_ms: 0.033458
+  type: 'test'
+  ...
+# Subtest: image label metadata reflects url or img inputs
+ok 19 - image label metadata reflects url or img inputs
+  ---
+  duration_ms: 0.031958
+  type: 'test'
+  ...
+# Subtest: image distribution metadata uses documented required product id only
+ok 20 - image distribution metadata uses documented required product id only
+  ---
+  duration_ms: 0.024959
+  type: 'test'
+  ...
+# Subtest: image upload and task query metadata include required merchant context
+ok 21 - image upload and task query metadata include required merchant context
+  ---
+  duration_ms: 0.033459
+  type: 'test'
+  ...
+# Subtest: image update metadata reflects merchant id and product id or product code relationship
+ok 22 - image update metadata reflects merchant id and product id or product code relationship
+  ---
+  duration_ms: 0.03375
+  type: 'test'
+  ...
+# Subtest: enforceApproval allows APIs that do not require approval
+ok 23 - enforceApproval allows APIs that do not require approval
+  ---
+  duration_ms: 1.698208
+  type: 'test'
+  ...
+# Subtest: enforceApproval rejects unknown APIs
+ok 24 - enforceApproval rejects unknown APIs
+  ---
+  duration_ms: 0.179625
+  type: 'test'
+  ...
+# Subtest: enforceApproval requires approval for write and paid APIs
+ok 25 - enforceApproval requires approval for write and paid APIs
+  ---
+  duration_ms: 0.063208
+  type: 'test'
+  ...
+# Subtest: enforceApproval allows risky APIs with explicit yes
+ok 26 - enforceApproval allows risky APIs with explicit yes
+  ---
+  duration_ms: 0.036333
+  type: 'test'
+  ...
+# Subtest: enforceApproval returns plan_requested for explicit plan requests
+ok 27 - enforceApproval returns plan_requested for explicit plan requests
+  ---
+  duration_ms: 0.076417
+  type: 'test'
+  ...
+# Subtest: createExecutionPlan returns a sanitized stable summary
+ok 28 - createExecutionPlan returns a sanitized stable summary
+  ---
+  duration_ms: 1.694
+  type: 'test'
+  ...
+# Subtest: createExecutionPlan does not leak auth keys or signature aliases
+ok 29 - createExecutionPlan does not leak auth keys or signature aliases
+  ---
+  duration_ms: 0.378958
+  type: 'test'
+  ...
+# Subtest: createExecutionPlan rejects unknown APIs
+ok 30 - createExecutionPlan rejects unknown APIs
+  ---
+  duration_ms: 0.262125
+  type: 'test'
+  ...
+# Subtest: writeExecutionPlan persists pretty sanitized JSON
+ok 31 - writeExecutionPlan persists pretty sanitized JSON
+  ---
+  duration_ms: 1.197917
+  type: 'test'
+  ...
+# Subtest: writeExecutionPlan keeps unsafe plan ids inside the target directory
+ok 32 - writeExecutionPlan keeps unsafe plan ids inside the target directory
+  ---
+  duration_ms: 1.361625
+  type: 'test'
+  ...
+# Subtest: auth login --stdin-json returns redacted tenant summary
+ok 33 - auth login --stdin-json returns redacted tenant summary
+  ---
+  duration_ms: 32.226792
+  type: 'test'
+  ...
+# Subtest: auth login --stdin-json writes stored config and credential refs without leaking secrets
+ok 34 - auth login --stdin-json writes stored config and credential refs without leaking secrets
+  ---
+  duration_ms: 3.724041
+  type: 'test'
+  ...
+# Subtest: auth login --stdin-json reports invalid JSON as CLI error
+ok 35 - auth login --stdin-json reports invalid JSON as CLI error
+  ---
+  duration_ms: 0.881666
+  type: 'test'
+  ...
+# Subtest: auth login --stdin-json rejects non-object JSON input
+ok 36 - auth login --stdin-json rejects non-object JSON input
+  ---
+  duration_ms: 1.298667
+  type: 'test'
+  ...
+# Subtest: auth login --stdin-json rejects unknown trailing args
+ok 37 - auth login --stdin-json rejects unknown trailing args
+  ---
+  duration_ms: 0.417834
+  type: 'test'
+  ...
+# Subtest: auth login --stdin-json coerces defaultTenant to boolean
+ok 38 - auth login --stdin-json coerces defaultTenant to boolean
+  ---
+  duration_ms: 12.364209
+  type: 'test'
+  ...
+# Subtest: config doctor --dry-run rejects unknown trailing args
+ok 39 - config doctor --dry-run rejects unknown trailing args
+  ---
+  duration_ms: 0.202459
+  type: 'test'
+  ...
+# Subtest: config doctor --dry-run succeeds without live network calls
+ok 40 - config doctor --dry-run succeeds without live network calls
+  ---
+  duration_ms: 0.829333
+  type: 'test'
+  ...
+# Subtest: accepts only active enum AI candidates with evidence and confidence at least 0.7
+ok 41 - accepts only active enum AI candidates with evidence and confidence at least 0.7
+  ---
+  duration_ms: 1.402875
+  type: 'test'
+  ...
+# Subtest: OCR only accepts traceable textual facts and does not invent missing image evidence
+ok 42 - OCR only accepts traceable textual facts and does not invent missing image evidence
+  ---
+  duration_ms: 0.252459
+  type: 'test'
+  ...
+# Subtest: OCR facts are constrained to the current DeepDraw template when one is available
+ok 43 - OCR facts are constrained to the current DeepDraw template when one is available
+  ---
+  duration_ms: 0.132667
+  type: 'test'
+  ...
+# Subtest: local vision review selects at most four safe images and only unresolved enum candidates
+ok 44 - local vision review selects at most four safe images and only unresolved enum candidates
+  ---
+  duration_ms: 0.210666
+  type: 'test'
+  ...
+# Subtest: AI suggestions tied to a vision plan must cite an included image
+ok 45 - AI suggestions tied to a vision plan must cite an included image
+  ---
+  duration_ms: 0.156417
+  type: 'test'
+  ...
+# Subtest: online tenant fixed rules resolve all seven previously missing fields against current enums
+ok 46 - online tenant fixed rules resolve all seven previously missing fields against current enums
+  ---
+  duration_ms: 6.179792
+  type: 'test'
+  ...
+# Subtest: snapshot contains 209 enabled rules and selects later applicable domain rule
+ok 47 - snapshot contains 209 enabled rules and selects later applicable domain rule
+  ---
+  duration_ms: 0.322542
+  type: 'test'
+  ...
+# Subtest: tenant and merchant isolation keep Balabala defaults out of other contexts
+ok 48 - tenant and merchant isolation keep Balabala defaults out of other contexts
+  ---
+  duration_ms: 1.386583
+  type: 'test'
+  ...
+# Subtest: manual preservation and template requirements remain authoritative
+ok 49 - manual preservation and template requirements remain authoritative
+  ---
+  duration_ms: 2.590333
+  type: 'test'
+  ...
+# Subtest: business blank and source-derived exceptions precede database skip and instruction defaults
+ok 50 - business blank and source-derived exceptions precede database skip and instruction defaults
+  ---
+  duration_ms: 1.60425
+  type: 'test'
+  ...
+# Subtest: same tenant cannot select another brand snapshot; explicit empty identities do not fall back
+ok 51 - same tenant cannot select another brand snapshot; explicit empty identities do not fall back
+  ---
+  duration_ms: 0.134625
+  type: 'test'
+  ...
+# Subtest: review only retains active current-template fields and exposes the source contract
+ok 52 - review only retains active current-template fields and exposes the source contract
+  ---
+  duration_ms: 2.259
+  type: 'test'
+  ...
+# Subtest: review deactivates a required child field when its parent option does not apply
+ok 53 - review deactivates a required child field when its parent option does not apply
+  ---
+  duration_ms: 0.716459
+  type: 'test'
+  ...
+# Subtest: review blocks missing sale attributes and unverified shoe-size evidence
+ok 54 - review blocks missing sale attributes and unverified shoe-size evidence
+  ---
+  duration_ms: 0.639708
+  type: 'test'
+  ...
+# Subtest: review blocks a main size table that omits an existing SKU size
+ok 55 - review blocks a main size table that omits an existing SKU size
+  ---
+  duration_ms: 0.313708
+  type: 'test'
+  ...
+# Subtest: review accepts only safe high-confidence AI enum candidates and preserves manual facts
+ok 56 - review accepts only safe high-confidence AI enum candidates and preserves manual facts
+  ---
+  duration_ms: 0.516334
+  type: 'test'
+  ...
+# Subtest: review rejects AI size charts, non-enum values, low confidence, and invalid image evidence
+ok 57 - review rejects AI size charts, non-enum values, low confidence, and invalid image evidence
+  ---
+  duration_ms: 0.397209
+  type: 'test'
+  ...
+# Subtest: builds template-valid colors, sale sizes, nested merchant SKU and platform price fields
+ok 58 - builds template-valid colors, sale sizes, nested merchant SKU and platform price fields
+  ---
+  duration_ms: 9.753292
+  type: 'test'
+  ...
+# Subtest: uses cm sale-size aliases for apparel templates
+ok 59 - uses cm sale-size aliases for apparel templates
+  ---
+  duration_ms: 0.484542
+  type: 'test'
+  ...
+# Subtest: marks unsupported special fields manual-required instead of synthesizing them
+ok 60 - marks unsupported special fields manual-required instead of synthesizing them
+  ---
+  duration_ms: 0.469667
+  type: 'test'
+  ...
+# Subtest: builds Tmall guide-title category slots from local copywriting
+ok 61 - builds Tmall guide-title category slots from local copywriting
+  ---
+  duration_ms: 1.653041
+  type: 'test'
+  ...
+# Subtest: accepts a reviewed manual value for a special-format field
+ok 62 - accepts a reviewed manual value for a special-format field
+  ---
+  duration_ms: 0.307291
+  type: 'test'
+  ...
+# Subtest: applies an explicit local field mapping before the Balabala fallback rules
+ok 63 - applies an explicit local field mapping before the Balabala fallback rules
+  ---
+  duration_ms: 0.202917
+  type: 'test'
+  ...
+# Subtest: derives and normalizes Balabala shoe fields from the same source evidence as Listingify
+ok 64 - derives and normalizes Balabala shoe fields from the same source evidence as Listingify
+  ---
+  duration_ms: 21.402291
+  type: 'test'
+  ...
+# Subtest: derives apparel and cross-platform defaults without borrowing shoe-only rules
+ok 65 - derives apparel and cross-platform defaults without borrowing shoe-only rules
+  ---
+  duration_ms: 12.705125
+  type: 'test'
+  ...
+# Subtest: derives the remaining Listingify shoe source-rule and platform fields
+ok 66 - derives the remaining Listingify shoe source-rule and platform fields
+  ---
+  duration_ms: 2.974084
+  type: 'test'
+  ...
+# Subtest: uses Listingify provenance order for apparel enterprise and titles, while omitting business-blank PDD fields
+ok 67 - uses Listingify provenance order for apparel enterprise and titles, while omitting business-blank PDD fields
+  ---
+  duration_ms: 2.527
+  type: 'test'
+  ...
+# Subtest: parses Listingify apparel material sections and down-fill evidence without guessing
+ok 68 - parses Listingify apparel material sections and down-fill evidence without guessing
+  ---
+  duration_ms: 2.891042
+  type: 'test'
+  ...
+# Subtest: applies Listingify wash-care and VIP apparel template rules, while excluding shoe-only AI slots
+ok 69 - applies Listingify wash-care and VIP apparel template rules, while excluding shoe-only AI slots
+  ---
+  duration_ms: 1.687667
+  type: 'test'
+  ...
+# Subtest: uses the Balabala apparel size reference before normalizing real apparel age and style enums
+ok 70 - uses the Balabala apparel size reference before normalizing real apparel age and style enums
+  ---
+  duration_ms: 1.15825
+  type: 'test'
+  ...
+# Subtest: normalizes and de-duplicates SKU colors with Listingify color-family rules
+ok 71 - normalizes and de-duplicates SKU colors with Listingify color-family rules
+  ---
+  duration_ms: 0.454167
+  type: 'test'
+  ...
+# Subtest: supports Listingify sale-size aliases and base merchant-SKU columns
+ok 72 - supports Listingify sale-size aliases and base merchant-SKU columns
+  ---
+  duration_ms: 0.186166
+  type: 'test'
+  ...
+# Subtest: formal 108035 and 121024 compositions preserve sections and exact fiber facts regardless of enum order
+ok 73 - formal 108035 and 121024 compositions preserve sections and exact fiber facts regardless of enum order
+  ---
+  duration_ms: 1.286375
+  type: 'test'
+  ...
+# Subtest: invalid main material percentages block even optional fields without enum constraints
+ok 74 - invalid main material percentages block even optional fields without enum constraints
+  ---
+  duration_ms: 0.501417
+  type: 'test'
+  ...
+# Subtest: raw workbook aliases, prices and Listingify defaults produce local fields
+ok 75 - raw workbook aliases, prices and Listingify defaults produce local fields
+  ---
+  duration_ms: 3.266292
+  type: 'test'
+  ...
+# Subtest: JD local size subattributes retain SKU order and reviewed special values override derived values
+ok 76 - JD local size subattributes retain SKU order and reviewed special values override derived values
+  ---
+  duration_ms: 0.627459
+  type: 'test'
+  ...
+# Subtest: reads physical cells beyond a false A1 worksheet dimension
+ok 77 - reads physical cells beyond a false A1 worksheet dimension
+  ---
+  duration_ms: 0.846458
+  type: 'test'
+  ...
+# Subtest: selects a formal spu and its SKC rows without accepting a prefix collision
+ok 78 - selects a formal spu and its SKC rows without accepting a prefix collision
+  ---
+  duration_ms: 0.252625
+  type: 'test'
+  ...
+# Subtest: imports complete source rows and an apparel PLM long table for the requested SPU
+ok 79 - imports complete source rows and an apparel PLM long table for the requested SPU
+  ---
+  duration_ms: 64.245791
+  type: 'test'
+  ...
+# Subtest: uses the first valid dated launch row for SPU scalar defaults while retaining cancelled rows as source evidence
+ok 80 - uses the first valid dated launch row for SPU scalar defaults while retaining cancelled rows as source evidence
+  ---
+  duration_ms: 15.041167
+  type: 'test'
+  ...
+# Subtest: imports a test workflow from an explicitly supplied formal source style without changing its remote target code
+ok 81 - imports a test workflow from an explicitly supplied formal source style without changing its remote target code
+  ---
+  duration_ms: 25.609875
+  type: 'test'
+  ...
+# Subtest: keeps supplied hangtag and wash-label PDFs in the auditable OCR evidence manifest
+ok 82 - keeps supplied hangtag and wash-label PDFs in the auditable OCR evidence manifest
+  ---
+  duration_ms: 16.183708
+  type: 'test'
+  ...
+# Subtest: offline SKU prices resolve only on complete unanimity and never use launch-plan price
+ok 83 - offline SKU prices resolve only on complete unanimity and never use launch-plan price
+  ---
+  duration_ms: 5.304375
+  type: 'test'
+  ...
+# Subtest: explicit SPU fact remains distinct from per-SKU transaction price, including blank SKU fallback
+ok 84 - explicit SPU fact remains distinct from per-SKU transaction price, including blank SKU fallback
+  ---
+  duration_ms: 1.17275
+  type: 'test'
+  ...
+# Subtest: shoe missing source, half sizes, sandals and additional sale properties block assembly
+ok 85 - shoe missing source, half sizes, sandals and additional sale properties block assembly
+  ---
+  duration_ms: 99.406917
+  type: 'test'
+  ...
+# Subtest: all plan/publish stages reject outstanding blockers before fetch or Java
+ok 86 - all plan/publish stages reject outstanding blockers before fetch or Java
+  ---
+  duration_ms: 15.775667
+  type: 'test'
+  ...
+# Subtest: shoe VIP is millimetres through the final SDK payload; main table is centimetres
+ok 87 - shoe VIP is millimetres through the final SDK payload; main table is centimetres
+  ---
+  duration_ms: 5.985042
+  type: 'test'
+  ...
+# Subtest: gram evidence propagates to tables and sale remarks without changing canonical SKU keys
+ok 88 - gram evidence propagates to tables and sale remarks without changing canonical SKU keys
+  ---
+  duration_ms: 1.768167
+  type: 'test'
+  ...
+# Subtest: down fill rejects missing sizes, conflicting grams, percentages and AI facts
+ok 89 - down fill rejects missing sizes, conflicting grams, percentages and AI facts
+  ---
+  duration_ms: 0.450458
+  type: 'test'
+  ...
+# Subtest: built-in shoe reference preserves original fractional millimetres and records workbook hash
+ok 90 - built-in shoe reference preserves original fractional millimetres and records workbook hash
+  ---
+  duration_ms: 1.728041
+  type: 'test'
+  ...
+# Subtest: OCR review rebuilds down-fill remarks repeatedly from retained original facts
+ok 91 - OCR review rebuilds down-fill remarks repeatedly from retained original facts
+  ---
+  duration_ms: 23.089875
+  type: 'test'
+  ...
+# Subtest: test-target rebuild selects formal PLM identities while keeping the test envelope
+ok 92 - test-target rebuild selects formal PLM identities while keeping the test envelope
+  ---
+  duration_ms: 14.254708
+  type: 'test'
+  ...
+# Subtest: conflicting PLM measurements block instead of silently selecting the last row
+ok 93 - conflicting PLM measurements block instead of silently selecting the last row
+  ---
+  duration_ms: 1.562959
+  type: 'test'
+  ...
+# Subtest: apparel hood and trouser length are sourced, not hard-coded
+ok 94 - apparel hood and trouser length are sourced, not hard-coded
+  ---
+  duration_ms: 1.74325
+  type: 'test'
+  ...
+# Subtest: generic incremental blocks remarked sale sizes before Java or network
+ok 95 - generic incremental blocks remarked sale sizes before Java or network
+  ---
+  duration_ms: 0.594375
+  type: 'test'
+  ...
+# Subtest: shoe template selector is not converted into an empty measurement table
+ok 96 - shoe template selector is not converted into an empty measurement table
+  ---
+  duration_ms: 0.346709
+  type: 'test'
+  ...
+# Subtest: plain quantity-price field uses offline SKU price and provider column delimiter
+ok 97 - plain quantity-price field uses offline SKU price and provider column delimiter
+  ---
+  duration_ms: 0.532917
+  type: 'test'
+  ...
+# Subtest: blocks a full update if no remote SKU key intersects
+ok 98 - blocks a full update if no remote SKU key intersects
+  ---
+  duration_ms: 1.248583
+  type: 'test'
+  ...
+# Subtest: marks absent multi-platform readback as UI verification instead of verified
+ok 99 - marks absent multi-platform readback as UI verification instead of verified
+  ---
+  duration_ms: 1.7825
+  type: 'test'
+  ...
+# Subtest: treats an absent primary size table as a mismatch, while canonicalizing sale-colour SKU aliases
+ok 100 - treats an absent primary size table as a mismatch, while canonicalizing sale-colour SKU aliases
+  ---
+  duration_ms: 0.515583
+  type: 'test'
+  ...
+# Subtest: hydrates DeepDraw form fields plus sale colors and sizes without inventing values
+ok 101 - hydrates DeepDraw form fields plus sale colors and sizes without inventing values
+  ---
+  duration_ms: 0.438125
+  type: 'test'
+  ...
+# Subtest: compares readback colors and sizes from their top-level form resources
+ok 102 - compares readback colors and sizes from their top-level form resources
+  ---
+  duration_ms: 0.2555
+  type: 'test'
+  ...
+# Subtest: protects nested merchant-SKU color-and-size keys and normalizes structured readback fields
+ok 103 - protects nested merchant-SKU color-and-size keys and normalizes structured readback fields
+  ---
+  duration_ms: 6.970042
+  type: 'test'
+  ...
+# Subtest: real form tables and SKU cells verify values, not merely row identities
+ok 104 - real form tables and SKU cells verify values, not merely row identities
+  ---
+  duration_ms: 0.650917
+  type: 'test'
+  ...
+# Subtest: omitted empty fields do not conceal missing nonempty fields
+ok 105 - omitted empty fields do not conceal missing nonempty fields
+  ---
+  duration_ms: 0.131709
+  type: 'test'
+  ...
+# Subtest: quantity-price wire rows decode only valid numeric pairs
+ok 106 - quantity-price wire rows decode only valid numeric pairs
+  ---
+  duration_ms: 0.31825
+  type: 'test'
+  ...
+# Subtest: top-level form SKU projection preserves the full-update intersection gate
+ok 107 - top-level form SKU projection preserves the full-update intersection gate
+  ---
+  duration_ms: 0.447375
+  type: 'test'
+  ...
+# Subtest: test mode permits only a configured exact target SPU and preserves its formal source SPU
+ok 108 - test mode permits only a configured exact target SPU and preserves its formal source SPU
+  ---
+  duration_ms: 1.23375
+  type: 'test'
+  ...
+# Subtest: test config accepts only explicit unique formal-to-test mappings
+ok 109 - test config accepts only explicit unique formal-to-test mappings
+  ---
+  duration_ms: 0.359125
+  type: 'test'
+  ...
+# Subtest: production preserves the one explicit formal SPU and never derives a test target
+ok 110 - production preserves the one explicit formal SPU and never derives a test target
+  ---
+  duration_ms: 0.093417
+  type: 'test'
+  ...
+# Subtest: builds sports-shoe tables only for actual integer SKU sizes
+ok 111 - builds sports-shoe tables only for actual integer SKU sizes
+  ---
+  duration_ms: 2.574459
+  type: 'test'
+  ...
+# Subtest: blocks a sandal when structural visual evidence is absent
+ok 112 - blocks a sandal when structural visual evidence is absent
+  ---
+  duration_ms: 0.249417
+  type: 'test'
+  ...
+# Subtest: selects open and closed sandal tables and emits the Listingify shoe enums
+ok 113 - selects open and closed sandal tables and emits the Listingify shoe enums
+  ---
+  duration_ms: 0.46075
+  type: 'test'
+  ...
+# Subtest: builds apparel upper tables with blank missing measurements and Listingify's bare weight reference
+ok 114 - builds apparel upper tables with blank missing measurements and Listingify's bare weight reference
+  ---
+  duration_ms: 1.863208
+  type: 'test'
+  ...
+# Subtest: builds every active apparel platform table from normalized PLM long rows
+ok 115 - builds every active apparel platform table from normalized PLM long rows
+  ---
+  duration_ms: 4.468333
+  type: 'test'
+  ...
+# Subtest: blocks an apparel main table without PLM while retaining reference-only VIP, Douyin and multi-platform tables
+ok 116 - blocks an apparel main table without PLM while retaining reference-only VIP, Douyin and multi-platform tables
+  ---
+  duration_ms: 0.771041
+  type: 'test'
+  ...
+# Subtest: stateful test mode permits only the exact configured target before any remote dependency can run
+ok 117 - stateful test mode permits only the exact configured target before any remote dependency can run
+  ---
+  duration_ms: 68.185708
+  type: 'test'
+  ...
+# Subtest: production plans exactly one explicit formal target and cannot publish without a reviewed matching hash
+ok 118 - production plans exactly one explicit formal target and cannot publish without a reviewed matching hash
+  ---
+  duration_ms: 44.384334
+  type: 'test'
+  ...
+# Subtest: test config maps formal local sources to only its explicit test archive target
+ok 119 - test config maps formal local sources to only its explicit test archive target
+  ---
+  duration_ms: 36.845208
+  type: 'test'
+  ...
+# Subtest: production full-update plan records category, sales facts, size-table summary and covering risk before a write
+ok 120 - production full-update plan records category, sales facts, size-table summary and covering risk before a write
+  ---
+  duration_ms: 27.40475
+  type: 'test'
+  ...
+# Subtest: stateful override changes only an already-synced scalar field
+ok 121 - stateful override changes only an already-synced scalar field
+  ---
+  duration_ms: 12.379833
+  type: 'test'
+  ...
+# Subtest: stateful template --tenant selects the requested stored tenant instead of the default
+ok 122 - stateful template --tenant selects the requested stored tenant instead of the default
+  ---
+  duration_ms: 3038.264875
+  type: 'test'
+  ...
+# Subtest: stateful full-update sends the post-readback merged payload, including remote fields retained for a covering update
+ok 123 - stateful full-update sends the post-readback merged payload, including remote fields retained for a covering update
+  ---
+  duration_ms: 3022.333375
+  type: 'test'
+  ...
+# Subtest: a reviewed production create performs form merge, required full-update, and final readback
+ok 124 - a reviewed production create performs form merge, required full-update, and final readback
+  ---
+  duration_ms: 6030.44975
+  type: 'test'
+  ...
+# Subtest: selects an exact child-shoe sports leaf with required platforms and sizes
+ok 125 - selects an exact child-shoe sports leaf with required platforms and sizes
+  ---
+  duration_ms: 1.639708
+  type: 'test'
+  ...
+# Subtest: requires manual selection for a tied or platform-incomplete candidate
+ok 126 - requires manual selection for a tied or platform-incomplete candidate
+  ---
+  duration_ms: 5.896833
+  type: 'test'
+  ...
+# Subtest: uses full tradePath ahead of a same-named leaf when trees are flattened
+ok 127 - uses full tradePath ahead of a same-named leaf when trees are flattened
+  ---
+  duration_ms: 0.393917
+  type: 'test'
+  ...
+# Subtest: ports Listingify child-apparel context tie breaks for down jackets and long pants
+ok 128 - ports Listingify child-apparel context tie breaks for down jackets and long pants
+  ---
+  duration_ms: 0.654
+  type: 'test'
+  ...
+# Subtest: lets specific denim evidence outrank a generic official pants leaf
+ok 129 - lets specific denim evidence outrank a generic official pants leaf
+  ---
+  duration_ms: 0.233625
+  type: 'test'
+  ...
+# Subtest: uses Listingify priority roots when a complete DeepDraw hierarchy is available
+ok 130 - uses Listingify priority roots when a complete DeepDraw hierarchy is available
+  ---
+  duration_ms: 1.699625
+  type: 'test'
+  ...
+# Subtest: flattens the nested merchant trade tree to leaf candidates with an inherited path
+ok 131 - flattens the nested merchant trade tree to leaf candidates with an inherited path
+  ---
+  duration_ms: 0.656791
+  type: 'test'
+  ...
+# Subtest: legacy remote balabala commands are disabled before fetch or Java can bypass stateful target policy
+ok 132 - legacy remote balabala commands are disabled before fetch or Java can bypass stateful target policy
+  ---
+  duration_ms: 4.962125
+  type: 'test'
+  ...
+# Subtest: legacy Balabala review remains local and continues to validate source and template facts
+ok 133 - legacy Balabala review remains local and continues to validate source and template facts
+  ---
+  duration_ms: 3.630792
+  type: 'test'
+  ...
+# Subtest: configPathForPlatform returns platform-specific user config paths
+ok 134 - configPathForPlatform returns platform-specific user config paths
+  ---
+  duration_ms: 0.717334
+  type: 'test'
+  ...
+# Subtest: EnvCredentialStore reads credentials from environment without allowing writes
+ok 135 - EnvCredentialStore reads credentials from environment without allowing writes
+  ---
+  duration_ms: 0.294042
+  type: 'test'
+  ...
+# Subtest: FakeCredentialStore supports async get set and delete
+ok 136 - FakeCredentialStore supports async get set and delete
+  ---
+  duration_ms: 0.141791
+  type: 'test'
+  ...
+# Subtest: resolveDeepdrawConfig prefers explicit environment variables over stored credentials
+ok 137 - resolveDeepdrawConfig prefers explicit environment variables over stored credentials
+  ---
+  duration_ms: 10.514792
+  type: 'test'
+  ...
+# Subtest: resolveDeepdrawConfig reads stored tenant config and credential references
+ok 138 - resolveDeepdrawConfig reads stored tenant config and credential references
+  ---
+  duration_ms: 2.004917
+  type: 'test'
+  ...
+# Subtest: resolveDeepdrawConfig can select a non-default stored tenant
+ok 139 - resolveDeepdrawConfig can select a non-default stored tenant
+  ---
+  duration_ms: 3.023834
+  type: 'test'
+  ...
+# Subtest: resolveDeepdrawConfig prefers stored config over complete .env.local fallback
+ok 140 - resolveDeepdrawConfig prefers stored config over complete .env.local fallback
+  ---
+  duration_ms: 3.885792
+  type: 'test'
+  ...
+# Subtest: resolveDeepdrawConfig loads .env.local values without overriding explicit env
+ok 141 - resolveDeepdrawConfig loads .env.local values without overriding explicit env
+  ---
+  duration_ms: 4.123375
+  type: 'test'
+  ...
+# Subtest: resolveDeepdrawConfig reports useful missing credential errors
+ok 142 - resolveDeepdrawConfig reports useful missing credential errors
+  ---
+  duration_ms: 2.616792
+  type: 'test'
+  ...
+# Subtest: resolveDeepdrawConfig rejects stored config with null tenants
+ok 143 - resolveDeepdrawConfig rejects stored config with null tenants
+  ---
+  duration_ms: 2.998834
+  type: 'test'
+  ...
+# Subtest: resolveDeepdrawConfig rejects selected tenant missing required fields
+ok 144 - resolveDeepdrawConfig rejects selected tenant missing required fields
+  ---
+  duration_ms: 5.646125
+  type: 'test'
+  ...
+# Subtest: resolveDeepdrawConfig rejects invalid stored tenant timeout
+ok 145 - resolveDeepdrawConfig rejects invalid stored tenant timeout
+  ---
+  duration_ms: 10.931167
+  type: 'test'
+  ...
+# Subtest: resolveDeepdrawConfig reports config path for malformed JSON
+ok 146 - resolveDeepdrawConfig reports config path for malformed JSON
+  ---
+  duration_ms: 7.329458
+  type: 'test'
+  ...
+# Subtest: callDeepdrawApi normalizes successful HTTP response
+ok 147 - callDeepdrawApi normalizes successful HTTP response
+  ---
+  duration_ms: 12.915709
+  type: 'test'
+  ...
+# Subtest: callDeepdrawApi sends JSON body when provided
+ok 148 - callDeepdrawApi sends JSON body when provided
+  ---
+  duration_ms: 1.131584
+  type: 'test'
+  ...
+# Subtest: callDeepdrawApi cools down once and retries a read after DeepDraw 10494
+ok 149 - callDeepdrawApi cools down once and retries a read after DeepDraw 10494
+  ---
+  duration_ms: 1.181417
+  type: 'test'
+  ...
+# Subtest: callDeepdrawApi treats HTTP 503 as a retryable busy read
+ok 150 - callDeepdrawApi treats HTTP 503 as a retryable busy read
+  ---
+  duration_ms: 0.5855
+  type: 'test'
+  ...
+# Subtest: callDeepdrawApi never replays a busy write or paid request
+ok 151 - callDeepdrawApi never replays a busy write or paid request
+  ---
+  duration_ms: 0.381417
+  type: 'test'
+  ...
+# Subtest: callDeepdrawApi rejects GET body before fetch
+ok 152 - callDeepdrawApi rejects GET body before fetch
+  ---
+  duration_ms: 0.240042
+  type: 'test'
+  ...
+# Subtest: callDeepdrawApi preserves raw text response payload
+ok 153 - callDeepdrawApi preserves raw text response payload
+  ---
+  duration_ms: 0.541791
+  type: 'test'
+  ...
+# Subtest: callDeepdrawApi normalizes empty response payload
+ok 154 - callDeepdrawApi normalizes empty response payload
+  ---
+  duration_ms: 0.967292
+  type: 'test'
+  ...
+# Subtest: callDeepdrawApi rejects unknown API names
+ok 155 - callDeepdrawApi rejects unknown API names
+  ---
+  duration_ms: 0.391875
+  type: 'test'
+  ...
+# Subtest: callDeepdrawApi rejects non-http API transports
+ok 156 - callDeepdrawApi rejects non-http API transports
+  ---
+  duration_ms: 0.504791
+  type: 'test'
+  ...
+# Subtest: deepdraw call remains dry-run by default
+ok 157 - deepdraw call remains dry-run by default
+  ---
+  duration_ms: 0.520958
+  type: 'test'
+  ...
+# Subtest: deepdraw call accepts explicit --dry-run
+ok 158 - deepdraw call accepts explicit --dry-run
+  ---
+  duration_ms: 0.082333
+  type: 'test'
+  ...
+# Subtest: deepdraw call rejects conflicting --dry-run and --execute without fetching
+ok 159 - deepdraw call rejects conflicting --dry-run and --execute without fetching
+  ---
+  duration_ms: 0.073625
+  type: 'test'
+  ...
+# Subtest: deepdraw call --execute runs low-risk HTTP API with injected fetch
+ok 160 - deepdraw call --execute runs low-risk HTTP API with injected fetch
+  ---
+  duration_ms: 1.113875
+  type: 'test'
+  ...
+# Subtest: deepdraw CLI exposes the bounded busy retry audit for an executed read
+ok 161 - deepdraw CLI exposes the bounded busy retry audit for an executed read
+  ---
+  duration_ms: 1.003334
+  type: 'test'
+  ...
+# Subtest: deepdraw call --execute routes product resource through Java SDK with full query
+ok 162 - deepdraw call --execute routes product resource through Java SDK with full query
+  ---
+  duration_ms: 15.444333
+  type: 'test'
+  ...
+# Subtest: deepdraw call --execute --yes routes product create through Java runner without fetching
+ok 163 - deepdraw call --execute --yes routes product create through Java runner without fetching
+  ---
+  duration_ms: 1.499708
+  type: 'test'
+  ...
+# Subtest: deepdraw call requires approval for SKU color incremental updates
+ok 164 - deepdraw call requires approval for SKU color incremental updates
+  ---
+  duration_ms: 0.471916
+  type: 'test'
+  ...
+# Subtest: deepdraw call --execute --yes routes SKU color incremental updates through Java bridge
+ok 165 - deepdraw call --execute --yes routes SKU color incremental updates through Java bridge
+  ---
+  duration_ms: 0.858334
+  type: 'test'
+  ...
+# Subtest: deepdraw call --execute returns approval plan for approval-required APIs without fetching
+ok 166 - deepdraw call --execute returns approval plan for approval-required APIs without fetching
+  ---
+  duration_ms: 0.205292
+  type: 'test'
+  ...
+# Subtest: deepdraw call --execute --yes runs approval-required HTTP API with injected fetch
+ok 167 - deepdraw call --execute --yes runs approval-required HTTP API with injected fetch
+  ---
+  duration_ms: 0.583792
+  type: 'test'
+  ...
+# Subtest: deepdraw call approval plan redacts secret-like query and body fields
+ok 168 - deepdraw call approval plan redacts secret-like query and body fields
+  ---
+  duration_ms: 0.264167
+  type: 'test'
+  ...
+# Subtest: deepdraw call --execute rejects GET body before fetch
+ok 169 - deepdraw call --execute rejects GET body before fetch
+  ---
+  duration_ms: 0.192125
+  type: 'test'
+  ...
+# Subtest: deepdraw call reads --json-file relative to cwd
+ok 170 - deepdraw call reads --json-file relative to cwd
+  ---
+  duration_ms: 4.079625
+  type: 'test'
+  ...
+# Subtest: deepdraw call rejects missing --json-file path and malformed file without fetching
+ok 171 - deepdraw call rejects missing --json-file path and malformed file without fetching
+  ---
+  duration_ms: 1.791375
+  type: 'test'
+  ...
+# Subtest: deepdraw call validates required params before HTTP fetch
+ok 172 - deepdraw call validates required params before HTTP fetch
+  ---
+  duration_ms: 0.493167
+  type: 'test'
+  ...
+# Subtest: deepdraw call validates required body params before HTTP fetch and Java spawn
+ok 173 - deepdraw call validates required body params before HTTP fetch and Java spawn
+  ---
+  duration_ms: 0.341125
+  type: 'test'
+  ...
+# Subtest: merchantId required params can be sourced from resolved config before execution
+ok 174 - merchantId required params can be sourced from resolved config before execution
+  ---
+  duration_ms: 0.4035
+  type: 'test'
+  ...
+# Subtest: registry uses POST for JSON payload mutation APIs
+ok 175 - registry uses POST for JSON payload mutation APIs
+  ---
+  duration_ms: 0.059
+  type: 'test'
+  ...
+# Subtest: all registered APIs support dry-run and approval-required execute calls do not fetch or spawn without --yes
+ok 176 - all registered APIs support dry-run and approval-required execute calls do not fetch or spawn without --yes
+  ---
+  duration_ms: 0.788583
+  type: 'test'
+  ...
+# Subtest: deepdraw call dry-run validates unknown options without fetching
+ok 177 - deepdraw call dry-run validates unknown options without fetching
+  ---
+  duration_ms: 0.166125
+  type: 'test'
+  ...
+# Subtest: deepdraw call dry-run validates malformed params without fetching
+ok 178 - deepdraw call dry-run validates malformed params without fetching
+  ---
+  duration_ms: 0.09875
+  type: 'test'
+  ...
+# Subtest: deepdraw call dry-run validates bad JSON without fetching
+ok 179 - deepdraw call dry-run validates bad JSON without fetching
+  ---
+  duration_ms: 0.149375
+  type: 'test'
+  ...
+# Subtest: AGENTS.md requires approval before write and paid calls
+ok 180 - AGENTS.md requires approval before write and paid calls
+  ---
+  duration_ms: 1.477667
+  type: 'test'
+  ...
+# Subtest: reference tracks the 2026-08-27 PDF and bundled SDK 1.6.25 contract
+ok 181 - reference tracks the 2026-08-27 PDF and bundled SDK 1.6.25 contract
+  ---
+  duration_ms: 0.675125
+  type: 'test'
+  ...
+# Subtest: AGENTS.md documents Chinese agent calling workflows
+ok 182 - AGENTS.md documents Chinese agent calling workflows
+  ---
+  duration_ms: 0.296209
+  type: 'test'
+  ...
+# Subtest: AGENTS.md documents the local Balabala payload builder and latest size fields
+ok 183 - AGENTS.md documents the local Balabala payload builder and latest size fields
+  ---
+  duration_ms: 0.183375
+  type: 'test'
+  ...
+# Subtest: AGENTS.md lists every registered API with calling metadata
+ok 184 - AGENTS.md lists every registered API with calling metadata
+  ---
+  duration_ms: 0.487666
+  type: 'test'
+  ...
+# Subtest: README documents cross-platform auth login
+ok 185 - README documents cross-platform auth login
+  ---
+  duration_ms: 0.981375
+  type: 'test'
+  ...
+# Subtest: README documents the local Balabala payload builder
+ok 186 - README documents the local Balabala payload builder
+  ---
+  duration_ms: 0.412666
+  type: 'test'
+  ...
+# Subtest: README and AGENTS.md document the Balabala listing workflow and its safe incremental boundary
+ok 187 - README and AGENTS.md document the Balabala listing workflow and its safe incremental boundary
+  ---
+  duration_ms: 0.701958
+  type: 'test'
+  ...
+# Subtest: README documents bundled DeepDraw SDK jars and runtime dependency jars
+ok 188 - README documents bundled DeepDraw SDK jars and runtime dependency jars
+  ---
+  duration_ms: 0.47
+  type: 'test'
+  ...
+# Subtest: README does not document nonexistent execute command
+ok 189 - README does not document nonexistent execute command
+  ---
+  duration_ms: 0.477041
+  type: 'test'
+  ...
+# Subtest: README auth login example reaches implemented stdin-json branch
+ok 190 - README auth login example reaches implemented stdin-json branch
+  ---
+  duration_ms: 1.11225
+  type: 'test'
+  ...
+# Subtest: buildSdkInput maps product create calls to SDK config, trade query, and product
+ok 191 - buildSdkInput maps product create calls to SDK config, trade query, and product
+  ---
+  duration_ms: 1.506292
+  type: 'test'
+  ...
+# Subtest: buildSdkInput maps product update calls to SDK query and product
+ok 192 - buildSdkInput maps product update calls to SDK query and product
+  ---
+  duration_ms: 0.517917
+  type: 'test'
+  ...
+# Subtest: buildSdkInput maps generic incremental updates to the Product SDK payload
+ok 193 - buildSdkInput maps generic incremental updates to the Product SDK payload
+  ---
+  duration_ms: 0.179375
+  type: 'test'
+  ...
+# Subtest: buildSdkInput maps SKU color incremental updates to the Product SDK payload
+ok 194 - buildSdkInput maps SKU color incremental updates to the Product SDK payload
+  ---
+  duration_ms: 0.073708
+  type: 'test'
+  ...
+# Subtest: parseSdkOutput normalizes trailing JSON line
+ok 195 - parseSdkOutput normalizes trailing JSON line
+  ---
+  duration_ms: 0.238375
+  type: 'test'
+  ...
+# Subtest: callJavaSdkApi writes SDK input to Java stdin and parses normalized output
+ok 196 - callJavaSdkApi writes SDK input to Java stdin and parses normalized output
+  ---
+  duration_ms: 0.434959
+  type: 'test'
+  ...
+# Subtest: callJavaSdkApi retries an SDK read after a 10494 busy response
+ok 197 - callJavaSdkApi retries an SDK read after a 10494 busy response
+  ---
+  duration_ms: 0.327625
+  type: 'test'
+  ...
+# Subtest: callJavaSdkApi does not replay a busy write
+ok 198 - callJavaSdkApi does not replay a busy write
+  ---
+  duration_ms: 0.132667
+  type: 'test'
+  ...
+# Subtest: callJavaSdkApi loads bundled SDK jars and dependency jars from vendor directory
+ok 199 - callJavaSdkApi loads bundled SDK jars and dependency jars from vendor directory
+  ---
+  duration_ms: 21.415625
+  type: 'test'
+  ...
+# Subtest: callJavaSdkApi routes product resource through Java runner with full query
+ok 200 - callJavaSdkApi routes product resource through Java runner with full query
+  ---
+  duration_ms: 0.815375
+  type: 'test'
+  ...
+# Subtest: callJavaSdkApi routes SKU color incremental updates through the dedicated Java bridge
+ok 201 - callJavaSdkApi routes SKU color incremental updates through the dedicated Java bridge
+  ---
+  duration_ms: 0.395292
+  type: 'test'
+  ...
+# Subtest: callJavaSdkApi compiles product resource bridge source when present
+ok 202 - callJavaSdkApi compiles product resource bridge source when present
+  ---
+  duration_ms: 19.503917
+  type: 'test'
+  ...
+# Subtest: generic incremental bridge keeps empty places out of the v2 Product request
+ok 203 - generic incremental bridge keeps empty places out of the v2 Product request
+  ---
+  duration_ms: 3141.592541
+  type: 'test'
+  ...
+# Subtest: bundled SDK is exactly 1.6.25 with no competing dop jar on the wildcard classpath
+ok 204 - bundled SDK is exactly 1.6.25 with no competing dop jar on the wildcard classpath
+  ---
+  duration_ms: 4.606167
+  type: 'test'
+  ...
+# Subtest: SDK 1.6.25 compiles all bridges and detects duplicate sizes despite different remarks
+ok 205 - SDK 1.6.25 compiles all bridges and detects duplicate sizes despite different remarks
+  ---
+  duration_ms: 3184.210833
+  type: 'test'
+  ...
+# Subtest: SKU color bridge emits no empty optional fields and rejects invalid required fields before prepare
+ok 206 - SKU color bridge emits no empty optional fields and rejects invalid required fields before prepare
+  ---
+  duration_ms: 10237.484583
+  type: 'test'
+  ...
+# Subtest: Balabala shoe payload uses integer sale sizes, aliases, remarks, and six platform columns
+ok 207 - Balabala shoe payload uses integer sale sizes, aliases, remarks, and six platform columns
+  ---
+  duration_ms: 5.18025
+  type: 'test'
+  ...
+# Subtest: Balabala apparel payload keeps cm display identities, bare table values, and blank missing measurements
+ok 208 - Balabala apparel payload keeps cm display identities, bare table values, and blank missing measurements
+  ---
+  duration_ms: 1.545125
+  type: 'test'
+  ...
+# Subtest: create and update expose the stable field sets without shrinking SKU or stable size tables
+ok 209 - create and update expose the stable field sets without shrinking SKU or stable size tables
+  ---
+  duration_ms: 1.789333
+  type: 'test'
+  ...
+# Subtest: full update sends multi-platform size rows by default
+ok 210 - full update sends multi-platform size rows by default
+  ---
+  duration_ms: 1.009708
+  type: 'test'
+  ...
+# Subtest: full update can explicitly omit multi-platform size rows for a confirmed incompatible template
+ok 211 - full update can explicitly omit multi-platform size rows for a confirmed incompatible template
+  ---
+  duration_ms: 0.864334
+  type: 'test'
+  ...
+# Subtest: merchant SKU tables use the sale-colour alias key, not the display enum, including historical buckets
+ok 212 - merchant SKU tables use the sale-colour alias key, not the display enum, including historical buckets
+  ---
+  duration_ms: 0.834917
+  type: 'test'
+  ...
+# Subtest: explicitly disabling multi-platform sizes omits the field from the SDK payload
+ok 213 - explicitly disabling multi-platform sizes omits the field from the SDK payload
+  ---
+  duration_ms: 0.689834
+  type: 'test'
+  ...
+# Subtest: stage-specific identifiers are required and shoe half sizes are rejected
+ok 214 - stage-specific identifiers are required and shoe half sizes are rejected
+  ---
+  duration_ms: 3.07875
+  type: 'test'
+  ...
+# Subtest: product payload CLI reads only the local input and never config, credentials, network, or Java
+ok 215 - product payload CLI reads only the local input and never config, credentials, network, or Java
+  ---
+  duration_ms: 15.035084
+  type: 'test'
+  ...
+# Subtest: redactSensitive hides credential-like fields recursively
+ok 216 - redactSensitive hides credential-like fields recursively
+  ---
+  duration_ms: 1.076041
+  type: 'test'
+  ...
+# Subtest: normalizeDeepdrawPayload extracts business status from SDK-style payload
+ok 217 - normalizeDeepdrawPayload extracts business status from SDK-style payload
+  ---
+  duration_ms: 0.197375
+  type: 'test'
+  ...
+# Subtest: normalizeDeepdrawPayload extracts root-style failed state
+ok 218 - normalizeDeepdrawPayload extracts root-style failed state
+  ---
+  duration_ms: 0.114125
+  type: 'test'
+  ...
+# Subtest: normalizeDeepdrawPayload extracts root-style success state
+ok 219 - normalizeDeepdrawPayload extracts root-style success state
+  ---
+  duration_ms: 0.102417
+  type: 'test'
+  ...
+# Subtest: createCliError returns stable error kind and message
+ok 220 - createCliError returns stable error kind and message
+  ---
+  duration_ms: 0.054666
+  type: 'test'
+  ...
+# Subtest: brand, tenant and merchant are independent exact-match dimensions
+ok 221 - brand, tenant and merchant are independent exact-match dimensions
+  ---
+  duration_ms: 0.397958
+  type: 'test'
+  ...
+# Subtest: audit metadata exists only for the selected snapshot
+ok 222 - audit metadata exists only for the selected snapshot
+  ---
+  duration_ms: 0.475375
+  type: 'test'
+  ...
+# Subtest: deepdraw --help exposes the CLI name and core commands
+ok 223 - deepdraw --help exposes the CLI name and core commands
+  ---
+  duration_ms: 1.004333
+  type: 'test'
+  ...
+# Subtest: semantic color list maps to registered API dry-run
+ok 224 - semantic color list maps to registered API dry-run
+  ---
+  duration_ms: 1.378125
+  type: 'test'
+  ...
+# Subtest: risky semantic command returns approval_required without --yes
+ok 225 - risky semantic command returns approval_required without --yes
+  ---
+  duration_ms: 0.672708
+  type: 'test'
+  ...
+# Subtest: risky semantic --plan --yes still returns approval plan without fetching
+ok 226 - risky semantic --plan --yes still returns approval plan without fetching
+  ---
+  duration_ms: 0.180834
+  type: 'test'
+  ...
+# Subtest: product content command extracts summary and assets from product resource
+ok 227 - product content command extracts summary and assets from product resource
+  ---
+  duration_ms: 6.132167
+  type: 'test'
+  ...
+# Subtest: product content dry-run does not fetch
+ok 228 - product content dry-run does not fetch
+  ---
+  duration_ms: 0.303875
+  type: 'test'
+  ...
+# Subtest: product content requires product code or product id
+ok 229 - product content requires product code or product id
+  ---
+  duration_ms: 0.353417
+  type: 'test'
+  ...
+# Subtest: every registered semantic command routes to its API in dry-run mode
+ok 230 - every registered semantic command routes to its API in dry-run mode
+  ---
+  duration_ms: 1.379833
+  type: 'test'
+  ...
+# Subtest: risky semantic approval plan redacts secret-like params
+ok 231 - risky semantic approval plan redacts secret-like params
+  ---
+  duration_ms: 0.398792
+  type: 'test'
+  ...
+# Subtest: semantic commands reject unknown options
+ok 232 - semantic commands reject unknown options
+  ---
+  duration_ms: 0.406042
+  type: 'test'
+  ...
+# Subtest: semantic commands reject malformed params
+ok 233 - semantic commands reject malformed params
+  ---
+  duration_ms: 0.507
+  type: 'test'
+  ...
+# Subtest: semantic commands reject missing input path
+ok 234 - semantic commands reject missing input path
+  ---
+  duration_ms: 0.278417
+  type: 'test'
+  ...
+# Subtest: buildSignedRequest builds canonical GET v2 request
+ok 235 - buildSignedRequest builds canonical GET v2 request
+  ---
+  duration_ms: 3.137166
+  type: 'test'
+  ...
+# Subtest: buildSignedRequest filters empty values and encodes sorted URL query values
+ok 236 - buildSignedRequest filters empty values and encodes sorted URL query values
+  ---
+  duration_ms: 1.240333
+  type: 'test'
+  ...
+# Subtest: payload cannot override credential query parameters
+ok 237 - payload cannot override credential query parameters
+  ---
+  duration_ms: 0.316625
+  type: 'test'
+  ...
+# Subtest: template sync assembles current-template fields and retains all imported MDM colors
+ok 238 - template sync assembles current-template fields and retains all imported MDM colors
+  ---
+  duration_ms: 12.517125
+  type: 'test'
+  ...
+# Subtest: template sync blocks publication when a current-template field needs manual special formatting
+ok 239 - template sync blocks publication when a current-template field needs manual special formatting
+  ---
+  duration_ms: 9.082167
+  type: 'test'
+  ...
+# Subtest: full-update preparation blocks non-overlapping remote SKU and incremental excludes structured fields
+ok 240 - full-update preparation blocks non-overlapping remote SKU and incremental excludes structured fields
+  ---
+  duration_ms: 9.526542
+  type: 'test'
+  ...
+# Subtest: remote sync hydrates an existing test archive and an override keeps colors and sizes in the incremental patch
+ok 241 - remote sync hydrates an existing test archive and an override keeps colors and sizes in the incremental patch
+  ---
+  duration_ms: 8.324583
+  type: 'test'
+  ...
+# Subtest: OCR review attaches the supplied PDF evidence to a current-template fact and rejects foreign fields
+ok 242 - OCR review attaches the supplied PDF evidence to a current-template fact and rejects foreign fields
+  ---
+  duration_ms: 15.501458
+  type: 'test'
+  ...
+# Subtest: workflow rejects brand mismatch and records no snapshot for unmatched tenant
+ok 243 - workflow rejects brand mismatch and records no snapshot for unmatched tenant
+  ---
+  duration_ms: 7.679834
+  type: 'test'
+  ...
+# Subtest: workflow store persists source fingerprints and redacts secret-shaped fields
+ok 244 - workflow store persists source fingerprints and redacts secret-shaped fields
+  ---
+  duration_ms: 13.590459
+  type: 'test'
+  ...
+# Subtest: workflow store records execution without mutating the snapshot
+ok 245 - workflow store records execution without mutating the snapshot
+  ---
+  duration_ms: 17.789458
+  type: 'test'
+  ...
+1..245
+# tests 245
+# suites 0
+# pass 245
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 12852.3345
+
+[exit_code] 0
+[elapsed_seconds] 13.02

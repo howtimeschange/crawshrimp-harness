@@ -72,6 +72,7 @@ from core import notifier
 from core import odps_sync
 from core import scheduler as sched_module
 from core.automation_controller import AutomationController
+from core.automation_policy import infer_automation_permission_mode
 from core.automation_program_proofs import consume_program_test_proof, issue_program_test_proof
 from core.cdp_bridge import CDPBridge, get_bridge, reset_bridge
 from core.browser_session import open_browser_session
@@ -12914,7 +12915,7 @@ class AutomationCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     objective_prompt: str = Field(min_length=1, max_length=20_000)
     automation_kind: str
-    context_mode: str = "isolated"
+    context_mode: Optional[str] = None
     source_session_id: str = ""
     source_runtime_session_id: str = ""
     schedule: dict = Field(default_factory=dict)
@@ -13037,13 +13038,33 @@ def _serialize_automation_run(row: dict) -> dict:
     return data
 
 
+def _automation_permission_mode_for_request(values: dict, *, existing: Optional[dict] = None) -> str:
+    policy = values.get("execution_policy")
+    if policy is None and existing is not None:
+        policy = existing.get("execution_policy")
+    policy = policy if isinstance(policy, Mapping) else {}
+    kind = str(values.get("automation_kind") or (existing or {}).get("automation_kind") or "").strip().lower()
+    has_program = values.get("program") is not None or str((existing or {}).get("active_program_version_uid") or "").strip()
+    return infer_automation_permission_mode(policy, automation_kind=kind, has_program=bool(has_program))
+
+
 def _validate_automation_inherited_session(values: dict, *, existing: Optional[dict] = None) -> None:
+    raw_context_mode = values.get("context_mode") if "context_mode" in values else None
+    if raw_context_mode is None or str(raw_context_mode).strip() == "":
+        values.pop("context_mode", None)
     if existing is not None and "context_mode" in values:
         previous_mode = str(existing.get("context_mode") or "isolated").strip().lower()
         proposed_mode = str(values.get("context_mode") or "").strip().lower()
         if proposed_mode != previous_mode:
             raise HTTPException(422, "context_mode is immutable after Automation creation")
-    context_mode = str(values.get("context_mode") if "context_mode" in values else (existing or {}).get("context_mode") or "isolated").strip().lower()
+    permission_mode = _automation_permission_mode_for_request(values, existing=existing)
+    if "context_mode" in values:
+        context_mode = str(values.get("context_mode") or "").strip().lower()
+    elif existing is not None:
+        context_mode = str(existing.get("context_mode") or "isolated").strip().lower()
+    else:
+        context_mode = "inherited" if permission_mode == "session" else "isolated"
+        values["context_mode"] = context_mode
     requested_source_session_id = str(values.get("source_session_id") or "").strip()
     requested_runtime_session_id = str(values.get("source_runtime_session_id") or "").strip()
     if context_mode != "inherited":

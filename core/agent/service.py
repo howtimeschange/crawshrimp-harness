@@ -92,9 +92,11 @@ def _automation_worker_timeout_seconds(item: dict) -> float:
     """
     if not str((item or {}).get("automation_run_uid") or "").strip():
         return float(30 * 60 + 60)
-    policy = (item or {}).get("automation_policy")
-    execution_policy = policy.get("execution_policy") if isinstance(policy, dict) else {}
-    raw = execution_policy.get("timeout_seconds") if isinstance(execution_policy, dict) else None
+    raw = (item or {}).get("automation_timeout_seconds")
+    if raw is None or str(raw).strip() == "":
+        policy = (item or {}).get("automation_policy")
+        execution_policy = policy.get("execution_policy") if isinstance(policy, dict) else {}
+        raw = execution_policy.get("timeout_seconds") if isinstance(execution_policy, dict) else None
     if raw is None or str(raw).strip() == "":
         # Definitions created before the timeout control existed must remain
         # bounded too; match the Automation Center's visible default.
@@ -129,6 +131,13 @@ def _inherited_automation_wait_seconds(automation: dict) -> int:
     if not math.isfinite(value) or not value.is_integer() or value <= 0:
         return DEFAULT_INHERITED_AUTOMATION_WAIT_SECONDS
     return min(int(value), MAX_INHERITED_AUTOMATION_WAIT_SECONDS)
+
+
+def _automation_dedicated_session_id(automation_uid: str) -> str:
+    uid = str(automation_uid or "").strip()
+    if not uid:
+        raise ValueError("automation_uid is required")
+    return f"automation:{uid}"
 
 
 class McpContextUnavailableError(LookupError):
@@ -433,6 +442,31 @@ def _result_error_message(result: dict) -> Optional[str]:
     ):
         return hook_message
     return None
+
+
+def _worker_run_result(response: Any) -> dict:
+    """Normalize worker.run replies into the terminal summary shape.
+
+    The JS worker can fail before prompt submission and return
+    ``{ok:false,error:{code,message}}`` without a ``summary``.  Preserve that
+    boundary error as the run reason so the DB, events and Automation projection
+    show the actionable failure instead of ``null``.
+    """
+    if not isinstance(response, Mapping):
+        return {}
+    summary = response.get("summary")
+    if isinstance(summary, Mapping) and summary:
+        return dict(summary)
+    if response.get("ok") is False:
+        raw_error = response.get("error")
+        error = raw_error if isinstance(raw_error, Mapping) else {}
+        code = str(error.get("code") or "WORKER_RUN_FAILED").strip() or "WORKER_RUN_FAILED"
+        message = str(error.get("message") or raw_error or code).strip() or code
+        return {
+            "status": "failed",
+            "reason": {"kind": "error", "error": {"code": code, "message": message}},
+        }
+    return {}
 
 
 def _result_hook_abort_message(result: dict) -> Optional[str]:
@@ -1011,6 +1045,21 @@ class AgentService:
         if not automation_run_uid or not agent_run_id:
             return {}
         controller = self.automation_controller or getattr(mcp_gateway.ctx, "automation_controller", None)
+        if self._automation_permission_mode(item) == "session" and str(status or "").strip().lower() == "completed":
+            if item.get("automation_has_verification_schema"):
+                # Explicit schemas remain evidence contracts.  The Controller
+                # will keep requiring automation_record_verification so schema
+                # validation still applies to the model supplied result.
+                pass
+            else:
+                projected = await self._project_session_mode_automation_completed(
+                    controller,
+                    automation_run_uid,
+                    agent_run_id,
+                    session_id=str(item.get("session_id") or ""),
+                )
+                if projected:
+                    return projected
         project = getattr(controller, "project_agent_run_terminal", None)
         if not callable(project):
             return {}
@@ -1031,6 +1080,54 @@ class AgentService:
             # projection exception to reopen it or suppress the normal event.
             logger.exception("Unable to project terminal Agent Run onto Automation")
             return {}
+
+    @staticmethod
+    def _automation_permission_mode(item: Mapping[str, Any]) -> str:
+        return str((item or {}).get("automation_permission_mode") or "scoped").strip().lower() or "scoped"
+
+    @staticmethod
+    def _assistant_terminal_text(session_id: str, agent_run_id: str) -> str:
+        run_id = str(agent_run_id or "").strip()
+        for message in reversed(db.list_messages(str(session_id or ""))):
+            if str(message.get("run_id") or "") != run_id or str(message.get("role") or "") != "assistant":
+                continue
+            try:
+                content = json.loads(message.get("content_json") or "{}")
+            except (TypeError, ValueError):
+                content = {}
+            text = content.get("text") if isinstance(content, dict) else ""
+            if isinstance(text, str) and text.strip():
+                return redact_text(text.strip())
+        return ""
+
+    async def _project_session_mode_automation_completed(
+        self,
+        controller: Any,
+        automation_run_uid: str,
+        agent_run_id: str,
+        *,
+        session_id: str,
+    ) -> dict:
+        summary = {
+            "assistant_terminal": {
+                "status": "completed",
+                "text": self._assistant_terminal_text(session_id, agent_run_id),
+                "provenance": "session_permission_mode",
+            }
+        }
+        project = getattr(controller, "project_session_agent_terminal", None)
+        if callable(project):
+            result = project(automation_run_uid, agent_run_id, result_summary=summary)
+            if inspect.isawaitable(result):
+                result = await result
+            return dict(result) if isinstance(result, dict) else {}
+        finish = getattr(controller, "_finish_completed", None)
+        if callable(finish):
+            result = finish(automation_run_uid, result_summary=summary)
+            if inspect.isawaitable(result):
+                result = await result
+            return dict(result) if isinstance(result, dict) else {}
+        return {}
 
     async def _cancel_automation_task_instances(self, automation_run_uid: str) -> None:
         """Best-effort stop for tasks created by one canceled Automation run."""
@@ -2025,7 +2122,10 @@ class AgentService:
                           attachment_ids: Optional[list[str]] = None,
                           grant_prefs: Optional[dict] = None,
                           automation_policy: Optional[dict] = None,
-                          automation_run_uid: str = "") -> dict:
+                          automation_run_uid: str = "",
+                          automation_permission_mode: str = "",
+                          automation_has_verification_schema: bool = False,
+                          automation_timeout_seconds: Any = None) -> dict:
         session = db.get_session(session_id)
         if not session:
             raise ValueError(f"会话不存在: {session_id}")
@@ -2076,6 +2176,9 @@ class AgentService:
             "grant_prefs": copy.deepcopy(grant_prefs or {}),
             "automation_policy": copy.deepcopy(automation_policy) if isinstance(automation_policy, dict) else None,
             "automation_run_uid": str(automation_run_uid or "").strip(),
+            "automation_permission_mode": str(automation_permission_mode or "").strip().lower(),
+            "automation_has_verification_schema": bool(automation_has_verification_schema),
+            "automation_timeout_seconds": automation_timeout_seconds,
             "image_attachments": image_attachments,
         })
         return {"turn_id": turn_id, "run_id": run_id, "queued": True,
@@ -2088,12 +2191,13 @@ class AgentService:
         prompt: str,
         toolset: list[str],
     ) -> dict:
-        """Queue one Controller-owned turn with an immutable automation policy.
+        """Queue one Controller-owned Automation turn.
 
-        This bridge deliberately keeps the Automation authority separate from
-        interactive grant state.  A missing browser reference therefore does
-        not create a broad grant; the request-scoped MCP policy remains the
-        sole unattended-approval source.
+        ``execution_policy.permission_mode=session`` deliberately uses normal
+        Agent session authority: model selection, native tools, browser state
+        and approval behavior come from the chosen conversation rather than an
+        Automation-scoped allow-list.  Missing/legacy mode remains ``scoped``
+        for the existing unattended policy boundary.
         """
         automation_uid = str((automation or {}).get("automation_uid") or "").strip()
         automation_run_uid = str((run or {}).get("run_uid") or "").strip()
@@ -2101,35 +2205,79 @@ class AgentService:
             raise ValueError("automation_uid and automation run_uid are required")
         normalized_toolset = sorted({str(item).strip() for item in toolset or [] if str(item).strip()})
         context_mode = str((automation or {}).get("context_mode") or "isolated").strip().lower()
+        execution_policy = (automation or {}).get("execution_policy")
+        execution_policy = execution_policy if isinstance(execution_policy, dict) else {}
+        permission_mode = str(execution_policy.get("permission_mode") or "scoped").strip().lower() or "scoped"
+        if permission_mode not in {"session", "scoped"}:
+            permission_mode = "scoped"
+
+        if permission_mode == "session":
+            if context_mode == "inherited":
+                session_id = str((automation or {}).get("source_session_id") or "").strip()
+                if not session_id or not db.get_session(session_id):
+                    raise ValueError("session-mode inherited Automation requires an existing source session")
+            elif context_mode == "isolated":
+                session_id = self._automation_execution_session_id(automation)
+            else:
+                raise ValueError("automation context_mode must be isolated or inherited")
+            title = str((automation or {}).get("title") or automation_uid).strip() or automation_uid
+            queued = await self.submit_turn(
+                session_id,
+                "\n".join([
+                    f"[定时任务触发：{title}]",
+                    "以下是本次定时任务要追加到当前会话执行的内容：",
+                    str(prompt or ""),
+                ]),
+                context_refs=[],
+                grant_prefs=None,
+                automation_policy=None,
+                automation_run_uid=automation_run_uid,
+                automation_permission_mode="session",
+                automation_has_verification_schema="verification_schema" in execution_policy,
+                automation_timeout_seconds=execution_policy.get("timeout_seconds"),
+            )
+            if context_mode == "inherited":
+                self._schedule_inherited_automation_wait(
+                    agent_run_id=str(queued.get("run_id") or ""),
+                    automation_run_uid=automation_run_uid,
+                    source_session_id=session_id,
+                    wait_seconds=_inherited_automation_wait_seconds(automation),
+                )
+            return {**queued, "session_id": session_id, "status": "queued"}
+
         if context_mode == "inherited":
             session_id = str((automation or {}).get("source_session_id") or "").strip()
             if not session_id or not db.get_session(session_id):
                 raise ValueError("inherited Automation requires an existing source session")
         elif context_mode == "isolated":
-            session_id = f"automation:{automation_uid}:{automation_run_uid}"
-            if not db.get_session(session_id):
-                db.create_session(session_id, f"dsh-{uuid.uuid4().hex}", f"自动化：{str((automation or {}).get('title') or '').strip() or automation_uid}")
+            session_id = self._automation_execution_session_id(automation)
         else:
             raise ValueError("automation context_mode must be isolated or inherited")
 
-        execution_policy = (automation or {}).get("execution_policy")
-        browser_tab_id = str(
-            execution_policy.get("browser_tab_id") if isinstance(execution_policy, dict) else ""
-        ).strip()
+        browser_tab_id = str(execution_policy.get("browser_tab_id") or "").strip()
+        if context_mode == "isolated" and "browser_navigate" in normalized_toolset:
+            # A recovered page belongs to this persistent Automation session.
+            # Prefer it to an obsolete creation-time tab on subsequent cycles.
+            browser_tab_id = str((db.get_session(session_id) or {}).get("browser_tab_id") or browser_tab_id).strip()
+        native_toolset = sorted({
+            str(item).strip() for item in execution_policy.get("native_toolset", []) if str(item).strip()
+        })
         context_refs = (
             [{"type": "browser_tab", "id": browser_tab_id}]
             if browser_tab_id else []
         )
         policy = {
             "toolset": list(normalized_toolset),
-            "execution_policy": copy.deepcopy(execution_policy) if isinstance(execution_policy, dict) else {},
+            "execution_policy": copy.deepcopy(execution_policy),
         }
         queued = await self.submit_turn(
             session_id,
             "\n".join([
                 "[后台自动化执行上下文]",
                 "调度器已到点触发本次执行，不需要再次计算或等待触发时间。",
-                "本轮只可调用以下工具：" + ", ".join(normalized_toolset),
+                "本轮已预授权 MCP 工具：" + ", ".join(normalized_toolset),
+                "本轮已预授权原生工具：" + (", ".join(native_toolset) or "无"),
+                "上述权限已在创建或编辑任务时约定，范围内操作直接执行，无需再次征询。仍须遵守任务目标与明确禁止项。",
                 "不要为准备工作调用未授权的时间、bash、文件或网络工具；不需要额外取时来提交固定验收结果。",
                 "仅执行下列目标，按实际结果提交验收：",
                 str(prompt or ""),
@@ -2138,6 +2286,8 @@ class AgentService:
             grant_prefs={"toolset": list(normalized_toolset)},
             automation_policy=policy,
             automation_run_uid=automation_run_uid,
+            automation_permission_mode="scoped",
+            automation_has_verification_schema="verification_schema" in execution_policy,
         )
         if context_mode == "inherited":
             self._schedule_inherited_automation_wait(
@@ -2153,6 +2303,60 @@ class AgentService:
         # Keep a stable explicit status for Controller integrations. The
         # ``queued`` boolean remains for compatibility with existing callers.
         return {**queued, "session_id": session_id, "status": "queued"}
+
+    def _automation_execution_session_id(self, automation: Mapping[str, Any]) -> str:
+        """Return the persistent Agent session that owns one isolated Automation.
+
+        Early builds used a run-scoped session id, so an existing Automation
+        may already have useful context in the most recent linked Agent
+        session.  Prefer that historical session when it still exists, then
+        fall back to the stable Automation-owned session id for new definitions.
+        """
+        automation_uid = str((automation or {}).get("automation_uid") or "").strip()
+        stable_session_id = _automation_dedicated_session_id(automation_uid)
+        for previous in data_sink.list_agent_automation_runs(automation_uid, 500):
+            candidate = str(previous.get("agent_session_id") or "").strip()
+            if candidate and db.get_session(candidate):
+                return candidate
+        if db.get_session(stable_session_id):
+            return stable_session_id
+        title = str((automation or {}).get("title") or "").strip() or automation_uid
+        created = False
+        try:
+            db.create_session(stable_session_id, f"dsh-{uuid.uuid4().hex}", f"自动化：{title}")
+            created = True
+        except Exception:
+            # Another scheduler callback may have created the same stable
+            # session between the read and insert. Re-read before surfacing
+            # the error; this keeps the helper safe without widening scope
+            # into the DB module.
+            if not db.get_session(stable_session_id):
+                raise
+        if created:
+            self._inherit_source_session_settings_once(stable_session_id, automation)
+        return stable_session_id
+
+    @staticmethod
+    def _inherit_source_session_settings_once(target_session_id: str, automation: Mapping[str, Any]) -> None:
+        """Copy source session settings into a newly created isolated session.
+
+        Session-mode isolated Automations should start with the user's current
+        model/browser context, then evolve independently.  Existing dedicated
+        sessions are never overwritten on later scheduled runs.
+        """
+        source_session_id = str((automation or {}).get("source_session_id") or "").strip()
+        if not source_session_id or source_session_id == str(target_session_id or ""):
+            return
+        source = db.get_session(source_session_id)
+        if not source:
+            return
+        updates = {
+            key: str(source.get(key) or "").strip()
+            for key in ("provider_id", "model_id", "browser_tab_id")
+            if str(source.get(key) or "").strip()
+        }
+        if updates:
+            db.update_session(target_session_id, **updates)
 
     def _schedule_inherited_automation_wait(
         self,
@@ -2368,6 +2572,7 @@ class AgentService:
                 "provider": item["provider_id"],
                 "model": official_real_model(item["model_id"]),
                 "budget": budget,
+                "sessionContinuation": self._automation_permission_mode(item) == "session",
             }
             if isinstance(item.get("automation_policy"), dict):
                 # The policy snapshot was captured at Automation claim time;
@@ -2388,7 +2593,7 @@ class AgentService:
                     f"Automation execution exceeded its {int(worker_timeout)}-second timeout"
                 ) from exc
 
-            result = (summary or {}).get("summary") or {}
+            result = _worker_run_result(summary)
 
             # DSH 持久化不变量:runtime 重启后,旧 runtime_session_id 与既有日志不匹配
             # (id collision)。产品行为:轮换 runtime_session_id 并重试一次,提示上下文不可恢复。
@@ -2416,6 +2621,7 @@ class AgentService:
                         "provider": item["provider_id"],
                         "model": official_real_model(item["model_id"]),
                         "budget": budget,
+                        "sessionContinuation": self._automation_permission_mode(item) == "session",
                     }
                     if isinstance(item.get("automation_policy"), dict):
                         retry_payload["automationPolicy"] = copy.deepcopy(item["automation_policy"])
@@ -2427,7 +2633,7 @@ class AgentService:
                     raise AutomationRunTimeoutError(
                         f"Automation execution exceeded its {int(worker_timeout)}-second timeout"
                     ) from exc
-                result = (summary or {}).get("summary") or {}
+                result = _worker_run_result(summary)
             status = result.get("status")
             if status not in RUN_FINAL_STATUSES:
                 status = "failed"
@@ -2597,23 +2803,38 @@ class AgentService:
 
     # ---------- runtime generation ----------
 
+    def _generation_matches_item(self, item: dict) -> bool:
+        """Return whether the shared DSH host is already on this run route."""
+        provider_id = str(item.get("provider_id") or "").strip()
+        model_id = str(item.get("model_id") or "").strip()
+        current_provider = str(self.generation_model_provider or "").strip()
+        current_model = str(self.generation_model or "").strip()
+        if not provider_id or not model_id or not current_provider or not current_model:
+            return False
+        return (
+            current_provider == provider_id
+            and official_real_model(current_model) == official_real_model(model_id)
+        )
+
+    def _generation_ready_for_item(self, item: dict) -> bool:
+        if self.worker is None or self.runtime_state != "ready":
+            return False
+        if self._automation_permission_mode(item) == "session":
+            return True
+        return self._generation_matches_item(item)
+
     def _queued_turn_is_blocked(self, runtime_session_id: str, item: dict) -> bool:
         if runtime_session_id in self.active_runs_by_runtime or runtime_session_id in self.shadow_runs:
             return True
         # Changing the generation stops the shared Host, including other
         # native sessions. Defer that change until all native turns finish.
-        generation_ready = (
-            self.worker is not None and self.runtime_state == "ready"
-            and self.generation_model == item.get("model_id")
-        )
-        return not generation_ready and bool(self.active_runs_by_runtime or self.shadow_runs)
+        return not self._generation_ready_for_item(item) and bool(self.active_runs_by_runtime or self.shadow_runs)
 
     async def _ensure_generation(self, item: dict) -> bool:
         if self._runtime_disabled or self.runtime_state == "disabled_until_manual_restart":
             self.runtime_state = "disabled_until_manual_restart"
             return False
-        if (self.worker is not None and self.runtime_state == "ready"
-                and self.generation_model == item.get("model_id")):
+        if self._generation_ready_for_item(item):
             return True
         return await self.start_generation(item["provider_id"], item["model_id"])
 

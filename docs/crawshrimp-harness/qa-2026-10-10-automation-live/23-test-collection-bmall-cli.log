@@ -1,0 +1,134 @@
+Collected 25 files for bmall-cli
+
+> bmall-cli@0.1.0 test
+> vitest run tests/contract/product.http.test.ts tests/unit/address.test.ts tests/unit/agent.test.ts tests/unit/ai-replenishment.test.ts tests/unit/audit.test.ts tests/unit/auth.test.ts tests/unit/command-surface-smoke.test.ts tests/unit/company.test.ts tests/unit/core.test.ts tests/unit/customer-api.test.ts tests/unit/export-task.test.ts tests/unit/job.test.ts tests/unit/manifest-contract.test.ts tests/unit/mid-presale.test.ts tests/unit/new-store.test.ts tests/unit/ops-misc.test.ts tests/unit/ops.test.ts tests/unit/order-plan.test.ts tests/unit/order-submit.test.ts tests/unit/pending-order-api.test.ts tests/unit/pickup.test.ts tests/unit/report.test.ts tests/unit/rule-chain.test.ts tests/unit/supply-presale.test.ts tests/unit/write-safety.test.ts
+
+
+ RUN  v2.1.9 /Users/xingyicheng/Documents/crawshrimp-harness/skills/cli/bmall-cli
+
+ ✓ tests/unit/agent.test.ts (4 tests) 3ms
+ ✓ tests/unit/address.test.ts (6 tests) 19ms
+ ✓ tests/unit/ops-misc.test.ts (3 tests) 23ms
+error: unknown command 'create'
+error: unknown command 'submit'
+ ✓ tests/unit/ai-replenishment.test.ts (6 tests) 12ms
+ ✓ tests/unit/export-task.test.ts (5 tests) 15ms
+ ✓ tests/unit/order-submit.test.ts (5 tests) 19ms
+ ✓ tests/unit/core.test.ts (8 tests) 37ms
+ ✓ tests/unit/supply-presale.test.ts (2 tests) 12ms
+ ✓ tests/unit/ops.test.ts (18 tests) 20ms
+ ✓ tests/unit/pending-order-api.test.ts (2 tests) 16ms
+{
+  "ok": true,
+  "profile": "unit",
+  "env": "prod",
+  "requestId": "cli_20261010083744091_tayx3x",
+  "data": {
+    "profile": "unit",
+    "env": "prod",
+    "verified": false,
+    "bundle": {
+      "tokenId": "test...oken",
+      "permissions": [],
+      "menuData": []
+    }
+  },
+  "warnings": [],
+  "meta": {
+    "source": "local"
+  }
+}
+ ✓ tests/unit/write-safety.test.ts (7 tests) 42ms
+ ✓ tests/unit/job.test.ts (6 tests) 6ms
+ ✓ tests/unit/audit.test.ts (2 tests) 4ms
+ ✓ tests/unit/mid-presale.test.ts (2 tests) 14ms
+ ✓ tests/unit/order-plan.test.ts (3 tests) 5ms
+ ✓ tests/unit/company.test.ts (9 tests) 461ms
+ ✓ tests/unit/rule-chain.test.ts (3 tests) 5ms
+ ✓ tests/unit/new-store.test.ts (2 tests) 13ms
+ ✓ tests/unit/pickup.test.ts (2 tests) 9ms
+ ✓ tests/contract/product.http.test.ts (1 test) 2ms
+ ✓ tests/unit/manifest-contract.test.ts (3 tests) 10ms
+ ✓ tests/unit/customer-api.test.ts (5 tests) 540ms
+ ✓ tests/unit/report.test.ts (12 tests) 161ms
+ ✓ tests/unit/command-surface-smoke.test.ts (1 test) 565ms
+   ✓ manifest command surface smoke > executes every manifest command through the real CLI registration surface 561ms
+{
+  "ok": true,
+  "profile": "unit",
+  "env": "prod",
+  "requestId": "cli_20261010083745214_mzzs5n",
+  "data": {
+    "profile": "unit",
+    "env": "prod",
+    "saved": true,
+    "bundle": {
+      "tokenId": "iam-...oken",
+      "groupId": "G-SAVED",
+      "groupName": "森马",
+      "groupCode": "C326",
+      "userId": "U1",
+      "userName": "IAM用户",
+      "mobile": "13800000000",
+      "loginActiveTabName": "iam",
+      "permissions": [],
+      "menuData": []
+    }
+  },
+  "warnings": [],
+  "meta": {
+    "source": "local"
+  }
+}
+{
+  "ok": true,
+  "profile": "unit",
+  "env": "prod",
+  "requestId": "cli_20261010083745221_j4wdpc",
+  "data": {
+    "profile": "unit",
+    "renewed": true,
+    "bundle": {
+      "tokenId": "new-...oken",
+      "groupId": "G1",
+      "permissions": [],
+      "menuData": []
+    }
+  },
+  "warnings": [],
+  "meta": {
+    "source": "local"
+  }
+}
+{
+  "ok": true,
+  "profile": "unit",
+  "env": "prod",
+  "requestId": "cli_20261010083745225_fbugsk",
+  "data": {
+    "bundle": {
+      "tokenId": "unit...oken",
+      "roleCode": "admin",
+      "permissions": [],
+      "menuData": []
+    },
+    "serverUser": {
+      "ResultInt": 0,
+      "userData": {
+        "userName": "Unit"
+      }
+    },
+    "menuList": []
+  },
+  "warnings": [],
+  "meta": {
+    "source": "local"
+  }
+}
+ ✓ tests/unit/auth.test.ts (18 tests) 1165ms
+   ✓ auth import-token command > reads a browser token bundle from an attached CDP Bmall tab 1040ms
+
+ Test Files  25 passed (25)
+      Tests  135 passed (135)
+   Start at  16:37:43
+   Duration  1.93s (transform 1.52s, setup 0ms, collect 8.50s, tests 3.18s, environment 3ms, prepare 2.61s)

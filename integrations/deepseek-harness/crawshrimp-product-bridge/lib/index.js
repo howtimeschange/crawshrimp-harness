@@ -54,7 +54,8 @@ const automationNativePolicies = new Map()
 // Read-only presentation hint. Returning tool names never grants execution;
 // automationNativeToolDecision and the MCP lease policy remain authoritative.
 export function automationToolPresentationHints(sessionId) {
-  return [...(automationNativePolicies.get(String(sessionId || ''))?.policy.toolset || [])]
+  const policy = automationNativePolicies.get(String(sessionId || ''))?.policy
+  return [...new Set([...(policy?.toolset || []), ...(policy?.native_toolset || [])])]
 }
 
 function automationPolicySnapshot(policy) {
@@ -62,29 +63,56 @@ function automationPolicySnapshot(policy) {
   const execution = source.execution_policy && typeof source.execution_policy === 'object'
     ? source.execution_policy
     : source
-  const toolset = Array.isArray(source.toolset)
-    ? source.toolset
-    : (Array.isArray(execution.toolset) ? execution.toolset : [])
+  const values = (key) => {
+    const raw = Array.isArray(source[key])
+      ? source[key]
+      : (Array.isArray(execution[key]) ? execution[key] : [])
+    return Object.freeze([...new Set(raw.map((value) => String(value || '').trim()).filter(Boolean))])
+  }
+  const hasNativeToolset = typeof source.has_native_toolset === 'boolean'
+    ? source.has_native_toolset
+    : (Array.isArray(source.native_toolset) || Array.isArray(execution.native_toolset))
+  const toolset = values('toolset')
   return Object.freeze({
-    toolset: Object.freeze([...new Set(toolset.map((tool) => String(tool || '').trim()).filter(Boolean))]),
-    allow_filesystem: execution.allow_filesystem === true,
-    allow_network: execution.allow_network === true,
+    toolset,
+    native_toolset: hasNativeToolset ? values('native_toolset') : toolset,
+    has_native_toolset: hasNativeToolset,
+    allowed_risks: values('allowed_risks'),
+    allow_filesystem: execution.allow_filesystem === true ? true : (execution.allow_filesystem === false ? false : undefined),
+    allow_browser: execution.allow_browser === true ? true : (execution.allow_browser === false ? false : undefined),
+    allow_network: execution.allow_network === true ? true : (execution.allow_network === false ? false : undefined),
+    allow_external_messages: execution.allow_external_messages === true ? true : (execution.allow_external_messages === false ? false : undefined),
+    allow_script_publish: execution.allow_script_publish === true ? true : (execution.allow_script_publish === false ? false : undefined),
   })
 }
 
-function nativeToolKind(toolName) {
+function nativeToolProfile(toolName) {
   const name = String(toolName || '').trim().toLowerCase()
-  if (/^(subagent(?:_|$)|workflow(?:_|$)|ralph(?:_|$)|fork(?:_|$))/u.test(name)) return 'delegation'
-  if (/^(web_fetch|web_search|web[_-])/u.test(name)) return 'network'
-  if (/^(bash|pwsh|shell|terminal)(?:_|$)/u.test(name)) return 'shell'
-  if (/(^|_)(read|write|edit|replace|patch|delete|move|copy|glob|grep|find|search)(?:_|$)/u.test(name)
-    || /^(fs|file)(?:_|$)/u.test(name)) return 'filesystem'
-  return ''
+  if (name === 'crawshrimp_tool_domains' || name === 'enable_tools') {
+    return { kind: 'discovery', risk: 'read_only' }
+  }
+  if (/^(subagent(?:_|$)|workflow(?:_|$)|ralph(?:_|$)|fork(?:_|$))/u.test(name)) {
+    return { kind: 'delegation', risk: 'local_write' }
+  }
+  if (/^(web_fetch|web_search|web[_-])/u.test(name)) {
+    return { kind: 'network', risk: 'read_only' }
+  }
+  if (/^(bash|pwsh|shell|terminal)(?:_|$)/u.test(name)) {
+    return { kind: 'shell', risk: 'external_write', requiredRisks: ['local_write', 'external_write'] }
+  }
+  if (/(^|_)(write|edit|replace|patch|delete|move|copy)(?:_|$)/u.test(name)) {
+    return { kind: 'filesystem', risk: 'local_write' }
+  }
+  if (/(^|_)(read|list|glob|grep|find|search)(?:_|$)/u.test(name)
+    || /^(fs|file|skill|read_image)(?:_|$)/u.test(name)) {
+    return { kind: 'filesystem', risk: 'read_only' }
+  }
+  return null
 }
 
 /**
- * Return the DSH pre-execute denial text for a native tool, or undefined to
- * leave it to the normal DSH tool chain.  This is deliberately separate from
+ * Return a DSH pre-execute decision for a native tool, or undefined to leave
+ * it to the normal DSH tool chain.  This is deliberately separate from
  * MCP policy enforcement: the latter remains scoped through the lease bridge.
  */
 export function automationNativeToolDecision(policy, toolName) {
@@ -92,24 +120,36 @@ export function automationNativeToolDecision(policy, toolName) {
   const snapshot = automationPolicySnapshot(policy)
   const name = String(toolName || '').trim()
   if (name.startsWith(MCP_TOOL_PREFIX)) return undefined
-  const kind = nativeToolKind(name)
   // DSH can add native tools without the product bridge being upgraded at the
   // same time.  An Automation policy is an allow-list, so an unclassified (or
   // malformed) native name must not silently inherit the interactive Session's
   // broader permission preset.
-  if (!kind) {
+  const profile = nativeToolProfile(name)
+  if (!profile) {
     const label = name || '<missing>'
     return `${AUTOMATION_POLICY_DENIED}: unknown native tool "${label}" is outside this Automation execution policy`
   }
-  const permitted = snapshot.toolset.includes(name)
-  let denied = !permitted
-  if (kind === 'delegation') denied = true // children cannot prove inheritance of this run-scoped guard.
-  if (kind === 'filesystem' && !snapshot.allow_filesystem) denied = true
-  // An arbitrary shell command can both read/write the filesystem and open a
-  // network connection, so require both explicit grants before allowing it.
-  if (kind === 'shell' && (!snapshot.allow_filesystem || !snapshot.allow_network)) denied = true
-  if (kind === 'network' && !snapshot.allow_network) denied = true
-  if (!denied) return undefined
+
+  const permitted = snapshot.native_toolset.includes(name)
+  if (snapshot.has_native_toolset) {
+    let denied = !permitted
+    if (profile.kind === 'delegation') denied = true // children cannot prove inheritance of this run-scoped guard.
+    if (profile.kind === 'filesystem' && snapshot.allow_filesystem === false) denied = true
+    if (profile.kind === 'shell'
+      && (snapshot.allow_filesystem !== true || snapshot.allow_network !== true
+        || [snapshot.allow_browser, snapshot.allow_external_messages, snapshot.allow_script_publish].includes(false))) denied = true
+    if (profile.kind === 'network' && snapshot.allow_network !== true) denied = true
+    const requiredRisks = profile.requiredRisks || [profile.risk]
+    if (requiredRisks.some((risk) => !snapshot.allowed_risks.includes(risk))) denied = true
+    if (!denied) return { kind: 'allow' }
+  } else {
+    let denied = !permitted
+    if (profile.kind === 'delegation') denied = true
+    if (profile.kind === 'filesystem' && snapshot.allow_filesystem !== true) denied = true
+    if (profile.kind === 'shell' && (snapshot.allow_filesystem !== true || snapshot.allow_network !== true)) denied = true
+    if (profile.kind === 'network' && snapshot.allow_network !== true) denied = true
+    if (!denied) return undefined
+  }
   return `${AUTOMATION_POLICY_DENIED}: native tool "${name}" is outside this Automation execution policy`
 }
 
@@ -545,6 +585,39 @@ function sameSelection(left, right) {
     && left?.reasoningEffort === right?.reasoningEffort
 }
 
+
+function modelSelectionFromValue(value) {
+  if (!validSelection(value)) return null
+  return {
+    provider: value.provider,
+    model: value.model,
+    ...(value.reasoningEffort === undefined ? {} : { reasoningEffort: value.reasoningEffort }),
+  }
+}
+
+function currentSessionModelSelection(ctx, agent) {
+  const session = agent?.session
+  const events = typeof session?.snapshotEvents === 'function' ? session.snapshotEvents() : (Array.isArray(session?.events) ? session.events : [])
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event?.type !== 'model/selection') continue
+    const selected = modelSelectionFromValue(event.data)
+    if (selected) return selected
+  }
+  const header = typeof session?.requestHeader === 'function' ? session.requestHeader() : undefined
+  const config = header?.config
+  const headerSelection = modelSelectionFromValue(config && {
+    provider: config.provider,
+    model: config.model,
+    ...(config.reasoningEffort === undefined || header?.adapterDefaults?.reasoningEffort === true ? {} : { reasoningEffort: config.reasoningEffort }),
+  })
+  if (headerSelection) return headerSelection
+  const defaultSelection = typeof ctx?.agentDefaultModel?.currentSelection === 'function'
+    ? modelSelectionFromValue(ctx.agentDefaultModel.currentSelection())
+    : null
+  return defaultSelection
+}
+
 function apiProxyFailure(error, fallbackCode = 'internal') {
   return {
     code: String(error?.code || error?.failure?.code || fallbackCode),
@@ -632,6 +705,22 @@ export async function setCrawshrimpSessionPermission(ctx, body) {
   }
   const payload = sessionPermissionPayload(ctx, agent)
   return { ...payload, previous }
+}
+
+export async function getCrawshrimpSessionModel(ctx, sessionId) {
+  const id = String(sessionId || '')
+  if (!id) {
+    return { ok: false, status: 400, error: { code: 'bad-request', message: 'sessionId required' } }
+  }
+  const agent = findLiveAgent(ctx, id)
+  if (agent === undefined) {
+    return { ok: false, status: 409, error: { code: 'NO_LIVE_AGENT', message: 'No live agent for this session' } }
+  }
+  const selected = currentSessionModelSelection(ctx, agent)
+  if (!selected) {
+    return { ok: false, status: 500, error: { code: 'invalid-response', message: 'current session model is unavailable' } }
+  }
+  return { ok: true, status: 200, selected }
 }
 
 export async function selectCrawshrimpSessionModel(ctx, body) {
@@ -908,8 +997,11 @@ export function apply(ctx) {
   ctx.on('tools/pre-execute', async (exec, next) => {
     const runtimeSessionId = String(exec?.agent?.id || '')
     const record = automationNativePolicies.get(runtimeSessionId)
-    const denial = record && automationNativeToolDecision(record.policy, exec?.name)
-    if (denial) {
+    const decision = record && automationNativeToolDecision(record.policy, exec?.name)
+    if (decision && typeof decision === 'object' && decision.kind === 'allow') {
+      return { kind: 'allow' }
+    }
+    if (typeof decision === 'string') {
       try {
         // Mark durable needs_review before returning the final DSH denial.
         // This route is bearer-authenticated with the generation-only token;
@@ -926,13 +1018,14 @@ export function apply(ctx) {
         // A hook cancellation closes the active turn; it does not dispose the
         // shared Web Host or affect another Session.
         try {
-          exec?.agent?.cancel?.({ kind: 'hook', reason: denial })
+          exec?.agent?.cancel?.({ kind: 'hook', reason: decision })
         } catch (cancelError) {
           ctx.logger?.error?.(`Unable to cancel Automation after native-tool denial: ${String(cancelError?.message || cancelError)}`)
         }
       }
+      return { kind: 'deny', reason: decision }
     }
-    return denial ? next({ kind: 'deny', reason: denial }) : next()
+    return next()
   }, { prepend: true })
 
   // DSH 的 MCP transport 是 runtime 级单连接，请求上没有 session header。
@@ -1026,6 +1119,22 @@ export function apply(ctx) {
         } catch (error) {
           res.writeHead(502, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
           res.end(JSON.stringify({ ok: false, error: String(error?.message || error) }))
+        }
+        return
+      }
+      if (url.pathname === '/api/crawshrimp/session/model' && req.method === 'GET') {
+        try {
+          const result = await getCrawshrimpSessionModel(ctx, url.searchParams.get('sessionId'))
+          res.writeHead(result.status ?? (result.ok ? 200 : 500), {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+          })
+          res.end(JSON.stringify(result.ok
+            ? { ok: true, selected: result.selected }
+            : { ok: false, error: result.error }))
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+          res.end(JSON.stringify({ ok: false, error: apiProxyFailure(error) }))
         }
         return
       }

@@ -98,6 +98,131 @@ test('Automation Center consumes the same race-safe state object exercised by un
   assert.match(source, /createAutomationViewState/)
   assert.match(source, /automationViewState\.select\(/)
   assert.match(source, /automationViewState\.runNow\(/)
+  assert.match(source, /inferAutomationPermissionMode/)
+  assert.match(source, /permissionModeLabel\(automation\)/)
   assert.doesNotMatch(source, /let selectionSequence\s*=/)
   assert.doesNotMatch(source, /let runsSequence\s*=/)
+})
+
+test('editing and copying keep agreed native tools, browser recovery URL and explicit restrictions', async () => {
+  const state = await import('./automationCenterState.mjs')
+  const automation = {
+    automation_kind: 'scheduled',
+    context_mode: 'isolated',
+    execution_policy: {
+      toolset: ['browser_navigate', 'automation_record_verification'],
+      native_toolset: ['read', 'web_fetch'],
+      browser_url: 'https://example.com/updates',
+      allowed_risks: ['read_only'],
+      allow_filesystem: true,
+      allow_network: true,
+      allow_external_messages: false,
+    },
+  }
+  for (const copy of [false, true]) {
+    const form = state.formFromAutomation(automation, {}, { copy })
+    const { execution_policy: policy } = state.payloadFromAutomationForm(form, { editing: !copy })
+    assert.deepEqual(policy.native_toolset, ['read', 'web_fetch'])
+    assert.equal(policy.browser_url, automation.execution_policy.browser_url)
+    assert.equal(policy.allow_external_messages, false)
+    assert.equal(policy.allow_network, true)
+    assert.deepEqual(policy.allowed_risks, ['read_only'])
+  }
+})
+
+test('permission scopes include preparation and recovery without granting unrelated actions', async () => {
+  const state = await import('./automationCenterState.mjs')
+  let form = { toolset_text: 'automation_state_get', allowed_risks_text: '', allow_external_messages: false }
+  form = state.addAutomationPermissionScope(form, 'browser')
+  form = state.addAutomationPermissionScope(form, 'network')
+  form = state.addAutomationPermissionScope(form, 'browser')
+  const { execution_policy: policy } = state.payloadFromAutomationForm(form)
+  assert(policy.toolset.includes('browser_navigate'))
+  assert(policy.toolset.includes('automation_record_verification'))
+  assert(policy.toolset.includes('automation_state_get'))
+  assert.equal(new Set(policy.toolset).size, policy.toolset.length)
+  assert.deepEqual(policy.native_toolset, ['web_search', 'web_fetch'])
+  assert.equal(policy.allow_network, true)
+  assert.equal(policy.allow_external_messages, false)
+  assert(!policy.allowed_risks.includes('external_write'))
+  assert(!policy.toolset.includes('fs_exec'))
+})
+
+test('file agreement can retain a no-message restriction without allowing arbitrary commands', async () => {
+  const state = await import('./automationCenterState.mjs')
+  const form = state.addAutomationPermissionScope({ allow_external_messages: false }, 'local')
+  const { execution_policy: policy } = state.payloadFromAutomationForm(form)
+  assert(policy.toolset.includes('fs_write'))
+  assert(!policy.toolset.includes('fs_exec'))
+  assert(!policy.native_toolset.includes('bash'))
+  assert(policy.allowed_risks.includes('local_write'))
+  assert.equal(policy.allow_filesystem, true)
+  assert.equal(policy.allow_external_messages, false)
+})
+
+test('command agreement explicitly enables the capabilities and risk required by command execution', async () => {
+  const state = await import('./automationCenterState.mjs')
+  const form = state.addAutomationPermissionScope({ allow_external_messages: false }, 'commands')
+  const { execution_policy: policy } = state.payloadFromAutomationForm(form)
+  assert(policy.toolset.includes('fs_exec'))
+  assert(policy.native_toolset.includes('bash'))
+  assert(policy.allowed_risks.includes('external_write'))
+  assert.equal(policy.allow_filesystem, true)
+  assert.equal(policy.allow_network, true)
+  assert.equal(policy.allow_external_messages, true)
+})
+
+test('session scheduling does not persist a second tool or risk permission configuration', async () => {
+  const state = await import('./automationCenterState.mjs')
+  const form = state.formFromAutomation({
+    automation_kind: 'scheduled', context_mode: 'inherited', source_session_id: 'chat',
+    execution_policy: { permission_mode: 'session', timeout_seconds: 180, max_retries: 0 },
+  })
+  const { execution_policy: policy } = state.payloadFromAutomationForm({
+    ...form, toolset_text: 'browser_act', allowed_risks_text: 'local_write',
+    native_toolset_text: 'bash', allow_external_messages: false,
+  })
+  assert.equal(form.permission_mode, 'session')
+  assert.deepEqual(policy, {
+    permission_mode: 'session', timeout_seconds: 180, max_retries: 0, inherited_wait_seconds: 300,
+  })
+  assert.equal(state.formFromAutomation({ execution_policy: { toolset: ['fs_read'] } }).permission_mode, 'scoped')
+})
+
+test('permission mode inference matches backend session-vs-scoped compatibility rules', async () => {
+  const state = await import('./automationCenterState.mjs')
+
+  assert.equal(state.inferAutomationPermissionMode({}, { automationKind: 'scheduled' }), 'session')
+  assert.equal(state.inferAutomationPermissionMode({
+    timeout_seconds: 600,
+    max_retries: 0,
+    retry_backoff_seconds: 30,
+    inherited_wait_seconds: 300,
+    verification_schema: { type: 'object' },
+  }, { automationKind: 'scheduled' }), 'session')
+  assert.equal(state.formFromAutomation({
+    automation_kind: 'scheduled',
+    execution_policy: {},
+  }).permission_mode, 'session')
+  assert.equal(state.formFromAutomation({
+    automation_kind: 'scheduled',
+    execution_policy: { timeout_seconds: 600 },
+  }).permission_mode, 'session')
+
+  assert.equal(state.inferAutomationPermissionMode({ toolset: [] }, { automationKind: 'scheduled' }), 'scoped')
+  assert.equal(state.inferAutomationPermissionMode({ native_toolset: [] }, { automationKind: 'scheduled' }), 'scoped')
+  assert.equal(state.inferAutomationPermissionMode({ allowed_risks: [] }, { automationKind: 'scheduled' }), 'scoped')
+  assert.equal(state.inferAutomationPermissionMode({ allow_network: true }, { automationKind: 'scheduled' }), 'scoped')
+  assert.equal(state.inferAutomationPermissionMode({ permission_mode: 'advanced' }, { automationKind: 'scheduled' }), 'scoped')
+  assert.equal(state.inferAutomationPermissionMode({}, { automationKind: 'loop' }), 'scoped')
+  assert.equal(state.inferAutomationPermissionMode({}, { automationKind: 'scheduled', hasProgram: true }), 'scoped')
+  assert.equal(state.formFromAutomation({
+    automation_kind: 'scheduled',
+    execution_policy: {},
+    program: {},
+  }).permission_mode, 'scoped')
+  assert.equal(state.formFromAutomation({
+    automation_kind: 'loop',
+    execution_policy: {},
+  }).permission_mode, 'scoped')
 })

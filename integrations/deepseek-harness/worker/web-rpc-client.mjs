@@ -356,6 +356,21 @@ export class DshWebRuntime {
     return result
   }
 
+  async currentModel({ sessionId }) {
+    const url = new URL('/api/crawshrimp/session/model', this.#origin)
+    url.searchParams.set('sessionId', sessionId)
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { cookie: this.#cookie },
+      signal: AbortSignal.timeout(10000),
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok || !result?.ok) {
+      throw Object.assign(new Error(result?.error?.message || 'Session model read failed'), { code: result?.error?.code })
+    }
+    return result.selected
+  }
+
   /**
    * Product sessions retain their own selected model.  Re-assert that choice
    * after a runtime restart (or a product-side model change), rather than

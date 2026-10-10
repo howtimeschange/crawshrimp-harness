@@ -1,0 +1,18 @@
+$ node scripts/test-collection.mjs run semir-yunpan-cli
+Collected 15 files for semir-yunpan-cli
+
+> semir-yunpan-cli@0.1.0 test
+> vitest run tests/api.test.ts tests/capabilities.test.ts tests/catalog-download.test.ts tests/cdp.test.ts tests/cli-args.test.ts tests/client.test.ts tests/download.test.ts tests/files.test.ts tests/image-catalog.test.ts tests/image-plan.test.ts tests/rule-image-plan.test.ts tests/rules.test.ts tests/run-input.test.ts tests/shenhui-plan.test.ts tests/shenhui.test.ts
+
+
+ RUN  v4.1.9 /Users/xingyicheng/Documents/crawshrimp-harness/skills/cli/semir-yunpan-cli
+
+
+ Test Files  15 passed (15)
+      Tests  61 passed (61)
+   Start at  17:36:12
+   Duration  258ms (transform 1.01s, setup 0ms, import 1.38s, tests 86ms, environment 1ms)
+
+
+[exit_code] 0
+[elapsed_seconds] 0.64

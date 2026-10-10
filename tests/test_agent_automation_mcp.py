@@ -54,7 +54,7 @@ def test_submit_automation_turn_uses_isolated_session_and_policy_toolset(monkeyp
             ["automation_record_observation"],
         )
 
-        assert queued["session_id"] == "automation:a1:ar1"
+        assert queued["session_id"] == "automation:a1"
         assert queued["status"] == "queued"
         item = service.queue.get_nowait()
         assert item["grant_prefs"] == {"toolset": ["automation_record_observation"]}
@@ -176,17 +176,19 @@ def test_automation_create_contract_guides_a_real_chinese_reminder_without_schem
     # than searching local files for an undocumented values shape.
     assert "automation_current_time" in description
     assert "今天/明天/几点" in description
-    assert "automation_kind=\"scheduled\"" in description
+    assert "automation_kind默认scheduled" in description
     assert '"kind":"at"' in description
     assert '"kind":"every"' in description
     assert '"interval_seconds":3600' in description
     assert "每小时同步" in description
     assert "无需 Program" in description
     assert "Asia/Shanghai" in description
-    assert "context_mode=\"isolated\"" in description
+    assert "execution_policy默认" in description
+    assert "context_mode默认inherited" in description
+    assert "固定专用会话连续执行" in description
     assert "automation_record_verification" in description
     assert "fs_read、fs_list、fs_exec、browser_*、script_* 或 repo_*" in description
-    assert "本地自动化验收提醒" in description
+    assert "普通定时只需填写" in description
     assert "automation_wait_run" in description
     assert "last_snapshot" in description
 
@@ -838,3 +840,39 @@ def test_registered_mcp_tools_enforce_the_exact_automation_toolset_before_tool_e
     assert controller.calls == [
         ("automation-run-受限", "AUTOMATION_TOOL_DENIED", "Automation policy does not authorize MCP tool fs_read"),
     ]
+
+
+def test_automation_create_timeout_only_policy_defaults_to_session(monkeypatch, tmp_path):
+    class Controller:
+        def __init__(self):
+            self.payload = None
+
+        def create(self, payload):
+            self.payload = dict(payload)
+            return self.payload
+
+    _seed_agent_db(monkeypatch, tmp_path)
+    db.create_session("source-session", "dsh-source", "创建自动化")
+    controller = Controller()
+    previous = mcp_gateway.ctx.automation_controller
+    mcp_gateway.set_automation_controller(controller)
+    token = mcp_gateway.bind_tool_context({
+        "active_run": {"run_id": "agent-create", "session_id": "source-session"},
+        "grant": None,
+        "current_tool_call_id": "",
+    })
+    try:
+        result = mcp_gateway.tool_automation_create({
+            "title": "十分钟普通定时",
+            "objective_prompt": "按当前会话继续执行",
+            "schedule": {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+            "context_mode": "inherited",
+            "execution_policy": {"timeout_seconds": 600},
+        })
+    finally:
+        mcp_gateway.reset_tool_context(token)
+        mcp_gateway.set_automation_controller(previous)
+
+    assert result["ok"] is True
+    assert controller.payload["execution_policy"] == {"timeout_seconds": 600, "permission_mode": "session"}
+    assert controller.payload["source_session_id"] == "source-session"

@@ -3,7 +3,7 @@
     <header class="ac-head">
       <div>
         <h2>智能体自动化</h2>
-        <p>让智能体按时间或闭环条件执行；条件只选择分支，权限仍受此自动化的策略约束。</p>
+        <p>在固定会话中定时执行任务，沿用会话当前的模型、权限和工具设置；已有脚本也可以按计划运行。</p>
       </div>
       <div class="ac-head-actions">
         <button v-if="editing" type="button" class="ac-secondary" @click="closeEditor">返回列表</button>
@@ -51,15 +51,23 @@
             <label>
               <span>会话上下文</span>
               <select v-model="form.context_mode" :disabled="Boolean(editingUid)">
-                <option value="isolated">隔离会话（推荐）</option>
-                <option value="inherited">继承已有会话</option>
+                <option value="inherited">当前会话（推荐）</option>
+                <option value="isolated">固定专用会话</option>
               </select>
             </label>
             <label v-if="form.context_mode === 'inherited'">
               <span>来源会话 ID</span>
               <input v-model.trim="form.source_session_id" required :readonly="Boolean(editingUid)" placeholder="已有智能体会话 ID" />
             </label>
+            <label>
+              <span>执行权限</span>
+              <select v-model="form.permission_mode" :disabled="form.automation_kind === 'loop' || hasProgram">
+                <option value="session">沿用会话设置（推荐）</option>
+                <option value="scoped">单独配置（高级）</option>
+              </select>
+            </label>
           </div>
+          <p class="ac-help">同一任务的每次执行都延续固定会话，保留历史上下文；每轮执行记录仍可单独查看。</p>
         </section>
 
         <section v-if="form.automation_kind === 'scheduled'" class="ac-card">
@@ -112,7 +120,7 @@
           <p class="ac-help">每轮先观察，再由 Program 选择分支；没有匹配分支也会保存 checkpoint 并等待下一轮。</p>
         </section>
 
-        <section class="ac-card">
+        <section v-if="form.permission_mode !== 'session'" class="ac-card">
           <div class="ac-section-head">
             <div>
               <h4>条件 Program</h4>
@@ -149,12 +157,27 @@
           </div>
         </section>
 
-        <section class="ac-card">
-          <h4>执行权限与限制</h4>
+        <section v-if="form.permission_mode !== 'session'" class="ac-card">
+          <h4>提前约定执行权限</h4>
+          <p class="ac-help">保存后，约定范围内的操作会自动执行，后续定时运行无需重复确认。可随时修改权限或暂停任务。</p>
+          <div class="ac-head-actions">
+            <button type="button" class="ac-secondary" @click="addPermissionScope('browser')">允许网页巡检与恢复</button>
+            <button type="button" class="ac-secondary" @click="addPermissionScope('local')">允许文件读写</button>
+            <button type="button" class="ac-secondary" @click="addPermissionScope('commands')">允许脚本与命令</button>
+            <button type="button" class="ac-secondary" @click="addPermissionScope('network')">允许联网检索</button>
+          </div>
           <div class="ac-grid three">
+            <label class="wide">
+              <span>任务网页地址</span>
+              <input v-model.trim="form.browser_url" type="url" placeholder="https://…（页面关闭后可自动恢复）" />
+            </label>
             <label class="wide">
               <span>允许 MCP 工具（逗号分隔）</span>
               <input v-model="form.toolset_text" placeholder="automation_record_observation, automation_record_verification" />
+            </label>
+            <label class="wide">
+              <span>允许原生工具（逗号分隔）</span>
+              <input v-model="form.native_toolset_text" placeholder="例如 read, write, bash, web_fetch" />
             </label>
             <label class="wide">
               <span>无人值守允许风险（逗号分隔）</span>
@@ -163,6 +186,13 @@
             <label>
               <span>超时（秒）</span>
               <input v-model.number="form.timeout_seconds" type="number" min="1" required />
+            </label>
+            <label v-for="[flag, label] in automationPermissionFlags" :key="flag">
+              <span>{{ label }}</span>
+              <select v-model="form[flag]">
+                <option :value="true">在约定工具范围内允许</option>
+                <option :value="false">禁止</option>
+              </select>
             </label>
             <label>
               <span>最大重试</span>
@@ -178,8 +208,20 @@
             <span>启用此自动化</span>
           </label>
           <p v-if="hasProgram && !hasSuccessfulProgramTest" class="ac-policy-warning">请先测试 Program；已编辑的 Program 或测试输入会使原测试结果失效。</p>
-          <p class="ac-help">填写实际 MCP 工具名，而不是“观察、验证”等抽象能力。例如闭环观察用 automation_record_observation，完成回执用 automation_record_verification。需要原本审批的操作，还必须填写具体风险类别：read_only、local_write、external_write 或 destructive；工具和风险必须同时匹配才会无人值守执行。策略与 Program 分支允许工具的交集之外，一律拒绝并转人工复核。继承会话会等待原会话空闲；超时会记录为“因并发跳过”，不会抢占用户对话。</p>
+          <p class="ac-help">工具列表和无人值守允许风险共同记录授权范围。风险类别：read_only（读取）、local_write（本地写入）、external_write（对外写入）、destructive（删除等操作）。脚本与命令可访问文件、网络和外部服务；有禁止项时请使用对应的文件或网页工具。网页恢复需要授权 browser_navigate 并填写任务网页地址。工具开关不会单独授予未列出的工具。继承会话会等待原会话空闲；超时会记录为“因并发跳过”，不会抢占用户对话。</p>
           <p v-if="editingUid" class="ac-policy-warning">会话上下文和来源会话在创建后不可修改；如需更换，请使用“复制为新 Automation”。</p>
+        </section>
+
+        <section v-else class="ac-card">
+          <h4>沿用会话设置</h4>
+          <p class="ac-help">每次触发都在选定的会话中执行，使用该会话当前的模型、权限与工具。无需为定时任务重复配置工具或风险类别。已写好的脚本可在目标中写明脚本和运行参数。</p>
+          <div class="ac-grid three">
+            <label><span>超时（秒）</span><input v-model.number="form.timeout_seconds" type="number" min="1" required /></label>
+            <label><span>最大重试</span><input v-model.number="form.max_retries" type="number" min="0" required /></label>
+            <label v-if="form.context_mode === 'inherited'"><span>会话忙碌时最长等待（秒）</span><input v-model.number="form.inherited_wait_seconds" type="number" min="1" required /></label>
+          </div>
+          <label class="ac-check"><input v-model="form.enabled" type="checkbox" /><span>启用此自动化</span></label>
+          <p class="ac-help">会话忙碌时排队等待，不打断当前任务；每轮保留执行记录。</p>
         </section>
 
         <div class="ac-form-actions">
@@ -223,6 +265,7 @@
             </div>
             <div>
               <span>{{ contextLabel(automation.context_mode) }}</span>
+              <span>{{ permissionModeLabel(automation) }}</span>
               <span :class="['ac-status', statusTone(automation.last_status)]">{{ statusLabel(automation.last_status, automation.enabled) }}</span>
             </div>
             <div>
@@ -279,8 +322,11 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
+  addAutomationPermissionScope,
+  automationPermissionFlags,
   createAutomationViewState,
   formFromAutomation,
+  inferAutomationPermissionMode,
   payloadFromAutomationForm,
 } from '../utils/automationCenterState.mjs'
 
@@ -338,8 +384,9 @@ function defaultForm() {
   return {
     title: '',
     objective_prompt: '',
-    automation_kind: 'loop',
-    context_mode: 'isolated',
+    automation_kind: 'scheduled',
+    context_mode: 'inherited',
+    permission_mode: 'session',
     source_session_id: '',
     timezone: 'Asia/Shanghai',
     schedule_kind: 'every',
@@ -349,19 +396,25 @@ function defaultForm() {
     max_cycles: 0,
     failure_threshold: 3,
     toolset_text: 'automation_record_observation, automation_record_verification',
+    native_toolset_text: '',
+    browser_url: '',
+    ...Object.fromEntries(automationPermissionFlags.map(([flag]) => [flag, true])),
     allowed_risks_text: '',
     timeout_seconds: 300,
     max_retries: 1,
     inherited_wait_seconds: 300,
     enabled: false,
-    program_text: JSON.stringify(exampleProgram(), null, 2),
+    program_text: '',
     facts_text: JSON.stringify({ inventory: { available: 5 } }, null, 2),
     checkpoint_text: '{}',
   }
 }
 
 const form = ref(defaultForm())
-const hasProgram = computed(() => Boolean(form.value.program_text.trim()))
+function addPermissionScope(scope) {
+  form.value = addAutomationPermissionScope(form.value, scope)
+}
+const hasProgram = computed(() => form.value.permission_mode !== 'session' && Boolean(form.value.program_text.trim()))
 const programFingerprint = computed(() => JSON.stringify({
   program: form.value.program_text,
   facts: form.value.facts_text,
@@ -408,7 +461,16 @@ function nextRunLabel(automation) {
 }
 
 function contextLabel(value) {
-  return value === 'inherited' ? '继承会话' : '隔离会话'
+  return value === 'inherited' ? '固定当前会话' : '固定专用会话'
+}
+
+function permissionModeLabel(automation) {
+  const mode = inferAutomationPermissionMode(automation?.execution_policy || {}, {
+    automationKind: automation?.automation_kind,
+    hasProgram: automation?.program !== undefined && automation?.program !== null
+      || Boolean(String(automation?.active_program_version_uid || '').trim()),
+  })
+  return mode === 'session' ? '沿用会话设置' : '单独配置权限'
 }
 
 function statusLabel(value, enabled) {
@@ -548,6 +610,7 @@ function closeEditor() {
 
 function onKindChange() {
   if (form.value.automation_kind === 'loop') {
+    form.value.permission_mode = 'scoped'
     form.value.schedule_kind = 'every'
     if (!form.value.program_text.trim()) restoreProgramExample()
     return

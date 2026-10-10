@@ -1,0 +1,473 @@
+Collected 14 files for integrations
+TAP version 13
+# Subtest: createVideoTask posts payload to Bailian video synthesis endpoint
+ok 1 - createVideoTask posts payload to Bailian video synthesis endpoint
+  ---
+  duration_ms: 16.722625
+  type: 'test'
+  ...
+# Subtest: baseUrl can already include api version without double-appending
+ok 2 - baseUrl can already include api version without double-appending
+  ---
+  duration_ms: 0.400125
+  type: 'test'
+  ...
+# Subtest: createVideoTask enables DashScope OSS resolution for temporary oss media URLs
+ok 3 - createVideoTask enables DashScope OSS resolution for temporary oss media URLs
+  ---
+  duration_ms: 0.380667
+  type: 'test'
+  ...
+# Subtest: getVideoTask fetches Bailian task by path id
+ok 4 - getVideoTask fetches Bailian task by path id
+  ---
+  duration_ms: 0.237041
+  type: 'test'
+  ...
+# Subtest: pollVideoTask stops on Bailian terminal status
+ok 5 - pollVideoTask stops on Bailian terminal status
+  ---
+  duration_ms: 4.813292
+  type: 'test'
+  ...
+# Subtest: validateBailianTaskPayload accepts HappyHorse examples
+ok 6 - validateBailianTaskPayload accepts HappyHorse examples
+  ---
+  duration_ms: 3.084833
+  type: 'test'
+  ...
+# Subtest: validateBailianTaskPayload accepts Bailian gateway model examples
+ok 7 - validateBailianTaskPayload accepts Bailian gateway model examples
+  ---
+  duration_ms: 2.075125
+  type: 'test'
+  ...
+# Subtest: validateBailianTaskPayload rejects invalid Kling parameter names and missing aspect ratio
+ok 8 - validateBailianTaskPayload rejects invalid Kling parameter names and missing aspect ratio
+  ---
+  duration_ms: 0.309084
+  type: 'test'
+  ...
+# Subtest: validateBailianTaskPayload rejects incomplete PixVerse motion-control inputs
+ok 9 - validateBailianTaskPayload rejects incomplete PixVerse motion-control inputs
+  ---
+  duration_ms: 0.373458
+  type: 'test'
+  ...
+# Subtest: validateBailianTaskPayload rejects image-to-video ratio
+ok 10 - validateBailianTaskPayload rejects image-to-video ratio
+  ---
+  duration_ms: 0.35475
+  type: 'test'
+  ...
+# Subtest: validateBailianTaskPayload limits reference images to nine
+ok 11 - validateBailianTaskPayload limits reference images to nine
+  ---
+  duration_ms: 0.134333
+  type: 'test'
+  ...
+# Subtest: isBailianTerminalStatus identifies Bailian task terminal states
+ok 12 - isBailianTerminalStatus identifies Bailian task terminal states
+  ---
+  duration_ms: 0.045834
+  type: 'test'
+  ...
+# Subtest: getBailianConfig builds workspace and legacy endpoints
+ok 13 - getBailianConfig builds workspace and legacy endpoints
+  ---
+  duration_ms: 0.059166
+  type: 'test'
+  ...
+# Subtest: backports are idempotent and reject unknown source
+ok 14 - backports are idempotent and reject unknown source
+  ---
+  duration_ms: 1.37325
+  type: 'test'
+  ...
+# Subtest: normal pagination swaps only after all pages
+ok 15 - normal pagination swaps only after all pages
+  ---
+  duration_ms: 1.015667
+  type: 'test'
+  ...
+# Subtest: cycle A→A rejects and retains old tools
+ok 16 - cycle A→A rejects and retains old tools
+  ---
+  duration_ms: 0.430042
+  type: 'test'
+  ...
+# Subtest: cycle A→B→A rejects and retains old tools
+ok 17 - cycle A→B→A rejects and retains old tools
+  ---
+  duration_ms: 0.318375
+  type: 'test'
+  ...
+# Subtest: transport cancellation retains old generation
+ok 18 - transport cancellation retains old generation
+  ---
+  duration_ms: 0.445458
+  type: 'test'
+  ...
+# Subtest: button uses Enter policy queue/false
+ok 19 - button uses Enter policy queue/false
+  ---
+  duration_ms: 3.51725
+  type: 'test'
+  ...
+# Subtest: button uses Enter policy queue/true
+ok 20 - button uses Enter policy queue/true
+  ---
+  duration_ms: 1.022625
+  type: 'test'
+  ...
+# Subtest: button uses Enter policy steer/false
+ok 21 - button uses Enter policy steer/false
+  ---
+  duration_ms: 0.829833
+  type: 'test'
+  ...
+# Subtest: button uses Enter policy steer/true
+ok 22 - button uses Enter policy steer/true
+  ---
+  duration_ms: 0.975
+  type: 'test'
+  ...
+# Subtest: native link callback uses resolved path and session; standalone and directory fall back
+ok 23 - native link callback uses resolved path and session; standalone and directory fall back
+  ---
+  duration_ms: 0.648125
+  type: 'test'
+  ...
+# Subtest: patched native opener routes files to the same panel and keeps directory/standalone fallback
+ok 24 - patched native opener routes files to the same panel and keeps directory/standalone fallback
+  ---
+  duration_ms: 0.491875
+  type: 'test'
+  ...
+# Subtest: native_toolset authorizes exact native tools without changing ordinary next flow
+ok 25 - native_toolset authorizes exact native tools without changing ordinary next flow
+  ---
+  duration_ms: 2.329792
+  type: 'test'
+  ...
+# Subtest: native policy denies missing tools, false flags, wrong risks, and delegation
+ok 26 - native policy denies missing tools, false flags, wrong risks, and delegation
+  ---
+  duration_ms: 0.610542
+  type: 'test'
+  ...
+# Subtest: legacy policy without native_toolset keeps previous native-tool behavior
+ok 27 - legacy policy without native_toolset keeps previous native-tool behavior
+  ---
+  duration_ms: 0.068041
+  type: 'test'
+  ...
+# Subtest: legacy policy snapshot keeps legacy behavior through the real hook
+ok 28 - legacy policy snapshot keeps legacy behavior through the real hook
+  ---
+  duration_ms: 0.747125
+  type: 'test'
+  ...
+# Subtest: real hook denies unauthorized native tools and monotonic cleanup preserves newer run snapshots
+ok 29 - real hook denies unauthorized native tools and monotonic cleanup preserves newer run snapshots
+  ---
+  duration_ms: 0.523125
+  type: 'test'
+  ...
+# Subtest: real Cordis Tools execution skips downstream ask on native allow while guards still apply
+ok 30 - real Cordis Tools execution skips downstream ask on native allow while guards still apply
+  ---
+  duration_ms: 16.281125
+  type: 'test'
+  ...
+# Subtest: current session model reads latest model selection event and preserves reasoning effort
+ok 31 - current session model reads latest model selection event and preserves reasoning effort
+  ---
+  duration_ms: 0.426334
+  type: 'test'
+  ...
+# Subtest: current session model falls back to request header without adapter default effort
+ok 32 - current session model falls back to request header without adapter default effort
+  ---
+  duration_ms: 0.105042
+  type: 'test'
+  ...
+# Subtest: unrelated tools are deferred; generic, skill and unknown extension tools remain
+ok 33 - unrelated tools are deferred; generic, skill and unknown extension tools remain
+  ---
+  duration_ms: 1.109584
+  type: 'test'
+  ...
+# Subtest: domain tool actually exposes callable registered schemas next request and never shrinks
+ok 34 - domain tool actually exposes callable registered schemas next request and never shrinks
+  ---
+  duration_ms: 6.76425
+  type: 'test'
+  ...
+# Subtest: empty discovery, unavailable domain and invalid input do not enable unrelated tools
+ok 35 - empty discovery, unavailable domain and invalid input do not enable unrelated tools
+  ---
+  duration_ms: 0.812083
+  type: 'test'
+  ...
+# Subtest: activation cannot leak across agents or bypass a pre-existing restricted registry
+ok 36 - activation cannot leak across agents or bypass a pre-existing restricted registry
+  ---
+  duration_ms: 1.548791
+  type: 'test'
+  ...
+# Subtest: resume preserves logged activation, including before next header; failed/forged results ignored
+ok 37 - resume preserves logged activation, including before next header; failed/forged results ignored
+  ---
+  duration_ms: 0.46025
+  type: 'test'
+  ...
+# Subtest: real Cordis scoped assembly exposes tools on the next request while restrictions and guards survive
+ok 38 - real Cordis scoped assembly exposes tools on the next request while restrictions and guards survive
+  ---
+  duration_ms: 9.34125
+  type: 'test'
+  ...
+# Subtest: every domain can be loaded together; script and skill tools keep their parameter schemas
+ok 39 - every domain can be loaded together; script and skill tools keep their parameter schemas
+  ---
+  duration_ms: 2.54775
+  type: 'test'
+  ...
+# Subtest: archive/restore preserves workspace membership and survives persisted readback
+ok 40 - archive/restore preserves workspace membership and survives persisted readback
+  ---
+  duration_ms: 3.400667
+  type: 'test'
+  ...
+# Subtest: all shipped patches are idempotent and client bundles parse
+ok 41 - all shipped patches are idempotent and client bundles parse
+  ---
+  duration_ms: 2.315417
+  type: 'test'
+  ...
+# Subtest: archive action waits for confirmation; cancellation sends no request; failures retain dialog
+ok 42 - archive action waits for confirmation; cancellation sends no request; failures retain dialog
+  ---
+  duration_ms: 4.131542
+  type: 'test'
+  ...
+# Subtest: archive dialog points to shell settings without registering a DSH settings section
+ok 43 - archive dialog points to shell settings without registering a DSH settings section
+  ---
+  duration_ms: 1.0065
+  type: 'test'
+  ...
+# Subtest: browser wire schema preserves restore flag instead of silently archiving again
+ok 44 - browser wire schema preserves restore flag instead of silently archiving again
+  ---
+  duration_ms: 29.087208
+  type: 'test'
+  ...
+# Subtest: patched workspace create performs a real atomic write probe and leaves no residue
+ok 45 - patched workspace create performs a real atomic write probe and leaves no residue
+  ---
+  duration_ms: 10.816375
+  type: 'test'
+  ...
+# Subtest: patched workspace create rejects a directory that exists but is not writable
+ok 46 - patched workspace create rejects a directory that exists but is not writable
+  ---
+  duration_ms: 1.657416
+  type: 'test'
+  ...
+# Subtest: projection preserves model provenance but omits prompt and tool contents
+ok 47 - projection preserves model provenance but omits prompt and tool contents
+  ---
+  duration_ms: 0.669417
+  type: 'test'
+  ...
+# Subtest: projection keeps authoritative tool result and assistant data intact
+ok 48 - projection keeps authoritative tool result and assistant data intact
+  ---
+  duration_ms: 0.093042
+  type: 'test'
+  ...
+# Subtest: request metadata is not mislabeled as model history bytes
+ok 49 - request metadata is not mislabeled as model history bytes
+  ---
+  duration_ms: 0.097542
+  type: 'test'
+  ...
+# Subtest: repairs legacy receipts and subsequent turns without changing content or seq
+ok 50 - repairs legacy receipts and subsequent turns without changing content or seq
+  ---
+  duration_ms: 2.007042
+  type: 'test'
+  ...
+# Subtest: rejects unrelated malformed history
+ok 51 - rejects unrelated malformed history
+  ---
+  duration_ms: 0.287875
+  type: 'test'
+  ...
+# Subtest: disk repair backs up original bytes and produces readable, idempotent history
+ok 52 - disk repair backs up original bytes and produces readable, idempotent history
+  ---
+  duration_ms: 35.491583
+  type: 'test'
+  ...
+# Subtest: ordinary worker runs still enforce interaction budgets
+ok 53 - ordinary worker runs still enforce interaction budgets
+  ---
+  duration_ms: 0.48
+  type: 'test'
+  ...
+# Subtest: trusted session continuations skip only worker interaction budgets
+ok 54 - trusted session continuations skip only worker interaction budgets
+  ---
+  duration_ms: 0.080625
+  type: 'test'
+  ...
+# Subtest: same provider and model skips selection so existing reasoning effort is preserved
+ok 55 - same provider and model skips selection so existing reasoning effort is preserved
+  ---
+  duration_ms: 0.634375
+  type: 'test'
+  ...
+# Subtest: explicit reasoning effort mismatch triggers a selection update
+ok 56 - explicit reasoning effort mismatch triggers a selection update
+  ---
+  duration_ms: 0.082625
+  type: 'test'
+  ...
+# Subtest: true model changes carry the current reasoning effort when the run has no explicit effort
+ok 57 - true model changes carry the current reasoning effort when the run has no explicit effort
+  ---
+  duration_ms: 0.362584
+  type: 'test'
+  ...
+# Subtest: findWorkspaceCwdForSession returns the persisted cwd for an existing DSH session
+ok 58 - findWorkspaceCwdForSession returns the persisted cwd for an existing DSH session
+  ---
+  duration_ms: 0.442083
+  type: 'test'
+  ...
+# Subtest: resolveRunSessionCwd preserves explicit cwd and otherwise adopts existing DSH session cwd
+ok 59 - resolveRunSessionCwd preserves explicit cwd and otherwise adopts existing DSH session cwd
+  ---
+  duration_ms: 5.051292
+  type: 'test'
+  ...
+# Subtest: resolveRunSessionCwd falls back to agent workspace for new sessions
+ok 60 - resolveRunSessionCwd falls back to agent workspace for new sessions
+  ---
+  duration_ms: 1.194667
+  type: 'test'
+  ...
+# Subtest: fresh Web profiles copy both the product preset composition and metadata, idempotently
+ok 61 - fresh Web profiles copy both the product preset composition and metadata, idempotently
+  ---
+  duration_ms: 16.233875
+  type: 'test'
+  ...
+# Subtest: createSession retains the preset migration guard
+ok 62 - createSession retains the preset migration guard
+  ---
+  duration_ms: 16.298333
+  type: 'test'
+  ...
+# Subtest: native Web follow closes and rejects when the socket never sends its first snapshot
+ok 63 - native Web follow closes and rejects when the socket never sends its first snapshot
+  ---
+  duration_ms: 27.593375
+  type: 'test'
+  ...
+# Subtest: output continuation sends the runtime token and a text-only body to the private Host route
+ok 64 - output continuation sends the runtime token and a text-only body to the private Host route
+  ---
+  duration_ms: 3.51975
+  type: 'test'
+  ...
+# Subtest: currentModel reads the authenticated product session model route
+ok 65 - currentModel reads the authenticated product session model route
+  ---
+  duration_ms: 2.233334
+  type: 'test'
+  ...
+# Subtest: background model selection uses the default-preserving product route
+ok 66 - background model selection uses the default-preserving product route
+  ---
+  duration_ms: 1.6905
+  type: 'test'
+  ...
+# Subtest: createVideoTask posts payload to Ark task endpoint
+ok 67 - createVideoTask posts payload to Ark task endpoint
+  ---
+  duration_ms: 16.044583
+  type: 'test'
+  ...
+# Subtest: getVideoTask fetches task by path id
+ok 68 - getVideoTask fetches task by path id
+  ---
+  duration_ms: 0.457125
+  type: 'test'
+  ...
+# Subtest: createVideoTask preserves a Seedance gateway base URL that already includes /api/v3
+ok 69 - createVideoTask preserves a Seedance gateway base URL that already includes /api/v3
+  ---
+  duration_ms: 0.650417
+  type: 'test'
+  ...
+# Subtest: pollVideoTask stops on terminal status
+ok 70 - pollVideoTask stops on terminal status
+  ---
+  duration_ms: 5.60925
+  type: 'test'
+  ...
+# Subtest: validateTaskPayload requires model and content
+ok 71 - validateTaskPayload requires model and content
+  ---
+  duration_ms: 0.25475
+  type: 'test'
+  ...
+# Subtest: isTerminalStatus identifies Ark task terminal states
+ok 72 - isTerminalStatus identifies Ark task terminal states
+  ---
+  duration_ms: 0.051958
+  type: 'test'
+  ...
+# Subtest: getArkConfig accepts Seedance gateway aliases
+ok 73 - getArkConfig accepts Seedance gateway aliases
+  ---
+  duration_ms: 0.166625
+  type: 'test'
+  ...
+# Subtest: getArkConfig accepts Doubao Seedance aliases
+ok 74 - getArkConfig accepts Doubao Seedance aliases
+  ---
+  duration_ms: 0.057417
+  type: 'test'
+  ...
+# Subtest: example Seedance 2.0 payload matches the task shape
+ok 75 - example Seedance 2.0 payload matches the task shape
+  ---
+  duration_ms: 2.114292
+  type: 'test'
+  ...
+# Subtest: rejects prose, credentials and unsupported schemes before any request
+ok 76 - rejects prose, credentials and unsupported schemes before any request
+  ---
+  duration_ms: 0.5825
+  type: 'test'
+  ...
+# Subtest: 403 gives actionable gateway diagnostics without claiming the credential is invalid or retrying
+ok 77 - 403 gives actionable gateway diagnostics without claiming the credential is invalid or retrying
+  ---
+  duration_ms: 0.419458
+  type: 'test'
+  ...
+1..77
+# tests 77
+# suites 0
+# pass 77
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 181.386541

@@ -1604,3 +1604,215 @@ def test_one_time_scheduled_failure_keeps_its_retry_wakeup_armed(monkeypatch, tm
     assert persisted["next_run_at"] == ""
     assert persisted["retry_at"]
     assert sched_module.get_scheduler().get_job(f"automation-retry::{automation['automation_uid']}") is not None
+
+
+def test_plain_scheduled_automation_defaults_to_session_permission_and_inherited_context(monkeypatch, tmp_path):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    controller = AutomationController(None, sched_module)
+
+    automation = controller.create({
+        "title": "普通定时",
+        "objective_prompt": "按时继续处理当前会话里的约定事项",
+        "automation_kind": "scheduled",
+        "source_session_id": "source-session",
+        "source_runtime_session_id": "runtime-session",
+        "schedule": {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+        "enabled": False,
+    })
+
+    assert automation["context_mode"] == "inherited"
+    assert automation["execution_policy"] == {"permission_mode": "session"}
+
+
+def test_session_permission_run_submits_normal_turn_to_source_session(monkeypatch, tmp_path):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    from core.agent import db as agent_db
+    agent_db.init_agent_db()
+    agent_db.create_session("source-session", "runtime-source", "创建会话")
+
+    class Agent:
+        def __init__(self):
+            self.calls = []
+
+        async def submit_automation_turn(self, automation, run, prompt, toolset):
+            self.calls.append((automation, run, prompt, list(toolset)))
+            return {"run_id": "agent-session-run", "session_id": automation["source_session_id"], "status": "queued"}
+
+    agent = Agent()
+    controller = AutomationController(agent, sched_module)
+    automation = controller.create({
+        "title": "沿用会话执行",
+        "objective_prompt": "到点执行已有脚本 task_run，参数 sku=1001，并汇报结果",
+        "automation_kind": "scheduled",
+        "source_session_id": "source-session",
+        "source_runtime_session_id": "runtime-source",
+        "schedule": {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+        "enabled": False,
+    })
+
+    result = _run(controller.run_now(automation["automation_uid"], request_uid="session-permission"))
+
+    assert result["status"] == "queued"
+    assert result["agent_run_id"] == "agent-session-run"
+    assert result["agent_session_id"] == "source-session"
+    assert len(agent.calls) == 1
+    submitted_automation, submitted_run, prompt, toolset = agent.calls[0]
+    assert submitted_automation["source_session_id"] == "source-session"
+    assert submitted_automation["execution_policy"] == {"permission_mode": "session"}
+    assert submitted_run["run_uid"] == result["run_uid"]
+    assert "到点执行已有脚本 task_run" in prompt
+    assert toolset == []
+
+
+def test_session_permission_isolated_uses_fixed_execution_session(monkeypatch, tmp_path):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    from core.agent import db as agent_db
+    agent_db.init_agent_db()
+    agent_db.create_session("fixed-auto-session", "runtime-auto", "自动化专用会话")
+
+    class Agent:
+        def __init__(self):
+            self.calls = []
+
+        async def submit_automation_turn(self, automation, run, prompt, toolset):
+            self.calls.append((automation, run, prompt, list(toolset)))
+            return {"run_id": "agent-fixed-run", "session_id": "fixed-auto-session", "status": "queued"}
+
+    agent = Agent()
+    controller = AutomationController(agent, sched_module)
+    automation = controller.create({
+        "title": "固定专用会话",
+        "objective_prompt": "按固定专用会话执行",
+        "automation_kind": "scheduled",
+        "context_mode": "isolated",
+        "execution_policy": {"permission_mode": "session"},
+        "schedule": {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+        "enabled": False,
+    })
+
+    result = _run(controller.run_now(automation["automation_uid"], request_uid="isolated-session"))
+
+    assert result["status"] == "queued"
+    assert agent.calls[0][0]["context_mode"] == "isolated"
+    assert agent.calls[0][3] == []
+
+
+def test_session_permission_rejects_loop_program_and_scoped_fields(monkeypatch, tmp_path):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    controller = AutomationController(None, sched_module)
+    base = {
+        "title": "非法 session 策略",
+        "objective_prompt": "测试非法组合",
+        "automation_kind": "scheduled",
+        "schedule": {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+        "enabled": False,
+    }
+
+    with pytest.raises(ValueError, match="only valid for scheduled Automations without a Program"):
+        controller.create({**base, "program": {"branches": []}, "execution_policy": {"permission_mode": "session"}})
+    with pytest.raises(ValueError, match="only valid for scheduled Automations without a Program"):
+        controller.create({
+            **base,
+            "automation_kind": "loop",
+            "schedule": {},
+            "loop_policy": {"cycle_interval_seconds": 60},
+            "program": _program(),
+            "execution_policy": {"permission_mode": "session"},
+        })
+    with pytest.raises(ValueError, match="toolset cannot be set"):
+        controller.create({**base, "execution_policy": {"permission_mode": "session", "toolset": ["automation_record_verification"]}})
+    with pytest.raises(ValueError, match="allow_network cannot be set"):
+        controller.create({**base, "execution_policy": {"permission_mode": "session", "allow_network": True}})
+
+
+def test_session_permission_controller_service_contract_projects_plain_completion(monkeypatch, tmp_path):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    from unittest.mock import AsyncMock
+    from core.agent import db as agent_db
+    from core.agent.service import AgentService
+
+    agent_db.init_agent_db()
+    agent_db.create_session("source-session", "runtime-source", "创建会话")
+    service = AgentService()
+    service._resolve_model = lambda _session_id: ("model", "provider")
+    service.broadcast = AsyncMock()
+    controller = AutomationController(service, sched_module)
+    service.set_automation_controller(controller)
+    automation = controller.create({
+        "title": "普通会话定时",
+        "objective_prompt": "到点普通回答结果",
+        "automation_kind": "scheduled",
+        "source_session_id": "source-session",
+        "source_runtime_session_id": "runtime-source",
+        "schedule": {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+        "enabled": False,
+    })
+
+    queued = _run(controller.run_now(automation["automation_uid"], request_uid="plain-session-complete"))
+    item = service.queue.get_nowait()
+
+    assert queued["status"] == "queued"
+    assert item["session_id"] == "source-session"
+    assert item["automation_run_uid"] == queued["run_uid"]
+    assert item["automation_permission_mode"] == "session"
+    assert item["automation_has_verification_schema"] is False
+    assert item["automation_policy"] is None
+    assert item["grant_prefs"] == {}
+
+    agent_db.create_message(
+        "message-assistant-terminal",
+        item["session_id"],
+        item["turn_id"],
+        item["run_id"],
+        "assistant",
+        "text",
+        {"text": "普通回答完成"},
+    )
+    projected = _run(service._project_automation_agent_terminal(item, status="completed"))
+
+    assert projected["status"] == "completed"
+    assert projected["result_summary"] == {
+        "assistant_terminal": {
+            "status": "completed",
+            "text": "普通回答完成",
+            "provenance": "session_permission_mode",
+        }
+    }
+    assert projected.get("verified") is not True
+    assert projected.get("error_code") != "VERIFICATION_EVIDENCE_REQUIRED"
+
+
+def test_timeout_only_scheduled_policy_defaults_to_session_permission(monkeypatch, tmp_path):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    controller = AutomationController(None, sched_module)
+
+    automation = controller.create({
+        "title": "超时控制普通定时",
+        "objective_prompt": "沿用会话执行但最多等十分钟",
+        "automation_kind": "scheduled",
+        "source_session_id": "source-session",
+        "source_runtime_session_id": "runtime-source",
+        "schedule": {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+        "execution_policy": {"timeout_seconds": 600},
+        "enabled": False,
+    })
+
+    assert automation["context_mode"] == "inherited"
+    assert automation["execution_policy"] == {"timeout_seconds": 600, "permission_mode": "session"}
+
+
+def test_empty_toolset_policy_keeps_legacy_scoped_semantics(monkeypatch, tmp_path):
+    _use_temp_product_db(monkeypatch, tmp_path)
+    controller = AutomationController(None, sched_module)
+
+    automation = controller.create({
+        "title": "旧空白名单",
+        "objective_prompt": "保持旧 scoped 语义",
+        "automation_kind": "scheduled",
+        "schedule": {"kind": "at", "value": "2099-01-01T00:00:00+08:00", "timezone": "Asia/Shanghai"},
+        "execution_policy": {"timeout_seconds": 600, "toolset": []},
+        "enabled": False,
+    })
+
+    assert automation["context_mode"] == "isolated"
+    assert automation["execution_policy"] == {"timeout_seconds": 600, "toolset": []}

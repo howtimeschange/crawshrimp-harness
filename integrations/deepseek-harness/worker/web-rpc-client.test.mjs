@@ -166,6 +166,30 @@ test('output continuation sends the runtime token and a text-only body to the pr
 })
 
 
+
+test('currentModel reads the authenticated product session model route', async (t) => {
+  let received
+  const server = createServer((request, response) => {
+    received = { method: request.method, url: request.url, cookie: request.headers.cookie }
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ ok: true, selected: { provider: 'official', model: 'deepseek-flash', reasoningEffort: 'high' } }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(async () => await new Promise(resolve => server.close(resolve)))
+  const child = new EventEmitter()
+  child.exitCode = 0
+  const runtime = new DshWebRuntime({ child, origin: `http://127.0.0.1:${server.address().port}`, cookie: 'dsh=fixture', launchUrl: '' })
+
+  const selected = await runtime.currentModel({ sessionId: 'session-existing' })
+
+  assert.deepEqual(selected, { provider: 'official', model: 'deepseek-flash', reasoningEffort: 'high' })
+  assert.deepEqual(received, {
+    method: 'GET',
+    url: '/api/crawshrimp/session/model?sessionId=session-existing',
+    cookie: 'dsh=fixture',
+  })
+})
+
 test('background model selection uses the default-preserving product route', async (t) => {
   let received
   const server = createServer((request, response) => {

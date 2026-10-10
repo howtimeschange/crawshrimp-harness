@@ -1,0 +1,76 @@
+{
+  "schedule": {
+    "id": 1,
+    "schedule_uid": "a3a5af05c88246e9afd8e9235c4a1bf0",
+    "adapter_id": "schedule-local-qa",
+    "task_id": "read_qa_page",
+    "title": "客户端走查 · 已有本地脚本定时执行",
+    "enabled": 0,
+    "frequency": "daily",
+    "time_of_day": "17:47",
+    "weekday": null,
+    "params_json": "{\"mode\": \"new\", \"target_url\": \"http://127.0.0.1:19179/qa-page.html\", \"limit\": 0, \"enabled\": false}",
+    "notify_channel": "none",
+    "notify_template": "巴拉-AI测图数据抓取导出执行通知\n定时任务：{{schedule_title}}\n执行状态：{{status}}\n导出记录：{{records}}\n输出文件：{{output_files}}\n导出目录：{{export_dir}}\n完成时间：{{finished_at}}\n错误信息：{{error}}",
+    "last_run_id": 1,
+    "last_instance_uid": "edcbf68a47864918b4bb0c8ba0b4392b",
+    "last_status": "completed",
+    "last_error": "",
+    "last_triggered_at": "2026-10-10T17:47:00.390266",
+    "archived": 0,
+    "created_at": "2026-10-10T17:45:24.386075",
+    "updated_at": "2026-10-10T17:49:27.099679"
+  },
+  "run": {
+    "id": 1,
+    "adapter_id": "schedule-local-qa",
+    "task_id": "read_qa_page",
+    "status": "done",
+    "started_at": "2026-10-10T17:47:00.040936",
+    "finished_at": "2026-10-10T17:47:00.380079",
+    "records_count": 1,
+    "error": null,
+    "output_files": "[\"/Users/xingyicheng/Documents/crawshrimp-harness/.crawshrimp-dev-harness/data/schedule-local-qa/read_qa_page/schedule-local-qa_20261010-174700.json\"]",
+    "last_seen_at": "2026-10-10T17:47:00.380079",
+    "phase": "starting",
+    "current_row": 0
+  },
+  "instance": {
+    "id": 1,
+    "instance_uid": "edcbf68a47864918b4bb0c8ba0b4392b",
+    "adapter_id": "schedule-local-qa",
+    "task_id": "read_qa_page",
+    "title": "客户端走查 · 已有本地脚本定时执行 2026-10-10 17:47",
+    "status": "completed",
+    "current_step": "create",
+    "params_json": "{\"mode\": \"new\", \"target_url\": \"http://127.0.0.1:19179/qa-page.html\", \"limit\": 0, \"enabled\": false, \"__task_schedule_uid\": \"a3a5af05c88246e9afd8e9235c4a1bf0\", \"__task_instance_uid\": \"edcbf68a47864918b4bb0c8ba0b4392b\"}",
+    "summary_json": "{\"records\": 1, \"output_files\": [\"/Users/xingyicheng/Documents/crawshrimp-harness/.crawshrimp-dev-harness/data/schedule-local-qa/read_qa_page/schedule-local-qa_20261010-174700.json\"], \"approval_board_url\": \"\", \"cloud_board_url\": \"\", \"local_board_url\": \"\", \"approval_stage\": \"approval\", \"run_id\": 1, \"create_summary\": {}}",
+    "last_run_id": 1,
+    "archived": 0,
+    "created_at": "2026-10-10T17:47:00.003139",
+    "updated_at": "2026-10-10T17:47:00.384384",
+    "completed_at": "2026-10-10T17:47:00.384382",
+    "source": "manual",
+    "source_ref": ""
+  },
+  "outputs": [
+    {
+      "path": "/Users/xingyicheng/Documents/crawshrimp-harness/.crawshrimp-dev-harness/data/schedule-local-qa/read_qa_page/schedule-local-qa_20261010-174700.json",
+      "json": [
+        {
+          "fixture": "schedule-local-qa",
+          "href": "http://127.0.0.1:19179/qa-page.html",
+          "expected_url": "http://127.0.0.1:19179/qa-page.html",
+          "fixed_text": "SCHEDULE_LOCAL_QA_FIXED_TEXT",
+          "marker": "schedule-local-qa-20261010",
+          "param_limit": 0,
+          "param_enabled": false,
+          "mode": "new",
+          "target_url": "http://127.0.0.1:19179/qa-page.html",
+          "read_only": true,
+          "ok": true
+        }
+      ]
+    }
+  ]
+}

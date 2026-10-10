@@ -1,0 +1,67 @@
+{
+  "qa_automations": [
+    {
+      "automation_uid": "df3df00f14ea4a2389d0ff3733742857",
+      "title": "客户端走查 · Tibo 重置巡检",
+      "enabled": 0,
+      "next_run_at": "",
+      "last_status": "needs_review"
+    },
+    {
+      "automation_uid": "2168a3d88eeb4b039e30ed6c938837cf",
+      "title": "客户端走查 · 当前会话 Tibo 巡检",
+      "enabled": 0,
+      "next_run_at": "",
+      "last_status": ""
+    },
+    {
+      "automation_uid": "82693dabf0c043bd8cdadc0fea6278b3",
+      "title": "客户端走查 · 当前会话 Tibo 巡检 v2",
+      "enabled": 0,
+      "next_run_at": "",
+      "last_status": "completed"
+    }
+  ],
+  "active_automation_runs": [],
+  "source_session": [
+    {
+      "session_id": "cs-web-c2fbe706c190",
+      "runtime_session_id": "session-eae1f4c6-477e-4aee-a3fc-f9065ac635de",
+      "title": "定时巡检 Codex 额度重置",
+      "status": "idle",
+      "continuation_available": 1,
+      "last_event_seq": 6047,
+      "created_at": "2026-10-10T17:07:24.201862",
+      "updated_at": "2026-10-10T18:31:26.678435",
+      "archived_at": null,
+      "model_id": "deepseek-flash",
+      "browser_tab_id": "95558B625DEFA5EA5CD7440B976793A7",
+      "provider_id": "crawshrimp-deepseek-official"
+    }
+  ],
+  "post_relaunch_qa_automations": [
+    {
+      "automation_uid": "df3df00f14ea4a2389d0ff3733742857",
+      "title": "客户端走查 · Tibo 重置巡检",
+      "enabled": 0,
+      "next_run_at": "",
+      "last_status": "needs_review"
+    },
+    {
+      "automation_uid": "2168a3d88eeb4b039e30ed6c938837cf",
+      "title": "客户端走查 · 当前会话 Tibo 巡检",
+      "enabled": 0,
+      "next_run_at": "",
+      "last_status": ""
+    },
+    {
+      "automation_uid": "82693dabf0c043bd8cdadc0fea6278b3",
+      "title": "客户端走查 · 当前会话 Tibo 巡检 v2",
+      "enabled": 0,
+      "next_run_at": "",
+      "last_status": "completed"
+    }
+  ],
+  "post_relaunch_active_automation_runs": [],
+  "qa_http_server_stopped": true
+}

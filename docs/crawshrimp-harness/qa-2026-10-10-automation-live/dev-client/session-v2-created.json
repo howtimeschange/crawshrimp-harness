@@ -1,0 +1,34 @@
+{
+  "definitions": [
+    {
+      "automation_uid": "82693dabf0c043bd8cdadc0fea6278b3",
+      "title": "客户端走查 · 当前会话 Tibo 巡检 v2",
+      "objective_prompt": "在创建本任务的当前会话中连续执行只读巡检（v2），每轮把结果正常回答到本会话（不另写归档文件、不外发）。使用本会话已有的模型、工具、权限与访问模式访问 https://x.com/thsottiaux，查看 Tibo 最近关于 Codex 使用额度重置的公告；若任务页面已关闭，重新打开 https://x.com/thsottiaux 继续只读巡检。区分已发生的重置与未来明确公布的重置时间，每条给出原帖链接、发布时间及北京时间（Asia/Shanghai）；无法确认时写“未知”，不猜测时区或日期。每轮与本会话上轮巡检结果比较，指出新增、变化、未变；首轮说明建立基线。仅只读：不发帖、不点赞、不关注、不发任何外部消息。遇登录墙或访问阻断时如实说明检查范围与限制，不夸大为完整成功。",
+      "automation_kind": "scheduled",
+      "enabled": 1,
+      "archived": 0,
+      "context_mode": "inherited",
+      "source_session_id": "cs-web-c2fbe706c190",
+      "source_runtime_session_id": "session-eae1f4c6-477e-4aee-a3fc-f9065ac635de",
+      "schedule_json": "{\"interval_seconds\": 240, \"kind\": \"every\", \"start_at\": \"2026-10-10T17:54:55+08:00\", \"timezone\": \"Asia/Shanghai\"}",
+      "loop_policy_json": "{}",
+      "execution_policy_json": "{\"timeout_seconds\": 600, \"permission_mode\": \"session\"}",
+      "active_program_version_uid": "",
+      "checkpoint_json": "{}",
+      "next_run_at": "2026-10-10T17:54:55+08:00",
+      "retry_at": "",
+      "cycle_seq": 0,
+      "last_run_uid": "",
+      "last_status": "",
+      "last_error": "",
+      "last_triggered_at": "",
+      "created_at": "2026-10-10T17:53:52.391999",
+      "updated_at": "2026-10-10T17:53:52.394942"
+    }
+  ],
+  "runs": [],
+  "agent_runs": [],
+  "messages": [],
+  "tools": [],
+  "approvals": []
+}

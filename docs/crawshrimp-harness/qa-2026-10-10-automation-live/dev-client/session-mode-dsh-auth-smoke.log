@@ -1,0 +1,7 @@
+
+> crawshrimp-harness@0.3.1 test:dsh-web-auth
+> electron scripts/dsh-web-auth-electron-smoke.cjs
+
+PASS: unpatched file:// iframe reproduces 401 after token redirect
+PASS: patched file:// iframe, fetch and websocket authenticate with Strict cookie unchanged
+PASS: disposing the bridge removes embedded authentication

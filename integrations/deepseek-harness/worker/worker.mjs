@@ -17,6 +17,9 @@ import { compactRequestEvent } from './context-metrics.mjs'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { DshWebRuntime, activeTurnEvents, assertSessionHeadersExcludeNativeWebTools } from './web-rpc-client.mjs'
 import { createNativeWebFollowManager, createRecoveringRunFollow } from './native-web-follow-manager.mjs'
+import { resolveRunSessionCwd } from './session-workspace.mjs'
+import { desiredSelectionForRun, shouldSelectModelForRun } from './session-model-selection.mjs'
+import { interactionBudgetName } from './session-interaction-budget.mjs'
 
 const PROTOCOL_VERSION = 1
 const MODEL_IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
@@ -452,14 +455,7 @@ function normalizeBudget(budget) {
 }
 
 function budgetName() {
-  const run = state.activeRun
-  if (!run) return ''
-  const b = run.budget
-  if (run.counters.steps >= b.maxSteps) return `步数预算耗尽(${b.maxSteps})`
-  if (run.counters.toolCalls >= b.maxToolCalls) return `工具调用预算耗尽(${b.maxToolCalls})`
-  if (run.counters.observe >= b.maxObserve) return `页面观察预算耗尽(${b.maxObserve})`
-  if (run.counters.act >= b.maxAct) return `页面操作预算耗尽(${b.maxAct})`
-  return ''
+  return interactionBudgetName(state.activeRun)
 }
 
 function recordAssistantOutput(run, text) {
@@ -514,6 +510,7 @@ async function startRun(params) {
     messageId: null, turnEndReason: null, lastSeq: 0, follow: null,
     outputBudgetReached: false, outputBudgetMessage: '', outputBudgetSegments: 0, cancelRequested: false, cancelPromise: null,
     outputDeltaTimes: [],
+    sessionContinuation: params.sessionContinuation === true,
     budget, counters: { steps: 0, toolCalls: 0, observe: 0, act: 0, textDeltas: 0, outputChars: 0 },
     resolve: null,
     timer: setTimeout(() => {
@@ -557,7 +554,12 @@ async function startRun(params) {
     if (!state.startedSessions.has(sessionId)) {
       await state.runtime.createSession({
         sessionId,
-        cwd: String(params.cwd || `${state.dataRoot}/agent/runtime-workdir`),
+        cwd: resolveRunSessionCwd({
+          sessionId,
+          explicitCwd: params.cwd,
+          dshHome: process.env.DSH_HOME || `${state.dataRoot}/agent/dsh-home`,
+          dataRoot: state.dataRoot,
+        }),
         agentPreset: 'crawshrimp-standard',
       })
       state.startedSessions.add(sessionId)
@@ -574,10 +576,19 @@ async function startRun(params) {
     const provider = String(params.provider || state.provider || '')
     const model = String(params.model || state.model || '')
     if (!provider || !model) throw new Error('runtime model selection is missing provider or model')
-    const selected = state.selectedModels.get(sessionId)
-    if (!selected || selected.provider !== provider || selected.model !== model) {
-      await state.runtime.selectModel({ sessionId, provider, model })
-      state.selectedModels.set(sessionId, { provider, model })
+    let currentSelection = state.selectedModels.get(sessionId) || null
+    try {
+      currentSelection = await state.runtime.currentModel({ sessionId })
+    } catch (error) {
+      console.error(`[worker] session ${sessionId} current model read failed: ${error.message}`)
+    }
+    if (state.activeRun !== run || run.cancelRequested) return { ok: true, summary: await done }
+    if (shouldSelectModelForRun({ provider, model, reasoningEffort: params.reasoningEffort }, currentSelection)) {
+      const desired = desiredSelectionForRun({ provider, model, reasoningEffort: params.reasoningEffort }, currentSelection) || { provider, model }
+      await state.runtime.selectModel({ sessionId, ...desired })
+      state.selectedModels.set(sessionId, desired)
+    } else if (currentSelection) {
+      state.selectedModels.set(sessionId, currentSelection)
     }
     if (state.activeRun !== run || run.cancelRequested) return { ok: true, summary: await done }
     const follow = attachRunEventHandlers(run)

@@ -1,0 +1,18 @@
+const test = require('node:test')
+const assert = require('node:assert/strict')
+
+test('script schedules preserve exact adapter, task and structured parameters without default external notifications', async () => {
+  const { scriptSchedulePayload, scheduleScriptOptions } = await import('./scriptScheduleState.mjs')
+  const options = scheduleScriptOptions([{ adapter_id: 'saved-scripts', task_id: 'read-report', task_name: '读取报告', params: [{ id: 'limit', default: 0 }] }])
+  assert.deepEqual(options[0].defaults, { limit: 0 })
+  assert.equal(options[0].name, '读取报告')
+  const payload = scriptSchedulePayload({ task_key: options[0].key, params_text: '{"limit":0,"enabled":false}', frequency: 'daily', time_of_day: '12:30', enabled: true })
+  assert.equal(payload.adapter_id, 'saved-scripts')
+  assert.equal(payload.task_id, 'read-report')
+  assert.deepEqual(payload.params, { limit: 0, enabled: false })
+  assert.equal(payload.notify_channel, 'none')
+  assert.equal(payload.sync_to_cloud, false)
+  assert.equal(scriptSchedulePayload({ task_key: options[0].key, params_text: '{"sync_to_cloud":["enabled"]}' }).sync_to_cloud, true)
+  assert.throws(() => scriptSchedulePayload({ task_key: options[0].key, params_text: '[]' }), /JSON 对象/)
+  assert.throws(() => scriptSchedulePayload({ task_key: options[0].key, params_text: '{' }), /有效 JSON/)
+})

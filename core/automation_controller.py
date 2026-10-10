@@ -19,10 +19,11 @@ import uuid
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from core import data_sink
-from core.automation_policy import automation_policy_error
+from core.automation_policy import READ_ONLY_NATIVE_TOOLS, automation_policy_error, infer_automation_permission_mode
 from core.automation_program import ProgramValidationError, evaluate_program, validate_program
 from core.scheduler import AT_MISFIRE_GRACE_SECONDS, RECURRING_MISFIRE_GRACE_SECONDS, RETRY_MISFIRE_GRACE_SECONDS
 
@@ -38,6 +39,8 @@ AUTOMATION_UNATTENDED_RISKS = {
     "external_write",
     "destructive",
 }
+DEFAULT_INHERITED_AUTOMATION_WAIT_SECONDS = 5 * 60
+MAX_INHERITED_AUTOMATION_WAIT_SECONDS = 2 * 60 * 60
 ACTIVE_RUN_STATUSES = {"claimed", "queued", "running", "retry_scheduled"}
 TERMINAL_RUN_STATUSES = {
     "completed",
@@ -55,6 +58,7 @@ READ_ONLY_MCP_TOOLS = {
     "tasks_search", "task_describe", "task_status", "task_wait",
     "artifacts_list", "data_preview", "data_analyze",
     "browser_observe", "browser_capture_requests",
+    "browser_navigate",
     "script_list", "script_describe", "skill_list", "skill_read",
     "attachment_read", "fs_read", "fs_list", "image_assets", "video_assets",
     "repo_list", "automation_record_observation",
@@ -207,11 +211,60 @@ def _policy_toolset(policy: Mapping[str, Any]) -> list[str]:
     return sorted({str(item).strip() for item in raw if str(item).strip()})
 
 
+def _policy_native_toolset(policy: Mapping[str, Any]) -> list[str]:
+    raw = policy.get("native_toolset")
+    if not isinstance(raw, (list, tuple, set)):
+        return []
+    return sorted({str(item).strip() for item in raw if str(item).strip()})
+
+
+def _permission_mode(
+    policy: Mapping[str, Any],
+    *,
+    automation_kind: str = "scheduled",
+    has_program: bool = False,
+) -> str:
+    return infer_automation_permission_mode(
+        policy,
+        automation_kind=automation_kind,
+        has_program=has_program,
+    )
+
+
+def _is_session_permission(
+    policy: Mapping[str, Any],
+    *,
+    automation_kind: str = "scheduled",
+    has_program: bool = False,
+) -> bool:
+    return _permission_mode(policy, automation_kind=automation_kind, has_program=has_program) == "session"
+
+
+def _inherited_automation_wait_seconds(automation: Mapping[str, Any]) -> int:
+    policy = (automation or {}).get("execution_policy")
+    raw = policy.get("inherited_wait_seconds") if isinstance(policy, Mapping) else None
+    if raw is None or str(raw).strip() == "":
+        return DEFAULT_INHERITED_AUTOMATION_WAIT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_INHERITED_AUTOMATION_WAIT_SECONDS
+    if not math.isfinite(value) or not value.is_integer() or value <= 0:
+        return DEFAULT_INHERITED_AUTOMATION_WAIT_SECONDS
+    return min(int(value), MAX_INHERITED_AUTOMATION_WAIT_SECONDS)
+
+
 def _read_only_policy(policy: Mapping[str, Any]) -> dict:
     result = copy.deepcopy(dict(policy))
     allowed = _policy_toolset(policy)
     result["risk"] = "read_only"
     result["toolset"] = [item for item in allowed if item in READ_ONLY_MCP_TOOLS]
+    raw_native = policy.get("native_toolset")
+    if isinstance(raw_native, (list, tuple, set)):
+        result["native_toolset"] = [
+            item for item in sorted({str(value).strip() for value in raw_native if str(value).strip()})
+            if item in READ_ONLY_NATIVE_TOOLS
+        ]
     if "allowed_capabilities" in result:
         result["allowed_capabilities"] = list(result["toolset"])
     return result
@@ -391,19 +444,29 @@ class AutomationController:
 
         async def _submit(automation, run, *args):
             branch = args[0] if action and args else None
+            submitted_automation = copy.deepcopy(dict(automation))
             if action:
                 toolset = args[-1] if args else []
+                execution_policy = copy.deepcopy(dict(submitted_automation.get("execution_policy") or {}))
+                execution_policy["toolset"] = list(toolset)
+                if isinstance(branch, Mapping) and (
+                    branch.get("allowed_native_tools") is not None
+                    or "native_toolset" in execution_policy
+                ):
+                    execution_policy["native_toolset"] = list(branch.get("allowed_native_tools") or [])
+                submitted_automation["execution_policy"] = execution_policy
             else:
                 observer_policy = args[0] if args and isinstance(args[0], Mapping) else {}
                 toolset = _policy_toolset(observer_policy)
+                submitted_automation["execution_policy"] = copy.deepcopy(dict(observer_policy))
             objective = str(automation.get("objective_prompt") or "")
             if isinstance(branch, Mapping):
                 objective = str(branch.get("objective") or branch.get("action") or objective)
             return await _invoke(
                 submit,
-                (automation, run, objective, list(toolset)),
+                (submitted_automation, run, objective, list(toolset)),
                 {
-                    "automation": automation,
+                    "automation": submitted_automation,
                     "run": run,
                     "prompt": objective,
                     "toolset": list(toolset),
@@ -411,6 +474,27 @@ class AutomationController:
             )
 
         return _submit
+
+    async def _submit_session_permission_turn(
+        self,
+        automation: Mapping[str, Any],
+        run: Mapping[str, Any],
+    ) -> dict:
+        if self.agent_service is None:
+            return self.mark_needs_review(
+                str(run.get("run_uid") or ""),
+                "ACTION_EXECUTOR_UNAVAILABLE",
+                "No AgentService is configured for session-permission Automation",
+            )
+        submit = getattr(self.agent_service, "submit_automation_turn", None)
+        if not callable(submit):
+            return self.mark_needs_review(
+                str(run.get("run_uid") or ""),
+                "ACTION_EXECUTOR_UNAVAILABLE",
+                "AgentService does not support Automation session turns",
+            )
+        objective = str((automation or {}).get("objective_prompt") or "")
+        return await submit(dict(automation or {}), dict(run or {}), objective, [])
 
     @staticmethod
     def _automation_or_raise(uid: str) -> dict:
@@ -443,13 +527,28 @@ class AutomationController:
         kind = str(source.get("automation_kind") or "").strip().lower()
         if kind not in {"scheduled", "loop"}:
             raise ValueError("automation_kind must be scheduled or loop")
+        raw_execution_policy = source.get("execution_policy")
+        has_program_definition = source.get("program") is not None or str(source.get("active_program_version_uid") or "").strip()
+        if raw_execution_policy is None:
+            raw_execution_policy = {}
+        if not isinstance(raw_execution_policy, Mapping):
+            raise ValueError("execution_policy must be an object")
+        execution_policy_seed = dict(raw_execution_policy)
+        if (
+            kind == "scheduled"
+            and not has_program_definition
+            and not execution_policy_seed
+        ):
+            execution_policy_seed["permission_mode"] = "session"
+            source["execution_policy"] = execution_policy_seed
         source["enabled"] = _lifecycle_flag(
             source.get("enabled"), field_name="enabled", default=True,
         )
         source["archived"] = _lifecycle_flag(
             source.get("archived"), field_name="archived", default=False,
         )
-        context_mode = str(source.get("context_mode") or "isolated").strip().lower()
+        default_context_mode = "inherited" if _is_session_permission(execution_policy_seed, automation_kind=kind, has_program=has_program_definition) else "isolated"
+        context_mode = str(source.get("context_mode") or default_context_mode).strip().lower()
         if context_mode not in {"isolated", "inherited"}:
             raise ValueError("context_mode must be isolated or inherited")
         source["context_mode"] = context_mode
@@ -513,6 +612,8 @@ class AutomationController:
         if not isinstance(execution_policy, Mapping):
             raise ValueError("execution_policy must be an object")
         source["execution_policy"] = dict(execution_policy)
+        if "permission_mode" in source["execution_policy"]:
+            source["execution_policy"]["permission_mode"] = _permission_mode(source["execution_policy"], automation_kind=kind, has_program=has_program_definition)
         if "verification_schema" in execution_policy:
             from jsonschema import Draft202012Validator, SchemaError
             try:
@@ -533,6 +634,24 @@ class AutomationController:
                 minimum=minimum,
                 maximum=maximum,
             )
+        inferred_permission_mode = _permission_mode(
+            source["execution_policy"],
+            automation_kind=kind,
+            has_program=has_program_definition,
+        )
+        if inferred_permission_mode == "session" and "permission_mode" not in source["execution_policy"]:
+            source["execution_policy"]["permission_mode"] = "session"
+        session_permission = inferred_permission_mode == "session"
+        if session_permission and (kind == "loop" or has_program_definition):
+            raise ValueError("execution_policy.permission_mode=session is only valid for scheduled Automations without a Program")
+        if session_permission:
+            for field in (
+                "toolset", "allowed_tools", "allowed_capabilities", "native_toolset",
+                "allowed_risks", "allow_browser", "allow_filesystem", "allow_network",
+                "allow_external_messages", "allow_script_publish", "browser_tab_id", "browser_url",
+            ):
+                if field in source["execution_policy"]:
+                    raise ValueError(f"execution_policy.{field} cannot be set when permission_mode=session")
         allowed_tools = _policy_toolset(source["execution_policy"])
         if allowed_tools:
             # Keep the durable definition honest: a capability label can never
@@ -545,7 +664,23 @@ class AutomationController:
                     "execution_policy.toolset contains unknown MCP tools: "
                     + ", ".join(unknown_tools)
                 )
-        source["execution_policy"]["toolset"] = allowed_tools
+        if not session_permission:
+            source["execution_policy"]["toolset"] = allowed_tools
+        raw_native_tools = source["execution_policy"].get("native_toolset")
+        if raw_native_tools is not None:
+            if not isinstance(raw_native_tools, (list, tuple, set)):
+                raise ValueError("execution_policy.native_toolset must be an array")
+            source["execution_policy"]["native_toolset"] = sorted({
+                str(value).strip()
+                for value in raw_native_tools
+                if str(value).strip()
+            })
+        browser_url = str(source["execution_policy"].get("browser_url") or "").strip()
+        if browser_url:
+            parsed_browser_url = urlparse(browser_url)
+            if parsed_browser_url.scheme not in {"http", "https"} or not parsed_browser_url.netloc:
+                raise ValueError("execution_policy.browser_url must be an http(s) URL")
+            source["execution_policy"]["browser_url"] = browser_url
         policy_error = automation_policy_error(source["execution_policy"])
         if policy_error:
             raise ValueError(policy_error)
@@ -1389,8 +1524,26 @@ class AutomationController:
         # they have no deterministic checkpoint/condition boundary.
         if str(execution_automation.get("automation_kind") or "").strip().lower() == "loop":
             return self.mark_needs_review(run_uid, "PROGRAM_REQUIRED", "Loop Automation requires an active Program")
+        direct_execution_policy = self._execution_policy_for_run(execution_automation, started)
+        if _is_session_permission(direct_execution_policy):
+            try:
+                queued = await self._submit_session_permission_turn(execution_automation, started)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Session-permission Automation submission failed: %s", run_uid)
+                return self._record_execution_failure_for_run(
+                    run_uid,
+                    "SESSION_PERMISSION_SUBMISSION_FAILED",
+                    str(exc),
+                    retryable=True,
+                )
+            if isinstance(queued, Mapping) and self._is_agent_queue_receipt(queued):
+                self._record_agent_submission(run_uid, queued)
+                return data_sink.update_agent_automation_run(run_uid, result_summary=dict(queued))
+            return data_sink.get_agent_automation_run(run_uid)
         executor = self._default_executor(action=True)
-        toolset = _policy_toolset(self._execution_policy_for_run(execution_automation, started))
+        toolset = _policy_toolset(direct_execution_policy)
         if executor is None or not toolset:
             return self.mark_needs_review(run_uid, "ACTION_EXECUTOR_UNAVAILABLE", "No authorized action executor is configured")
         branch = {
@@ -1398,6 +1551,8 @@ class AutomationController:
             "objective": execution_automation.get("objective_prompt") or "",
             "allowed_tools": toolset,
         }
+        if "native_toolset" in direct_execution_policy:
+            branch["allowed_native_tools"] = _policy_native_toolset(direct_execution_policy)
         aliases = {
             "automation": execution_automation,
             "automation_uid": execution_automation["automation_uid"],
@@ -1644,6 +1799,26 @@ class AutomationController:
         )
         return sorted(allowed & branch_allowed)
 
+    def _branch_native_toolset(
+        self,
+        automation: Mapping[str, Any],
+        branch: Mapping[str, Any],
+        *,
+        execution_policy: Optional[Mapping[str, Any]] = None,
+    ) -> list[str]:
+        allowed = set(_policy_native_toolset(execution_policy or automation.get("execution_policy") or {}))
+        branch_value = branch.get("allowed_native_tools")
+        if branch_value is None:
+            branch_value = branch.get("native_toolset")
+        if branch_value is None:
+            return []
+        branch_allowed = {
+            str(item).strip()
+            for item in branch_value
+            if str(item).strip()
+        }
+        return sorted(allowed & branch_allowed)
+
     async def record_observation(
         self,
         run_uid: str,
@@ -1732,11 +1907,18 @@ class AutomationController:
                 return self._finish_completed(run_uid, result_summary=summary)
             return updated
         branch = self._branch_for(program, branch_id)
+        execution_policy = self._execution_policy_for_run(execution_automation, run)
         toolset = self._branch_toolset(
             execution_automation,
             branch,
-            execution_policy=self._execution_policy_for_run(execution_automation, run),
+            execution_policy=execution_policy,
         )
+        native_toolset = self._branch_native_toolset(
+            execution_automation,
+            branch,
+            execution_policy=execution_policy,
+        )
+        branch["allowed_native_tools"] = native_toolset
         executor = self._default_executor(action=True)
         if not toolset:
             return self.mark_needs_review(

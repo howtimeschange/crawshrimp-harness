@@ -130,22 +130,35 @@ function workerFixture({ stop = async () => {}, cancel = async () => ({ accepted
   let events
   let stopCalls = 0
   let cancelCalls = 0
+  const dataRoot = path.join(tmpdir(), 'harness worker recovery data')
   const runtime = {
     createSession: async () => ({}), selectModel: async () => ({}), prompt: async () => ({}),
+    currentModel: async () => ({ provider: 'previous-p', model: 'previous-m' }),
     follow(_id, handlers) { events = handlers; return { ready: Promise.resolve(), close() {} } },
     async cancel() { cancelCalls++; return await cancel() },
     async stop() { stopCalls++; return await stop() },
   }
   const context = { console, setTimeout, clearTimeout, Buffer, runtime,
+    existsSync: fs.existsSync, readFileSync: fs.readFileSync, statSync: fs.statSync,
     assertSessionHeadersExcludeNativeWebTools() {}, activeTurnEvents: x => x,
     process: { env: {}, versions: process.versions, stdout: { write() {} }, exit() { throw Error('worker exit') } },
   }
   vm.createContext(context)
+  const workspaceSource = fs.readFileSync(path.join(root, 'worker/session-workspace.mjs'), 'utf8')
+    .replace(/^import \{ existsSync, readFileSync \} from 'node:fs'\n/, '')
+    .replace(/^export /gm, '')
+  vm.runInContext(workspaceSource, context)
+  const modelSelectionSource = fs.readFileSync(path.join(root, 'worker/session-model-selection.mjs'), 'utf8')
+    .replace(/^export /gm, '')
+  vm.runInContext(modelSelectionSource, context)
+  const interactionBudgetSource = fs.readFileSync(path.join(root, 'worker/session-interaction-budget.mjs'), 'utf8')
+    .replace(/^export /gm, '')
+  vm.runInContext(interactionBudgetSource, context)
   const followSource = fs.readFileSync(path.join(root, 'worker/native-web-follow-manager.mjs'), 'utf8').replace(/^export /gm, '')
   vm.runInContext(followSource, context)
   vm.runInContext(fs.readFileSync(path.join(root, 'worker/context-metrics.mjs'), 'utf8').replace(/^export /gm, ''), context)
   vm.runInContext(source, context)
-  vm.runInContext("state.runtime = runtime; state.provider = 'p'; state.model = 'm'", context)
+  vm.runInContext(`state.runtime = runtime; state.provider = 'p'; state.model = 'm'; state.dataRoot = ${JSON.stringify(dataRoot)}`, context)
   return { context, runtime, events: () => events,
     start: (params = {}) => context.startRun({ runId: 'r', sessionId: 's', text: 'fixture', budget: { maxToolCalls: 1 }, ...params }),
     state: () => vm.runInContext('state', context),
@@ -168,6 +181,48 @@ test('budget cancellation accepts turn/end even while counters remain over budge
   assert.equal(f.stopCalls(), 0)
 })
 
+test('session continuation can exceed interaction caps and complete', async () => {
+  const f = workerFixture()
+  const pending = f.start({
+    sessionContinuation: true,
+    budget: { maxSteps: 30, maxToolCalls: 40, maxObserve: 40, maxAct: 50 },
+  })
+  await new Promise(resolve => setImmediate(resolve))
+  for (let i = 1; i <= 31; i++) {
+    f.events().onEvent({ type: 'step/start', data: {}, seq: i })
+  }
+  for (let i = 32; i <= 72; i++) {
+    f.events().onEvent({ type: 'tool/call', data: { name: 'fixture' }, seq: i })
+  }
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(f.cancelCalls(), 0)
+  assert.ok(f.state().activeRun)
+  f.events().onEvent({ type: 'turn/end', data: { reason: { kind: 'completed' } }, seq: 73 })
+  const result = await pending
+  assert.equal(result.summary.status, 'completed')
+  assert.equal(f.stopCalls(), 0)
+})
+
+test('non-continuation runs still cancel at interaction caps', async () => {
+  const f = workerFixture()
+  const pending = f.start({
+    sessionContinuation: false,
+    budget: { maxSteps: 30, maxToolCalls: 40, maxObserve: 40, maxAct: 50 },
+  })
+  await new Promise(resolve => setImmediate(resolve))
+  for (let i = 1; i <= 40; i++) {
+    f.events().onEvent({ type: 'tool/call', data: { name: 'fixture' }, seq: i })
+  }
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(f.cancelCalls(), 1)
+  assert.ok(f.state().activeRun)
+  f.events().onEvent({ type: 'turn/end', data: { reason: { kind: 'aborted' } }, seq: 41 })
+  const result = await pending
+  assert.equal(result.summary.status, 'failed')
+  assert.equal(result.summary.reason.error.code, 'BUDGET_EXCEEDED')
+  assert.match(result.summary.reason.error.message, /工具调用预算耗尽\(40\)/)
+})
+
 test('failed cancellation holds the run until forced Host shutdown actually finishes', async () => {
   let releaseStop
   const stop = new Promise(resolve => { releaseStop = resolve })
@@ -186,7 +241,7 @@ test('failed cancellation holds the run until forced Host shutdown actually fini
   assert.equal(f.state().activeRun, null)
 })
 
-for (const step of ['createSession', 'selectModel', 'follow']) {
+for (const step of ['createSession', 'currentModel', 'selectModel', 'follow']) {
   test(`cancellation during ${step} preserves the run reply and never submits a prompt`, async () => {
     const f = workerFixture()
     let release

@@ -1,0 +1,13 @@
+Collected 15 files for semir-yunpan-cli
+
+> semir-yunpan-cli@0.1.0 test
+> vitest run tests/api.test.ts tests/capabilities.test.ts tests/catalog-download.test.ts tests/cdp.test.ts tests/cli-args.test.ts tests/client.test.ts tests/download.test.ts tests/files.test.ts tests/image-catalog.test.ts tests/image-plan.test.ts tests/rule-image-plan.test.ts tests/rules.test.ts tests/run-input.test.ts tests/shenhui-plan.test.ts tests/shenhui.test.ts
+
+
+ RUN  v4.1.9 /Users/xingyicheng/Documents/crawshrimp-harness/skills/cli/semir-yunpan-cli
+
+
+ Test Files  15 passed (15)
+      Tests  61 passed (61)
+   Start at  16:37:54
+   Duration  250ms (transform 898ms, setup 0ms, import 1.25s, tests 75ms, environment 1ms)

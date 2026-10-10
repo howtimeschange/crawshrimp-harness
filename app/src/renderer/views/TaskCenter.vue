@@ -9,6 +9,7 @@
         <button type="button" class="tc-secondary" @click="startCreateSchedule">
           新增数据抓取定时任务
         </button>
+        <button type="button" class="tc-secondary" @click="startCreateScriptSchedule">新增脚本定时任务</button>
         <button type="button" class="tc-primary" :disabled="creating" @click="startCreateAiImageTask">
           {{ creating ? '创建中...' : '新增 AI 测图任务' }}
         </button>
@@ -127,12 +128,23 @@
       <section class="tc-modal-dialog wide" role="dialog" aria-modal="true" aria-labelledby="schedule-dialog-title">
         <header class="tc-modal-head">
           <div>
-            <h3 id="schedule-dialog-title">{{ editingScheduleUid ? '编辑定时任务' : '新增数据抓取定时任务' }}</h3>
-            <p>巴拉-AI测图数据抓取导出可按每天或每周自动执行</p>
+            <h3 id="schedule-dialog-title">{{ editingScheduleUid ? '编辑定时任务' : scheduleForm.script_mode ? '新增脚本定时任务' : '新增数据抓取定时任务' }}</h3>
+            <p>{{ scheduleForm.script_mode ? '到点直接运行已保存的脚本和参数，每轮保留运行记录。' : '巴拉-AI测图数据抓取导出可按每天或每周自动执行' }}</p>
           </div>
           <button type="button" class="tc-icon-button" aria-label="关闭" @click="cancelScheduleEdit">×</button>
         </header>
         <form class="tc-schedule-form tc-dialog-form" @submit.prevent="saveSchedule">
+          <label v-if="scheduleForm.script_mode" class="full">
+            <span>已有脚本</span>
+            <select v-model="scheduleForm.task_key" :disabled="Boolean(editingScheduleUid)" required @change="selectScheduleScript">
+              <option value="">选择已安装的脚本</option>
+              <option v-for="task in scheduleScripts" :key="task.key" :value="task.key">{{ task.label }}</option>
+            </select>
+          </label>
+          <label v-if="scheduleForm.script_mode" class="full">
+            <span>运行参数（JSON）</span>
+            <textarea v-model="scheduleForm.params_text" rows="5" spellcheck="false" />
+          </label>
           <label>
             <span>任务名称</span>
             <input v-model.trim="scheduleForm.title" type="text" required />
@@ -156,7 +168,7 @@
             <span>时间</span>
             <input v-model="scheduleForm.time_of_day" type="time" required />
           </label>
-          <div class="tc-field wide">
+          <div v-if="!scheduleForm.script_mode" class="tc-field wide">
             <span>本地导出目录</span>
             <div class="tc-dir-picker" :class="{ empty: !scheduleForm.output_dir }">
               <button type="button" class="tc-dir-target" @click="chooseScheduleOutputDir">
@@ -175,7 +187,11 @@
               </button>
             </div>
           </div>
-          <label class="full">
+          <label>
+            <span>结果通知</span>
+            <select v-model="scheduleForm.notify_channel"><option value="none">仅保留运行记录</option><option value="dingtalk">使用已配置的钉钉通知</option></select>
+          </label>
+          <label v-if="!scheduleForm.script_mode || scheduleForm.notify_channel !== 'none'" class="full">
             <span>钉钉消息模板</span>
             <textarea v-model="scheduleForm.notify_template" rows="8" />
           </label>
@@ -183,7 +199,7 @@
             <input v-model="scheduleForm.enabled" type="checkbox" />
             <span>启用定时任务</span>
           </label>
-          <label class="tc-check">
+          <label v-if="!scheduleForm.script_mode" class="tc-check">
             <input v-model="scheduleForm.sync_to_cloud" type="checkbox" />
             <span>自动同步云端</span>
           </label>
@@ -203,6 +219,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AutomationCenter from './AutomationCenter.vue'
+import { scriptSchedulePayload, scheduleScriptOptions } from '../utils/scriptScheduleState.mjs'
 
 const emit = defineEmits(['open-instance', 'open-agent'])
 
@@ -248,6 +265,7 @@ const scheduleError = ref('')
 const aiTaskError = ref('')
 const aiTaskForm = ref(defaultAiTaskForm())
 const scheduleForm = ref(defaultScheduleForm())
+const scheduleScripts = ref([])
 const aiPreviewCache = ref({})
 const aiPreviewLoading = ref({})
 let autoRefreshTimer = null
@@ -260,6 +278,10 @@ function defaultAiTaskForm() {
 
 function defaultScheduleForm() {
   return {
+    script_mode: false,
+    task_key: '',
+    params_text: '{}',
+    notify_channel: 'dingtalk',
     title: `巴拉数据抓取 ${new Date().toLocaleDateString('zh-CN')}`,
     frequency: 'daily',
     weekday: 1,
@@ -297,10 +319,7 @@ async function loadSchedules() {
   schedulesLoading.value = true
   scheduleError.value = ''
   try {
-    const result = await window.cs.listTaskSchedules({
-      adapter_id: 'tmall-ops-assistant',
-      task_id: 'tmall_material_test_data_export',
-    })
+    const result = await window.cs.listTaskSchedules({})
     schedules.value = Array.isArray(result?.items) ? result.items : []
   } catch (err) {
     scheduleError.value = err?.message || String(err)
@@ -350,9 +369,31 @@ function startCreateSchedule() {
   showScheduleDialog.value = true
 }
 
+async function startCreateScriptSchedule() {
+  startCreateSchedule()
+  scheduleForm.value = { ...defaultScheduleForm(), script_mode: true, title: '脚本定时任务', notify_channel: 'none', sync_to_cloud: false }
+  try {
+    scheduleScripts.value = scheduleScriptOptions(await window.cs.getTasks())
+  } catch (err) {
+    scheduleError.value = err?.message || String(err)
+  }
+}
+
+function selectScheduleScript() {
+  const task = scheduleScripts.value.find(item => item.key === scheduleForm.value.task_key)
+  if (task) {
+    scheduleForm.value.title = `${task.name} · 定时运行`
+    scheduleForm.value.params_text = JSON.stringify(task.defaults, null, 2)
+  }
+}
+
 function editSchedule(schedule) {
   editingScheduleUid.value = schedule.schedule_uid
   scheduleForm.value = {
+    script_mode: schedule.adapter_id !== 'tmall-ops-assistant' || schedule.task_id !== 'tmall_material_test_data_export',
+    task_key: JSON.stringify([schedule.adapter_id, schedule.task_id]),
+    params_text: JSON.stringify(schedule.params || {}, null, 2),
+    notify_channel: schedule.notify_channel || 'none',
     title: schedule.title || '',
     frequency: schedule.frequency || 'daily',
     weekday: Number(schedule.weekday || 1),
@@ -364,6 +405,14 @@ function editSchedule(schedule) {
   }
   scheduleError.value = ''
   showScheduleDialog.value = true
+  if (scheduleForm.value.script_mode) {
+    const key = scheduleForm.value.task_key
+    scheduleScripts.value = [{ key, label: `${schedule.adapter_id} / ${schedule.task_id}` }]
+    window.cs.getTasks().then(tasks => {
+      const options = scheduleScriptOptions(tasks)
+      if (showScheduleDialog.value && scheduleForm.value.task_key === key && options.some(task => task.key === key)) scheduleScripts.value = options
+    }).catch(() => {})
+  }
 }
 
 function cancelScheduleEdit() {
@@ -391,9 +440,12 @@ function clearScheduleOutputDir() {
 }
 
 function schedulePayload() {
-  const params = {}
+  if (scheduleForm.value.script_mode) return scriptSchedulePayload(scheduleForm.value)
+  const params = JSON.parse(scheduleForm.value.params_text || '{}')
   if (scheduleForm.value.output_dir) params.output_dir = scheduleForm.value.output_dir
+  else delete params.output_dir
   if (scheduleForm.value.sync_to_cloud) params.sync_to_cloud = ['enabled']
+  else delete params.sync_to_cloud
   return {
     adapter_id: 'tmall-ops-assistant',
     task_id: 'tmall_material_test_data_export',
@@ -402,7 +454,8 @@ function schedulePayload() {
     time_of_day: scheduleForm.value.time_of_day,
     weekday: scheduleForm.value.frequency === 'weekly' ? Number(scheduleForm.value.weekday || 1) : null,
     params,
-    notify_channel: 'dingtalk',
+    sync_to_cloud: Boolean(scheduleForm.value.sync_to_cloud),
+    notify_channel: scheduleForm.value.notify_channel || 'none',
     notify_template: scheduleForm.value.notify_template || defaultNotifyTemplate,
     enabled: Boolean(scheduleForm.value.enabled),
   }

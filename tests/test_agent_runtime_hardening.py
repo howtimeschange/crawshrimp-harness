@@ -3494,3 +3494,36 @@ def test_projection_tolerates_non_object_event_fields(monkeypatch, tmp_path, eve
         await service._on_worker_notification('harness.notification', 51)
         await service._on_worker_notification('harness.notification', {'event': [1]})
     asyncio.run(scenario())
+
+
+def test_worker_run_result_preserves_pre_prompt_worker_error():
+    from core.agent.service import _result_error_code, _result_error_message, _worker_run_result
+
+    result = _worker_run_result({
+        "ok": False,
+        "error": {
+            "code": "PROMPT_FAILED",
+            "message": 'DSH Web RPC session/create failed: session "s" belongs to "old", not "new"',
+        },
+    })
+
+    assert result == {
+        "status": "failed",
+        "reason": {
+            "kind": "error",
+            "error": {
+                "code": "PROMPT_FAILED",
+                "message": 'DSH Web RPC session/create failed: session "s" belongs to "old", not "new"',
+            },
+        },
+    }
+    assert _result_error_code(result) == "PROMPT_FAILED"
+    assert _result_error_message(result) == 'DSH Web RPC session/create failed: session "s" belongs to "old", not "new"'
+
+
+def test_worker_run_result_keeps_existing_summary_preferred():
+    from core.agent.service import _worker_run_result
+
+    summary = {"status": "failed", "reason": {"kind": "error", "error": {"code": "X"}}}
+
+    assert _worker_run_result({"ok": False, "error": {"code": "WRAPPER"}, "summary": summary}) == summary

@@ -127,6 +127,99 @@ def test_model_restart_waits_for_other_native_sessions(monkeypatch, tmp_path):
     asyncio.run(scenario())
 
 
+def test_generation_ready_uses_provider_and_runtime_model_identity():
+    async def scenario():
+        service = AgentService()
+        service.worker = SimpleNamespace()
+        service.runtime_state = 'ready'
+        service.generation_model_provider = 'crawshrimp-deepseek-official'
+        service.generation_model = 'deepseek-official-flash'
+        service.start_generation = AsyncMock(return_value=True)
+
+        assert await service._ensure_generation({
+            'provider_id': 'crawshrimp-deepseek-official',
+            'model_id': 'deepseek-official-v4-flash-vision-exp',
+        })
+        service.start_generation.assert_not_awaited()
+
+        assert await service._ensure_generation({
+            'provider_id': 'custom-deepseek',
+            'model_id': 'deepseek-official-v4-flash-vision-exp',
+        })
+        service.start_generation.assert_awaited_once_with(
+            'custom-deepseek', 'deepseek-official-v4-flash-vision-exp')
+
+    asyncio.run(scenario())
+
+
+def test_model_restart_waits_when_provider_changes_even_if_model_id_matches(monkeypatch, tmp_path):
+    async def scenario():
+        service, item = _service_with_runs(monkeypatch, tmp_path)
+        db.create_session('other', 'native-other')
+        item['session_id'] = 'other'
+        item['provider_id'] = 'other-provider'
+        item['model_id'] = 'model'
+        service.start_generation = AsyncMock(return_value=True)
+        await service._run_one(item)
+        service.start_generation.assert_not_awaited()
+        assert db.get_run('auto-run')['status'] == 'queued'
+        assert 'native-source' in service.active_runs_by_runtime
+    asyncio.run(scenario())
+
+
+
+
+def test_session_mode_reuses_ready_host_even_when_generation_route_differs():
+    async def scenario():
+        service = AgentService()
+        service.worker = SimpleNamespace()
+        service.runtime_state = 'ready'
+        service.generation_model_provider = 'crawshrimp-deepseek-official'
+        service.generation_model = 'deepseek-official-flash'
+        service.start_generation = AsyncMock(return_value=True)
+
+        assert await service._ensure_generation({
+            'provider_id': 'custom-provider',
+            'model_id': 'custom-model',
+            'automation_permission_mode': 'session',
+        })
+        service.start_generation.assert_not_awaited()
+
+        assert await service._ensure_generation({
+            'provider_id': 'custom-provider',
+            'model_id': 'custom-model',
+            'automation_permission_mode': 'scoped',
+        })
+        service.start_generation.assert_awaited_once_with('custom-provider', 'custom-model')
+
+    asyncio.run(scenario())
+
+
+def test_session_mode_worker_payload_marks_continuation_without_policy(monkeypatch, tmp_path):
+    async def scenario():
+        service, item = _service_with_runs(monkeypatch, tmp_path)
+        item['automation_permission_mode'] = 'session'
+        item['automation_policy'] = None
+        item['provider_id'] = 'other-provider'
+        item['model_id'] = 'other-model'
+        service.generation_model_provider = 'default-provider'
+        service.generation_model = 'default-model'
+        service.shadow_runs.clear()
+        service.active_runs_by_runtime.clear()
+        service.worker = SimpleNamespace(request=AsyncMock(return_value={'summary': {'status': 'completed'}}))
+
+        await service._run_one(item)
+
+        method, payload = service.worker.request.await_args.args[:2]
+        assert method == 'worker.run'
+        assert payload['sessionContinuation'] is True
+        assert 'automationPolicy' not in payload
+        assert payload['provider'] == 'other-provider'
+        assert payload['model'] == 'other-model'
+
+    asyncio.run(scenario())
+
+
 def test_crash_circuit_blocks_queue_and_start_entry_until_manual_reset():
     async def scenario():
         service = AgentService()
