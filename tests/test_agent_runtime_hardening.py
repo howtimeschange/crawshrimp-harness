@@ -2316,7 +2316,16 @@ def test_dsh_web_profile_retains_official_pro_vision_bridge_and_other_image_rout
     assert "input: [text]" in pro_block
     assert "input: [text, image]" not in pro_block
     assert re.search(r"id: deepseek-flash[\s\S]*input: \[text, image\]", profile)
-    assert re.search(r"crawshrimp-glm-official:[\s\S]*id: glm-official-5\.3-flash[\s\S]*input: \[text, image\]", profile)
+    glm_block = profile.split("crawshrimp-glm-official:", 1)[1].split("- id: session-persistence-jsonl", 1)[0]
+    glm_flash_block = re.search(r"- id: glm-5\.3-flash\n(?P<block>[\s\S]*?)(?=\n\s+- id:)", glm_block)
+    glm_53_block = re.search(r"- id: glm-5\.3\n(?P<block>[\s\S]*?)(?=\n\s+- id:)", glm_block)
+    glm_52_block = re.search(r"- id: glm-5\.2\n(?P<block>[\s\S]*)", glm_block)
+    assert "id: glm-official-5.3" not in glm_block
+    assert glm_flash_block and "input: [text, image]" in glm_flash_block.group("block")
+    assert glm_53_block and "input: [text]" in glm_53_block.group("block")
+    assert glm_53_block and "input: [text, image]" not in glm_53_block.group("block")
+    assert glm_52_block and "input: [text]" in glm_52_block.group("block")
+    assert glm_52_block and "input: [text, image]" not in glm_52_block.group("block")
 
 
 @pytest.mark.parametrize("override", [False, True])
@@ -2354,6 +2363,52 @@ def test_dsh_runtime_official_pro_keeps_paired_flash_vision_transport(tmp_path, 
     saved = yaml.safe_load((tmp_path / "dsh-home/settings.yaml").read_text())
     saved_models = saved["llm-pi-ai"]["providers"]["crawshrimp-deepseek-official"]["models"]
     assert next(model for model in saved_models if model["id"] == "deepseek-v4-pro")["input"] == ["text"]
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_dsh_runtime_official_glm_uses_flash_vision_bridge_for_verified_text_models(tmp_path, override):
+    from core.agent.cordis_config import model_capabilities
+    from core.agent.service import _dsh_llm_pi_ai_settings, _sync_dsh_default_model_settings
+
+    cfg = {"ai": {"llm": {}}}
+    if override:
+        cfg["ai"]["llm"]["builtin_provider_models"] = {
+            "crawshrimp-glm-official": [
+                {"id": "glm-official-5.3-flash"},
+                {"id": "glm-official-5.3", "label": "Edited GLM 5.3", "context_window": 256000},
+                {"id": "glm-official-5.2"},
+                {"id": "glm-official-5.4"},
+            ],
+        }
+    custom = [{"id": "custom-glm", "models": [{"id": "glm-5.3"}]}]
+    settings = _dsh_llm_pi_ai_settings(cfg, custom)
+    official = settings["providers"]["crawshrimp-glm-official"]
+    by_id = {model["id"]: model for model in official["models"]}
+
+    assert by_id["glm-5.3-flash"]["input"] == ["text", "image"]
+    assert by_id["glm-5.3"]["input"] == ["text"]
+    assert by_id["glm-5.2"]["input"] == ["text"]
+    assert model_capabilities("glm-official-5.3", cfg)["input_modalities"] == ["text", "image"]
+    assert model_capabilities("glm-official-5.2", cfg)["input_modalities"] == ["text", "image"]
+    if override:
+        assert by_id["glm-5.3"]["name"] == "Edited GLM 5.3"
+        assert by_id["glm-5.3"]["contextWindow"] == 256000
+        assert by_id["glm-5.4"]["input"] == ["text", "image"]
+
+    assert settings["providers"]["custom-glm"]["models"][0]["input"] == ["text", "image"]
+    domestic_glm = next(model for model in settings["providers"]["crawshrimp-domestic-openai"]["models"] if model["id"] == "glm-5.2")
+    assert domestic_glm["input"] == ["text", "image"]
+
+    _sync_dsh_default_model_settings(tmp_path, "crawshrimp-glm-official", "glm-5.3", cfg, custom)
+    import yaml
+
+    saved = yaml.safe_load((tmp_path / "dsh-home/settings.yaml").read_text())
+    saved_models = saved["llm-pi-ai"]["providers"]["crawshrimp-glm-official"]["models"]
+    saved_by_id = {model["id"]: model for model in saved_models}
+    assert saved_by_id["glm-5.3-flash"]["input"] == ["text", "image"]
+    assert saved_by_id["glm-5.3"]["input"] == ["text"]
+    assert saved_by_id["glm-5.2"]["input"] == ["text"]
+    assert saved["agent-default-model"] == {"provider": "crawshrimp-glm-official", "model": "glm-5.3"}
 
 
 def test_dsh_native_deepseek_route_is_hidden_in_favor_of_crawshrimp_route():

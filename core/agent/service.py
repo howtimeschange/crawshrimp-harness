@@ -567,6 +567,13 @@ def _compact_text(value: Any) -> str:
     return str(value or "").strip()
 
 
+_GLM_OFFICIAL_VISION_BRIDGE_TEXT_MODELS = frozenset({"glm-5.3", "glm-5.2"})
+
+
+def _uses_glm_official_vision_bridge(provider: Mapping[str, Any], runtime_model_id: str) -> bool:
+    return bool(provider.get("official_glm")) and runtime_model_id in _GLM_OFFICIAL_VISION_BRIDGE_TEXT_MODELS
+
+
 def build_llm_runtime_environment(external_env: Mapping[str, str], cfg: Mapping[str, Any]) -> dict[str, str]:
     """Build a fresh DSH child environment from external values and current config.
 
@@ -634,15 +641,14 @@ def _dsh_llm_pi_ai_settings(
                 provider.get("official_deepseek") or provider.get("official_glm")
             ) else str(model_id)
             uses_pro_vision_bridge = provider.get("official_deepseek") and runtime_model_id == "deepseek-v4-pro"
+            uses_glm_vision_bridge = _uses_glm_official_vision_bridge(provider, runtime_model_id)
             model = {
                 "id": runtime_model_id,
                 "contextWindow": int(cap.get("context_window") or 64000),
                 "maxTokens": int(cap.get("max_output_tokens") or 8192),
-                # The official Pro route consumes image descriptions from its
-                # paired Flash model. Keep its wire input text-only so the
-                # installed Vision bridge runs; the adapter exposes the paired
-                # image capability to the UI and image-returning tools.
-                "input": ["text"] if uses_pro_vision_bridge else ["text", "image"],
+                # Official text routes consume their paired vision model's
+                # descriptions; the adapter still exposes image input to users.
+                "input": ["text"] if (uses_pro_vision_bridge or uses_glm_vision_bridge) else ["text", "image"],
             }
             if provider.get("official_deepseek") and model_id in provider["preset_models"]:
                 model["reasoningEfforts"] = {"off": "off", "low": "low", "high": "high", "max": "max"}
