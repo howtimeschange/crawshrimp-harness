@@ -18,6 +18,7 @@ concurrency:
 
 env:
   TZ: Asia/Shanghai
+  CRAWSHRIMP_BUNDLE_OFFICE: ${{ vars.CRAWSHRIMP_BUNDLE_OFFICE || '' }}
 
 jobs:
   test:
@@ -211,7 +212,15 @@ jobs:
           PYTHON_TARGETS: ${{ matrix.python_target }}
         run: bash scripts/download-python.sh
 
+      - name: Verify lightweight Office runtime metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s runtime-locks/office-assets.json
+          test -d runtime-locks/licenses
+
       - name: Stage native Office runtime
+        if: env.CRAWSHRIMP_BUNDLE_OFFICE == '1'
         working-directory: app
         shell: bash
         env:
@@ -224,6 +233,9 @@ jobs:
           done
 
       - name: Verify staged native Office runtime
+        # macOS font resources invalidate the upstream resource seal until the
+        # application is signed. afterSign runs the same smoke for both arches.
+        if: env.CRAWSHRIMP_BUNDLE_OFFICE == '1' && matrix.artifact_suffix != 'mac'
         shell: bash
         env:
           PYTHON_TARGETS: ${{ matrix.python_target }}

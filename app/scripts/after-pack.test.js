@@ -12,7 +12,36 @@ const {
   requireNativeRuntimePackages,
   requirePythonBundle,
   requirePythonScriptsBundle,
+  deduplicateOfficeFonts,
 } = require('./after-pack')
+
+test('packaged profiles omit build-machine dependency links and keep their configuration', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-profile-assets-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const source = path.join(root, 'source'), destination = path.join(root, 'destination')
+  fs.mkdirSync(path.join(source, 'profiles/web/node_modules'), { recursive: true })
+  fs.writeFileSync(path.join(source, 'profiles/web/cordis.yml'), 'plugins: {}')
+  fs.writeFileSync(path.join(source, 'profiles/web/node_modules/build-only.js'), 'not a runtime dependency')
+  fs.mkdirSync(destination)
+  copyDirSync(source, destination, new Set(), { skipProfileDependencies: true })
+  assert.equal(fs.readFileSync(path.join(destination, 'profiles/web/cordis.yml'), 'utf8'), 'plugins: {}')
+  assert.equal(fs.existsSync(path.join(destination, 'profiles/web/node_modules')), false)
+})
+
+test('full Office packages share the native font files with Python before signing', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'office-single-font-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const native = 'libreoffice/LibreOffice.app/Contents/Resources/fonts/truetype'
+  fs.mkdirSync(path.join(root, native), { recursive: true }); fs.mkdirSync(path.join(root, 'fonts'))
+  fs.writeFileSync(path.join(root, native, 'fixture.otf'), 'font-data')
+  fs.writeFileSync(path.join(root, 'fonts/fixture.otf'), 'font-data')
+  fs.writeFileSync(path.join(root, 'runtime.json'), JSON.stringify({ fonts: [{ path: 'fonts/fixture.otf', sha256: 'fixture' }] }))
+  deduplicateOfficeFonts(root, 'mac-arm64')
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'runtime.json')))
+  assert.equal(manifest.fonts[0].path, `${native}/fixture.otf`)
+  assert.equal(fs.existsSync(path.join(root, 'fonts')), false)
+  assert.equal(fs.readFileSync(path.join(root, manifest.fonts[0].path), 'utf8'), 'font-data')
+})
 
 test('Office native links survive removing their staging directory', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'office-relocation-'))

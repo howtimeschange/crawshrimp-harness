@@ -305,6 +305,8 @@ git diff --check
 
 ## 构建
 
+默认桌面安装包是轻量版：保留 Office 生成能力和锁文件，但不内置完整 LibreOffice 运行时。首次需要预览、转换或原生字体资源时，客户端会按 `runtime-locks/office-assets.json` 下载并校验 Office 资源，写入用户数据目录缓存；缓存命中后，同一锁文件版本可离线继续使用。仅使用内置 Python 库的文档生成任务无需先下载 LibreOffice。
+
 ```bash
 # 仅 Vite
 npm --prefix app run vite:build
@@ -316,7 +318,16 @@ npm --prefix app run build:mac:ci
 npm --prefix app run build:win
 ```
 
+需要完全离线、安装包内置 Office 原生运行时时，显式打开 full bundle：
+
+```bash
+CRAWSHRIMP_BUNDLE_OFFICE=1 npm --prefix app run build:mac:ci
+CRAWSHRIMP_BUNDLE_OFFICE=1 npm --prefix app run build:win
+```
+
 `stage-runtime.mjs` 使用独立 `package-lock.json` 生成生产依赖闭包，并执行禁用能力检查与 Electron-as-Node boot check。不要把开发期 `.spike-*`、运行数据、token 或构建缓存提交到 Git。
+
+Office 运行时发布模式见 [Office Runtime On Demand](docs/crawshrimp-harness/office-runtime-on-demand.md)。
 
 ## 桌面自动更新
 
@@ -347,6 +358,7 @@ SPEC.md                           v1 规范与 v2 Harness 增补
 
 ## 维护文档
 
+- [Office 运行时按需下载与 full bundle 构建](docs/crawshrimp-harness/office-runtime-on-demand.md)
 - [交接与 code review 结论](docs/crawshrimp-harness/04-codex-handover.md)
 - [会话内媒体实现与踩坑](docs/crawshrimp-harness/03-media-in-chat-handover.md)
 - [交付能力与验证证据](docs/crawshrimp-harness/02-delivery.md)

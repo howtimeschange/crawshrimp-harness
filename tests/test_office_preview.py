@@ -141,6 +141,21 @@ def test_plain_office_file_starts_once_and_reuses_queued_job(monkeypatch, tmp_pa
     assert document.read_bytes() == original
 
 
+def test_preview_poll_exposes_first_use_install_progress(monkeypatch, tmp_path):
+    _use_data_root(monkeypatch, tmp_path)
+    document = tmp_path / "first.docx"
+    document.write_bytes(b"docx")
+    started = []
+    _fake_start(monkeypatch, started)
+    monkeypatch.setattr(preview.jobs, "read", lambda root, job_id, **kwargs: {
+        "state": "running", "runtime_progress": {"state": "downloading", "downloaded_bytes": 50, "total_bytes": 100}})
+    first = preview.resolve(document)
+    result = preview.resolve(document, first["job_id"])
+    assert result["state"] == "running"
+    assert result["runtime_progress"]["downloaded_bytes"] == 50
+    assert started == [document.resolve()]
+
+
 def test_start_terminal_response_is_normalized_through_poll(monkeypatch, tmp_path):
     _use_data_root(monkeypatch, tmp_path)
     document = tmp_path / "fast.docx"

@@ -3,6 +3,28 @@
 const fs = require('fs')
 const path = require('path')
 const { signAsync } = require('@electron/osx-sign')
+const signingUtil = require(path.join(path.dirname(require.resolve('@electron/osx-sign')), 'util.js'))
+
+async function executeWithTimestampRetry(execute, file, args, options, wait = ms => new Promise(resolve => setTimeout(resolve, ms))) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await execute(file, args, options)
+    } catch (error) {
+      const timestampRequest = file === 'codesign' && Array.isArray(args) && args.includes('--timestamp')
+      const transient = /A timestamp was expected but was not found|timestamp service is not available/i.test(`${error.message || ''}\n${error.stderr || ''}`)
+      if (!timestampRequest || !transient || attempt >= 3) throw error
+      console.warn(`[sign] timestamp service failed; retrying the same signing request (${attempt}/3)`)
+      await wait(1000 * attempt)
+    }
+  }
+}
+
+function installTimestampRetry() {
+  if (signingUtil.crawshrimpTimestampRetryInstalled) return
+  const execute = signingUtil.execFileAsync
+  signingUtil.execFileAsync = (file, args, options) => executeWithTimestampRetry(execute, file, args, options)
+  signingUtil.crawshrimpTimestampRetryInstalled = true
+}
 
 const MACH_O_MAGICS = new Set([
   0xfeedface,
@@ -77,6 +99,7 @@ function createPythonDataIgnore(existingIgnore = () => false) {
 }
 
 async function signMacApp(options) {
+  installTimestampRetry()
   return signAsync({
     ...options,
     ignore: createPythonDataIgnore(options.ignore),
@@ -88,3 +111,4 @@ module.exports.default = signMacApp
 module.exports.createPythonDataIgnore = createPythonDataIgnore
 module.exports.hasNonNativeResourceExtension = hasNonNativeResourceExtension
 module.exports.isMachOFile = isMachOFile
+module.exports.executeWithTimestampRetry = executeWithTimestampRetry

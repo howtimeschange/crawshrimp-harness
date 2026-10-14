@@ -8,13 +8,14 @@ function delay(ms, signal) {
 
 // Opening an Office file is independent of whether its chat artifact included
 // preview metadata. The server resolves an existing revision or renders a copy.
-export async function resolveOfficePreview(path, { api, signal, pollInterval = 750, timeout = 330000 } = {}) {
+export async function resolveOfficePreview(path, { api, signal, onProgress, pollInterval = 750, timeout = 2130000 } = {}) {
   const deadline = Date.now() + timeout
   let jobId
   while (true) {
     signal.throwIfAborted()
     const result = await api('POST', '/agent/artifacts/office-preview', { path, ...(jobId ? { job_id: jobId } : {}) })
     signal.throwIfAborted()
+    if (onProgress) onProgress(result.runtime_progress || null)
     if (result.state === 'completed') {
       if (!result.office?.pages?.length) throw new Error('未生成可显示的预览页面，请重新读取文件')
       return result.office

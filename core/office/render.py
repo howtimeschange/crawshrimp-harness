@@ -35,7 +35,7 @@ def _render(document: Path, work: Path, *, profile: Path, recalculate: bool = Fa
             cancel: threading.Event | None = None) -> dict:
     import pymupdf as fitz
     from PIL import Image, ImageDraw
-    manifest = assets()
+    manifest = assets(install=True, cancel=cancel)
     profile.mkdir(parents=True, exist_ok=True)
     # A private profile prevents reuse of the user's running GUI instance.
     (profile / "user").mkdir(exist_ok=True)
@@ -47,6 +47,11 @@ def _render(document: Path, work: Path, *, profile: Path, recalculate: bool = Fa
         '<prop oor:name="Link" oor:op="fuse"><value>2</value></prop></item></oor:items>', encoding="utf-8")
     command = [str(office_root() / manifest["executable"]["path"]),
                f"-env:UserInstallation={profile.as_uri()}", "--headless", "--nologo", "--nodefault", "--norestore"]
+    if manifest.get("brandDirectory"):
+        brand = (office_root() / manifest["brandDirectory"]).resolve()
+        if not brand.is_relative_to(office_root()) or not brand.is_dir():
+            raise OfficeError("OFFICE_RUNTIME_INCOMPLETE", "Office 字体资源路径无效。")
+        command.insert(1, f"-env:BRAND_BASE_DIR={brand.as_uri()}")
     editable, preview = work / "editable", work / "preview"
     editable.mkdir(exist_ok=True)
     preview.mkdir(exist_ok=True)

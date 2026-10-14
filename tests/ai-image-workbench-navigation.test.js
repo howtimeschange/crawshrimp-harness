@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import vm from 'node:vm'
 
 function read(path) {
@@ -685,6 +686,7 @@ test('AI image workbench embeds a tldraw annotation layer for precise edits', ()
   assert.match(annotation, /from 'react-dom\/client'/)
   assert.match(annotation, /tldraw\/tldraw\.css/)
   assert.match(annotation, /from '@tldraw\/assets\/urls'/)
+  assert.match(annotation, /getAssetUrlsByMetaUrl\(preserveTldrawAssetUrl\)/)
   assert.doesNotMatch(annotation, /@tldraw\/assets\/imports\.vite/)
   assert.doesNotMatch(annotation, /const assetUrls = getAssetUrlsByImport\(\)/)
   assert.match(annotation, /new Box\(0, 0, rect\.width, rect\.height\)/)
@@ -712,9 +714,36 @@ test('AI image workbench embeds a tldraw annotation layer for precise edits', ()
   assert.doesNotMatch(annotation, /createShapeId/)
   assert.doesNotMatch(annotation, /editor\.createAssets/)
   assert.doesNotMatch(annotation, /type: 'image'/)
-  assert.ok(pkg.dependencies?.tldraw, 'tldraw should be bundled as a client dependency')
-  assert.ok(pkg.dependencies?.react, 'react should be bundled for the tldraw island')
-  assert.ok(pkg.dependencies?.['react-dom'], 'react-dom should be bundled for the tldraw island')
+  for (const dependency of ['tldraw', 'react', 'react-dom']) {
+    assert.ok(pkg.devDependencies?.[dependency], `${dependency} must be available to bundle the renderer annotation island`)
+    assert.equal(pkg.dependencies?.[dependency], undefined, `${dependency} must not duplicate the compiled renderer in the host Node runtime`)
+  }
+})
+
+test('Tldraw annotation assets preserve Vite file and HTTP URLs', async () => {
+  const annotation = read('app/src/renderer/components/TldrawAnnotationLayer.js')
+  const { getAssetUrlsByMetaUrl } = await import(pathToFileURL('app/node_modules/@tldraw/assets/urls.js').href)
+  const helperMatch = annotation.match(/export function preserveTldrawAssetUrl\(assetUrl\) \{\s*return assetUrl\s*\}/)
+
+  assert.ok(helperMatch, 'production tldraw asset URL formatter helper is missing')
+  const preserveTldrawAssetUrl = vm.runInNewContext(
+    `${helperMatch[0].replace('export ', '')}; preserveTldrawAssetUrl`,
+    {},
+  )
+
+  const fileAssetUrls = getAssetUrlsByMetaUrl(preserveTldrawAssetUrl)
+  const fontUrl = fileAssetUrls.fonts.tldraw_draw
+  const localeUrl = fileAssetUrls.translations['zh-cn']
+
+  assert.ok(fontUrl.startsWith('file://'))
+  assert.ok(localeUrl.startsWith('file://'))
+  assert.equal(fontUrl.startsWith('/file://'), false)
+  assert.equal(localeUrl.startsWith('/file://'), false)
+  assert.ok((await fs.promises.readFile(fileURLToPath(fontUrl))).length > 0)
+  assert.ok(JSON.parse(await fs.promises.readFile(fileURLToPath(localeUrl), 'utf8')))
+
+  assert.equal(preserveTldrawAssetUrl('http://127.0.0.1:5173/@fs/font.woff2'), 'http://127.0.0.1:5173/@fs/font.woff2')
+  assert.equal(preserveTldrawAssetUrl('data:font/woff2;base64,d09GMg=='), 'data:font/woff2;base64,d09GMg==')
 })
 
 test('AI image workbench keeps generated task metadata separate from next-run edits', () => {

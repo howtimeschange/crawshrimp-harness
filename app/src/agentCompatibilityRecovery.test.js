@@ -75,7 +75,7 @@ test('Windows staging preserves executable and script paths containing spaces', 
   source = source.replace(/^import .*$/gm, '').replaceAll('import.meta.url', JSON.stringify('file:///C:/Work%20Space/scripts/stage-runtime-targets.mjs'))
   let call
   vm.runInNewContext(source, {
-    process: { platform: 'win32', arch: 'x64', execPath: 'C:\\Program Files\\nodejs\\node.exe', argv: ['node', 'script', 'win32-x64'], exit(code) { throw Error(String(code)) } },
+    process: { env: {}, platform: 'win32', arch: 'x64', execPath: 'C:\\Program Files\\nodejs\\node.exe', argv: ['node', 'script', 'win32-x64'], exit(code) { throw Error(String(code)) } },
     spawnSync(executable, args, options) { call = { executable, args, options }; return { status: 0 } },
     dirname: () => 'C:\\Work Space\\scripts', resolve: path.win32.resolve,
     fileURLToPath: () => 'C:\\Work Space\\scripts\\stage-runtime-targets.mjs', console,

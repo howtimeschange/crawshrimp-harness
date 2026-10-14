@@ -15,7 +15,7 @@ function harness(api, initial = {}) {
     watch: (_, cb) => { callback = cb }, resolveOfficePreview, AbortController,
     window: { cs: { agentApi: api } },
   }
-  vm.runInNewContext(script + '\nglobalThis.h = {pages, status, error, loading}', context)
+  vm.runInNewContext(script + '\nglobalThis.h = {pages, status, error, loading, runtimeProgress, retryCount}', context)
   return { props, ...context.h, update(change = {}) { dispose(); Object.assign(props, change); return callback(null, null, fn => { dispose = fn }) }, dispose() { dispose() } }
 }
 const office = { revision: 'v1', pages: [{ path: '/page1.png' }], visual: { status: 'passed', reviewed: [1] } }
@@ -67,6 +67,18 @@ test('failed conversion shows its cause and reread can recover', async () => {
   failing = false; await h.update({ revision: 1 })
   assert.equal(h.pages.value.length, 1)
   assert.equal(h.error.value, '')
+})
+test('Office download status is visible and the retry control recovers a failed first use', async () => {
+  let failing = true
+  const h = harness(async () => failing ? { state: 'failed', error: { message: '下载失败，请检查网络' } } : { state: 'completed', office })
+  await h.update()
+  assert.match(h.error.value, /下载失败/)
+  failing = false; h.retryCount.value++; await h.update()
+  assert.equal(h.pages.value.length, 1)
+  h.loading.value = true
+  h.runtimeProgress.value = { state: 'downloading', message: '首次使用，正在下载 Office 组件', downloaded_bytes: 1, total_bytes: 2 }
+  assert.match(h.status.value, /50%/)
+  h.loading.value = false
 })
 test('a same-path update invalidates published pages and rejects an older pending response', async () => {
   const requests = []

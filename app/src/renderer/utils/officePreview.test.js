@@ -20,6 +20,19 @@ test('ordinary Office preview polls the same job until its pages are ready', asy
   }), office)
   assert.deepEqual(requests, [{ path: '/table.xlsx' }, { path: '/table.xlsx', job_id: 'job1' }, { path: '/table.xlsx', job_id: 'job1' }])
 })
+test('first-use downloads report progress while polling the same background job', async () => {
+  const seen = [], requests = []
+  const progress = { state: 'downloading', message: '正在下载 Office 资源', downloaded_bytes: 50, total_bytes: 100 }
+  const results = [{ state: 'running', job_id: 'install-job', runtime_progress: progress }, { state: 'completed', office }]
+  const result = await resolveOfficePreview('/first.docx', {
+    signal: new AbortController().signal, pollInterval: 0,
+    onProgress: value => seen.push(value),
+    api: async (_, __, body) => { requests.push(body); return results.shift() },
+  })
+  assert.equal(result, office)
+  assert.deepEqual(seen, [progress, null])
+  assert.equal(requests[1].job_id, 'install-job')
+})
 test('switching away stops polling and discards a late preview response', async () => {
   const controller = new AbortController()
   let finish, requests = 0

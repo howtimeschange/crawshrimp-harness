@@ -51,6 +51,17 @@ const builderBin = path.join(
 const builderCommand = process.env.ELECTRON_BUILDER_BIN || builderBin
 
 const args = ['--config', 'build.yml', ...process.argv.slice(2)]
+if (process.env.CRAWSHRIMP_BUNDLE_OFFICE === '1') {
+  const windows = args.includes('--win') || (process.platform === 'win32' && !args.includes('--mac'))
+  const targets = windows ? ['win-x64'] : args.includes('--arm64') ? ['mac-arm64'] : args.includes('--x64') ? ['mac-x64'] : ['mac-arm64', 'mac-x64']
+  for (const target of targets) {
+    const staged = spawnSync(process.execPath, [path.join(__dirname, 'stage-office-runtime.mjs'), target], {
+      cwd: path.join(__dirname, '..'), env, stdio: 'inherit',
+    })
+    if (staged.error) throw staged.error
+    if (staged.status !== 0) process.exit(staged.status || 1)
+  }
+}
 const maxAttempts = Math.max(1, Number.parseInt(process.env.ELECTRON_BUILDER_ATTEMPTS || '4', 10) || 4)
 const retryDelayMs = Math.max(0, Number.parseInt(process.env.ELECTRON_BUILDER_RETRY_DELAY_MS || '10000', 10) || 10000)
 

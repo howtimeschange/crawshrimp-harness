@@ -16,7 +16,7 @@ def test_render_uses_localized_font_fallbacks_only_in_preview_input(tmp_path, mo
     original = source.read_bytes()
     work = tmp_path / 'job'
     work.mkdir()
-    monkeypatch.setattr(rendering, 'assets', lambda: {'executable': {'path': 'soffice'}, 'libreofficeVersion': 'fixture'})
+    monkeypatch.setattr(rendering, 'assets', lambda **kwargs: {'executable': {'path': 'soffice'}, 'libreofficeVersion': 'fixture'})
     monkeypatch.setattr(rendering, 'office_root', lambda: tmp_path)
     inputs = []
 

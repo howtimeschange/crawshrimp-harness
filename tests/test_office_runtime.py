@@ -91,6 +91,60 @@ def test_same_name_jobs_are_isolated_and_use_explicit_python(tmp_path, monkeypat
         jobs.read(tmp_path / "other-session", first["job_id"])
 
 
+def test_pure_python_run_does_not_preinstall_office_runtime(tmp_path, monkeypatch):
+    monkeypatch.setenv("CRAWSHRIMP_PYTHON_EXECUTABLE", sys.executable)
+    monkeypatch.setenv("CRAWSHRIMP_OFFICE_ON_DEMAND", "1")
+
+    def unexpected_assets(*_args, **_kwargs):
+        raise AssertionError("pure run should not preinstall Office assets")
+
+    monkeypatch.setattr(jobs, "assets", unexpected_assets)
+    code = "print('pure python run')"
+
+    started = jobs.start(tmp_path, "run", code=code)
+    result = wait(tmp_path, started["job_id"])
+
+    assert result["state"] == "completed"
+    assert "pure python run" in result["result"]["stdout"]
+    assert "runtime_progress" not in result
+
+
+def test_child_office_install_progress_pauses_script_timeout(tmp_path, monkeypatch):
+    monkeypatch.setenv("CRAWSHRIMP_OFFICE_CACHE", str(tmp_path / "cache"))
+    script = (
+        "import time\n"
+        "from core.office import install\n"
+        "install._write_status({'state':'downloading','message':'installing','downloaded_bytes':1,'total_bytes':2})\n"
+        "time.sleep(1.4)\n"
+        "install._write_status({'state':'ready','message':'ready'})\n"
+        "print('after install')\n"
+    )
+    seen = []
+
+    result = execute([sys.executable, "-c", script], tmp_path / "job", timeout=1, progress=seen.append)
+
+    assert "after install" in result["stdout"]
+    assert any(item.get("state") == "downloading" for item in seen)
+
+
+def test_child_office_lock_wait_progress_pauses_script_timeout(tmp_path):
+    script = (
+        "import json, os, time\n"
+        "from pathlib import Path\n"
+        "path = Path(os.environ['CRAWSHRIMP_OFFICE_PROGRESS_FILE'])\n"
+        "path.write_text(json.dumps({'state':'waiting','message':'waiting'}), encoding='utf-8')\n"
+        "time.sleep(1.4)\n"
+        "path.write_text(json.dumps({'state':'ready','message':'ready'}), encoding='utf-8')\n"
+        "print('after waiting')\n"
+    )
+    seen = []
+
+    result = execute([sys.executable, "-c", script], tmp_path / "job", timeout=1, progress=seen.append)
+
+    assert "after waiting" in result["stdout"]
+    assert any(item.get("state") == "waiting" for item in seen)
+
+
 def test_interrupted_job_is_not_replayed(tmp_path):
     work = tmp_path / ("a" * 32)
     work.mkdir()

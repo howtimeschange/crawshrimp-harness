@@ -22,11 +22,15 @@ const LOCKED_ANNOTATION_CAMERA_OPTIONS = Object.freeze({
 let cachedAssetUrls
 let assetUrlsResolved = false
 
+export function preserveTldrawAssetUrl(assetUrl) {
+  return assetUrl
+}
+
 function resolveTldrawAssetUrls() {
   if (assetUrlsResolved) return cachedAssetUrls
   assetUrlsResolved = true
   try {
-    cachedAssetUrls = getAssetUrlsByMetaUrl()
+    cachedAssetUrls = getAssetUrlsByMetaUrl(preserveTldrawAssetUrl)
   } catch (error) {
     console.warn('tldraw asset urls unavailable', error)
     cachedAssetUrls = undefined

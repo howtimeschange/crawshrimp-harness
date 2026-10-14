@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core import runtime_paths
+from core import shared_ocr_assets
+
 
 @dataclass(frozen=True)
 class OcrWord:
@@ -431,8 +434,49 @@ def _default_tesseract_lang_path() -> str:
     explicit = _text(os.environ.get("CRAWSHRIMP_TESSERACT_LANG_PATH"))
     if explicit:
         return explicit
-    bundled = _project_root() / "adapters" / "tmall-ops-assistant" / "vendor" / "tesseract" / "lang"
-    return str(bundled) if bundled.is_dir() else ""
+    return shared_ocr_assets.default_tesseract_lang_path(_project_root())
+
+
+def _default_tesseract_cache_path() -> str:
+    try:
+        cache_dir = runtime_paths.child_dir("ocr-cache")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return str(cache_dir.resolve(strict=False))
+    except Exception as exc:
+        raise RuntimeError(
+            "Unable to prepare OCR cache directory under Crawshrimp runtime data. "
+            "Check CRAWSHRIMP_DATA permissions or free disk space before running host OCR."
+        ) from exc
+
+
+_ELECTRON_AS_NODE_TESSERACT_PRELOAD = r"""
+const Module = require('module');
+const marker = '__crawshrimpTesseractForceNodeEnvironment';
+if (!globalThis[marker]) {
+  globalThis[marker] = true;
+  const originalLoad = Module._load;
+  Module._load = function crawshrimpPatchedLoad(request, parent, isMain) {
+    if (request === 'is-electron') {
+      return function isElectron() { return false; };
+    }
+    return originalLoad.apply(this, arguments);
+  };
+}
+""".strip() + "\n"
+
+
+def _electron_as_node_tesseract_preload(cache_path: str) -> str:
+    preload_path = Path(cache_path) / "electron-as-node-tesseract-preload.cjs"
+    try:
+        preload_path.parent.mkdir(parents=True, exist_ok=True)
+        if not preload_path.exists() or preload_path.read_text() != _ELECTRON_AS_NODE_TESSERACT_PRELOAD:
+            preload_path.write_text(_ELECTRON_AS_NODE_TESSERACT_PRELOAD)
+        return str(preload_path.resolve(strict=False))
+    except Exception as exc:
+        raise RuntimeError(
+            "Unable to prepare OCR Electron-as-Node preload under Crawshrimp runtime data. "
+            "Check CRAWSHRIMP_DATA permissions or free disk space before running host OCR."
+        ) from exc
 
 
 _TESSERACT_JS_SCRIPT = r"""
@@ -448,6 +492,7 @@ async function main() {
   const options = { logger: () => {} };
   if (payload.corePath) options.corePath = payload.corePath;
   if (payload.langPath) options.langPath = payload.langPath;
+  if (payload.cachePath) options.cachePath = payload.cachePath;
   const worker = await tesseractModule.createWorker(payload.lang || 'eng', 1, options);
   try {
     if (payload.whitelist) {
@@ -494,10 +539,12 @@ def recognize_image_with_tesseract_js(
     if not status["available"]:
         raise RuntimeError("project tesseract.js runtime is not available")
     node_modules = Path(status["node_modules"])
+    cache_path = _default_tesseract_cache_path()
     payload = {
         "nodeModulesDir": str(node_modules),
         "corePath": str(node_modules / "tesseract.js-core"),
         "langPath": _default_tesseract_lang_path(),
+        "cachePath": cache_path,
         "lang": lang,
         "whitelist": whitelist,
     }
@@ -507,10 +554,20 @@ def recognize_image_with_tesseract_js(
         for part in [str(node_modules), _text(env.get("NODE_PATH"))]
         if part
     )
+    command = [status["node_executable"], "-e", _TESSERACT_JS_SCRIPT, str(image_path), json.dumps(payload)]
     if _text(os.environ.get("CRAWSHRIMP_NODE_EXECUTABLE")):
         env["ELECTRON_RUN_AS_NODE"] = "1"
+        command = [
+            status["node_executable"],
+            "--require",
+            _electron_as_node_tesseract_preload(cache_path),
+            "-e",
+            _TESSERACT_JS_SCRIPT,
+            str(image_path),
+            json.dumps(payload),
+        ]
     completed = subprocess.run(
-        [status["node_executable"], "-e", _TESSERACT_JS_SCRIPT, str(image_path), json.dumps(payload)],
+        command,
         cwd=str(_project_root()),
         env=env,
         capture_output=True,

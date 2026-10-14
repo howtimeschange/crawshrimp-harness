@@ -1,4 +1,4 @@
-"""Resolve the explicit bundled runtime; never search PATH for Python or Office."""
+"""Resolve bundled Python and a pinned, bundled or on-demand Office runtime."""
 from __future__ import annotations
 
 import hashlib
@@ -48,11 +48,21 @@ def office_root() -> Path:
     raw = os.environ.get("CRAWSHRIMP_OFFICE_ROOT", "")
     if not raw or not Path(raw).is_absolute():
         raise OfficeError("OFFICE_RUNTIME_INCOMPLETE", "Office 资源路径缺失，请修复应用运行环境。")
-    return Path(raw).resolve()
+    root = Path(raw).resolve()
+    if not (root / "runtime.json").is_file() and os.environ.get("CRAWSHRIMP_OFFICE_ON_DEMAND") == "1":
+        from .install import installed_root
+        return installed_root()
+    return root
 
 
-def assets() -> dict:
+def assets(*, install: bool = False, cancel=None, progress=None) -> dict:
     root = office_root()
+    if install and os.environ.get("CRAWSHRIMP_OFFICE_ON_DEMAND") == "1":
+        from .install import ensure_runtime
+        # A bundled installation remains usable offline. Only the versioned
+        # on-demand root is managed by the downloader.
+        if not (Path(os.environ["CRAWSHRIMP_OFFICE_ROOT"]) / "runtime.json").is_file():
+            root = ensure_runtime(cancel=cancel, progress=progress)
     try:
         manifest = json.loads((root / "runtime.json").read_text(encoding="utf-8"))
         if manifest["target"] != target_id():
@@ -70,7 +80,7 @@ def environment(work: Path) -> dict[str, str]:
     env = dict(os.environ)
     for name in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"):
         env.pop(name, None)
-    env.update(PYTHONNOUSERSITE="1", PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
+    env.update(PYTHONNOUSERSITE="1", PYTHONDONTWRITEBYTECODE="1", PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
                PYTHONPATH=str(Path(__file__).resolve().parents[2]),
                MPLBACKEND="Agg", MPLCONFIGDIR=str(work / "mpl-cache"),
                CRAWSHRIMP_OFFICE_OUTPUT=str(work / "editable"))
@@ -79,7 +89,8 @@ def environment(work: Path) -> dict[str, str]:
 
 def configure_fonts() -> str:
     from matplotlib import font_manager, rcParams
-    root, manifest = office_root(), assets()
+    manifest = assets(install=True)
+    root = office_root()
     for entry in manifest["fonts"]:
         font_manager.fontManager.addfont(str(root / entry["path"]))
     family = manifest["fontFamily"]
@@ -117,6 +128,10 @@ def inspect_runtime() -> dict:
             if file_hash(office_root() / entry["path"]) != entry["sha256"]:
                 result["issues"].append(f"资源校验失败: {entry['path']}")
     except OfficeError as exc:
-        result["issues"].append(str(exc))
+        if exc.code == "OFFICE_RUNTIME_INCOMPLETE" and os.environ.get("CRAWSHRIMP_OFFICE_ON_DEMAND") == "1":
+            from .install import runtime_status
+            result["office"] = {**runtime_status(), "on_demand": True}
+        else:
+            result["issues"].append(str(exc))
     result["ok"] = not result["issues"]
     return result

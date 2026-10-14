@@ -183,7 +183,8 @@ def _existing_for(path: Path, revision: str) -> dict | None:
             continue
         state = data.get("state")
         if state in {"queued", "running"}:
-            return {"state": state, "job_id": work.name}
+            return {"state": state, "job_id": work.name,
+                    **({"runtime_progress": data["runtime_progress"]} if data.get("runtime_progress") else {})}
         if state == "completed":
             office = _office_from_preview_job(work, path, revision)
             if office:
@@ -225,7 +226,8 @@ def _poll(path: Path, job_id: str) -> dict:
         return _error(getattr(exc, "code", "OFFICE_PREVIEW_FAILED"), str(exc), job_id=job_id)
     state = data.get("state")
     if state in {"queued", "running"}:
-        return {"state": state, "job_id": job_id}
+        return {"state": state, "job_id": job_id,
+                **({"runtime_progress": data["runtime_progress"]} if data.get("runtime_progress") else {})}
     if state == "completed":
         office = _office_from_preview_job(work, path, current_revision)
         if office:

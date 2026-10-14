@@ -15,6 +15,7 @@
 
 const fs   = require('fs')
 const path = require('path')
+const { prunePackagedRuntime } = require('./prune-packaged-runtime')
 
 const REQUIRED_BACKEND_IMPORTS = [
   'fastapi',
@@ -95,9 +96,7 @@ const REQUIRED_DEEPSEEK_HARNESS_FILES = [
   'worker/web-rpc-client.mjs',
   'profiles/web/cordis.yml',
   'profiles/web/cordis.patch.yml',
-  'profiles/web/node_modules/@xmanrui/dsh-im/package.json',
-  'profiles/web/node_modules/crawshrimp-product-bridge/lib/index.js',
-  'profiles/web/node_modules/crawshrimp-slots/lib/client.js',
+  'node_modules/@xmanrui/dsh-im/package.json',
 ]
 
 const DEEPSEEK_RUNTIME_TARGET_MARKER = '.crawshrimp-runtime-target.json'
@@ -179,6 +178,13 @@ function requirePythonScriptsBundle(resourcesPath) {
 
   const adaptersDir = path.join(scriptsDir, 'adapters')
   requireAdapterManifests(adaptersDir)
+  if (['tmall-ops-assistant', 'vipshop-ops-assistant'].some(id => fs.existsSync(path.join(adaptersDir, id)))) {
+    for (const relative of ['tesseract.min.js', 'worker.min.js', 'tesseract-core-simd.wasm.js', 'lang/eng.traineddata.gz', 'lang/chi_sim.traineddata.gz', 'LICENSE.tesseract.js.md', 'LICENSE.tesseract-core']) {
+      if (!fs.existsSync(path.join(scriptsDir, 'shared-assets', 'tesseract', relative))) {
+        throw new Error(`[after-pack] shared OCR asset missing: ${relative}`)
+      }
+    }
+  }
 
   const integrationsDir = path.join(scriptsDir, 'integrations')
   const missingIntegrations = REQUIRED_VIDEO_INTEGRATION_FILES.filter(relativePath => {
@@ -308,21 +314,19 @@ async function afterPack(context) {
   const installedLock = path.join(srcPython, '.crawshrimp-python.lock')
   if (!fs.existsSync(installedLock) || !pythonLock.equals(fs.readFileSync(installedLock))) throw new Error('[after-pack] Python bundle lock mismatch; rebuild bundled Python')
   const officeSource = path.join(scriptDir, '..', 'build-staging', 'office', srcKey)
-  const officeManifestPath = path.join(officeSource, 'runtime.json')
-  if (!fs.existsSync(officeManifestPath)) throw new Error(`[after-pack] Office runtime missing: ${officeManifestPath}`)
-  const officeManifest = JSON.parse(fs.readFileSync(officeManifestPath, 'utf8'))
-  if (officeManifest.target !== srcKey || officeManifest.stagingVersion !== 2) throw new Error('[after-pack] Office runtime target/staging version mismatch; restage resources')
+  const bundleOffice = process.env.CRAWSHRIMP_BUNDLE_OFFICE === '1'
   const hash = value => require('crypto').createHash('sha256').update(value).digest('hex')
   const lockPath = path.join(scriptDir, '..', 'runtime-locks', 'office-assets.json')
-  if (officeManifest.fingerprint !== hash(fs.readFileSync(lockPath))) throw new Error('[after-pack] Office asset lock changed; restage resources')
-  const assetLock = JSON.parse(fs.readFileSync(lockPath, 'utf8'))
-  for (const entry of [officeManifest.executable, ...officeManifest.fonts]) {
-    const itemPath = path.resolve(officeSource, entry.path)
-    if (!itemPath.startsWith(path.resolve(officeSource) + path.sep) || !fs.existsSync(itemPath) || hash(fs.readFileSync(itemPath)) !== entry.sha256) throw new Error(`[after-pack] Office resource verification failed: ${entry.path}`)
-  }
-  for (const font of assetLock.fonts) {
-    const bundledFont = path.join(officeSource, assetLock.targets[srcKey].fontDirectory, font.filename)
-    if (!fs.existsSync(bundledFont) || hash(fs.readFileSync(bundledFont)) !== font.sha256) throw new Error(`[after-pack] LibreOffice font copy missing or changed: ${font.filename}`)
+  if (bundleOffice) {
+    const officeManifestPath = path.join(officeSource, 'runtime.json')
+    if (!fs.existsSync(officeManifestPath)) throw new Error(`[after-pack] Office runtime missing: ${officeManifestPath}`)
+    const officeManifest = JSON.parse(fs.readFileSync(officeManifestPath, 'utf8'))
+    if (officeManifest.target !== srcKey || ![2, 3].includes(officeManifest.stagingVersion)) throw new Error('[after-pack] Office runtime target/staging version mismatch; restage resources')
+    if (officeManifest.fingerprint !== hash(fs.readFileSync(lockPath))) throw new Error('[after-pack] Office asset lock changed; restage resources')
+    for (const entry of [officeManifest.executable, ...officeManifest.fonts]) {
+      const itemPath = path.resolve(officeSource, entry.path)
+      if (!itemPath.startsWith(path.resolve(officeSource) + path.sep) || !fs.existsSync(itemPath) || hash(fs.readFileSync(itemPath)) !== entry.sha256) throw new Error(`[after-pack] Office resource verification failed: ${entry.path}`)
+    }
   }
 
   let resourcesPath
@@ -337,6 +341,10 @@ async function afterPack(context) {
   }
 
   requirePythonScriptsBundle(resourcesPath)
+  const officeAssets = path.join(resourcesPath, 'office-assets')
+  fs.mkdirSync(officeAssets, { recursive: true })
+  fs.copyFileSync(lockPath, path.join(officeAssets, 'office-assets.json'))
+  copyOfficeRuntime(path.join(scriptDir, '..', 'runtime-locks', 'licenses'), path.join(officeAssets, 'licenses'))
 
   // DeepSeek Harness:与 Python 同模式 —— stage 脚本编排生产闭包,
   // afterPack 负责拷入 Resources 并校验(extraResources 默认排除 node_modules)。
@@ -351,20 +359,49 @@ async function afterPack(context) {
   const destHarness = path.join(resourcesPath, 'deepseek-harness')
   console.log(`[after-pack] Copying deepseek-harness → ${destHarness}`)
   fs.mkdirSync(destHarness, { recursive: true })
-  copyDirSync(stageHarness, destHarness)
+  copyDirSync(stageHarness, destHarness, new Set(), { skipProfileDependencies: true })
   requireDeepseekHarnessBundle(resourcesPath, {
     platform: electronPlatformName,
     arch: archName,
   })
   console.log('[after-pack] deepseek-harness bundled')
 
-  copyOfficeRuntime(officeSource, path.join(resourcesPath, 'office'))
+  if (bundleOffice) {
+    const officeDestination = path.join(resourcesPath, 'office')
+    copyOfficeRuntime(officeSource, officeDestination)
+    deduplicateOfficeFonts(officeDestination, srcKey)
+  }
   const destPython = path.join(resourcesPath, 'python')
   console.log(`[after-pack] Copying Python ${srcKey} → ${destPython}`)
   fs.mkdirSync(destPython, { recursive: true })
   copyDirSync(srcPython, destPython)
+  const trimmed = prunePackagedRuntime(resourcesPath, { platform: electronPlatformName, arch: archName })
+  console.log(`[after-pack] pruned ${trimmed.bytes} bytes (${trimmed.removed.length} paths)`)
+  requirePythonBundle(destPython, srcKey)
   console.log(`[after-pack] Python bundled (${srcKey})`)
-  runOfficeSmoke(resourcesPath, path.join(appOutDir, `office-smoke-${srcKey}-${Date.now()}`), srcKey)
+  // macOS Office resources are signed afterPack; smoke before signing can be
+  // killed by the OS because adding bundled fonts changes the resource seal.
+  if (bundleOffice && electronPlatformName !== 'darwin') runOfficeSmoke(resourcesPath, path.join(appOutDir, `office-smoke-${srcKey}-${Date.now()}`), srcKey)
+}
+
+function deduplicateOfficeFonts(officeRoot, srcKey) {
+  const manifestPath = path.join(officeRoot, 'runtime.json')
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+  const fontDirectory = srcKey === 'win-x64' ? 'libreoffice/share/fonts/truetype' : 'libreoffice/LibreOffice.app/Contents/Resources/fonts/truetype'
+  // Legacy staging keeps a second copy for matplotlib. Both consumers can
+  // read the native font directory; rewrite before signing, never after it.
+  if (manifest.fonts.every(font => font.path.startsWith('fonts/'))) {
+    for (const font of manifest.fonts) {
+      const target = path.join(officeRoot, fontDirectory, path.basename(font.path))
+      if (!fs.existsSync(target) || !fs.readFileSync(target).equals(fs.readFileSync(path.join(officeRoot, font.path)))) {
+        throw new Error(`[after-pack] cannot deduplicate differing Office font: ${font.path}`)
+      }
+      font.path = `${fontDirectory}/${path.basename(font.path)}`
+    }
+    manifest.stagingVersion = 3
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n')
+    fs.rmSync(path.join(officeRoot, 'fonts'), { recursive: true })
+  }
 }
 
 function copyOfficeRuntime(source, destination) {
@@ -379,7 +416,7 @@ function runOfficeSmoke(resourcesPath, output, srcKey) {
   const cli = path.join(resourcesPath, 'python-scripts/core/office/cli.py')
   const env = { ...process.env, CRAWSHRIMP_PYTHON_EXECUTABLE: python,
     CRAWSHRIMP_RESOURCES_ROOT: resourcesPath, CRAWSHRIMP_OFFICE_ROOT: path.join(resourcesPath, 'office'),
-    PYTHONNOUSERSITE: '1', PYTHONUTF8: '1', MPLBACKEND: 'Agg', MPLCONFIGDIR: path.join(output, 'mpl-cache') }
+    PYTHONNOUSERSITE: '1', PYTHONDONTWRITEBYTECODE: '1', PYTHONUTF8: '1', MPLBACKEND: 'Agg', MPLCONFIGDIR: path.join(output, 'mpl-cache') }
   for (const name of ['PYTHONHOME', 'PYTHONPATH', 'VIRTUAL_ENV', 'CRAWSHRIMP_OFFICE_CHILD']) delete env[name]
   const result = spawnSync(python, [cli, 'smoke', output], { env, encoding: 'utf8', timeout: 300000, maxBuffer: 2 * 1024 * 1024 })
   if (result.status !== 0) throw new Error(`[after-pack] Native Office smoke failed for ${srcKey}. Run packaging on a compatible host. ${result.error || result.stderr || result.stdout}`)
@@ -396,7 +433,7 @@ function isPrunedPnpmVirtualStoreLink(source) {
     && segments[pnpmIndex + 1] === 'node_modules'
 }
 
-function copyDirSync(src, dest, ancestorSources = new Set()) {
+function copyDirSync(src, dest, ancestorSources = new Set(), options = {}) {
   const canonicalSource = fs.realpathSync(src)
   if (ancestorSources.has(canonicalSource)) {
     throw new Error(`[after-pack] cyclic directory link while copying ${src} -> ${canonicalSource}`)
@@ -406,9 +443,11 @@ function copyDirSync(src, dest, ancestorSources = new Set()) {
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
     const s = path.join(src, entry.name)
     const d = path.join(dest, entry.name)
+    if (options.skipProfileDependencies && entry.name === 'node_modules' &&
+        path.basename(src) === 'web' && path.basename(path.dirname(src)) === 'profiles') continue
     if (entry.isDirectory()) {
       fs.mkdirSync(d, { recursive: true })
-      copyDirSync(s, d, nextAncestors)
+      copyDirSync(s, d, nextAncestors, options)
     } else if (entry.isSymbolicLink()) {
       let realSrc
       try {
@@ -424,7 +463,7 @@ function copyDirSync(src, dest, ancestorSources = new Set()) {
       const targetStat = fs.statSync(s)
       if (targetStat.isDirectory()) {
         fs.mkdirSync(d, { recursive: true })
-        copyDirSync(realSrc, d, nextAncestors)
+        copyDirSync(realSrc, d, nextAncestors, options)
       } else if (targetStat.isFile()) {
         fs.copyFileSync(realSrc, d)
       } else {
@@ -437,6 +476,7 @@ function copyDirSync(src, dest, ancestorSources = new Set()) {
 }
 
 exports.default = afterPack
+exports.deduplicateOfficeFonts = deduplicateOfficeFonts
 exports.runOfficeSmoke = runOfficeSmoke
 exports.copyOfficeRuntime = copyOfficeRuntime
 exports.copyDirSync = copyDirSync

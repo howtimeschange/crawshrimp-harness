@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextvars
 import json
+import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -12,7 +13,7 @@ from core.atomic_file import atomic_write_text
 from .executor import execute
 from . import render_cache
 from core.resource_budget import OFFICE_WORKERS
-from .runtime import OfficeError, file_hash, python_executable
+from .runtime import OfficeError, assets, file_hash, python_executable
 
 _pool = ThreadPoolExecutor(max_workers=OFFICE_WORKERS, thread_name_prefix="office")
 _lock = threading.RLock()
@@ -87,8 +88,18 @@ def start(root: Path, operation: str, *, code: str = "", document: Path | None =
             with _lock:
                 data["state"] = "running"
                 save(work, data)
+            install_progress = None
+            if os.environ.get("CRAWSHRIMP_OFFICE_ON_DEMAND") == "1":
+                def install_progress(progress):
+                    with _lock:
+                        data["runtime_progress"] = progress
+                        save(work, data)
+                # Downloads happen in the background job, before the bounded
+                # rendering subprocess. Enqueueing must never block the UI.
+            if operation == "render" and install_progress:
+                assets(install=True, cancel=cancel, progress=install_progress)
             if operation == "run":
-                execution = execute([str(python), str(work / "script.py")], work, cancel=cancel)
+                execution = execute([str(python), str(work / "script.py")], work, cancel=cancel, progress=install_progress)
                 files = [str(p) for p in sorted((work / "editable").rglob("*"))
                          if p.is_file() and p.suffix.lower() in (".docx", ".pptx", ".xlsx", ".png", ".pdf")]
                 result = {"files": files, **execution}
@@ -100,7 +111,7 @@ def start(root: Path, operation: str, *, code: str = "", document: Path | None =
                 result = render_cache.restore(root, work, data.get("render_cache_key"), cancel)
                 if result is None:
                     execute([str(python), str(Path(__file__).with_name("cli.py")), "render", str(request)],
-                            work, timeout=300, cancel=cancel)
+                            work, timeout=300, cancel=cancel, progress=install_progress)
                     result = json.loads((work / "result.json").read_text(encoding="utf-8"))
                 if data.get("render_cache_key"):
                     data["render_cache_files"] = render_cache.file_digests(work, result)

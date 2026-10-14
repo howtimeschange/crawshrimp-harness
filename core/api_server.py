@@ -66,6 +66,7 @@ from core import ai_image_service
 from core import ai_video_generation_service
 from core import llm_gateway
 from core import ocr_service
+from core import shared_ocr_assets
 from core import shenhui_shoe_packaging
 from core import data_sink
 from core import notifier
@@ -9739,7 +9740,10 @@ def options_adapter_asset(adapter_id: str, asset_path: str):
 
 @app.get("/adapter-assets/{adapter_id}/{asset_path:path}")
 def get_adapter_asset(adapter_id: str, asset_path: str):
-    normalized = str(asset_path or "").replace("\\", "/").lstrip("/")
+    try:
+        normalized = shared_ocr_assets.normalize_adapter_asset_path(asset_path)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
     if not normalized.startswith(("vendor/", "assets/")):
         raise HTTPException(400, "adapter asset path must be under vendor/ or assets/")
 
@@ -9754,8 +9758,15 @@ def get_adapter_asset(adapter_id: str, asset_path: str):
             allowed_suffixes=None,
             require_exists=True,
         )
-    except FileNotFoundError as exc:
-        raise HTTPException(404, str(exc))
+    except FileNotFoundError as adapter_exc:
+        try:
+            path = shared_ocr_assets.resolve_shared_tesseract_asset(normalized)
+        except FileNotFoundError:
+            raise HTTPException(404, str(adapter_exc))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        if path is None:
+            raise HTTPException(404, str(adapter_exc))
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 

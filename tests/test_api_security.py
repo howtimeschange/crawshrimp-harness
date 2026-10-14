@@ -152,6 +152,75 @@ class ApiSecurityTests(unittest.IsolatedAsyncioTestCase):
                     api_server.get_adapter_asset("demo-adapter", str(outside))
                 self.assertEqual(ctx.exception.status_code, 400)
 
+    def test_adapter_tesseract_asset_falls_back_to_shared_resource_for_old_urls(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            shared = root / "shared-assets" / "tesseract"
+            shared.mkdir(parents=True)
+            shared_asset = shared / "worker.min.js"
+            shared_asset.write_text("shared worker", encoding="utf-8")
+            tmall_dir = root / "tmall-ops-assistant"
+            vipshop_dir = root / "vipshop-ops-assistant"
+            tmall_dir.mkdir()
+            vipshop_dir.mkdir()
+
+            def adapter_dir(adapter_id):
+                return {
+                    "tmall-ops-assistant": tmall_dir,
+                    "vipshop-ops-assistant": vipshop_dir,
+                }.get(adapter_id)
+
+            with patch("core.api_server.adapter_loader.get_adapter_dir", side_effect=adapter_dir), \
+                 patch("core.shared_ocr_assets.project_root", return_value=root):
+                tmall = api_server.get_adapter_asset(
+                    "tmall-ops-assistant",
+                    "vendor/tesseract/worker.min.js",
+                )
+                vipshop = api_server.get_adapter_asset(
+                    "vipshop-ops-assistant",
+                    "vendor/tesseract/worker.min.js",
+                )
+
+            self.assertEqual(Path(tmall.path).resolve(), shared_asset.resolve())
+            self.assertEqual(Path(vipshop.path).resolve(), shared_asset.resolve())
+            self.assertEqual(tmall.headers.get("access-control-allow-origin"), "*")
+            self.assertEqual(vipshop.headers.get("access-control-allow-origin"), "*")
+
+    def test_adapter_tesseract_asset_prefers_adapter_vendor_over_shared_resource(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            shared = root / "shared-assets" / "tesseract"
+            shared.mkdir(parents=True)
+            (shared / "tesseract.min.js").write_text("shared", encoding="utf-8")
+            adapter_dir = root / "demo-adapter"
+            adapter_asset = adapter_dir / "vendor" / "tesseract" / "tesseract.min.js"
+            adapter_asset.parent.mkdir(parents=True)
+            adapter_asset.write_text("adapter", encoding="utf-8")
+
+            with patch("core.api_server.adapter_loader.get_adapter_dir", return_value=adapter_dir), \
+                 patch("core.shared_ocr_assets.project_root", return_value=root):
+                response = api_server.get_adapter_asset(
+                    "demo-adapter",
+                    "vendor/tesseract/tesseract.min.js",
+                )
+
+            self.assertEqual(Path(response.path).resolve(), adapter_asset.resolve())
+
+    def test_shared_tesseract_fallback_rejects_path_traversal(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            adapter_dir = Path(tmpdir) / "demo-adapter"
+            adapter_dir.mkdir()
+
+            with patch("core.api_server.adapter_loader.get_adapter_dir", return_value=adapter_dir):
+                for unsafe in (
+                    "vendor/tesseract/../secret.txt",
+                    "vendor/tesseract/%2e%2e/secret.txt",
+                    "vendor\\tesseract\\..\\secret.txt",
+                ):
+                    with self.assertRaises(api_server.HTTPException) as ctx:
+                        api_server.get_adapter_asset("demo-adapter", unsafe)
+                    self.assertEqual(ctx.exception.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

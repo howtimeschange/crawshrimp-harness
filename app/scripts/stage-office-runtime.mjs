@@ -27,8 +27,7 @@ async function download(entry, filename) {
   return downloadOfficeAsset(entry, { cacheDirectory: cache, filename })
 }
 const previous = existsSync(join(root, 'runtime.json')) ? JSON.parse(readFileSync(join(root, 'runtime.json'))) : null
-if (previous?.stagingVersion === 2 && previous?.fingerprint === fingerprint && [previous.executable, ...previous.fonts,
-  ...manifest.fonts.map(font => ({ path: join(source.fontDirectory, font.filename), sha256: font.sha256 }))]
+if (previous?.stagingVersion === 3 && previous?.fingerprint === fingerprint && [previous.executable, ...previous.fonts]
   .every(item => existsSync(join(root, item.path)) && sha(readFileSync(join(root, item.path))) === item.sha256)) {
   console.log(`[office] ${target} assets verified, unchanged`)
   process.exit(0)
@@ -63,19 +62,17 @@ try {
     cpSync(extractedRoot, join(temporary, 'libreoffice'), { recursive: true })
     rmSync(extracted, { recursive: true })
   }
-  mkdirSync(join(temporary, 'fonts'), { recursive: true })
   mkdirSync(join(temporary, source.fontDirectory), { recursive: true })
   const fonts = []
   for (const font of manifest.fonts) {
     const path = await download(font, font.filename)
-    cpSync(path, join(temporary, 'fonts', font.filename))
     // LO loads bundled fonts using its native application font directory.
     cpSync(path, join(temporary, source.fontDirectory, font.filename))
-    fonts.push({ path: `fonts/${font.filename}`, sha256: font.sha256 })
+    fonts.push({ path: `${source.fontDirectory}/${font.filename}`, sha256: font.sha256 })
   }
   cpSync(join(repo, 'runtime-locks/licenses'), join(temporary, 'licenses'), { recursive: true })
   const executable = { path: source.executable, sha256: sha(readFileSync(join(temporary, source.executable))) }
-  writeFileSync(join(temporary, 'runtime.json'), JSON.stringify({ schemaVersion: 1, stagingVersion: 2, target, fingerprint,
+  writeFileSync(join(temporary, 'runtime.json'), JSON.stringify({ schemaVersion: 1, stagingVersion: 3, target, fingerprint,
     libreofficeVersion: manifest.libreofficeVersion, fontFamily: manifest.fontFamily,
     executable, fonts, source: { url: source.url, sha256: source.sha256 } }, null, 2) + '\n')
   if (existsSync(root)) rmSync(root, { recursive: true })

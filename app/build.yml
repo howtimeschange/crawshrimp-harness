@@ -68,6 +68,7 @@ files:
   - "!src/**/*.test.*"
   - "!src/renderer/**"
   - "!dist/renderer/**/*.map"
+  - "!node_modules/**/*.map"
 
 extraResources:
   # Python scripts (core/ + adapters/)
@@ -85,6 +86,12 @@ extraResources:
       - "!**/notes/**"
       - "!**/.DS_Store"
       - "!**/*.zip"
+      - "!tmall-ops-assistant/vendor/tesseract/**"
+      - "!vipshop-ops-assistant/vendor/tesseract/**"
+  - from: "../adapters/tmall-ops-assistant/vendor/tesseract"
+    to: python-scripts/shared-assets/tesseract
+    filter:
+      - "**/*"
   - from: "../integrations"
     to: python-scripts/integrations
     filter:
@@ -105,4 +112,6 @@ afterPack: scripts/after-pack.js
 afterSign: scripts/notarize-macos-app.js
 
 asarUnpack:
-  - "**/*.node"
+  # Python checks host OCR files using native filesystem APIs. Keep the small
+  # production Node dependency closure physical; renderer libraries are dev-only.
+  - "node_modules/**/*"

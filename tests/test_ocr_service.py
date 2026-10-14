@@ -1,5 +1,7 @@
 import unittest
 import tempfile
+import subprocess
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -66,6 +68,198 @@ class OcrServiceTests(unittest.TestCase):
         self.assertEqual(status["package"], "tesseract.js")
         self.assertIn("available", status)
         self.assertIn("node_modules", status)
+
+    def test_default_tesseract_lang_path_prefers_shared_assets(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            shared_lang = root / "shared-assets" / "tesseract" / "lang"
+            shared_lang.mkdir(parents=True)
+            bundled_lang = root / "adapters" / "tmall-ops-assistant" / "vendor" / "tesseract" / "lang"
+            bundled_lang.mkdir(parents=True)
+
+            with patch.object(ocr_service, "_project_root", return_value=root), \
+                 patch.dict("os.environ", {"CRAWSHRIMP_TESSERACT_LANG_PATH": ""}, clear=False):
+                self.assertEqual(ocr_service._default_tesseract_lang_path(), str(shared_lang))
+
+    def test_default_tesseract_lang_path_falls_back_to_tmall_adapter_vendor(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bundled_lang = root / "adapters" / "tmall-ops-assistant" / "vendor" / "tesseract" / "lang"
+            bundled_lang.mkdir(parents=True)
+
+            with patch.object(ocr_service, "_project_root", return_value=root), \
+                 patch.dict("os.environ", {"CRAWSHRIMP_TESSERACT_LANG_PATH": ""}, clear=False):
+                self.assertEqual(ocr_service._default_tesseract_lang_path(), str(bundled_lang))
+
+    def test_recognize_tesseract_payload_uses_runtime_data_cache_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_dir = Path(tmpdir) / "runtime" / "ocr-cache"
+            image_path = Path(tmpdir) / "fixture.png"
+            Image.new("RGB", (120, 60), "white").save(image_path)
+            node_modules = Path(tmpdir) / "node_modules"
+            (node_modules / "tesseract.js").mkdir(parents=True)
+            completed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout='{"text":"OCR 123","confidence":95,"words":[]}',
+                stderr="",
+            )
+
+            with patch.object(
+                ocr_service,
+                "project_tesseract_status",
+                return_value={
+                    "available": True,
+                    "node_executable": "node",
+                    "node_modules": str(node_modules),
+                    "package": "tesseract.js",
+                },
+            ), patch.object(
+                ocr_service.runtime_paths,
+                "child_dir",
+                return_value=cache_dir,
+            ), patch.object(
+                ocr_service,
+                "_default_tesseract_lang_path",
+                return_value="/tmp/lang",
+            ), patch.object(
+                ocr_service.subprocess,
+                "run",
+                return_value=completed,
+            ) as run:
+                result = ocr_service.recognize_image_with_tesseract_js(image_path, lang="eng")
+
+            self.assertEqual(result["text"], "OCR 123")
+            self.assertTrue(cache_dir.is_dir())
+            args = run.call_args.args[0]
+            payload = json.loads(args[-1])
+            self.assertEqual(Path(payload["cachePath"]), cache_dir.resolve(strict=False))
+            self.assertTrue(Path(payload["cachePath"]).is_absolute())
+            self.assertEqual(payload["langPath"], "/tmp/lang")
+
+    def test_recognize_tesseract_uses_preload_for_electron_as_node(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_dir = Path(tmpdir) / "runtime" / "ocr-cache"
+            image_path = Path(tmpdir) / "fixture.png"
+            Image.new("RGB", (120, 60), "white").save(image_path)
+            node_modules = Path(tmpdir) / "node_modules"
+            (node_modules / "tesseract.js").mkdir(parents=True)
+            completed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout='{"text":"OCR 123","confidence":95,"words":[]}',
+                stderr="",
+            )
+
+            with patch.object(
+                ocr_service,
+                "project_tesseract_status",
+                return_value={
+                    "available": True,
+                    "node_executable": "/Applications/Fake.app/Contents/MacOS/Fake",
+                    "node_modules": str(node_modules),
+                    "package": "tesseract.js",
+                },
+            ), patch.object(
+                ocr_service.runtime_paths,
+                "child_dir",
+                return_value=cache_dir,
+            ), patch.object(
+                ocr_service,
+                "_default_tesseract_lang_path",
+                return_value="/tmp/lang",
+            ), patch.dict(
+                "os.environ",
+                {"CRAWSHRIMP_NODE_EXECUTABLE": "/Applications/Fake.app/Contents/MacOS/Fake"},
+                clear=False,
+            ), patch.object(
+                ocr_service.subprocess,
+                "run",
+                return_value=completed,
+            ) as run:
+                result = ocr_service.recognize_image_with_tesseract_js(image_path, lang="eng")
+
+            self.assertEqual(result["text"], "OCR 123")
+            args = run.call_args.args[0]
+            self.assertEqual(args[1], "--require")
+            preload_path = Path(args[2])
+            self.assertEqual(preload_path.parent, cache_dir.resolve(strict=False))
+            self.assertIn("request === 'is-electron'", preload_path.read_text())
+            env = run.call_args.kwargs["env"]
+            self.assertEqual(env["ELECTRON_RUN_AS_NODE"], "1")
+            payload = json.loads(args[-1])
+            self.assertEqual(Path(payload["cachePath"]), cache_dir.resolve(strict=False))
+
+    def test_recognize_tesseract_does_not_use_preload_for_system_node(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_dir = Path(tmpdir) / "runtime" / "ocr-cache"
+            image_path = Path(tmpdir) / "fixture.png"
+            Image.new("RGB", (120, 60), "white").save(image_path)
+            node_modules = Path(tmpdir) / "node_modules"
+            (node_modules / "tesseract.js").mkdir(parents=True)
+            completed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout='{"text":"OCR 123","confidence":95,"words":[]}',
+                stderr="",
+            )
+
+            with patch.object(
+                ocr_service,
+                "project_tesseract_status",
+                return_value={
+                    "available": True,
+                    "node_executable": "node",
+                    "node_modules": str(node_modules),
+                    "package": "tesseract.js",
+                },
+            ), patch.object(
+                ocr_service.runtime_paths,
+                "child_dir",
+                return_value=cache_dir,
+            ), patch.object(
+                ocr_service,
+                "_default_tesseract_lang_path",
+                return_value="/tmp/lang",
+            ), patch.dict(
+                "os.environ",
+                {"CRAWSHRIMP_NODE_EXECUTABLE": ""},
+                clear=False,
+            ), patch.object(
+                ocr_service.subprocess,
+                "run",
+                return_value=completed,
+            ) as run:
+                result = ocr_service.recognize_image_with_tesseract_js(image_path, lang="eng")
+
+            self.assertEqual(result["text"], "OCR 123")
+            args = run.call_args.args[0]
+            self.assertNotIn("--require", args)
+            self.assertNotIn("ELECTRON_RUN_AS_NODE", run.call_args.kwargs["env"])
+
+    def test_recognize_tesseract_cache_path_failure_is_actionable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_path = Path(tmpdir) / "fixture.png"
+            Image.new("RGB", (120, 60), "white").save(image_path)
+            node_modules = Path(tmpdir) / "node_modules"
+            (node_modules / "tesseract.js").mkdir(parents=True)
+
+            with patch.object(
+                ocr_service,
+                "project_tesseract_status",
+                return_value={
+                    "available": True,
+                    "node_executable": "node",
+                    "node_modules": str(node_modules),
+                    "package": "tesseract.js",
+                },
+            ), patch.object(
+                ocr_service.runtime_paths,
+                "child_dir",
+                side_effect=PermissionError("read-only data root"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "OCR cache directory.*CRAWSHRIMP_DATA"):
+                    ocr_service.recognize_image_with_tesseract_js(image_path, lang="eng")
 
     def test_extract_shoe_label_fields_preserves_full_printed_color_name(self):
         with tempfile.TemporaryDirectory() as tmpdir:
