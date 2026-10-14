@@ -12,6 +12,9 @@ Harness 面向个人本地使用：本地功能免登录，设置中的个人账
 
 - 会话文件工作区支持持久标签、双栏比较、连续 Office / PDF 阅读及预览状态恢复。
 - 会话浏览器支持内嵌和浮窗预览、鼠标键盘输入；设置页支持查看与恢复归档会话。
+- 设置页支持管理内置和自定义供应商的模型列表；DeepSeek 和 GLM 支持发现上游模型后选择导入。
+- 普通定时任务复用固定会话及其当前模型、工具与权限；任务中心支持直接调度已安装脚本。
+- 默认安装包采用轻量 Office 运行时，首次需要原生预览、转换或字体资源时按需下载并校验。
 - Electron 43.1.0 主进程启动 FastAPI、托管 Chrome 和 Node Worker。
 - FastAPI 默认监听 `127.0.0.1:18765`；冲突时在 `+1..+100` 内漂移。
 - MCP 网关使用 `API + 200`；DSH Web host 使用 `API + 300`，并按 `window.__DSH_BOOT__` 特征回查真实端口。
@@ -20,6 +23,15 @@ Harness 面向个人本地使用：本地功能免登录，设置中的个人账
 - macOS arm64/x64 可构建；Windows unpacked 可在 macOS 验证，NSIS 安装器应在 Windows 构建机生成。
 
 ## 版本记录
+
+### v0.4.0
+
+- 设置页新增供应商模型管理：支持新增、改名、编辑 ID、删除、批量编辑及逐模型预算与推理协议配置；DeepSeek 和 GLM 可从上游目录发现模型，由用户选择导入。
+- 新增 GPT-6.1 Sol、GPT-6 Sol / Luna 网关模型，统一森马海外 OpenAI 默认地址；模型目录、会话选择与运行时路由保持同步。
+- 恢复 DeepSeek 官方 V4 Pro 的同供应商 Flash 视觉桥接，为官方 GLM 5.3 / 5.2 增加 Flash / FlashX 识图桥接；新导入的官方 GLM 型号在明确拒收图片时可回退。国内网关和自定义同名模型不使用官方桥接，也不借用其他供应商凭据。
+- 普通定时任务默认复用创建它的固定会话，沿用会话当前模型、工具、工作区、浏览器上下文及权限模式；旧 scoped 任务继续使用原授权范围。
+- 任务中心新增脚本定时任务：选择已安装脚本和 JSON 参数，按每天或每周计划直接运行 Adapter，保存运行结果和输出文件，无需每轮调用模型。
+- 默认安装包不再内置完整 LibreOffice 原生运行时；首次需要时按锁文件下载、校验并缓存。精简打包依赖、复用 OCR 资源，完整离线 Office 包可通过 `CRAWSHRIMP_BUNDLE_OFFICE=1` 构建。
 
 ### v0.3.1
 
@@ -333,7 +345,7 @@ Office 运行时发布模式见 [Office Runtime On Demand](docs/crawshrimp-harne
 
 独立仓库 `howtimeschange/crawshrimp-harness` 的正式客户端使用 GitHub Release 元数据用于应用内更新。本仓构建不发布到 `https://updates.crawshrimp.com/`，也不刷新主项目的 `desktop-latest`。
 
-v0.3.1 安装包在发布 CI 成功后提供于 [v0.3.1 Release](https://github.com/howtimeschange/crawshrimp-harness/releases/tag/v0.3.1)。
+v0.4.0 安装包在发布 CI 成功后提供于 [v0.4.0 Release](https://github.com/howtimeschange/crawshrimp-harness/releases/tag/v0.4.0)。
 
 升级不需要卸载旧版：
 

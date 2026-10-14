@@ -4,12 +4,12 @@ This checklist is the required evidence record before claiming Crawshrimp Harnes
 
 ## Release Identity
 
-- Release scope (`PATCH` / `MINOR` / `MAJOR`): `PATCH`
-- Version selection rationale: 修复已有实时浏览器输入和 Office 文件预览的回归，不改变产品功能边界或架构；按维护级 PATCH 从 v0.3.0 升至 v0.3.1。
-- Target version selected under the [release versioning policy](release-versioning.md): `v0.3.1`
+- Release scope (`PATCH` / `MINOR` / `MAJOR`): `MINOR`
+- Version selection rationale: 新增供应商模型管理与模型发现、按现有脚本创建定时任务，扩展固定会话接续与同供应商视觉桥接，并将 Office 原生运行时改为按需安装；按功能级 MINOR 从 v0.3.1 升至 v0.4.0，保留现有桌面与 DSH 核心架构。
+- Target version selected under the [release versioning policy](release-versioning.md): `v0.4.0` (2026-10-14)
 - Source commit: `PENDING`
-- Old version under test: `PENDING` (previous published release: `v0.3.0`)
-- New version under test: `v0.3.1`
+- Old version under test: `PENDING` (previous published release: `v0.3.1`)
+- New version under test: `v0.4.0`
 - GitHub main build run ID: `PENDING`
 - GitHub tag build run ID: `PENDING`
 - Formal release URL: `PENDING`
