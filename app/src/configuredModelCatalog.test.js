@@ -11,10 +11,7 @@ async function fixture() {
   const source = patcher.patchConfiguredModelCatalogSource(original)
   assert.equal(patcher.patchConfiguredModelCatalogSource(source), source)
   const method = source.slice(source.indexOf('\tlistModels(provider) {'), source.indexOf('\tresolveModel(provider, model, _signal) {'))
-  // The extracted method calls the Office modality helper from its module scope.
-  // This fixture tests route credentials with plain-text models; keep that
-  // independent helper explicit rather than letting ReferenceError hide models.
-  const adapter = new Function('crawshrimpOfficeInputModalities', `return {${method}}`)(input => [...input])
+  const adapter = new Function(`const crawshrimpOfficeInputModalities = input => input; return {${method}}`)()
   const keys = new Map()
   const providers = ['crawshrimp-deepseek-official', 'crawshrimp-overseas-openai', 'custom-acme']
   adapter.config = { resolveApiKey: async provider => {

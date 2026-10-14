@@ -13,7 +13,7 @@
         displayName: 抓虾-海外 OpenAI
         apiKeyEnv: CRAWSHRIMP_LLM_API_KEY
         api: openai-completions
-        baseURL: !!js process.env.CRAWSHRIMP_OVERSEAS_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/overseas-openai-vip/v1'
+        baseURL: !!js process.env.CRAWSHRIMP_OVERSEAS_OPENAI_BASE_URL ?? 'https://ai-aigw.semir.com/overseas-openai-codex/v1'
         models:
           - id: !!js process.env.CRAWSHRIMP_AGENT_MODEL ?? 'gpt-5.6-terra'
             contextWindow: 200000
