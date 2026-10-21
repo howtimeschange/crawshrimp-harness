@@ -9,12 +9,6 @@ from core.agent.cordis_config import (
     model_capabilities,
     resolve_provider_for_model,
 )
-from core.ai_image_service import (
-    GEMINI_FLASH_CONFIG_ID,
-    GEMINI_PRO_CONFIG_ID,
-    GPT_2K_CONFIG_ID,
-    GPT_4K_CONFIG_ID,
-)
 from core.config import load_config
 from core.llm_gateway import (
     builtin_llm_providers,
@@ -46,44 +40,7 @@ def _configured(config: Mapping[str, Any], dotted_key: str) -> bool:
     return bool(_compact(_config_value(config, dotted_key)))
 
 
-AI_IMAGE_MODEL_SPECS = (
-    {
-        "id": "gpt-image-2k",
-        "model": "gpt-image-2",
-        "label": "GPT Image 2K",
-        "provider": "1xm",
-        "provider_label": "1XM",
-        "config_id": GPT_2K_CONFIG_ID,
-        "defaults": {"size": "1024x1024", "quality": "high", "format": "png"},
-    },
-    {
-        "id": "gpt-image-4k",
-        "model": "gpt-image-2",
-        "label": "GPT Image 4K",
-        "provider": "1xm",
-        "provider_label": "1XM",
-        "config_id": GPT_4K_CONFIG_ID,
-        "defaults": {"size": "2880x2880", "quality": "high", "format": "png"},
-    },
-    {
-        "id": "gemini-3.1-flash-image-preview",
-        "model": "gemini-3.1-flash-image-preview",
-        "label": "Gemini 3.1 Flash Image Preview",
-        "provider": "1xm",
-        "provider_label": "1XM / Nano Banana",
-        "config_id": GEMINI_FLASH_CONFIG_ID,
-        "defaults": {"size": "1K"},
-    },
-    {
-        "id": "gemini-3-pro-image-preview",
-        "model": "gemini-3-pro-image-preview",
-        "label": "Gemini 3 Pro Image Preview",
-        "provider": "1xm",
-        "provider_label": "1XM / Nano Banana",
-        "config_id": GEMINI_PRO_CONFIG_ID,
-        "defaults": {"size": "2K"},
-    },
-)
+AI_IMAGE_MODEL_SPECS = ()
 
 
 def _llm_provider_maps(config: Mapping[str, Any]) -> tuple[dict[str, dict], dict[str, str]]:

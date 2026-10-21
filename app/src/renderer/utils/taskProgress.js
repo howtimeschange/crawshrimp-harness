@@ -1070,7 +1070,7 @@ function buildTmallAiImageTestChainProgress(live = {}, liveStatus = '', isRunnin
             generationSubmitted > 0 ? `已提交 ${generationSubmitted}/${generationTotal}` : '',
             generationCompleted > 0 ? `已完成 ${generationCompleted}/${generationTotal}` : '等待生成回传',
           ].filter(Boolean).join(' · ')
-        : '找图完成后统一提交 1XM',
+        : '找图完成后统一提交生图',
       detail: [currentStyle ? `当前款号 ${currentStyle}` : '', currentPrompt ? `当前提示词 ${currentPrompt}` : '', store].filter(Boolean).join(' · '),
       status: generationState === 'complete' ? '已完成' : generationState === 'active' ? '进行中' : '待开始',
       tone: 'secondary',
@@ -1104,7 +1104,7 @@ function buildTmallAiImageTestChainProgress(live = {}, liveStatus = '', isRunnin
       currentStyle ? `款号 ${currentStyle}` : '',
     ]),
     tracks,
-    sub: [phaseLabel, generationStarted ? '1XM 并发队列' : '', currentStyle ? `当前款号 ${currentStyle}` : ''].filter(Boolean).join(' · ') || statusLabel,
+    sub: [phaseLabel, generationStarted ? '生图并发队列' : '', currentStyle ? `当前款号 ${currentStyle}` : ''].filter(Boolean).join(' · ') || statusLabel,
   }
 }
 

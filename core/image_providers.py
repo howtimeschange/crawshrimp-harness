@@ -7,6 +7,7 @@ import json
 import re
 import urllib.request
 import urllib.error
+from urllib.parse import urlsplit
 import time
 import threading
 from typing import Any, Mapping
@@ -212,13 +213,17 @@ class CompatibleImageClient:
         self.protocol = protocol or ("gemini" if model.startswith("gemini-") else "openai")
 
     def create_task(self, payload, *, idempotency_key='', timeout=240, request_retries=3, retry_delay_seconds=1.0, sleep_fn=time.sleep, **kwargs):
-        headers = {'Content-Type': 'application/json'}
+        headers = {'Content-Type': 'application/json', 'User-Agent': 'Crawshrimp-Harness/0.4'}
         images = payload.get('image') or []
         if isinstance(images, str): images = [images]
         if self.protocol == 'gemini':
             if payload.get('mask'):
                 raise RejectedOneXMImageError('Nano Banana 不支持独立蒙版参数，请通过提示词和参考图编辑')
-            headers['x-goog-api-key'] = self.api_key
+            # ModelJetty documents Bearer authentication for its native Gemini route.
+            if urlsplit(self.base_url).hostname == 'api.modeljetty.com':
+                headers['Authorization'] = 'Bearer ' + self.api_key
+            else:
+                headers['x-goog-api-key'] = self.api_key
             parts = [{'text': payload.get('prompt', '')}]
             for value in images:
                 mime, data = _image_bytes(value)

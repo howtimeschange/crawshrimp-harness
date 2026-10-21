@@ -453,8 +453,8 @@
               <p class="panel-kicker">AI 生图</p>
               <h3>图片模型供应商</h3>
             </div>
-            <span :class="['badge', hasAnyFieldConfigured(ai1xmKeyFields) ? 'on' : 'off']">
-              {{ hasAnyFieldConfigured(ai1xmKeyFields) ? '已配置' : '未配置' }}
+            <span :class="['badge', hasAnyFieldConfigured(aiImageKeyFields) ? 'on' : 'off']">
+              {{ hasAnyFieldConfigured(aiImageKeyFields) ? '已配置' : '未配置' }}
             </span>
           </div>
 
@@ -579,7 +579,7 @@
                     v-if="!provider.isDefault && provider.firstModel"
                     class="btn-ghost compact"
                     type="button"
-                    @click="setLlmDefaultModel(provider.firstModel)"
+                    @click="setLlmDefaultModel(provider.firstModel, provider.id)"
                   >
                     设为默认
                   </button>
@@ -831,7 +831,8 @@
               <div class="field">
                 <label>兼容协议</label>
                 <select v-model="llmProviderDraft.protocol" class="select" :disabled="llmProviderModal.isBuiltin">
-                  <option value="openai">OpenAI 兼容</option>
+                  <option value="openai">OpenAI Chat Completions</option>
+                  <option value="openai-responses">OpenAI Responses（ModelJetty GPT）</option>
                   <option value="anthropic">Anthropic 兼容</option>
                 </select>
               </div>
@@ -964,6 +965,8 @@
 </template>
 
 <script setup>
+import modeljettyLogoUrl from '../assets/modeljetty-mark.svg'
+import { MODELJETTY_LLM_PRESETS } from '../utils/modeljettyPresets.mjs'
 import { requestArchivedSessions } from '../utils/archivedSessions.mjs'
 import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import AccountPanel from '../components/AccountPanel.vue'
@@ -1138,13 +1141,9 @@ const testing = reactive({ dingtalk: false, feishu: false, webhook: false })
 const testMsg = reactive({ dingtalk: '', feishu: '', webhook: '' })
 const testOk = reactive({ dingtalk: true, feishu: true, webhook: true })
 const imageProviderFields = ['ai.woka.base_url', 'ai.woka.gemini_base_url', 'ai.woka.api_key', 'ai.semir.base_url', 'ai.semir.gemini_base_url', 'ai.semir.gpt_api_key', 'ai.semir.gemini_api_key']
-const ai1xmKeyFields = [
+const aiImageKeyFields = [
   CUSTOM_IMAGE_PROVIDERS_FIELD,
   ...imageProviderFields.filter(field => field.endsWith('_key')),
-  'ai.1xm.gpt_image_2k_key',
-  'ai.1xm.gpt_image_4k_key',
-  'ai.1xm.gemini_3_1_flash_image_preview_key',
-  'ai.1xm.gemini_3_pro_image_preview_key',
 ]
 const aiVideoKeyFields = [
   'ai.video.seedance_api_key',
@@ -1262,7 +1261,7 @@ const menuGroups = [
     label: 'AI 能力',
     desc: '图片 / 文本 / 视频 / 智能体',
     children: [
-      { id: 'ai-1xm', label: '图片模型供应商', statusKeys: ai1xmKeyFields },
+      { id: 'ai-1xm', label: '图片模型供应商', statusKeys: aiImageKeyFields },
       { id: 'ai-llm', label: '文本大模型', statusKeys: llmKeyFields },
       { id: 'ai-video', label: '视频模型', statusKeys: aiVideoKeyFields },
       { id: 'ai-agent', label: '智能体', statusKeys: [] },
@@ -1305,7 +1304,7 @@ const panelFields = {
   'notify-custom': ['notify.custom_webhook'],
   'storage-data': ['data_dir'],
   'sync-odps': ['odps.app_code'],
-  'ai-1xm': [CUSTOM_IMAGE_PROVIDERS_FIELD, ...imageProviderFields, 'ai.1xm.base_url', 'ai.1xm.gpt_image_2k_key', 'ai.1xm.gpt_image_4k_key', 'ai.1xm.gemini_3_1_flash_image_preview_key', 'ai.1xm.gemini_3_pro_image_preview_key'],
+  'ai-1xm': [CUSTOM_IMAGE_PROVIDERS_FIELD, ...imageProviderFields],
   'ai-llm': [...LLM_PANEL_FIELDS],
   'ai-video': ['ai.video.seedance_api_key', 'ai.video.seedance_base_url', 'ai.video.bailian_api_key', 'ai.video.bailian_workspace_id', 'ai.video.bailian_region', 'ai.video.bailian_base_url', 'ai.video.bailian_upload_api_key', 'ai.video.bailian_uploads_url'],
 }
@@ -1369,28 +1368,32 @@ const llmProviders = computed(() => {
       modelCount: modelIds.length,
       previewModels: modelIds.slice(0, 3),
       firstModel: modelIds[0] || '',
-      isDefault: modelIds.includes(defaultModel),
+      isDefault: modelIds.includes(defaultModel) && (!cfg.value['ai.llm.default_provider'] || cfg.value['ai.llm.default_provider'] === provider.id),
     }
   })
-  const customRows = customLlmProviders.value.map((provider) => {
+  const presets = MODELJETTY_LLM_PRESETS.map(preset => customLlmProviders.value.find(item => item.id === preset.id) || {
+    ...preset, models: mergeCustomLlmModelDraft(preset.models.join('\n')), configured: false,
+  })
+  const customRows = [...presets, ...customLlmProviders.value.filter(item => !MODELJETTY_LLM_PRESETS.some(preset => preset.id === item.id))].map((provider) => {
+    const isModelJetty = MODELJETTY_LLM_PRESETS.some(preset => preset.id === provider.id)
     const modelIds = provider.models.map(model => model.id).filter(Boolean)
     return {
       id: provider.id,
       name: provider.name,
-      brand: 'custom',
-      logoImage: '',
+      brand: isModelJetty ? 'modeljetty' : 'custom',
+      logoImage: isModelJetty ? modeljettyLogoUrl : '',
       logoText: llmProviderLogoText(provider),
-      isCustom: true,
-      compatibility: provider.protocol === 'anthropic' ? 'Anthropic 兼容' : 'OpenAI 兼容',
+      isCustom: !isModelJetty,
+      compatibility: provider.protocol === 'anthropic' ? 'Anthropic 兼容' : provider.protocol === 'openai-responses' ? 'OpenAI Responses' : 'OpenAI Chat Completions',
       configured: Boolean(provider.configured),
       baseUrl: provider.base_url,
       modelCount: modelIds.length,
       previewModels: modelIds.slice(0, 3),
       firstModel: modelIds[0] || '',
-      isDefault: modelIds.includes(defaultModel),
+      isDefault: modelIds.includes(defaultModel) && (!cfg.value['ai.llm.default_provider'] || cfg.value['ai.llm.default_provider'] === provider.id),
     }
   })
-  return [...builtinRows, ...customRows]
+  return [builtinRows[0], ...customRows.filter(item => item.brand === 'modeljetty'), ...builtinRows.slice(1), ...customRows.filter(item => item.brand !== 'modeljetty')]
 })
 
 function llmProviderLogoText(provider = {}) {
@@ -1431,11 +1434,12 @@ function firstAvailableLlmModel() {
   return ''
 }
 
-async function setLlmDefaultModel(modelId) {
+async function setLlmDefaultModel(modelId, providerId = '') {
   const value = String(modelId || '').trim()
   if (!value) return
   const previousCfg = clonePlain(cfg.value)
   cfg.value['ai.llm.default_model'] = value
+  cfg.value['ai.llm.default_provider'] = providerId
   try {
     await persistLlmPanelChange(previousCfg, '默认模型已保存')
   } catch {
@@ -1453,7 +1457,18 @@ function slugifyLlmProviderId(value) {
   return slug ? `custom-${slug}` : `custom-${Date.now().toString(36)}`
 }
 
+function openModelJettyPreset(preset) {
+  const existing = customLlmProviders.value.find(provider => provider.id === preset.id)
+  if (existing) return openLlmProviderModal(existing.id)
+  openLlmProviderModal()
+  const models = mergeCustomLlmModelDraft(preset.models.join('\n'))
+  Object.assign(llmProviderDraft, { id: preset.id, name: preset.name, protocol: preset.protocol,
+    baseUrl: preset.base_url, models, modelsText: preset.models.join('\n'), modelIds: [...preset.models] })
+}
+
 function openLlmProviderModal(providerId = '') {
+  const preset = MODELJETTY_LLM_PRESETS.find(item => item.id === providerId)
+  if (preset && !customLlmProviders.value.some(item => item.id === providerId)) return openModelJettyPreset(preset)
   llmDiscoveryRequestId += 1
   Object.assign(llmProviderModal, { tab: 'connection', selectedModelId: '', newModelId: '', discovering: false, discoveryError: '', discoveredModels: [], selectedDiscoveredIds: [], discoveryNotice: '', discoverySourceUrl: '' })
   const builtin = LLM_BUILTIN_PROVIDERS.find(provider => provider.id === providerId)
@@ -1812,7 +1827,6 @@ function normalizedSettings(raw) {
   if (!flat['ai.woka.gemini_base_url']) flat['ai.woka.gemini_base_url'] = 'https://4.0.wk-best.com/v1beta'
   if (!flat['ai.semir.base_url']) flat['ai.semir.base_url'] = 'https://ai-aigw.semir.com/overseas-image/v1'
   if (!flat['ai.semir.gemini_base_url']) flat['ai.semir.gemini_base_url'] = 'https://ai-aigw.semir.com/overseas-image-gemini/v1beta'
-  if (!flat['ai.1xm.base_url']) flat['ai.1xm.base_url'] = 'https://one-xm-proxy.crawshrimp.com/v1'
   for (const [key, value] of Object.entries(LLM_DEFAULTS)) {
     if (!flat[key]) flat[key] = value
   }
@@ -1914,9 +1928,11 @@ function buildPatch(panelId) {
 }
 
 async function saveImageProviderConfig(patch) {
+  // Existing provider entries come from Vue reactive state; IPC accepts plain data.
+  const plainPatch = clonePlain(patch)
   const result = typeof window.cs.patchSettings === 'function'
-    ? await window.cs.patchSettings(patch)
-    : await window.cs.saveSettings({ ...savedCfg.value, ...patch })
+    ? await window.cs.patchSettings(plainPatch)
+    : await window.cs.saveSettings(clonePlain({ ...savedCfg.value, ...plainPatch }))
   const readback = normalizedSettings(await window.cs.getSettings() || {})
   for (const key of Object.keys(patch)) {
     cfg.value[key] = readback[key]
@@ -3739,4 +3755,9 @@ watch(imSettingsUrl, () => {
 .archive-panel .archived-session-row .btn-ghost, .archive-pagination .btn-ghost { padding: 5px 10px; min-height: 30px; font-size: 12px; flex-shrink: 0; }
 .archive-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 12px; padding-top: 4px; }
 .archive-pagination > div { display: flex; align-items: center; gap: 10px; }
+</style>
+
+<style scoped>
+.llm-provider-logo.brand-modeljetty { background: #fff; border: 1px solid #ddd; }
+.llm-provider-logo.brand-modeljetty img { width: 44px; height: 44px; object-fit: contain; }
 </style>

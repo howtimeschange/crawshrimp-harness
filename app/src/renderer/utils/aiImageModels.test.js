@@ -20,33 +20,17 @@ import {
   sizesForRatio,
 } from './aiImageModels.js'
 
-test('ai image models expose supported 1XM model ids and config keys', () => {
-  assert.deepEqual(
-    AI_IMAGE_MODELS.filter(model => !model.provider).map((model) => model.key),
-    [
-      'gpt-image-2',
-      'gpt-image-2',
-      'gemini-3.1-flash-image-preview',
-      'gemini-3-pro-image-preview',
-    ],
-  )
-  assert.deepEqual(
-    AI_IMAGE_MODELS.filter(model => !model.provider).map((model) => model.configId),
-    [
-      'ai.1xm.gpt_image_2k_key',
-      'ai.1xm.gpt_image_4k_key',
-      'ai.1xm.gemini_3_1_flash_image_preview_key',
-      'ai.1xm.gemini_3_pro_image_preview_key',
-    ],
-  )
+test('retired 1XM models are absent from active selectors', () => {
+  assert.equal(AI_IMAGE_MODELS.length, 6)
+  assert.ok(AI_IMAGE_MODELS.every(model => model.provider && !model.label.includes('1XM')))
 })
 
 test('default ai image form uses compact local generation defaults', () => {
   const form = defaultAiImageForm()
 
   assert.equal(form.title, 'AI 生图任务')
-  assert.equal(form.modelId, 'gpt-image-2k')
-  assert.equal(form.model_key, 'gpt-image-2')
+  assert.equal(form.modelId, 'woka/gpt-image-2')
+  assert.equal(form.model_key, 'woka/gpt-image-2')
   assert.equal(form.size, '1024x1024')
   assert.equal(form.ratio, '1:1')
   assert.equal(form.quality, 'high')
@@ -75,65 +59,28 @@ test('ratio and size helpers keep generation dimensions compatible', () => {
   assert.equal(threeFour.ratio, '3:4')
 
   const wide4k = defaultAiImageForm({ modelId: 'gpt-image-4k', ratio: '16:9' })
-  assert.equal(wide4k.size, '3840x2160')
+  assert.equal(wide4k.size, '1536x864')
   assert.equal(wide4k.ratio, '16:9')
 })
 
-test('model-specific options match GPT and Nano Banana async contracts', () => {
-  assert.deepEqual(sizeOptionsForModel('gpt-image-4k', '16:9'), ['3840x2160'])
-  assert.deepEqual(sizeOptionsForModel('gemini-3-pro-image-preview', '16:9'), ['1K', '2K', '4K'])
-  assert.deepEqual(qualityOptionsForModel('gpt-image-2k'), ['auto', 'high', 'medium', 'low'])
-  assert.deepEqual(qualityOptionsForModel('gemini-3.1-flash-image-preview'), [])
-  assert.equal(isNanoBananaModel('gemini-3.1-flash-image-preview'), true)
-  assert.equal(isNanoBananaModel('gpt-image-2k'), false)
+test('active models expose sizes and configured keys without retired key fallback', () => {
+  assert.deepEqual(sizeOptionsForModel('woka/gemini-3-pro-image-preview', '16:9'), ['1K', '2K', '4K'])
+  assert.deepEqual(qualityOptionsForModel('woka/gpt-image-2'), ['auto', 'high', 'medium', 'low'])
+  assert.equal(missingKeyForModel('woka/gpt-image-2', {'ai.1xm.gpt_image_2k_key': 'retired'}), 'ai.woka.api_key')
+  assert.equal(missingKeyForModel('woka/gpt-image-2', {'ai.woka.api_key': 'active'}), '')
 })
 
-test('missing key detection returns the active model config id', () => {
-  assert.equal(
-    missingKeyForModel('gpt-image-2k', {
-      'ai.1xm.gpt_image_2k_key': '',
-      'ai.1xm.gpt_image_4k_key': 'key-4k',
-    }),
-    'ai.1xm.gpt_image_2k_key',
-  )
-  assert.equal(
-    missingKeyForModel('gemini-3-pro-image-preview', {
-      'ai.1xm.gemini_3_pro_image_preview_key': 'gemini-key',
-    }),
-    '',
-  )
+test('historical retired jobs cannot silently become a different provider', () => {
+  assert.equal(modelIdForJob({model_key: 'gpt-image-2'}), 'gpt-image-2')
+  assert.ok(!AI_IMAGE_MODELS.some(m => m.id === modelIdForJob({model_key: 'gpt-image-2'})))
 })
 
-test('model id resolves from persisted job payload model tier and size', () => {
-  assert.equal(
-    modelIdForJob({
-      model_key: 'gpt-image-2',
-      model_key_tier: '4k',
-      params: { size: '1024x1024' },
-    }),
-    'gpt-image-4k',
-  )
-  assert.equal(
-    modelIdForJob({
-      model_key: 'gpt-image-2',
-      params: { size: '3840x2160' },
-    }),
-    'gpt-image-4k',
-  )
-  assert.equal(
-    modelIdForJob({
-      model_key: 'gpt-image-2',
-      model_key_tier: '2k',
-      params: { size: '4096x4096' },
-    }),
-    'gpt-image-2k',
-  )
-  assert.equal(
-    modelIdForJob({
-      model_key: 'gemini-3-pro-image-preview',
-    }),
-    'gemini-3-pro-image-preview',
-  )
+test('configured ModelJetty is the preferred new form', () => {
+  configureAiImageProviders({'ai.image.custom_providers': [
+    {id:'custom-modeljetty-gemini',name:'ModelJetty',protocol:'gemini',models:['banana'],api_key:'active'},
+  ]})
+  assert.equal(defaultAiImageForm().modelId,'custom-modeljetty-gemini/banana')
+  configureAiImageProviders({})
 })
 
 test('output dir hint includes mac linux and windows compatible examples', () => {
@@ -146,7 +93,7 @@ test('output dir hint includes mac linux and windows compatible examples', () =>
 
 test('provider selection survives saved jobs and reads each provider credential', () => {
   assert.equal(AI_IMAGE_MODELS.some(model => model.key.endsWith('gpt-image-2.5')), false)
-  assert.ok(AI_IMAGE_MODELS.slice(0, 4).every(model => model.label.startsWith('1XM · ')))
+  assert.ok(AI_IMAGE_MODELS.every(model => !model.label.startsWith('1XM · ')))
   for (const provider of ['woka', 'semir']) {
     for (const key of ['gpt-image-2', 'gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview']) {
       const id = `${provider}/${key}`

@@ -6141,43 +6141,8 @@ def _nested_config_value(source: dict, path: str, default: str = "") -> str:
 
 def _resolve_one_xm_settings() -> dict:
     cfg = load_config()
-    base_url = (
-        _nested_config_value(cfg, "ai.1xm.base_url")
-        or os.environ.get("ONE_XM_BASE_URL", "")
-        or ONE_XM_DEFAULT_BASE_URL
-    )
-    return {
-        **provider_settings(cfg, os.environ),
-        "base_url": base_url,
-        "2k": (
-            _nested_config_value(cfg, "ai.1xm.gpt_image_2k_key")
-            or os.environ.get("ONE_XM_GPT_IMAGE_2K_KEY", "").strip()
-            or os.environ.get("ONE_XM_API_KEY", "").strip()
-        ),
-        "4k": (
-            _nested_config_value(cfg, "ai.1xm.gpt_image_4k_key")
-            or os.environ.get("ONE_XM_GPT_IMAGE_4K_KEY", "").strip()
-            or os.environ.get("ONE_XM_API_KEY", "").strip()
-        ),
-        "ai.1xm.gpt_image_2k_key": (
-            _nested_config_value(cfg, "ai.1xm.gpt_image_2k_key")
-            or os.environ.get("ONE_XM_GPT_IMAGE_2K_KEY", "").strip()
-            or os.environ.get("ONE_XM_API_KEY", "").strip()
-        ),
-        "ai.1xm.gpt_image_4k_key": (
-            _nested_config_value(cfg, "ai.1xm.gpt_image_4k_key")
-            or os.environ.get("ONE_XM_GPT_IMAGE_4K_KEY", "").strip()
-            or os.environ.get("ONE_XM_API_KEY", "").strip()
-        ),
-        "ai.1xm.gemini_3_1_flash_image_preview_key": (
-            _nested_config_value(cfg, "ai.1xm.gemini_3_1_flash_image_preview_key")
-            or os.environ.get("ONE_XM_GEMINI_3_1_FLASH_IMAGE_PREVIEW_KEY", "").strip()
-        ),
-        "ai.1xm.gemini_3_pro_image_preview_key": (
-            _nested_config_value(cfg, "ai.1xm.gemini_3_pro_image_preview_key")
-            or os.environ.get("ONE_XM_GEMINI_3_PRO_IMAGE_PREVIEW_KEY", "").strip()
-        ),
-    }
+    # Keep the internal name for historical jobs; retired 1XM credentials/env are ignored.
+    return provider_settings(cfg, os.environ)
 
 
 def _normalize_one_xm_key_tier(row: dict, run_params: dict) -> str:
@@ -14523,6 +14488,7 @@ _LLM_RUNTIME_SETTING_FIELDS = frozenset({
     "deepseek_base_url",
     "glm_base_url",
     "default_model",
+    "default_provider",
     "custom_providers",
     "builtin_provider_models",
 })
@@ -14812,8 +14778,6 @@ def image_models():
     settings = _resolve_one_xm_settings()
     from core.image_providers import PROVIDERS, config_id
     models = []
-    for model, field in [("gpt-image-2", "ai.1xm.gpt_image_2k_key"), ("gemini-3.1-flash-image-preview", "ai.1xm.gemini_3_1_flash_image_preview_key"), ("gemini-3-pro-image-preview", "ai.1xm.gemini_3_pro_image_preview_key")]:
-        models.append({"id": model, "provider": "1XM", "configured": bool(settings.get(field) or (settings.get("2k") or settings.get("4k") if model == "gpt-image-2" else ""))})
     for provider, defaults in PROVIDERS.items():
         for model in ("gpt-image-2", "gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"):
             models.append({"id": provider + "/" + model, "provider": defaults["label"], "configured": bool(settings.get(config_id(provider, model)))})

@@ -1955,11 +1955,11 @@ def tool_image_generate(
     output_format: str = "png",
     key_tier: str = "",
     model_key_tier: str = "",
-    model: str = "gpt-image-2",
+    model: str = "",
     reference_image_paths: Optional[list[str]] = None,
     reference_attachment_ids: Optional[list[str]] = None,
 ) -> dict:
-    """调用抓虾多供应商生图：1XM、沃卡、森马网关及自定义模型。"""
+    """调用抓虾多供应商生图：ModelJetty、沃卡、森马网关及自定义模型。"""
     guard = _require_run()
     if guard:
         return guard
@@ -2020,7 +2020,9 @@ def tool_image_generate(
     }
     if tier:
         params["model_key_tier"] = tier
-    model_text = str(model or "gpt-image-2").strip() or "gpt-image-2"
+    model_text = str(model or "").strip()
+    if not model_text or "/" not in model_text:
+        return _failed("MODEL_REQUIRED", "请先调用 image_models 选择已配置的供应商模型；旧的无前缀生图模型已停用。")
     try:
         settings = _resolve_one_xm_settings()
     except Exception as exc:  # noqa: BLE001
@@ -3166,7 +3168,7 @@ def create_agent_mcp_server() -> MCPServer:
 
     mcp.add_tool(tool_image_models, name="image_models", description="列出图片供应商、模型ID与已配置状态，不返回密钥；生图前用此工具选择模型。")
     mcp.add_tool(tool_image_generate, name="image_generate",
-                 description="调用抓虾 AI 生图/参考图改图:生成图片(1-4 张)。model 可选 woka/gpt-image-2、semir/gpt-image-2、woka/gemini-3.1-flash-image-preview、semir/gemini-3-pro-image-preview 等（两家均支持 GPT Image 2、Nano Banana 2/Pro）；自定义模型使用 custom-供应商ID/原始模型ID，先调用 image_models 获取可用配置。无前缀模型沿用 1XM。reference_image_paths 接收聊天图片提供的 Normalized copy 只读本地路径（支持无扩展名），reference_attachment_ids 接收当前会话的抓虾附件 id（不是原生 sha256 标识）；合计最多10张PNG/JPEG/WebP、每张20MB。按路径列表再附件id列表的顺序输入参考图。纯文生图省略两项。未指定 key_tier 时自动选择已配置且支持尺寸的 Key，显式档位不会切换。Harness 自动将产物提交到当前会话展示；delivery.requires_file_return=false 时直接总结，不要重复调用 dsh_im_return_file 或复制文件。配置错误会返回各档位配置状态，无需读取配置文件")
+                 description="调用抓虾 AI 生图/参考图改图:生成图片(1-4 张)。model 可选 woka/gpt-image-2、semir/gpt-image-2、woka/gemini-3.1-flash-image-preview、semir/gemini-3-pro-image-preview 等（两家均支持 GPT Image 2、Nano Banana 2/Pro）；自定义模型使用 custom-供应商ID/原始模型ID，先调用 image_models 获取可用配置。必须先通过 image_models 选择已配置的带供应商前缀模型；无前缀的旧模型已停用。reference_image_paths 接收聊天图片提供的 Normalized copy 只读本地路径（支持无扩展名），reference_attachment_ids 接收当前会话的抓虾附件 id（不是原生 sha256 标识）；合计最多10张PNG/JPEG/WebP、每张20MB。按路径列表再附件id列表的顺序输入参考图。纯文生图省略两项。未指定 key_tier 时自动选择已配置且支持尺寸的 Key，显式档位不会切换。Harness 自动将产物提交到当前会话展示；delivery.requires_file_return=false 时直接总结，不要重复调用 dsh_im_return_file 或复制文件。配置错误会返回各档位配置状态，无需读取配置文件")
     mcp.add_tool(tool_image_assets, name="image_assets",
                  description="列出智能体生成过的生图产物(本地文件路径)")
     mcp.add_tool(tool_video_models, name="video_models",

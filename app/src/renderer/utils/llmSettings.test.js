@@ -17,6 +17,7 @@ import {
   LLM_CUSTOM_PROVIDERS_FIELD,
   LLM_BUILTIN_PROVIDER_MODELS_FIELD,
   normalizeBuiltinProviderModels,
+  normalizeCustomLlmProviders,
   builtinLlmProviderModelIds,
   builtinLlmProviderModels,
   mergeDiscoveredLlmModels,
@@ -343,4 +344,10 @@ test('known and custom model additions both forward images while preserving budg
   assert.equal(migrated.supports_tools, true)
   assert.deepEqual(migrated.input_modalities, ['text', 'image'])
   assert.equal(migrated.max_output_tokens, 48000)
+})
+
+test('Responses protocol survives custom provider normalization and save', () => {
+  const provider = { id: 'modeljetty-gpt', name: 'ModelJetty GPT', protocol: 'openai-responses', base_url: 'https://api.modeljetty.com/v1', api_key: 'test-key', models: [{ id: 'gpt-6-luna' }] }
+  assert.equal(normalizeCustomLlmProviders([provider])[0].protocol, 'openai-responses')
+  assert.equal(buildLlmSettingsPatch({ 'ai.llm.custom_providers': [provider] })['ai.llm.custom_providers'][0].protocol, 'openai-responses')
 })

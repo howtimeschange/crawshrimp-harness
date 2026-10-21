@@ -163,6 +163,13 @@ def resolve_session_model_selection(provider_id: str, model_id: str, config: dic
 
 
 def resolve_provider_for_model(model_id: str, config: Optional[dict] = None) -> str:
+    llm = ((config or {}).get("ai") or {}).get("llm") or {}
+    preferred = llm.get("default_provider")
+    if preferred and model_id == llm.get("default_model"):
+        try:
+            return resolve_session_model_selection(preferred, model_id, config)[1]
+        except ValueError:
+            pass
     custom = custom_provider_for_configured_model(model_id, config)
     if custom and not builtin_provider_has_configured_key(model_id, config):
         return str(custom.get("id") or "")

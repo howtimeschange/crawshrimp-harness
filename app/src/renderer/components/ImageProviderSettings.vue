@@ -6,13 +6,13 @@
     </div>
     <div class="provider-list" aria-label="图片模型供应商列表">
       <article v-for="provider in providers" :key="provider.id" class="provider-card">
-        <div :class="['provider-logo', provider.id]">{{ provider.logo }}</div>
+        <div :class="['provider-logo', provider.id, { 'modeljetty-logo': provider.preset }]"><img v-if="provider.preset" :src="modeljettyLogoUrl" alt="ModelJetty" /><span v-else>{{ provider.logo }}</span></div>
         <div class="provider-main">
           <div class="provider-heading">
             <h4>{{ provider.name }}</h4>
             <span :class="['status', provider.configured ? 'ready' : '']">{{ provider.configured ? '已配 Key' : '未配 Key' }}</span>
             <span class="tag">{{ provider.protocolLabel }}</span>
-            <span v-if="provider.custom" class="tag">自定义</span>
+            <span v-if="provider.custom && !provider.preset" class="tag">自定义</span>
           </div>
           <p class="endpoint">{{ provider.baseUrl || '尚未填写接口地址' }}</p>
           <div class="model-tags"><span v-for="model in provider.previewModels" :key="model">{{ model }}</span><span v-if="provider.more">+{{ provider.more }}</span></div>
@@ -39,7 +39,7 @@
               <template v-if="draft.custom">
                 <div class="editor-grid">
                   <label>供应商名称<input v-model="draft.name" required placeholder="例如：团队生图网关" /></label>
-                  <label>接口协议<select v-model="draft.protocol"><option value="openai">OpenAI Images</option><option value="gemini">Gemini 原生</option><option value="one_xm">1XM 异步任务</option></select></label>
+                  <label>接口协议<select v-model="draft.protocol"><option value="openai">OpenAI Images</option><option value="gemini">Gemini 原生</option><option v-if="draft.protocol === 'one_xm'" value="one_xm">异步任务（旧配置）</option></select></label>
                 </div>
                 <label>Base URL<input v-model="draft.baseUrl" required type="url" :placeholder="draft.protocol === 'gemini' ? 'https://api.example.com/v1beta' : 'https://api.example.com/v1'" /></label>
                 <label>API Key<input v-model="draft.apiKey" type="password" autocomplete="off" placeholder="填写供应商密钥" /></label>
@@ -58,7 +58,7 @@
               <p v-if="editor.error" class="editor-error" role="alert">{{ editor.error }}</p>
             </div>
             <footer>
-              <button v-if="draft.custom && !editor.isNew" type="button" class="danger" :disabled="editor.saving" @click="removeProvider">移除供应商</button>
+              <button v-if="draft.custom && !draft.preset && !editor.isNew" type="button" class="danger" :disabled="editor.saving" @click="removeProvider">移除供应商</button>
               <span class="spacer" />
               <button type="button" :disabled="editor.saving" @click="closeEditor">取消</button>
               <button class="primary" type="submit" :disabled="editor.saving">{{ editor.saving ? '保存中…' : '保存供应商' }}</button>
@@ -71,15 +71,12 @@
 </template>
 
 <script setup>
+import modeljettyLogoUrl from '../assets/modeljetty-mark.svg'
+import { MODELJETTY_IMAGE_PRESETS } from '../utils/modeljettyPresets.mjs'
 import { computed, nextTick, reactive, ref } from 'vue'
 import { AI_IMAGE_MODELS, CUSTOM_IMAGE_PROVIDERS_FIELD, customImageProviders } from '../utils/aiImageModels.js'
 const props = defineProps({ config: { type: Object, required: true }, save: { type: Function, required: true } })
 const builtin = [
-  { id: '1xm', name: '1XM', logo: '1XM', protocolLabel: '异步任务', groups: [
-    { title: '连接', fields: [{ id: 'ai.1xm.base_url', label: 'Base URL' }] },
-    { title: 'GPT Image 2', description: '1XM 按分辨率使用不同密钥。', fields: [{ id: 'ai.1xm.gpt_image_2k_key', label: '2K API Key', secret: true }, { id: 'ai.1xm.gpt_image_4k_key', label: '4K API Key', secret: true }] },
-    { title: 'Nano Banana', fields: [{ id: 'ai.1xm.gemini_3_1_flash_image_preview_key', label: 'Nano Banana 2 API Key', secret: true }, { id: 'ai.1xm.gemini_3_pro_image_preview_key', label: 'Nano Banana Pro API Key', secret: true }] },
-  ] },
   { id: 'woka', name: '沃卡', logo: 'WOKA', protocolLabel: 'OpenAI / Gemini', groups: [
     { title: '身份验证', description: 'GPT Image 与 Nano Banana 共用此密钥。', fields: [{ id: 'ai.woka.api_key', label: 'API Key', secret: true }] },
     { title: '接口地址', fields: [{ id: 'ai.woka.base_url', label: 'GPT Image · OpenAI Base URL' }, { id: 'ai.woka.gemini_base_url', label: 'Nano Banana · Gemini Base URL' }] },
@@ -90,11 +87,18 @@ const builtin = [
   ] },
 ]
 const providers = computed(() => [
-  ...builtin.map(item => {
-    const models = AI_IMAGE_MODELS.filter(model => (model.provider || '1xm') === item.id)
-    return { ...item, baseUrl: props.config[`ai.${item.id}.base_url`], configured: item.groups.some(group => group.fields.some(field => field.secret && props.config[field.id])), previewModels: item.id === '1xm' ? ['GPT Image 2 · 2K / 4K', 'Nano Banana 2', 'Nano Banana Pro'] : ['GPT Image 2', 'Nano Banana 2', 'Nano Banana Pro'], modelCount: models.length, models: models.map(model => model.label.replace(/^.* · /, '')) }
+  ...MODELJETTY_IMAGE_PRESETS.map(preset => {
+    const saved = customImageProviders(props.config).find(item => item.id === preset.id)
+    const item = saved || preset
+    return { ...item, preset: true, custom: true, baseUrl: item.base_url,
+      protocolLabel: item.protocol === 'gemini' ? 'Gemini 原生' : 'OpenAI Images',
+      configured: Boolean(item.api_key), previewModels: item.models, modelCount: item.models.length }
   }),
-  ...customImageProviders(props.config).map(item => ({ ...item, custom: true, logo: item.name?.slice(0, 2).toUpperCase() || 'API', baseUrl: item.base_url, protocolLabel: { openai: 'OpenAI Images', gemini: 'Gemini 原生', one_xm: '异步任务' }[item.protocol], configured: Boolean(item.api_key), previewModels: (item.models || []).slice(0, 3), modelCount: item.models?.length || 0, more: Math.max(0, (item.models?.length || 0) - 3) })),
+  ...builtin.map(item => {
+    const models = AI_IMAGE_MODELS.filter(model => model.provider === item.id)
+    return { ...item, baseUrl: props.config[`ai.${item.id}.base_url`], configured: item.groups.some(group => group.fields.some(field => field.secret && props.config[field.id])), previewModels: ['GPT Image 2', 'Nano Banana 2', 'Nano Banana Pro'], modelCount: models.length, models: models.map(model => model.label.replace(/^.* · /, '')) }
+  }),
+  ...customImageProviders(props.config).filter(item => !MODELJETTY_IMAGE_PRESETS.some(preset => preset.id === item.id)).map(item => ({ ...item, custom: true, logo: item.name?.slice(0, 2).toUpperCase() || 'API', baseUrl: item.base_url, protocolLabel: { openai: 'OpenAI Images', gemini: 'Gemini 原生', one_xm: '异步任务' }[item.protocol], configured: Boolean(item.api_key), previewModels: (item.models || []).slice(0, 3), modelCount: item.models?.length || 0, more: Math.max(0, (item.models?.length || 0) - 3) })),
 ])
 const editor = reactive({ open: false, isNew: false, saving: false, error: '' })
 const draft = reactive({ id: '', name: '', custom: false, protocol: 'openai', baseUrl: '', apiKey: '', modelsText: '', groups: [], models: [], values: {} })
@@ -105,7 +109,7 @@ async function openEditor(provider) {
   restoreFocus = document.activeElement
   editor.isNew = !provider
   editor.error = ''
-  Object.assign(draft, { id: provider?.id || `custom-${crypto.randomUUID()}`, name: provider?.name || '', custom: !provider || Boolean(provider.custom), protocol: provider?.protocol || 'openai', baseUrl: provider?.baseUrl || '', apiKey: provider?.api_key || '', modelsText: (provider?.models || []).join('\n'), groups: provider?.groups || [], models: provider?.models || [], values: { ...props.config } })
+  Object.assign(draft, { preset: Boolean(provider?.preset), id: provider?.id || `custom-${crypto.randomUUID()}`, name: provider?.name || '', custom: !provider || Boolean(provider.custom), protocol: provider?.protocol || 'openai', baseUrl: provider?.baseUrl || '', apiKey: provider?.api_key || '', modelsText: (provider?.models || []).join('\n'), groups: provider?.groups || [], models: provider?.models || [], values: { ...props.config } })
   editor.open = true
   await nextTick()
   dialog.value?.focus()
@@ -189,4 +193,9 @@ textarea { resize: vertical; }.editor-grid { display: grid; grid-template-column
 .help { font-size: 12px; line-height: 1.6; margin: 0; color: var(--text3, #9696aa); }.editor-error { color: #fa8c8c; font-size: 13px; margin: 0; }
 footer { position: sticky; bottom: 0; display: flex; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--border, #34343e); background: var(--bg2, #1e1e27); }.spacer { flex: 1; }.danger { color: #f08c8c; }
 @media (max-width: 820px) { .provider-toolbar { align-items: flex-start; flex-direction: column; }.provider-card { padding: 15px; gap: 12px; }.provider-logo { flex-basis: 62px; font-size: 15px; }.provider-heading { gap: 5px; }.editor-grid { grid-template-columns: 1fr; } }
+</style>
+
+<style scoped>
+.provider-logo.modeljetty-logo { background: #fff; border: 1px solid #ddd; }
+.modeljetty-logo img { width: 44px; height: 44px; object-fit: contain; }
 </style>

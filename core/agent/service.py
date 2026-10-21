@@ -724,7 +724,7 @@ def _dsh_llm_pi_ai_settings(
         providers[provider_id] = {
             "displayName": _compact_text(provider.get("displayName")) or provider_id,
             "apiKeyEnv": _compact_text(provider.get("apiKeyEnv")),
-            "api": "anthropic-messages" if provider.get("api") == "anthropic-messages" else "openai-completions",
+            "api": provider.get("api") if provider.get("api") in {"anthropic-messages", "openai-responses"} else "openai-completions",
             "baseURL": _compact_text(provider.get("baseURL")),
             "models": [{**model, "input": ["text", "image"]} for model in provider.get("models") or []],
         }

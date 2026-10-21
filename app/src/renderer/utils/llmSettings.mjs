@@ -26,6 +26,7 @@ export const LLM_DEFAULTS = Object.freeze({
   'ai.llm.deepseek_base_url': DEEPSEEK_OFFICIAL_BASE_URL_DEFAULT,
   'ai.llm.glm_base_url': GLM_OFFICIAL_BASE_URL_DEFAULT,
   'ai.llm.default_model': 'deepseek-official-flash',
+  'ai.llm.default_provider': '',
 })
 
 // Keep renderer fallback presets aligned with core.agent.cordis_config.MODEL_CAPABILITIES.
@@ -200,7 +201,8 @@ function hasPlainCredential(value) {
 }
 
 export function normalizeLlmProtocol(protocol = 'openai') {
-  return String(protocol || '').toLowerCase() === 'anthropic' ? 'anthropic' : 'openai'
+  const value = String(protocol || '').toLowerCase()
+  return ['anthropic', 'openai-responses'].includes(value) ? value : 'openai'
 }
 
 export function parseLlmModelsText(text = '') {

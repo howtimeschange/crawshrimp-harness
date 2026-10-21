@@ -292,6 +292,8 @@ def test_agent_catalog_and_api_list_custom_models_without_keys(monkeypatch):
     import json
     response = api_server.image_models()
     assert 'custom-catalog/product-v2' in json.dumps(response)
+    assert all('/' in model['id'] for model in response['models'])
+    assert all(model['provider'] != '1xm' for model in models.values())
     for secret in ('woka-private', 'custom-private'):
         assert secret not in json.dumps(response)
         assert secret not in json.dumps(models)
@@ -347,3 +349,21 @@ def test_early_gateway_rejection_reads_response_without_resubmitting():
         assert requests == ['/generate']
     finally:
         server.shutdown(); server.server_close(); thread.join()
+
+
+def test_runtime_ignores_retired_provider_config_and_environment(monkeypatch):
+    from core import api_server
+    monkeypatch.setattr(api_server, 'load_config', lambda: {'ai': {'1xm': {'gpt_image_2k_key': 'retired'}, 'woka': {'api_key': 'active'}}})
+    monkeypatch.setenv('ONE_XM_API_KEY', 'retired-env')
+    settings = api_server._resolve_one_xm_settings()
+    assert settings['ai.woka.api_key'] == 'active'
+    assert '2k' not in settings
+    assert not any(key.startswith('ai.1xm.') for key in settings)
+
+
+def test_agent_requires_active_provider_model_before_generation(monkeypatch):
+    from core.agent import mcp_gateway
+    monkeypatch.setattr(mcp_gateway.ctx, 'active_run', {'run_id': 'retired', 'session_id': 'session'})
+    result = mcp_gateway.tool_image_generate('test')
+    assert not result['ok']
+    assert result['error']['code'] == 'MODEL_REQUIRED'
