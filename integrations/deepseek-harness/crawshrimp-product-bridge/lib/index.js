@@ -50,6 +50,10 @@ const OUTPUT_CONTINUATION_MAX_CHARS = 2_000
 // snapshot immediately before an Automation prompt and removes it as that run
 // settles; no interactive Session permission state is changed or persisted.
 const automationNativePolicies = new Map()
+// Memory assembly performs a read without a tool call; keep it outside scoped automation runs.
+export function hasAutomationNativePolicy(sessionId) {
+  return automationNativePolicies.has(String(sessionId || ''))
+}
 
 // Read-only presentation hint. Returning tool names never grants execution;
 // automationNativeToolDecision and the MCP lease policy remain authoritative.

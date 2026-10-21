@@ -5,6 +5,9 @@
 # the host-layer product prompt. Keep the complete operational roster here and
 # replace only that scoped persona.
 
+- id: crawshrimp-memory
+  name: 'crawshrimp-product-bridge/lib/memory.js'
+
 - id: crawshrimp-context-tools
   name: 'crawshrimp-product-bridge/lib/context-tools.js'
   config:
