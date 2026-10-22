@@ -2,13 +2,28 @@
   <section :class="['account-panel', { 'auth-panel': auth, 'profile-panel': !auth }]" :aria-labelledby="headingId">
     <div class="account-intro">
       <div v-if="auth" class="auth-brand"><span aria-hidden="true">🦐</span> 抓虾</div>
-      <h3 :id="headingId">{{ auth ? state.recovery ? '设置新密码' : state.pending ? '验证你的邮箱' : mode === 'register' ? '创建账号' : mode === 'recovery' ? '找回密码' : '欢迎回来' : '个人账号' }}</h3>
+      <h3 :id="headingId">{{ state.managed ? (auth ? '登录抓虾官方服务' : '账号与会员') : auth ? state.recovery ? '设置新密码' : state.pending ? '验证你的邮箱' : mode === 'register' ? '创建账号' : mode === 'recovery' ? '找回密码' : '欢迎回来' : '个人账号' }}</h3>
       <p v-if="!auth" class="profile-subtitle">查看个人身份与管理登录状态</p>
       <p v-if="auth">{{ mode === 'register' ? '用邮箱创建你的抓虾账号' : mode === 'recovery' ? '通过注册邮箱验证码找回账号' : '登录你的抓虾账号' }}</p>
     </div>
     <p v-if="loading" role="status">正在读取账号状态…</p>
     <template v-else>
       <p v-if="!available" class="account-note">请在抓虾桌面客户端中管理账号。</p>
+      <div v-else-if="state.managed" class="account-form">
+        <template v-if="state.user">
+          <h3>{{ state.user.name || state.user.email || '抓虾账号' }}</h3>
+          <p>{{ state.user.email }} · {{ (state.plan || 'free').toUpperCase() }}</p>
+          <p>官方生文与生图已连接。请在模型选择器中选择“抓虾官方”；自带 API Key 的模型保持独立。</p>
+          <button type="button" @click="perform('plans')">查看会员套餐与价格</button>
+          <button type="button" :disabled="busy" @click="perform('logout')">退出当前设备</button>
+        </template>
+        <template v-else>
+          <p>登录后使用抓虾提供的文字与图片模型。已有 API Key 可直接在模型设置中配置，无需登录。</p>
+          <button v-if="!state.pending" class="primary" type="button" :disabled="busy" @click="perform('login')">在浏览器中登录</button>
+          <template v-else><p role="status">请在系统浏览器中登录并授权此设备。</p><button type="button" @click="perform('cancel')">取消登录</button></template>
+          <button type="button" @click="perform('plans')">查看会员套餐</button>
+        </template>
+      </div>
       <p v-else-if="!state.configured && !error" class="account-note">账号服务尚未配置，你可以继续使用全部本地功能。</p>
       <div v-else-if="!auth && !state.user && !state.recovery && !state.pending" class="account-signed-out">
         <p>尚未登录</p><button class="primary" type="button" @click="emit('login')">登录账号</button>

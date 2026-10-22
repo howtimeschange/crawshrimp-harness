@@ -728,6 +728,12 @@ def _dsh_llm_pi_ai_settings(
             "baseURL": _compact_text(provider.get("baseURL")),
             "models": [{**model, "input": ["text", "image"]} for model in provider.get("models") or []],
         }
+        if provider_id in {"crawshrimp-managed-openai", "crawshrimp-managed-openai-responses"}:
+            # Paid POSTs have no end-to-end idempotency guarantee. A timeout or
+            # broken stream (even after output) must not replay the model call.
+            providers[provider_id]["retryPolicy"] = {
+                "mode": "normal", "maxRetries": 0,
+            }
     return {"providers": providers}
 
 

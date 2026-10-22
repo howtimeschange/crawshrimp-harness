@@ -24,6 +24,7 @@
   "dependencies": {
     "@supabase/supabase-js": "2.116.0",
     "electron-updater": "6.8.9",
+    "openid-client": "^6.8.1",
     "portfinder": "^1.0.32",
     "semver": "7.7.2",
     "tesseract.js": "^5.1.1",

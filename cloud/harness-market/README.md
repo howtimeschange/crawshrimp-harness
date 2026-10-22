@@ -52,3 +52,15 @@ env -u ELECTRON_RUN_AS_NODE node_modules/.bin/electron scripts/market-electron-s
 2026-09-11：002 在线事务迁移成功；PostgreSQL RLS 覆盖单账号更新、范围检查、自评/匿名拒绝、隐藏后编辑/重发仍隐藏、恢复统计。客户端及后台 17 项测试通过，Vite 构建通过。真实 Electron 管理员会话验证评分汇总与自评拒绝，并再次完成上传/审核/安装/下架；示例 `992746d3-54b1-40b2-a34a-aa6cc34e750b` 已下架。无虚构公开好评。
 
 图标：`003_package_icons.sql` 增加可选 PNG 缩略图。发布界面接受最大 2 MB 的 PNG/JPG/WebP，本地转换为 128×128 PNG（保留比例），未选择或加载失败显示默认虾图标。图标随包审核且不可直接覆盖；市场安装收据保存缩略图，按适配器 ID 与版本匹配到“我的脚本”和详情。旧包默认值为空，继续使用虾图标。
+
+## ModelJetty 账号桥接（2026-10-21）
+
+新桌面账号经 `modeljetty.com/account/market/` 转发至 `modeljetty-market` Edge Function。函数每次调用 `modeljetty.com/account/me` 验证桌面令牌及撤销状态，以服务端生成的私有身份映射获得普通 Supabase Auth 用户会话，再执行现有市场 RLS。客户端不持有 Supabase 管理密钥或用户会话；账号服务 VPS 仅配置固定 `MARKET_BRIDGE_URL`。
+
+- 迁移 `006_modeljetty_identity.sql`：身份映射表仅 service_role 可访问。
+- 函数 `functions/modeljetty-market`：禁用网关 Supabase JWT 校验是因为输入是 ModelJetty opaque token；函数自身强制在线验证，未关闭认证。
+- 允许读取三个市场表、已有发布者 RPC 和私有 ZIP 上传/下载，拒绝审核 RPC、其他表、修改/删除存储对象。
+- 新账号映射独立于旧 Supabase 账号；不按同名/邮箱自动认领旧发布记录。旧用户的发布归属迁移需要单独验证双方身份。
+- 通过 Supabase MCP 应用迁移和部署函数，无需网页重复配置。CLI `npx supabase` 已验证可用，但 CLI 尚未单独登录。
+
+验收：真实新账号列出 2 个已上架包；“我的发布”为空；下载 250855 字节并通过完整性校验；在独立测试数据目录成功安装 `temu`（未执行脚本）。管理员 RPC 被拒绝，退出后访问被拒绝。生产未新增公开脚本或审核动作。发布生命周期的本地 RLS 测试继续通过；未以真实账号上传新的待审包。

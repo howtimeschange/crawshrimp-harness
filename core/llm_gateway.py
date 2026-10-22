@@ -408,7 +408,8 @@ def _normalize_custom_models(value: Any, *, preserve_default_reasoning: bool = F
 
 def custom_llm_providers(config: dict | None = None, *, include_secrets: bool = True) -> list[dict[str, Any]]:
     llm = _llm_settings(config)
-    raw = llm.get("custom_providers")
+    from core.managed_models import text_providers
+    raw = list(llm.get("custom_providers") or []) + text_providers()
     providers: list[dict[str, Any]] = []
     if not isinstance(raw, list):
         return providers
@@ -1159,9 +1160,9 @@ def generate_video_copies(
     route = route_for_model(model_id, config=config)
     correction = ""
     validation_attempt = 0
-    max_validation_attempts = 2
+    max_validation_attempts = 1 if route.model_id.startswith("managed-") else 2
     transport_attempt = 0
-    max_transport_attempts = 3
+    max_transport_attempts = 1 if route.model_id.startswith("managed-") else 3
     while validation_attempt < max_validation_attempts and transport_attempt < max_transport_attempts:
         try:
             response = (
@@ -1247,6 +1248,8 @@ def generate_multimodal_json(
         if len(model_ids) > 1 or not retry_same_model
         else [model_ids[0], model_ids[0]]
     )
+    if str(model_id).startswith("managed-"):
+        attempts = [model_id]  # Never silently retry or switch billing source.
     last_error: LlmGatewayError | None = None
     for attempt_index, current_model_id in enumerate(attempts):
         route = route_for_model(current_model_id, config=config)
@@ -1274,7 +1277,7 @@ def generate_multimodal_json(
         except LlmGatewayError as exc:
             last_error = exc
             retryable = _is_retryable_llm_error(exc)
-            if attempt_index == len(attempts) - 1 or not retryable:
+            if route.model_id.startswith("managed-") or attempt_index == len(attempts) - 1 or not retryable:
                 raise
     raise last_error or LlmGatewayError("文本模型接口调用失败")
 
@@ -1318,6 +1321,8 @@ def generate_multimodal_text(
         if len(model_ids) > 1 or not retry_same_model
         else [model_ids[0], model_ids[0]]
     )
+    if str(model_id).startswith("managed-"):
+        attempts = [model_id]  # Never silently retry or switch billing source.
     last_error: LlmGatewayError | None = None
     for attempt_index, current_model_id in enumerate(attempts):
         route = route_for_model(current_model_id, config=config)
@@ -1345,7 +1350,7 @@ def generate_multimodal_text(
         except LlmGatewayError as exc:
             last_error = exc
             retryable = _is_retryable_llm_error(exc)
-            if attempt_index == len(attempts) - 1 or not retryable:
+            if route.model_id.startswith("managed-") or attempt_index == len(attempts) - 1 or not retryable:
                 raise
     raise last_error or LlmGatewayError("文本模型接口调用失败")
 

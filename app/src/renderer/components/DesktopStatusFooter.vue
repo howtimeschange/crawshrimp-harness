@@ -29,6 +29,7 @@
         <IconChevronRight :size="16" aria-hidden="true" />
       </button>
       <div class="menu-divider" role="separator"></div>
+      <button type="button" role="menuitem" class="menu-row" @click="select('usage')"><IconSettings :size="16" :stroke-width="1.6" /><span>套餐与用量</span><IconChevronRight class="row-tail" :size="15" /></button>
       <button type="button" role="menuitem" class="menu-row" @click="select('settings')"><IconSettings :size="16" :stroke-width="1.6" /><span>设置</span><IconChevronRight class="row-tail" :size="15" /></button>
       <button type="button" role="menuitem" class="menu-row" :class="`tone-${presentation.tone}`" :disabled="busy" :title="presentation.title" @click="select('update-details')">
         <UpdateProgressRing v-if="presentation.tone === 'downloading'" compact :percent="presentation.percent || 0" />
@@ -58,7 +59,7 @@ import { IconUser, IconSelector, IconChevronRight, IconSettings, IconDownload, I
 import UpdateProgressRing from './UpdateProgressRing.vue'
 import { accountIdentity, runtimeIndicators } from '../utils/desktopAccountMenu.js'
 const props = defineProps({ status: { type: Object, default: () => ({}) }, presentation: { type: Object, default: () => ({}) }, busy: Boolean, collapsed: Boolean, contextKey: String })
-const emit = defineEmits(['account', 'settings', 'services', 'update', 'update-details'])
+const emit = defineEmits(['usage','account', 'settings', 'services', 'update', 'update-details'])
 const root = ref(null)
 const trigger = ref(null)
 const menu = ref(null)

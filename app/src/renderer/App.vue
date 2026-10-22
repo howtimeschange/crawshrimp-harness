@@ -4,14 +4,14 @@
     :class="{
       'layout-ai-image': currentView === 'ai_image' || currentView === 'ai_video_generation',
       'sidebar-collapsed': effectiveSidebarCollapsed,
-      'has-script-sidebar': activeScript,
+      'has-script-sidebar': activeScript && currentView !== 'settings',
       'titlebar-macos': isMacTitlebar,
     }"
   >
     <!-- macOS keeps a native traffic-light/drag strip; Windows uses its OS titlebar. -->
     <div v-if="isMacTitlebar" class="titlebar" aria-hidden="true"></div>
     <DesktopStatusFooter
-      v-if="agentShellControlsVisible || currentView !== 'agent' || activeScript"
+      v-if="currentView !== 'settings' && (agentShellControlsVisible || currentView !== 'agent' || activeScript)"
       class="shell-status-footer"
       :style="{ width: `${activeScript ? 168 : railWidth}px` }"
       :status="status"
@@ -20,6 +20,7 @@
       :busy="updateActionBusy"
       :context-key="`${currentView}:${activeScript?.adapter_id || ''}`"
       @account="openAccount"
+      @usage="openSettingsPanel('account-usage')"
       @update-details="openSettingsPanel('application-update')"
       @settings="openSettingsPanel('appearance-theme')"
       @services="openSettingsPanel('connection-overview')"
@@ -27,7 +28,7 @@
     />
 
     <!-- 侧边栏:仅脚本详情显示二级菜单(主菜单在智能体会话侧边栏内) -->
-    <aside v-if="activeScript" class="sidebar">
+    <aside v-if="activeScript && currentView !== 'settings'" class="sidebar">
       <div class="sub-nav">
         <button class="back-btn" @click="exitScript">
           ← 我的脚本
@@ -78,7 +79,7 @@
 
     <!-- 主内容区:智能体会话常驻全幅;脚本详情为独立二级页面(隐藏会话界面) -->
     <main class="content">
-      <div v-show="!activeScript" class="agent-persist">
+      <div class="agent-persist" :aria-hidden="Boolean(activeScript) || currentView === 'settings'" :inert="Boolean(activeScript) || currentView === 'settings'">
         <AgentWebView
           :theme="effectiveTheme"
           :nav-items="filteredNavItems"
@@ -101,6 +102,7 @@
         v-show="currentView !== 'agent'"
         class="embed-overlay"
         :style="{ left: `${embedLeft}px` }"
+        :class="{ 'settings-overlay': currentView === 'settings' }"
       >
         <div class="embed-overlay-body">
           <!-- 我的脚本：脚本列表 -->
@@ -113,7 +115,7 @@
           <!-- 脚本任务执行页 -->
           <TaskRunner
             :key="`${activeScript?.adapter_id || ''}:${activeTaskId || ''}:${taskRunnerHandoffKey}`"
-            v-else-if="activeScript && activeTaskId"
+            v-else-if="activeScript && activeTaskId && currentView !== 'settings'"
             :adapter-id="activeScript.adapter_id"
             :task="activeScript.tasks.find(t => t.task_id === activeTaskId)"
             :initial-params="taskRunnerHandoffParams"
@@ -162,6 +164,7 @@
             :update-action-busy="updateActionBusy"
             :theme-preference="themePreference"
             :effective-theme="effectiveTheme"
+            @back="closeSettingsPanel"
             @runtime-refresh="refreshRuntimeStatus"
             @check-update="retryUpdateCheck"
             @theme-change="setThemePreference"
@@ -304,6 +307,7 @@ const navItems = [
 const filteredNavItems = computed(() => navItems)
 
 function selectNav(item) {
+  if (item.id === 'settings') { openSettingsPanel(''); return }
   if (shouldClearActiveScriptForNav(item)) {
     activeScript.value = null
     activeTaskId.value = null
@@ -360,14 +364,20 @@ function onRuntimeSession(runtimeSessionId) {
   activeRuntimeSessionId.value = String(runtimeSessionId || '')
 }
 // 脚本详情:独立二级页面(隐藏会话界面,内容区从 0 开始)
-const embedLeft = computed(() => (activeScript.value ? 0 : railWidth.value))
+const embedLeft = computed(() => (currentView.value === 'settings' || activeScript.value ? 0 : railWidth.value))
 
 function openTaskInstanceFromAgent(instanceUid) {
   activeInstanceUid.value = instanceUid || ''
   currentView.value = 'task_center'
 }
 
+let settingsReturnView = 'agent'
+function closeSettingsPanel() {
+  currentView.value = settingsReturnView
+}
+
 function openSettingsPanel(target) {
+  if (currentView.value !== 'settings') settingsReturnView = currentView.value
   const panelId = target && typeof target === 'object'
     ? target.panelId || target.id || ''
     : target
@@ -375,9 +385,6 @@ function openSettingsPanel(target) {
   focusSettingsPanelId.value = panelId
   focusSettingsRequestId.value += 1
   currentView.value = 'settings'
-  activeScript.value = null
-  activeTaskId.value = null
-  activeInstanceUid.value = ''
 }
 
 async function loadScriptGroups(options = {}) {
@@ -775,6 +782,8 @@ input, select, textarea { font-family: inherit; }
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+.settings-overlay { border-left: 0; }
 
 .embed-overlay-body {
   height: 100%;

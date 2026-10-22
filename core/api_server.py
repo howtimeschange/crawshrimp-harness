@@ -14585,6 +14585,9 @@ def _public_settings() -> dict:
     public_llm["glm_configured"] = _llm_key_configured(source_llm, "glm_api_key")
     ai["llm"] = public_llm
     public["ai"] = ai
+    from core.managed_models import image_providers, text_providers
+    public["managed_image_providers"] = [{k: v for k, v in item.items() if k not in {"api_key", "base_url"}} | {"configured": True} for item in image_providers()]
+    public["managed_text_providers"] = [{k: v for k, v in item.items() if k not in {"api_key", "base_url"}} | {"configured": True} for item in text_providers()]
     return public
 
 
@@ -14639,6 +14642,8 @@ def _safe_settings_write_patch(cfg: dict) -> dict:
     for key in list(patch):
         if key == "cloud_approval" or key.startswith("cloud_approval."):
             patch.pop(key)
+    patch.pop("managed_image_providers", None)
+    patch.pop("managed_text_providers", None)
     source_llm = (((load_config().get("ai") or {}).get("llm") or {}))
     for field in _AI_VIDEO_PRIVATE_SETTING_FIELDS:
         dotted = f"ai.video.{field}"

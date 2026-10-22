@@ -1,6 +1,9 @@
 <template>
   <div class="view">
     <header class="view-header">
+      <button type="button" class="settings-back" aria-label="返回上一页" title="返回上一页" @click="emit('back')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 19-7-7 7-7M5 12h14" /></svg>
+      </button>
       <div>
         <h2>设置</h2>
         <p>按配置域分开管理，每个子菜单独立保存。</p>
@@ -453,8 +456,8 @@
               <p class="panel-kicker">AI 生图</p>
               <h3>图片模型供应商</h3>
             </div>
-            <span :class="['badge', hasAnyFieldConfigured(aiImageKeyFields) ? 'on' : 'off']">
-              {{ hasAnyFieldConfigured(aiImageKeyFields) ? '已配置' : '未配置' }}
+            <span :class="['badge', isImageServiceConfigured ? 'on' : 'off']">
+              {{ isImageServiceConfigured ? '已配置' : '未配置' }}
             </span>
           </div>
 
@@ -515,8 +518,8 @@
               <p class="panel-kicker">AI 文本与多模态</p>
               <h3>文本大模型网关</h3>
             </div>
-            <span :class="['badge', isLlmConfigured(cfg) ? 'on' : 'off']">
-              {{ isLlmConfigured(cfg) ? '已配置' : '未配置' }}
+            <span :class="['badge', isTextServiceConfigured ? 'on' : 'off']">
+              {{ isTextServiceConfigured ? '已配置' : '未配置' }}
             </span>
           </div>
 
@@ -558,7 +561,7 @@
                         {{ provider.name }}
                       </button>
                       <span :class="['key-pill', provider.configured ? 'on' : 'off']">
-                        {{ provider.configured ? '已配 Key' : '未配 Key' }}
+                        {{ provider.id.startsWith('crawshrimp-managed-') ? '账号已连接' : provider.configured ? '已配 Key' : '未配 Key' }}
                       </span>
                       <span class="key-pill neutral">{{ provider.compatibility }}</span>
                       <span v-if="provider.isCustom" class="key-pill neutral">自定义</span>
@@ -732,6 +735,7 @@
           </div>
         </section>
 
+        <UsagePanel v-else-if="activePanelId === 'account-usage'" key="account-usage" />
         <AccountPanel v-else-if="activePanelId === 'account'" key="account" @login="emit('login')" />
         <!--
           The IM panel stays outside this Transition so its authenticated
@@ -969,6 +973,7 @@ import modeljettyLogoUrl from '../assets/modeljetty-mark.svg'
 import { MODELJETTY_LLM_PRESETS } from '../utils/modeljettyPresets.mjs'
 import { requestArchivedSessions } from '../utils/archivedSessions.mjs'
 import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import UsagePanel from '../components/UsagePanel.vue'
 import AccountPanel from '../components/AccountPanel.vue'
 import AutomationPermissionsPanel from '../components/AutomationPermissionsPanel.vue'
 import { IconExternalLink } from '@tabler/icons-vue'
@@ -1022,7 +1027,7 @@ const props = defineProps([
   'themePreference',
   'effectiveTheme',
 ])
-const emit = defineEmits(['runtime-refresh', 'check-update', 'theme-change', 'login'])
+const emit = defineEmits(['back', 'runtime-refresh', 'check-update', 'theme-change', 'login'])
 
 const agentRuntime = ref({ state: 'unknown', generation: 0, model: '', web_origin: '', web_verified: false, api_key_configured: false, error: '' })
 const agentBusy = ref('')
@@ -1279,7 +1284,7 @@ const menuGroups = [
     icon: '●',
     label: '账号',
     desc: '个人资料 / 账号管理',
-    children: [{ id: 'account', label: '个人账号' }],
+    children: [{ id: 'account', label: '个人账号' }, { id: 'account-usage', label: '套餐与用量' }],
   },
 ]
 
@@ -1393,7 +1398,8 @@ const llmProviders = computed(() => {
       isDefault: modelIds.includes(defaultModel) && (!cfg.value['ai.llm.default_provider'] || cfg.value['ai.llm.default_provider'] === provider.id),
     }
   })
-  return [builtinRows[0], ...customRows.filter(item => item.brand === 'modeljetty'), ...builtinRows.slice(1), ...customRows.filter(item => item.brand !== 'modeljetty')]
+  const managedRows = (cfg.value.managed_text_providers || []).map(provider => ({ id: provider.id, name: '抓虾官方', brand: 'modeljetty', logoImage: modeljettyLogoUrl, logoText: 'MJ', isCustom: false, compatibility: '账号额度 · ' + provider.protocol, configured: true, baseUrl: '网页登录后使用，无需 API Key', modelCount: provider.models.length, previewModels: provider.models.map(m => m.name || m.id), firstModel: provider.models[0]?.id, isDefault: provider.models.some(m => m.id === defaultModel) }))
+  return [...managedRows, builtinRows[0], ...customRows.filter(item => item.brand === 'modeljetty'), ...builtinRows.slice(1), ...customRows.filter(item => item.brand !== 'modeljetty')]
 })
 
 function llmProviderLogoText(provider = {}) {
@@ -1467,6 +1473,7 @@ function openModelJettyPreset(preset) {
 }
 
 function openLlmProviderModal(providerId = '') {
+  if (providerId.startsWith('crawshrimp-managed-')) { selectPanel('account', 'account'); return }
   const preset = MODELJETTY_LLM_PRESETS.find(item => item.id === providerId)
   if (preset && !customLlmProviders.value.some(item => item.id === providerId)) return openModelJettyPreset(preset)
   llmDiscoveryRequestId += 1
@@ -1906,8 +1913,12 @@ function hasAnyFieldConfigured(keys) {
   return keys.some(key => isFieldConfigured(key))
 }
 
+const isImageServiceConfigured = computed(() => (cfg.value.managed_image_providers || []).some(provider => provider.models?.length) || hasAnyFieldConfigured(aiImageKeyFields))
+const isTextServiceConfigured = computed(() => (cfg.value.managed_text_providers || []).some(provider => provider.models?.length) || isLlmConfigured(cfg.value))
+
 function isMenuChildConfigured(child) {
-  if (child?.id === 'ai-llm') return isLlmConfigured(cfg.value)
+  if (child?.id === 'ai-1xm') return isImageServiceConfigured.value
+  if (child?.id === 'ai-llm') return isTextServiceConfigured.value
   if (Array.isArray(child?.statusKeys)) return hasAnyFieldConfigured(child.statusKeys)
   return isFieldConfigured(child?.statusKey)
 }
@@ -2119,7 +2130,9 @@ async function restoreArchivedSession(id) {
   finally { archiveRestoring.value = '' }
 }
 
+let stopAccountUpdates
 onMounted(async () => {
+  stopAccountUpdates = window.cs.onAccountChanged?.(async () => { const fresh = await window.cs.getSettings(); for (const key of ['managed_text_providers', 'managed_image_providers']) cfg.value[key] = fresh[key] || []; configureAiImageProviders(cfg.value) })
   window.addEventListener('message', onImSettingsMessage)
   await load()
   if (activePanelId.value === 'storage-archived') await loadArchivedSessions()
@@ -2127,6 +2140,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  stopAccountUpdates?.()
   window.removeEventListener('message', onImSettingsMessage)
 })
 
@@ -2222,9 +2236,16 @@ watch(imSettingsUrl, () => {
   min-height: 0;
 }
 
+.settings-back {
+  display: grid; place-items: center; flex: 0 0 36px; width: 36px; height: 36px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg2); color: var(--text);
+}
+.settings-back:hover { background: var(--bg3); }
+.settings-back:focus-visible { outline: 2px solid var(--orange); outline-offset: 3px; }
 .view-header {
   display: flex;
   align-items: center;
+  gap: 14px;
   padding: 20px 28px 16px;
   border-bottom: 1px solid var(--border);
 }

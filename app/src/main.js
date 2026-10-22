@@ -5,7 +5,6 @@ delete process.env.ELECTRON_RUN_AS_NODE
 
 const { app, BrowserWindow, Menu, ipcMain, shell, dialog, session, powerMonitor, protocol, nativeImage } = require('electron')
 const { Notification, safeStorage, clipboard } = require('electron')
-const { createAccountAuth } = require('./accountAuth')
 const { assertImageInputSize, importImageInput, rememberImageInputDirectory, imageInputDirectory } = require('./aiImageInputFiles')
 const { autoUpdater } = require('electron-updater')
 const path   = require('path')
@@ -2557,20 +2556,16 @@ app.on('child-process-gone', () => productAnalytics?.record('app_error', {featur
 let accountAuth = null
 function desktopAccountAuth() {
   if (!accountAuth) {
-    const defaults = require('./accountConfig.json')
-    accountAuth = createAccountAuth({
-      config: {
-        ...defaults,
-        url: process.env.CRAWSHRIMP_SUPABASE_URL || defaults.url,
-        publishableKey: process.env.CRAWSHRIMP_SUPABASE_PUBLISHABLE_KEY || defaults.publishableKey,
-      },
+    accountAuth = require('./managedAccount').createManagedAccount({
+      issuer: process.env.CRAWSHRIMP_ACCOUNT_ISSUER || 'https://modeljetty.com/oidc',
+      development: !app.isPackaged,
       directory: path.join(app.getPath('userData'), 'account'),
+      runtimeDirectory: () => getCrawshrimpDataDir(),
       safeStorage,
-      openExternal: url => shell.openExternal(url),
-      createClient: require('@supabase/supabase-js').createClient,
+      openExternal: url => shell.openExternal(url, { activate: true }),
+      copyText: text => clipboard.writeText(text),
       notify: () => {
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('account:changed')
-        setImmediate(() => { try { void desktopAnalytics().sync().catch(() => {}) } catch {} })
       },
     })
   }
@@ -2579,7 +2574,7 @@ function desktopAccountAuth() {
 secureHandle('account:action', (_, action, input = {}) => desktopAccountAuth().run(action, input))
 const marketplace = require('./marketplace').createMarketplace({
   getClient: () => desktopAccountAuth().getClient(),
-  accountState: () => desktopAccountAuth().run('status'),
+  accountState: () => desktopAccountAuth().marketState(),
   version: app.getVersion(),
   installZip: bytes => apiCall('POST', '/adapters/install', {zip_base64:bytes.toString('base64'),install_mode:'copy'}),
   getInstalled: () => apiCall('GET', '/adapters', null, BACKEND_STARTUP_RETRY_OPTIONS),

@@ -10,16 +10,16 @@
         <div class="provider-main">
           <div class="provider-heading">
             <h4>{{ provider.name }}</h4>
-            <span :class="['status', provider.configured ? 'ready' : '']">{{ provider.configured ? '已配 Key' : '未配 Key' }}</span>
+            <span :class="['status', provider.configured ? 'ready' : '']">{{ provider.id.startsWith('custom-managed-') ? '账号已连接' : provider.configured ? '已配 Key' : '未配 Key' }}</span>
             <span class="tag">{{ provider.protocolLabel }}</span>
-            <span v-if="provider.custom && !provider.preset" class="tag">自定义</span>
+            <span v-if="provider.custom && !provider.preset && !provider.id.startsWith('custom-managed-')" class="tag">自定义</span>
           </div>
-          <p class="endpoint">{{ provider.baseUrl || '尚未填写接口地址' }}</p>
+          <p class="endpoint">{{ provider.id.startsWith('custom-managed-') ? '网页登录后使用，无需 API Key' : provider.baseUrl || '尚未填写接口地址' }}</p>
           <div class="model-tags"><span v-for="model in provider.previewModels" :key="model">{{ model }}</span><span v-if="provider.more">+{{ provider.more }}</span></div>
         </div>
         <div class="provider-actions">
           <small>{{ provider.modelCount }} 个模型</small>
-          <button type="button" :aria-label="`编辑${provider.name}`" @click="openEditor(provider)">编辑</button>
+          <button v-if="!provider.id.startsWith('custom-managed-')" type="button" :aria-label="`编辑${provider.name}`" @click="openEditor(provider)">编辑</button>
         </div>
       </article>
     </div>
@@ -92,13 +92,13 @@ const providers = computed(() => [
     const item = saved || preset
     return { ...item, preset: true, custom: true, baseUrl: item.base_url,
       protocolLabel: item.protocol === 'gemini' ? 'Gemini 原生' : 'OpenAI Images',
-      configured: Boolean(item.api_key), previewModels: item.models, modelCount: item.models.length }
+      configured: Boolean(item.api_key || item.configured), previewModels: item.models, modelCount: item.models.length }
   }),
   ...builtin.map(item => {
     const models = AI_IMAGE_MODELS.filter(model => model.provider === item.id)
     return { ...item, baseUrl: props.config[`ai.${item.id}.base_url`], configured: item.groups.some(group => group.fields.some(field => field.secret && props.config[field.id])), previewModels: ['GPT Image 2', 'Nano Banana 2', 'Nano Banana Pro'], modelCount: models.length, models: models.map(model => model.label.replace(/^.* · /, '')) }
   }),
-  ...customImageProviders(props.config).filter(item => !MODELJETTY_IMAGE_PRESETS.some(preset => preset.id === item.id)).map(item => ({ ...item, custom: true, logo: item.name?.slice(0, 2).toUpperCase() || 'API', baseUrl: item.base_url, protocolLabel: { openai: 'OpenAI Images', gemini: 'Gemini 原生', one_xm: '异步任务' }[item.protocol], configured: Boolean(item.api_key), previewModels: (item.models || []).slice(0, 3), modelCount: item.models?.length || 0, more: Math.max(0, (item.models?.length || 0) - 3) })),
+  ...customImageProviders(props.config).filter(item => !MODELJETTY_IMAGE_PRESETS.some(preset => preset.id === item.id)).map(item => ({ ...item, custom: true, logo: item.name?.slice(0, 2).toUpperCase() || 'API', baseUrl: item.base_url, protocolLabel: { openai: 'OpenAI Images', gemini: 'Gemini 原生', one_xm: '异步任务' }[item.protocol], configured: Boolean(item.api_key || item.configured), previewModels: (item.models || []).slice(0, 3), modelCount: item.models?.length || 0, more: Math.max(0, (item.models?.length || 0) - 3) })),
 ])
 const editor = reactive({ open: false, isNew: false, saving: false, error: '' })
 const draft = reactive({ id: '', name: '', custom: false, protocol: 'openai', baseUrl: '', apiKey: '', modelsText: '', groups: [], models: [], values: {} })
@@ -135,7 +135,7 @@ async function saveEditor() {
     if (!draft.name.trim() || !validUrl(draft.baseUrl) || !models.length) { editor.error = '请填写供应商名称、有效接口地址和至少一个模型 ID。'; return }
     if (models.some(model => /\s/.test(model))) { editor.error = '模型 ID 不能包含空格。'; return }
     const next = { id: draft.id, name: draft.name.trim(), protocol: draft.protocol, base_url: draft.baseUrl.trim().replace(/\/$/, ''), api_key: draft.apiKey.trim(), models }
-    patch[CUSTOM_IMAGE_PROVIDERS_FIELD] = [...customImageProviders(props.config).filter(item => item.id !== draft.id), next]
+    patch[CUSTOM_IMAGE_PROVIDERS_FIELD] = [...customImageProviders(props.config).filter(item => item.id !== draft.id && !item.id.startsWith('custom-managed-')), next]
   } else {
     for (const group of draft.groups) for (const field of group.fields) {
       const value = String(draft.values[field.id] || '').trim()
@@ -146,7 +146,7 @@ async function saveEditor() {
   await commit(patch, `${draft.name} 已保存`)
 }
 async function removeProvider() {
-  await commit({ [CUSTOM_IMAGE_PROVIDERS_FIELD]: customImageProviders(props.config).filter(item => item.id !== draft.id) }, '自定义供应商已移除')
+  await commit({ [CUSTOM_IMAGE_PROVIDERS_FIELD]: customImageProviders(props.config).filter(item => item.id !== draft.id && !item.id.startsWith('custom-managed-')) }, '自定义供应商已移除')
 }
 </script>
 

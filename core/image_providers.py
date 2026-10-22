@@ -61,7 +61,8 @@ def provider_settings(config: Mapping[str, Any], environ: Mapping[str, str]) -> 
                 value = (config.get('ai') or {}).get(provider, {}).get(field)
             result[name] = str(value or environ.get(f'{provider.upper()}_IMAGE_{field.upper()}') or defaults.get(field, '')).strip()
     customs = config.get('ai.image.custom_providers', (config.get('ai') or {}).get('image', {}).get('custom_providers', []))
-    result['ai.image.custom_providers'] = customs if isinstance(customs, list) else []
+    from core.managed_models import image_providers
+    result['ai.image.custom_providers'] = (list(customs) if isinstance(customs, list) else []) + image_providers()
     for custom in result['ai.image.custom_providers']:
         if isinstance(custom, dict):
             result[f"ai.image.custom.{custom.get('id')}.api_key"] = custom.get('api_key') or ''
@@ -144,7 +145,7 @@ class _EarlyResponseMixin:
     def request(self, *args, **kwargs):
         try:
             return super().request(*args, **kwargs)
-        except BrokenPipeError:
+        except (BrokenPipeError, ConnectionResetError):
             # Some gateways reject a large body before it finishes uploading.
             # Read the response on this connection; never resend the POST.
             pass
@@ -247,7 +248,7 @@ class CompatibleImageClient:
             url = re.sub(r'/images/(?:generations|edits)$', '', self.base_url) + '/images/' + endpoint
             if images: body, headers['Content-Type'] = _multipart(body)
         retry_history = []
-        attempts = max(1, min(3, int(request_retries or 1)))
+        attempts = 1 if self.provider.startswith("custom-managed-") else max(1, min(3, int(request_retries or 1)))
         for attempt in range(1, attempts + 1):
             with _provider_submission_slot(self.provider):
                 status, result = self.transport('POST', url, headers=headers, body=body, timeout=max(240, timeout))

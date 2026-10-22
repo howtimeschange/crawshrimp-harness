@@ -3,6 +3,7 @@
     <!-- 主体:iframe(DSH Web UI) + 可展开浏览器面板 -->
     <div
       class="web-body"
+      :inert="inlineLlmModalOpen"
     >
       <div class="web-frame-wrap" :style="{ marginRight: frameReady && resourcesCompact ? '332px' : undefined }">
         <iframe
@@ -72,6 +73,7 @@
             </template>
             <div class="placeholder-actions">
               <span :class="['recover-state', { muted: runtimeNeedsAttention }]">{{ placeholderStateText }}</span>
+              <button v-if="isRuntimeNeedsConfiguration" class="placeholder-btn primary" type="button" @click="openInlineLlmModal">登录账号或配置模型</button>
               <button v-if="runtimeNeedsAttention" class="placeholder-btn primary" type="button" @click="retryLoad">
                 重新连接智能体
               </button>
@@ -83,80 +85,28 @@
       <div v-if="fileDropOverlay" class="resource-drop-overlay" :style="fileDropOverlay" aria-hidden="true" />
     </div>
     <Teleport to="body">
-      <div v-if="inlineLlmModalOpen" class="inline-llm-modal-backdrop" @click.self="closeInlineLlmModal">
+      <div v-if="inlineLlmModalOpen" class="model-welcome-backdrop">
         <section
-          class="inline-llm-modal"
+          class="model-welcome-shell"
+          ref="onboardingDialog"
+          tabindex="-1"
+          @keydown="trapDialogFocus($event, onboardingDialog)"
+          @keydown.esc.stop="closeInlineLlmModal"
           role="dialog"
           aria-modal="true"
           aria-labelledby="inline-llm-modal-title"
         >
-          <header class="inline-modal-head">
-            <div>
-              <strong id="inline-llm-modal-title">配置大模型供应商</strong>
-              <span>当前对话需要至少一个可用供应商；其它抓虾功能不受影响。</span>
-            </div>
-          </header>
-
-          <div class="inline-llm-card in-modal">
-            <div class="inline-card-head">
-              <div>
-                <strong>选择一种配置方式</strong>
-                <span>进入设置页后会打开对应的大模型配置入口。</span>
-              </div>
-            </div>
-            <div class="provider-guide-list" aria-label="大模型供应商配置说明">
-              <div class="provider-guide-row">
-                <div>
-                  <strong>DeepSeek 官方 API</strong>
-                  <span>
-                    适合新用户直接接入官方 Key；
-                    <button class="provider-text-link" type="button" @click="openDeepSeekPlatform">
-                      <IconExternalLink :size="13" :stroke-width="2.1" aria-hidden="true" />
-                      <span>打开 DeepSeek 平台</span>
-                    </button>
-                    创建 Key 后进入配置弹窗粘贴保存。
-                  </span>
-                </div>
-                <div class="provider-guide-actions">
-                  <button class="placeholder-btn primary" type="button" @click="openDeepSeekProviderSettings">
-                    <IconSettings :size="15" :stroke-width="2.1" aria-hidden="true" />
-                    <span>配置 DeepSeek</span>
-                  </button>
-                </div>
-              </div>
-              <div class="provider-guide-row">
-                <div>
-                  <strong>森马 AI 网关</strong>
-                  <span>适合使用公司网关；进入大模型配置页后分别编辑海外 OpenAI、海外 Anthropic、国内 OpenAI。</span>
-                </div>
-                <div class="provider-guide-actions">
-                  <button class="placeholder-btn primary" type="button" @click="openSemirProviderSettings">
-                    <IconSettings :size="15" :stroke-width="2.1" aria-hidden="true" />
-                    <span>配置森马 AI 网关</span>
-                  </button>
-                </div>
-              </div>
-              <div class="provider-guide-row">
-                <div>
-                  <strong>自定义模型供应商</strong>
-                  <span>适合接入其它 OpenAI/Anthropic 兼容服务；进入设置页后会直接打开新增供应商弹窗。</span>
-                </div>
-                <div class="provider-guide-actions">
-                  <button class="placeholder-btn primary" type="button" @click="openCustomProviderSettings">
-                    <IconSettings :size="15" :stroke-width="2.1" aria-hidden="true" />
-                    <span>添加自定义供应商</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div class="inline-form-actions">
-              <button class="placeholder-btn" type="button" @click="closeInlineLlmModal">取消</button>
-              <button class="placeholder-btn primary" type="button" @click="openSemirProviderSettings">
-                <IconSettings :size="15" :stroke-width="2.1" aria-hidden="true" />
-                <span>进入大模型配置页</span>
-              </button>
-            </div>
-          </div>
+          <WelcomeOnboarding
+            v-model:step="onboardingStep"
+            :account="onboardingAccount"
+            :busy="onboardingBusy"
+            :error="onboardingError"
+            @action="onboardingAction"
+            @close="closeInlineLlmModal"
+            @provider-help="openDeepSeekPlatform"
+            @configure="configureOnboardingProvider"
+            @ready="focusFirstInDialog(onboardingDialog)"
+          />
         </section>
       </div>
     </Teleport>
@@ -165,8 +115,9 @@
 
 <script setup>
 import { adaptivePoll } from '../utils/adaptivePoll'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { IconExternalLink, IconSettings } from '@tabler/icons-vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { focusFirstInDialog, trapDialogFocus } from '../utils/dialogAccessibility.mjs'
+import WelcomeOnboarding from '../components/WelcomeOnboarding.vue'
 import VoyageLoader from '../components/agent/VoyageLoader.vue'
 import SessionResources from '../components/agent/SessionResources.vue'
 import { DEEPSEEK_PLATFORM_URL } from '../utils/llmSettings.mjs'
@@ -203,7 +154,7 @@ let recovering = false
 let nativeWebFollowRetryTimer = null
 let nativeWebFollowSessionId = ''
 const nativeWebFollowOwner = `agent-webview:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`
-const MISSING_LLM_PROVIDER_MESSAGE = '请先配置任一可用的大模型供应商。'
+const MISSING_LLM_PROVIDER_MESSAGE = '登录账号使用官方模型，或配置自己的 API Key。'
 const NATIVE_WEB_FOLLOW_RETRY_DELAYS_MS = [250, 750, 1500]
 
 const frameSrc = computed(() => {
@@ -248,11 +199,53 @@ const placeholderStateText = computed(() => (
 ))
 const runtimeNeedsModelKey = ref(false)
 const inlineLlmModalOpen = ref(false)
+const onboardingDialog = ref(null)
+let onboardingPresented = false
+let onboardingPreviousFocus
+const onboardingStep = ref('choice')
+watch([inlineLlmModalOpen, onboardingStep], async ([open]) => {
+  if (open) { await nextTick(); focusFirstInDialog(onboardingDialog.value) }
+  else onboardingPreviousFocus?.focus?.()
+})
+const onboardingAccount = ref({})
+watch(() => onboardingAccount.value.pending, async () => {
+  if (inlineLlmModalOpen.value) { await nextTick(); focusFirstInDialog(onboardingDialog.value) }
+})
+const onboardingBusy = ref(false)
+const onboardingError = ref('')
+let appliedManagedAccountId = ''
+let unsubscribeOnboardingAccount
+async function refreshOnboardingAccount() {
+  try {
+    const state = await window.cs.accountAction('status')
+    onboardingAccount.value = state
+    const accountId = state.user?.id || ''
+    if (accountId !== appliedManagedAccountId) {
+      appliedManagedAccountId = accountId
+      await window.cs.agentApi('POST', '/agent/runtime/restart')
+    }
+    if (state.user && state.models?.some(model => model.kind === 'text')) {
+      inlineLlmModalOpen.value = false
+      await loadRuntime()
+    } else if (!state.pending && state.message) onboardingError.value = state.message
+  } catch (err) { onboardingError.value = String(err.message || '账号服务暂不可用') }
+}
+async function onboardingAction(action) {
+  if (onboardingBusy.value) return
+  onboardingBusy.value = true; onboardingError.value = ''
+  try { onboardingAccount.value = await window.cs.accountAction(action); if (onboardingAccount.value.user) await refreshOnboardingAccount() }
+  catch (err) { onboardingError.value = String(err.message || '操作未完成，请重试').replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') }
+  finally { onboardingBusy.value = false }
+}
 
 function syncRuntimeModelConfiguration(result) {
   const needsModelKey = result?.api_key_configured === false
   const changed = runtimeNeedsModelKey.value !== needsModelKey
   runtimeNeedsModelKey.value = needsModelKey
+  if (needsModelKey && !onboardingPresented) {
+    onboardingPresented = true
+    openInlineLlmModal()
+  }
   if (!needsModelKey) {
     inlineLlmModalOpen.value = false
   }
@@ -428,11 +421,22 @@ function normalizeModelConfigMessage(message = '') {
   return text
 }
 
+function configureOnboardingProvider(provider) {
+  if (provider === 'custom') openCustomProviderSettings()
+  else if (provider === 'semir') openSemirProviderSettings()
+  else openDeepSeekProviderSettings()
+}
+
 function openInlineLlmModal() {
+  onboardingPreviousFocus = document.activeElement
+  onboardingError.value = ''
+  onboardingStep.value = 'choice'
+  void refreshOnboardingAccount()
   inlineLlmModalOpen.value = true
 }
 
 function closeInlineLlmModal() {
+  if (onboardingAccount.value.pending) void onboardingAction('cancel')
   inlineLlmModalOpen.value = false
 }
 
@@ -814,6 +818,8 @@ function onOpenResource(event) {
 }
 function onBrowserActivity(event) { resourcesPanel.value?.followBrowserActivity(event.detail) }
 onMounted(() => {
+  unsubscribeOnboardingAccount = window.cs.onAccountChanged?.(refreshOnboardingAccount)
+  void refreshOnboardingAccount()
   window.addEventListener('cs-open-resource', onOpenResource)
   window.addEventListener('cs-browser-activity', onBrowserActivity)
   loadRuntime()
@@ -866,6 +872,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  unsubscribeOnboardingAccount?.()
   window.removeEventListener('cs-open-resource', onOpenResource)
   window.removeEventListener('cs-browser-activity', onBrowserActivity)
   pollTimer?.()
@@ -1117,184 +1124,6 @@ watch(showFallbackNav, (visible) => {
   gap: 10px;
 }
 
-.inline-llm-card {
-  width: min(100%, 640px);
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  margin: 6px 0 2px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg2);
-}
-
-.inline-llm-card.in-modal {
-  width: 100%;
-  margin: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
-}
-
-.inline-llm-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.58);
-  backdrop-filter: blur(10px);
-}
-
-.inline-llm-modal {
-  width: min(720px, calc(100vw - 32px));
-  max-height: min(760px, calc(100vh - 32px));
-  display: flex;
-  flex-direction: column;
-  overflow: auto;
-  gap: 16px;
-  padding: 18px;
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  background: var(--bg2);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.36);
-}
-
-.inline-modal-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: start;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-.inline-modal-head div {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-width: 0;
-}
-
-.inline-modal-head strong {
-  color: var(--text);
-  font-size: 16px;
-  font-weight: 760;
-}
-
-.inline-modal-head span {
-  color: var(--text3);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.inline-card-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: start;
-}
-
-.inline-card-head div,
-.provider-guide-row,
-.provider-guide-row > div,
-.provider-guide-actions {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.inline-card-head strong,
-.provider-guide-row strong {
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 760;
-}
-
-.inline-card-head span,
-.provider-guide-row > div > span,
-.runtime-detail {
-  color: var(--text3);
-  font-size: 11px;
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-}
-
-.inline-card-head div {
-  gap: 5px;
-}
-
-.provider-guide-list {
-  display: grid;
-  gap: 10px;
-}
-
-.provider-guide-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--soft-fill);
-}
-
-.provider-guide-row > div {
-  gap: 5px;
-}
-
-.provider-text-link {
-  margin: 0 1px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--orange-text);
-  font: inherit;
-  font-weight: 720;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  vertical-align: baseline;
-}
-
-.provider-text-link:hover {
-  text-decoration: underline;
-}
-
-.provider-guide-actions {
-  flex-direction: row;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: nowrap;
-  gap: 8px;
-}
-
-.provider-guide-actions .placeholder-btn.primary {
-  width: 178px;
-}
-
-.inline-form-actions {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.runtime-detail {
-  max-width: min(100%, 640px);
-  margin: 0;
-  padding: 7px 10px;
-  border-radius: 7px;
-  background: rgba(248, 113, 113, 0.1);
-  color: var(--red);
-}
-
 .recover-state {
   font-size: 12px;
   color: var(--text3);
@@ -1338,12 +1167,11 @@ watch(showFallbackNav, (visible) => {
     justify-content: flex-start;
     padding-top: 36px;
   }
-  .inline-card-head,
-  .inline-modal-head {
-    grid-template-columns: 1fr;
-  }
-  .inline-llm-modal-backdrop {
-    padding: 12px;
-  }
 }
+</style>
+
+<style scoped>
+.model-welcome-backdrop{position:fixed;inset:38px 0 0;z-index:var(--z-modal,1000);background:#fafbf8;display:flex;-webkit-app-region:no-drag}
+.model-welcome-shell{width:100%;height:100%;min-height:0;outline:none;overflow:hidden}
+@media(max-width:650px){.model-welcome-backdrop{inset:0}}
 </style>

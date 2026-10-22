@@ -125,7 +125,14 @@ def _config_path() -> Path:
 
 
 def _apply_config_migrations(cfg: dict) -> dict:
+    cfg.pop("managed_image_providers", None)
+    cfg.pop("managed_text_providers", None)
     ai = cfg.get("ai")
+    if isinstance(ai, dict):
+        for kind, prefix in (("image", "custom-managed-"), ("llm", "crawshrimp-managed-")):
+            section = ai.get(kind)
+            if isinstance(section, dict) and isinstance(section.get("custom_providers"), list):
+                section["custom_providers"] = [p for p in section["custom_providers"] if not isinstance(p, dict) or not str(p.get("id", "")).startswith(prefix)]
     # The retired provider must not reappear when older settings are loaded/saved.
     if isinstance(ai, dict):
         ai.pop("1xm", None)
