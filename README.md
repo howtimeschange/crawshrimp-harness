@@ -4,6 +4,16 @@ Crawshrimp Harness 把抓虾桌面应用与 DeepSeek Harness（DSH）组合成�
 
 本仓库是独立的 Harness 开发线，不是上游 `crawshrimp` 发布仓的 README 镜像。DSH 依赖族精确锁定在 `@deepseek-ai/dsh@0.1.2-rc.1` 与 `@xmanrui/dsh-im@4.11.0`；升级时必须重新验证 Web Profile/RPC、插件和 hash 类名。
 
+## 合作交流与赞助
+
+欢迎联系作者邢易成，交流「抓虾 Harness」的使用与想法、探讨项目合作，或赞助支持项目持续开发。
+
+使用微信扫描下方二维码添加好友，备注「抓虾 Harness + 合作 / 交流 / 赞助」即可。此二维码与[抓虾官网](https://crawshrimp.com/)使用的联系方式一致。
+
+<a href="https://crawshrimp.com/wechat-qr.jpg">
+  <img src="https://crawshrimp.com/wechat-qr.jpg" alt="作者邢易成的微信联系二维码，用于抓虾 Harness合作交流与赞助联系" width="280" />
+</a>
+
 ## 个人账号与云端边界
 
 Harness 面向个人本地使用：本地功能免登录，设置中的个人账号独立接入 Supabase Auth，不授予远程执行权限。登录后可使用脚本市场；使用统计默认开启，可在个人账号中关闭，不采集聊天正文、文件内容、路径或密钥。旧云审批和任务机已弃用，旧配置不能重新启动；本地 DSH 权限审批保持有效。配置与验证说明见 [个人账号文档](docs/crawshrimp-harness/16-personal-account.md)。
