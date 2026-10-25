@@ -6,12 +6,12 @@ Crawshrimp Harness 把抓虾桌面应用与 DeepSeek Harness（DSH）组合成�
 
 ## 合作交流与赞助
 
-欢迎联系作者邢易成，交流「抓虾 Harness」的使用与想法、探讨项目合作，或赞助支持项目持续开发。
+欢迎联系作者，交流「抓虾 Harness」的使用与想法、探讨项目合作，或赞助支持项目持续开发。
 
 使用微信扫描下方二维码添加好友，备注「抓虾 Harness + 合作 / 交流 / 赞助」即可。此二维码与[抓虾官网](https://crawshrimp.com/)使用的联系方式一致。
 
 <a href="https://crawshrimp.com/wechat-qr.jpg">
-  <img src="https://crawshrimp.com/wechat-qr.jpg" alt="作者邢易成的微信联系二维码，用于抓虾 Harness合作交流与赞助联系" width="280" />
+  <img src="https://crawshrimp.com/wechat-qr.jpg" alt="作者的微信联系二维码，用于抓虾 Harness合作交流与赞助联系" width="280" />
 </a>
 
 ## 个人账号与云端边界
