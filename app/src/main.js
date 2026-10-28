@@ -2863,6 +2863,7 @@ secureHandle('install-adapter', async (_, payload) => {
   return { ok: false, error: 'No path or file provided' }
 })
 
+secureHandle('get-tasks-live', async () => apiCall('GET', '/tasks/live', null, BACKEND_STARTUP_RETRY_OPTIONS))
 secureHandle('get-tasks', async () => {
   const tasks=await apiCall('GET','/tasks',null,BACKEND_STARTUP_RETRY_OPTIONS)
   let receipts=[]
@@ -2919,6 +2920,8 @@ secureHandle('create-ai-image-job', async (_, payload) =>
   apiCall('POST', '/ai-image/jobs', payload || {}))
 secureHandle('get-ai-image-job', async (_, jobUid) =>
   apiCall('GET', `/ai-image/jobs/${encodeURIComponent(String(jobUid || ''))}`))
+secureHandle('trace-ai-image-managed-request', async (_, jobUid, runUid) =>
+  apiCall('GET', `/ai-image/jobs/${encodeURIComponent(String(jobUid || ''))}/runs/${encodeURIComponent(String(runUid || ''))}/managed-request`, undefined, { timeoutMs: 40000 }))
 secureHandle('update-ai-image-job', async (_, jobUid, payload) =>
   apiCall('PATCH', `/ai-image/jobs/${encodeURIComponent(String(jobUid || ''))}`, payload || {}))
 secureHandle('set-ai-image-job-pinned', async (_, jobUid, pinned) =>

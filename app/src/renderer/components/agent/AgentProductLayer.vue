@@ -304,6 +304,7 @@ async function pushArtifactToSession(data, runtimeSessionId) {
       imageGeneration: data?.media_kind === 'image' && imageGenerations.has(String(data?.tool_call_id || '')),
       filename: data?.filename || '',
       path,
+      sourcePath: String(data?.source_path || '').trim(),
       size: data?.size || 0,
       mediaKind: data?.media_kind || 'file',
       zipImages,

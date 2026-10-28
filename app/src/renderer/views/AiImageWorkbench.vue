@@ -193,10 +193,10 @@
           <button v-if="generationConfigMessage" class="aiw-primary-action aiw-config-action" type="button" aria-describedby="aiw-generation-config-message" @click="openSettings">
             <span class="aiw-icon-button-content"><AiwIcon name="settings" />去配置</span>
           </button>
-          <button v-else class="aiw-primary-action" type="button" :disabled="generating || inputImportBusy || Boolean(advancedJsonError) || submissionUnconfirmed" @click="generate">
+          <button v-else class="aiw-primary-action" type="button" :disabled="generating || inputImportBusy || Boolean(advancedJsonError)" @click="generate()">
             <span class="aiw-icon-button-content"><AiwIcon name="wand" />{{ generateLabel }}</span>
           </button>
-          <small v-if="submissionUnconfirmed" role="status">当前任务的提交结果待核对，请先核对任务与服务商记录；如需其他内容，可新建任务。</small>
+          <small v-if="submissionUnconfirmed" role="status">此前有请求结果待核实。可先核对记录，也可确认风险后再次生成。</small>
           <small v-if="errorMessage" role="alert">{{ errorMessage }}</small>
         </section>
       </aside>
@@ -307,6 +307,7 @@
                     <small v-if="retrySummaryText(item)">{{ retrySummaryText(item) }}</small>
                     <div class="aiw-failed-actions">
                       <button v-if="isUnknownImageSubmission(item)" type="button" @click.stop="recheckResultRecord(item)">核对任务记录</button>
+                      <button v-if="isUnknownImageSubmission(item)" type="button" :disabled="generating || inputImportBusy" @click.stop="prepareUnknownRetry(item)">使用此参数再次生成</button>
                       <button v-else type="button" :disabled="retryingRunUids.has(item.runUid)" @click.stop="retryFailedRun(item)">
                         <span class="aiw-icon-button-content"><AiwIcon name="rotate-ccw" />{{ retryingRunUids.has(item.runUid) ? '重试提交中...' : '重试本队列' }}</span>
                       </button>
@@ -410,6 +411,13 @@
       </main>
     </div>
     <div v-if="actionNotice" class="aiw-toast" role="status" aria-live="polite" aria-atomic="true">{{ actionNotice }}</div>
+    <div v-if="unknownRetryDialogOpen" class="aiw-delete-dialog" @click.self="closeUnknownRetryDialog">
+      <section ref="unknownRetryDialogPanel" role="dialog" aria-modal="true" aria-label="确认再次生成" tabindex="-1">
+        <header><div><strong>再次生成</strong><span>此前请求的结果仍待核实</span></div></header>
+        <div class="aiw-delete-dialog-copy"><p>之前的请求可能已经被服务商接收或计费。再次生成会提交一个新的请求，可能产生重复费用；原记录会保留供核对。</p></div>
+        <footer><button type="button" @click="closeUnknownRetryDialog">取消</button><button class="aiw-delete-confirm" type="button" @click="confirmUnknownRetry">确认再次生成</button></footer>
+      </section>
+    </div>
     <div v-if="deleteTaskDialog.open" class="aiw-delete-dialog" @click.self="closeDeleteTaskDialog">
       <section
         ref="deleteTaskDialogPanel"
@@ -1069,6 +1077,9 @@ const batchDialogPanel = ref(null)
 const lightboxDialogPanel = ref(null)
 const promptDialogPanel = ref(null)
 const deleteTaskDialogPanel = ref(null)
+const unknownRetryDialogPanel = ref(null)
+const unknownRetryDialogOpen = ref(false)
+let confirmedUnknownRetry = false
 const lightboxItem = ref(null)
 const lightboxEditPrompt = ref('')
 const lightboxEditReferencePaths = ref([])
@@ -1212,6 +1223,8 @@ const advancedJsonError = computed(() => {
   }
 })
 const workbenchDialogOpen = computed(() => Boolean(
+  unknownRetryDialogOpen.value
+  ||
   batchGenerationDialog.open
   || batchPromptLibraryPicker.open
   || deleteTaskDialog.open
@@ -1381,6 +1394,7 @@ watch(() => batchGenerationDialog.open, (open) => syncDialogFocus('batch', open,
 watch(() => Boolean(lightboxItem.value), (open) => syncDialogFocus('lightbox', open, lightboxDialogPanel))
 watch(() => Boolean(promptDialogQueue.value), (open) => syncDialogFocus('prompt', open, promptDialogPanel))
 watch(() => deleteTaskDialog.open, (open) => syncDialogFocus('deleteTask', open, deleteTaskDialogPanel))
+watch(unknownRetryDialogOpen, (open) => syncDialogFocus('unknownRetry', open, unknownRetryDialogPanel))
 
 function syncDialogFocus(key, open, panelRef) {
   if (typeof document === 'undefined') return
@@ -1395,6 +1409,7 @@ function syncDialogFocus(key, open, panelRef) {
 }
 
 function activeWorkbenchDialog() {
+  if (unknownRetryDialogOpen.value) return { key: 'unknownRetry', panel: unknownRetryDialogPanel.value, close: closeUnknownRetryDialog, busy: false }
   if (deleteTaskDialog.open) return { key: 'deleteTask', panel: deleteTaskDialogPanel.value, close: closeDeleteTaskDialog, busy: deleteTaskDialog.submitting }
   if (promptDialogQueue.value) return { key: 'prompt', panel: promptDialogPanel.value, close: closePromptDialog, busy: false }
   if (lightboxItem.value) return { key: 'lightbox', panel: lightboxDialogPanel.value, close: closeLightbox, busy: lightboxEditBusy.value }
@@ -2343,7 +2358,9 @@ async function submitBatchGeneration() {
 }
 
 async function generate() {
-  if (submissionUnconfirmed.value) { errorMessage.value = '当前任务结果待核对，已阻止重复提交。'; return }
+  const confirmedUnknown = confirmedUnknownRetry
+  confirmedUnknownRetry = false
+  if (submissionUnconfirmed.value && !confirmedUnknown) { unknownRetryDialogOpen.value = true; return }
   errorMessage.value = ''
   if (!String(form.prompt || '').trim()) {
     errorMessage.value = '请输入生图提示词后再开始生成'
@@ -3225,7 +3242,17 @@ async function recheckResultRecord(item) {
     const result = await window.cs.getAiImageJob(resultOwnerJobUid(item))
     const job = result?.job || result
     if (job?.job_uid) { currentJob.value = job; upsertJob(job) }
-    errorMessage.value = '已读取任务记录，未重复生成。若结果仍未知，请核对服务商记录与账单。'
+    const runUid = String(item?.runUid || item?.run_uid || '').trim()
+    const run = (job?.summary?.runs || []).find(entry => entry.run_uid === runUid)
+    if (run?.managed_request_id && typeof window.cs.traceAiImageManagedRequest === 'function') {
+      const trace = await window.cs.traceAiImageManagedRequest(resultOwnerJobUid(item), runUid)
+      if (trace.status === 'found') {
+        const labels = { in_progress: '处理中', completed: '服务端已完成', unknown: '结果未知', upstream_rejected: '上游拒绝', not_dispatched: '未转发', failed: '失败', canceled: '已取消' }
+        errorMessage.value = `官方请求 ${trace.request_id}：${labels[trace.state] || '状态待确认'}。请核对账单和图片，未重复生成。`
+      } else {
+        errorMessage.value = '官方请求记录暂未确认；未找到记录也不能证明未受理或未计费，请继续核对，未重复生成。'
+      }
+    } else errorMessage.value = '已读取任务记录，未重复生成。此记录没有可核对的官方请求编号，请核对服务商记录与账单。'
   } catch (error) { errorMessage.value = '任务记录暂时无法读取，请稍后核对；不要重复生成。' }
 }
 async function retryFailedRun(item) {
@@ -3269,6 +3296,18 @@ async function copyFailedPrompt(item) {
   } catch (error) {
     errorMessage.value = error?.message || String(error)
   }
+}
+
+function closeUnknownRetryDialog() { unknownRetryDialogOpen.value = false }
+function confirmUnknownRetry() {
+  if (!unknownRetryDialogOpen.value) return
+  closeUnknownRetryDialog()
+  confirmedUnknownRetry = true
+  void generate()
+}
+function prepareUnknownRetry(item) {
+  restoreFailedRunInputs(item)
+  unknownRetryDialogOpen.value = true
 }
 
 function restoreFailedRunInputs(item) {

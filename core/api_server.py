@@ -11505,6 +11505,14 @@ def get_ai_image_job(job_uid: str):
     return job
 
 
+@app.get("/ai-image/jobs/{job_uid}/runs/{run_uid}/managed-request")
+def trace_ai_image_managed_request(job_uid: str, run_uid: str):
+    try:
+        return ai_image_service.trace_managed_image_request(job_uid, run_uid)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
 @app.patch("/ai-image/jobs/{job_uid}")
 def update_ai_image_job(job_uid: str, req: AiImageJobPatchRequest):
     payload = _model_payload(req, exclude_unset=True, exclude_none=True)
@@ -12584,6 +12592,19 @@ def list_tasks():
                 "live": _run_status.get(jid),
             })
     return result
+
+
+@app.get("/tasks/live")
+def live_task_summaries():
+    """Refresh task state against the loaded catalog without rescanning manifests."""
+    manifests = [adapter_loader.get_adapter(item['id']) for item in adapter_loader.list_all()]
+    keys = [(manifest.id, task.id) for manifest in manifests if manifest
+            for task in manifest.tasks if not getattr(task, 'hidden', False)]
+    latest = data_sink.get_latest_runs(keys)
+    return [{'adapter_id': adapter_id, 'task_id': task_id,
+             'last_run': latest.get((adapter_id, task_id)),
+             'live': _run_status.get(f'{adapter_id}::{task_id}')}
+            for adapter_id, task_id in keys]
 
 
 class RuntimeDrainReleaseRequest(BaseModel):

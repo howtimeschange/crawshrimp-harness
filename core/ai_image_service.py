@@ -5,6 +5,7 @@ import base64
 import binascii
 import hashlib
 import http.client
+import json
 import mimetypes
 import re
 import shutil
@@ -26,7 +27,7 @@ from copy import deepcopy
 from core import data_sink, runtime_paths
 from core.image_inputs import normalize_inputs, snapshot_params, compile_input_prompt
 from core.image_connection_info import connection_info
-from core.image_providers import split_model, config_id as provider_config_id, create_image_client, is_gemini_model
+from core.image_providers import split_model, config_id as provider_config_id, create_image_client, is_gemini_model, managed_image_request_id
 from core.one_xm_image import (
     DEFAULT_BASE_URL,
     FAILED_STATUSES,
@@ -519,6 +520,7 @@ def _safe_summary(result: Mapping[str, Any], output_files: list[str], tier: str)
     return {
         "ok": bool(result.get("ok")),
         "run_uid": _compact(result.get("run_uid")),
+        **{key: result[key] for key in ("managed_request_id", "managed_owner_id", "failure_phase") if result.get(key)},
         "model_key_tier": tier,
         "task_id": _compact(result.get("task_id")),
         "poll_url": _compact(result.get("poll_url")),
@@ -664,6 +666,7 @@ def _merge_run_summary(job: Mapping[str, Any], latest_summary: Mapping[str, Any]
     image_urls = _string_list(latest_summary.get("image_urls"))
     run_record = {
         "run_uid": _compact(latest_summary.get("run_uid") or latest_summary.get("task_id")) or f"run-{len(previous_runs) + 1}",
+        **{key: latest_summary[key] for key in ("managed_request_id", "managed_owner_id", "failure_phase") if latest_summary.get(key)},
         "created_at": _now_iso(),
         "prompt": _compact(job.get("prompt") or params.get("prompt")),
         "model_key": _compact(job.get("model_key") or params.get("model") or "gpt-image-2"),
@@ -688,6 +691,9 @@ def _merge_run_summary(job: Mapping[str, Any], latest_summary: Mapping[str, Any]
     if edit_source:
         run_record["edit_source"] = edit_source
 
+    # A managed request is recorded before dispatch; update that same run on
+    # completion rather than adding a second, unrelated receipt.
+    previous_runs = [run for run in previous_runs if run.get('run_uid') != run_record['run_uid']]
     merged = {
         **dict(latest_summary),
         "image_urls": _append_unique(_string_list(previous_summary.get("image_urls")), image_urls),
@@ -1140,8 +1146,60 @@ def _submission_failure_patch(exc, client):
     return {"status": "failed", "provider_status": "unknown" if unknown else "failed",
             "error": _sanitize_error(exc, [getattr(client, "api_key", "")]),
             "error_code": "UNKNOWN_SUBMIT_RESULT" if unknown else "",
+            **({"failure_phase": getattr(exc, "failure_phase", "unknown")} if unknown else {}),
             "submission_attempts": getattr(exc, "submission_attempts", 0),
             "submission_retry_history": getattr(exc, "submission_retry_history", [])}
+
+
+def _managed_image_identity(client, operation_key):
+    if not str(getattr(client, 'provider', '')).startswith('custom-managed-'):
+        return {}
+    from core.managed_models import session
+    current = session()
+    if not current or current.get('brokerToken') != client.api_key or not client.base_url.startswith(current['baseURL'] + '/') or not current.get('accountId'):
+        raise ValueError('官方生图账号会话已变化，请重新选择模型')
+    return {'managed_request_id': managed_image_request_id(operation_key), 'managed_owner_id': current['accountId']}
+
+
+def trace_managed_image_request(job_uid, run_uid):
+    """Read a single original receipt; never refresh credentials or resubmit."""
+    job = data_sink.get_ai_image_job(job_uid)
+    if not job:
+        raise ValueError('生图任务不存在')
+    run = next((r for r in (job.get('summary') or {}).get('runs', []) if isinstance(r, Mapping) and r.get('run_uid') == run_uid), None)
+    if not run:
+        raise ValueError('生图记录不存在')
+    request_id, owner = run.get('managed_request_id'), run.get('managed_owner_id')
+    if not isinstance(request_id, str) or not re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', request_id) or not owner:
+        return {'status': 'identity_unavailable'}
+    from core.managed_models import session
+    current = session()
+    if not current or current.get('accountId') != owner:
+        return {'status': 'account_changed'}
+    request = urllib.request.Request(current['baseURL'] + '/account/requests/' + request_id, headers={'Authorization': 'Bearer ' + current['brokerToken']}, method='GET')
+    try:
+        from core.image_providers import _NoManagedRedirect
+        with urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoManagedRedirect()).open(request, timeout=35) as response:
+            raw = response.read(8193)
+            if len(raw) > 8192:
+                raise ValueError('response too large')
+            result = json.loads(raw)
+        after = session()
+        if not after or after.get('accountId') != owner or after.get('brokerToken') != current['brokerToken']:
+            return {'status': 'account_changed'}
+        if not isinstance(result, dict) or 'request' not in result:
+            raise ValueError('invalid receipt')
+        row = result['request']
+        if row is None:
+            return {'status': 'not_found', 'request_id': request_id}
+        if row.get('requestId') != request_id:
+            raise ValueError('request identity mismatch')
+        state = row.get('state')
+        if state not in ('in_progress', 'completed', 'unknown', 'upstream_rejected', 'not_dispatched', 'failed', 'canceled'):
+            raise ValueError('unknown request state')
+        return {'status': 'found', 'request_id': request_id, 'state': state, 'billing_request_id': row.get('billingRequestId')}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {'status': 'unavailable', 'request_id': request_id}
 
 
 def retry_workbench_run(
@@ -1197,12 +1255,17 @@ def retry_workbench_run(
         "task_id": _compact(run.get("task_id")),
         "error": _compact(run.get("error")),
         "retried_at": _now_iso(),
+        **({"managed_request_id": run["managed_request_id"]} if run.get("managed_request_id") else {}),
     })
 
+    operation_key = f"ai_image_{job_uid}_{run_uid}_manual_retry_{manual_retry_count}"
+    retry_identity = _managed_image_identity(client, operation_key)
+    if retry_identity:
+        _update_workbench_run(job_uid, run_uid, {**retry_identity, "status": "running", "provider_status": "pending_submission", "manual_retry_count": manual_retry_count, "manual_retry_history": manual_retry_history})
     try:
         task = client.create_task(
             _workbench_retry_payload(job, run),
-            idempotency_key=f"ai_image_{job_uid}_{run_uid}_manual_retry_{manual_retry_count}",
+            idempotency_key=operation_key,
             timeout=30,
             request_retries=3,
         )
@@ -1313,8 +1376,10 @@ def submit_workbench_batch(
     created_at = _now_iso()
     batch_runs = []
     for index, prompt_item in enumerate(normalized_prompts):
+        run_uid = uuid4().hex
         batch_runs.append({
-            "run_uid": uuid4().hex,
+            "run_uid": run_uid,
+            **_managed_image_identity(client, f"ai_image_{job_uid}_{run_uid}"),
             "batch_uid": batch_uid,
             "batch_index": index,
             "request_uid": request_key,
@@ -1451,7 +1516,11 @@ def run_job_with_one_xm(
 
     client = create_image_client(job, resolved_settings, api_key, legacy_factory=OneXMImageClient)
     run_uid = uuid4().hex
-    data_sink.update_ai_image_job(job_uid, {"status": "running"})
+    request_identity = _managed_image_identity(client, f"ai_image_{job_uid}_{run_uid}")
+    if request_identity:
+        _finish_workbench_generation(job, _safe_summary({"run_uid": run_uid, **request_identity}, [], tier), "running")
+    else:
+        data_sink.update_ai_image_job(job_uid, {"status": "running"})
     try:
         result = runner(
             client,
@@ -1466,7 +1535,8 @@ def run_job_with_one_xm(
         managed = bool(getattr(client, "manages_submission_retries", False))
         unknown = managed and not isinstance(exc, RejectedOneXMImageError)
         summary = _safe_summary(
-            {"ok": False, "run_uid": run_uid, "error": _sanitize_error(exc, [api_key]),
+            {"ok": False, "run_uid": run_uid, **request_identity, "error": _sanitize_error(exc, [api_key]),
+             **({"failure_phase": getattr(exc, "failure_phase", "unknown")} if unknown else {}),
              "submission_retries_managed": managed,
              "submission_attempts": getattr(exc, "submission_attempts", 0),
              "submission_retry_history": getattr(exc, "submission_retry_history", []),
@@ -1486,7 +1556,7 @@ def run_job_with_one_xm(
             if str(url or "").strip()
         ][:requested_count]
 
-    summary = _safe_summary({**normalized_result, "run_uid": run_uid}, [], tier)
+    summary = _safe_summary({**normalized_result, "run_uid": run_uid, **request_identity}, [], tier)
     if normalized_result.get("ok") and not summary["image_urls"]:
         summary["ok"] = False
         summary["error"] = "生成任务成功返回，但没有图片地址"

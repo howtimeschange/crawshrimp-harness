@@ -612,7 +612,6 @@ onMounted(async () => {
     overviewPollInFlight = true
     try {
       await refreshRuntimeStatus()
-      await loadScriptGroups({ preserveOnShrink: true })
     } catch (error) {
       console.error('Failed to poll runtime status', error)
     } finally {

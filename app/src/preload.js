@@ -575,6 +575,7 @@ contextBridge.exposeInMainWorld('cs', {
   favoriteScript: (id) => ipcRenderer.invoke('favorite-script', id),
   unfavoriteScript: (id) => ipcRenderer.invoke('unfavorite-script', id),
 
+  getTasksLive: () => ipcRenderer.invoke('get-tasks-live'),
   getTasks:        () => ipcRenderer.invoke('get-tasks'),
   listTaskInstances: (query = {}) => invokeWithApiFallback('list-task-instances', [query],
     () => apiCall('GET', `/task-instances?${queryString(query)}`)),
@@ -624,6 +625,8 @@ contextBridge.exposeInMainWorld('cs', {
     () => apiCall('POST', '/ai-image/jobs', payload || {})),
   getAiImageJob: (uid) => invokeWithApiFallback('get-ai-image-job', [uid],
     () => apiCall('GET', `/ai-image/jobs/${encodePathPart(uid)}`)),
+  traceAiImageManagedRequest: (uid, runUid) => invokeWithApiFallback('trace-ai-image-managed-request', [uid, runUid],
+    () => apiCall('GET', `/ai-image/jobs/${encodePathPart(uid)}/runs/${encodePathPart(runUid)}/managed-request`)),
   updateAiImageJob: (uid, payload) => invokeWithApiFallback('update-ai-image-job', [uid, payload],
     () => apiCall('PATCH', `/ai-image/jobs/${encodePathPart(uid)}`, payload || {})),
   setAiImageJobPinned: (uid, pinned) => invokeWithApiFallback('set-ai-image-job-pinned', [uid, pinned],

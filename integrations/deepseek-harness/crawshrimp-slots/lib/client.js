@@ -869,7 +869,8 @@ window.__ModuleLoader__.load({
 
     // ---- 产物媒体注入:会话消息流内直接显示图片(多图)/视频(可播放)/附件(可点击) ----
     const ARTIFACT_CSS = [
-      '.cs-generation-group { position: relative; flex: none; width: min(100%, 420px); margin: 12px 0; align-self: flex-start; }',
+      '.cs-generation-group { position: relative; flex: none; width: min(100%, 220px); margin: 2px 0; align-self: flex-start; }',
+      '.cs-generation-group[hidden], .cs-image-card[hidden], .cs-image-turn-gallery[hidden] { display: none !important; }',
       '.cs-generation-preview { position: relative; width: 100%; aspect-ratio: 1; overflow: hidden; border-radius: 12px; background: #000; border: 1px solid #39302b; }',
       '.cs-generation-effect, .cs-generation-effect > *, .cs-generation-effect .aiw-image-generation-effect, .cs-generation-effect .aiw-image-generation-surface, .cs-generation-effect .aiw-image-generation-fallback { width: 100%; height: 100%; position: absolute; inset: 0; }',
       '.cs-generation-caption { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; pointer-events: none; color: #eee; font-size: 14px; font-weight: 600; text-shadow: 0 1px 8px #000; }',
@@ -884,17 +885,33 @@ window.__ModuleLoader__.load({
       '.cs-image-action { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid #ffffff30; border-radius: 9px; background: #202124dd; color: white; cursor: pointer; }',
       '.cs-image-action svg, .cs-image-process summary svg { width: 16px; height: 16px; flex: none; }',
       '.cs-image-action:focus-visible, .cs-image-preview:focus-visible, .cs-image-process summary:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: -2px; }',
-      '.cs-image-process { color: var(--dsw-alias-label-secondary); font-size: 13px; margin: 8px 0; }',
+      '.cs-image-process { color: var(--dsw-alias-label-secondary); font-size: 13px; margin: 2px 0; }',
       '.cs-image-process summary { display: flex; align-items: center; gap: 7px; cursor: pointer; list-style: none; width: fit-content; padding: 4px 0; }',
       '.cs-image-process summary::-webkit-details-marker { display: none; }',
       '.cs-image-process summary::after { content: "›"; margin-left: 2px; transition: transform 120ms ease; }',
       '.cs-image-process[open] summary::after { transform: rotate(90deg); }',
       '.cs-image-process-items, .cs-image-delivery { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; max-width: 100%; }',
-      '.cs-image-process-items .cs-image-preview img { width: 80px; height: 80px; object-fit: cover; }',
+      '.cs-image-process-items .cs-image-preview img { width: 220px; max-width: 100%; height: auto; object-fit: contain; }',
       '.cs-image-process-items .cs-image-card { border-radius: 10px; }',
       '.cs-image-process-items .cs-image-actions { display: none; }',
-      '.cs-image-delivery { margin: 12px 0; }',
-      '.cs-image-delivery .cs-image-card { max-width: min(100%, 480px); }',
+      'p:has(> button[class*="_imageButton"] ~ button[class*="_imageButton"]) { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-start; }',
+      'p:has(> button[class*="_imageButton"] ~ button[class*="_imageButton"]) > button[class*="_imageButton"] { display:block; flex:0 1 220px; width:220px; max-width:100%; }',
+      'p:has(> button[class*="_imageButton"] ~ button[class*="_imageButton"]) > button[class*="_imageButton"] img { width:100%; max-height:220px; object-fit:contain; }',
+      '[data-cs-image-grouped="true"] { display:none !important; }',
+      '.cs-image-turn-gallery.cs-collection-mode .cs-image-delivery { display:none; }',
+      '.cs-image-collection { display:flex; gap:10px; width:min(100%, 620px); align-items:flex-start; }',
+      '.cs-image-collection-main { flex:1; min-width:0; border-radius:14px; overflow:hidden; background:var(--dsw-alias-bg-layer-1); }',
+      '.cs-image-collection-main .cs-image-card, .cs-image-collection-main .cs-image-preview { width:100%; height:auto; }',
+      '.cs-image-collection-main .cs-image-preview img { width:100%; height:auto; max-height:620px; object-fit:contain; }',
+      '.cs-image-collection-list { flex:none; display:flex; flex-direction:column; gap:8px; width:76px; max-height:min(520px,70vw); overflow-y:auto; padding:3px; }',
+      '.cs-image-collection-thumb { flex:none; padding:0; border:2px solid transparent; border-radius:9px; overflow:hidden; background:transparent; width:68px; aspect-ratio:1; cursor:pointer; }',
+      '.cs-image-collection-thumb[aria-pressed="true"] { border-color:var(--dsw-alias-state-business-primary, #315c43); }',
+      '.cs-image-collection-thumb img { width:100%; height:100%; object-fit:cover; display:block; }',
+      '.cs-image-collection-thumb:focus-visible { outline:2px solid var(--dsw-alias-state-business-primary, #315c43); outline-offset:2px; }',
+      '.cs-image-turn-gallery { display:flex; flex-wrap:wrap; gap:10px; margin:12px 0; }',
+      '.cs-image-delivery { display:contents; }',
+      '.cs-image-delivery .cs-image-card { width: min(100%, 220px); max-width: 100%; }',
+      '.cs-image-delivery .cs-image-preview img { width:100%; max-height:220px; object-fit:cover; }',
       '@media (hover: none) { .cs-image-actions { opacity: 1; } }',
       '@media (prefers-reduced-motion: reduce) { .cs-image-actions, .cs-image-process summary::after { transition: none; } }',
       '.cs-artifact-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }',
@@ -1099,6 +1116,57 @@ window.__ModuleLoader__.load({
     }
 
     const generationGroups = new Map()
+    const imageTurnGalleries = new Map()
+    function answerContainsArtifact(answer, path) {
+      if (!path) return false
+      return [...answer.querySelectorAll('img')].some(img => {
+        try {
+          const url = new URL(img.currentSrc || img.src, document.baseURI)
+          return url.searchParams.get('path') === path
+        } catch { return false }
+      })
+    }
+    function reconcileImageCollection(gallery, answer, items) {
+      const large = items.length > 3
+      for (const button of answer.querySelectorAll('[data-cs-image-grouped="true"]')) button.removeAttribute('data-cs-image-grouped')
+      gallery.classList.toggle('cs-collection-mode', large)
+      if (!large) {
+        gallery.collection?.view.remove()
+        gallery.collection = null
+        return
+      }
+      const paths = new Set(items.map(item => item.sourcePath || item.path))
+      for (const img of answer.querySelectorAll('img')) {
+        try {
+          const path = new URL(img.currentSrc || img.src, document.baseURI).searchParams.get('path')
+          const button = img.closest('button')
+          if (paths.has(path) && button) button.setAttribute('data-cs-image-grouped', 'true')
+        } catch { /* unrelated image */ }
+      }
+      if (gallery.collection && gallery.collection.items.length === items.length &&
+          items.every((item, i) => gallery.collection.items[i] === item)) return
+      const oldIndex = gallery.collection?.selected || 0
+      gallery.collection?.view.remove()
+      const view = document.createElement('section'); view.className = 'cs-image-collection'
+      view.setAttribute('aria-label', '本轮生成的图片')
+      const main = document.createElement('div'); main.className = 'cs-image-collection-main'
+      const list = document.createElement('div'); list.className = 'cs-image-collection-list'
+      const state = { view, items, selected: Math.min(oldIndex, items.length - 1) }
+      const thumbs = items.map((item, index) => {
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'cs-image-collection-thumb'
+        button.setAttribute('aria-label', '选择图片：' + (item.artifact.filename || String(index + 1)))
+        const img = document.createElement('img'); img.src = item.urls.file; img.alt = ''; button.appendChild(img)
+        button.addEventListener('click', () => select(index))
+        list.appendChild(button); return button
+      })
+      function select(index) {
+        state.selected = index
+        while (main.firstChild) main.firstChild.remove()
+        main.appendChild(makeArtifactBlock(items[index].artifact, items[index].urls))
+        thumbs.forEach((button, i) => button.setAttribute('aria-pressed', String(i === index)))
+      }
+      view.append(main, list); gallery.appendChild(view); gallery.collection = state; select(state.selected)
+    }
     let imageEffectPromise
     function imageEffectReady() {
       if (window.crawshrimpMountImageLoader) return Promise.resolve()
@@ -1121,6 +1189,9 @@ window.__ModuleLoader__.load({
         stopGenerationLoader(entry)
         entry.block.remove()
         entry.delivery?.remove()
+        if (entry.gallery && !entry.gallery.querySelectorAll('.cs-image-delivery').length) {
+          entry.gallery.collection?.view.remove(); entry.gallery.collection = null; entry.gallery.remove()
+        }
         return
       }
       const column = messageColumn()
@@ -1138,24 +1209,48 @@ window.__ModuleLoader__.load({
       while (flowAnchor.parentNode && flowAnchor.parentNode !== column) flowAnchor = flowAnchor.parentNode
       if (flowAnchor.parentNode !== column) return
       entry.flowAnchor = flowAnchor
-      let processPreceding = flowAnchor
-      for (const other of generationGroups.values()) {
-        if (other === entry) break
-        if (other.sessionId === entry.sessionId && other.flowAnchor === flowAnchor && other.block.isConnected) processPreceding = other.block
-      }
-      if (processPreceding.nextSibling !== entry.block) processPreceding.after(entry.block)
       const turn = anchor.dataset.chatTurn
       const answer = rows.find(row => row.dataset.chatTurn === turn && row.dataset.chatFinalAnswer === 'true')
-      if (!entry.delivery) return
-      if (!answer || !entry.delivery.childElementCount) { entry.delivery.remove(); return }
-      let preceding = answer === flowAnchor ? entry.block : answer
-      for (const other of generationGroups.values()) {
-        if (other === entry) break
-        if (other.sessionId === entry.sessionId && other.delivery?.isConnected
-          && other.delivery.dataset.chatTurn === turn) preceding = other.delivery
+      entry.block.hidden = Boolean(answer && entry.finished)
+      if (entry.block.hidden) {
+        // Do not insert hidden process rows next to the final answer. Competing
+        // insertions with the gallery can cause observers to continually move
+        // nodes, starving the renderer's input event loop.
+        entry.block.remove()
+      } else {
+        let processPreceding = flowAnchor
+        for (const other of generationGroups.values()) {
+          if (other === entry) break
+          if (other.sessionId === entry.sessionId && other.flowAnchor === flowAnchor && other.block.isConnected) processPreceding = other.block
+        }
+        if (processPreceding.nextSibling !== entry.block) processPreceding.after(entry.block)
       }
-      if (entry.delivery.dataset.chatTurn !== turn) entry.delivery.dataset.chatTurn = turn
-      if (preceding.nextSibling !== entry.delivery) preceding.after(entry.delivery)
+      if (!entry.delivery) return
+      if (!answer || !entry.delivery.childElementCount) {
+        entry.delivery.remove()
+        if (entry.gallery && !entry.gallery.querySelectorAll('.cs-image-delivery').length) {
+          entry.gallery.collection?.view.remove(); entry.gallery.collection = null; entry.gallery.remove()
+        }
+        return
+      }
+      const galleryKey = entry.sessionId + ':' + turn
+      let gallery = imageTurnGalleries.get(galleryKey)
+      if (!gallery) {
+        gallery = document.createElement('section')
+        gallery.className = 'cs-image-turn-gallery'
+        gallery.setAttribute('aria-label', '本轮生成的图片')
+        imageTurnGalleries.set(galleryKey, gallery)
+      }
+      entry.gallery = gallery
+      if (entry.delivery.parentNode !== gallery) gallery.appendChild(entry.delivery)
+      const items = [...generationGroups.values()]
+        .filter(group => group.gallery === gallery && group.delivery?.parentNode === gallery)
+        .flatMap(group => [...(group.images || new Map()).values()])
+      const large = items.length > 3
+      for (const image of items) image.final.hidden = !large && answerContainsArtifact(answer, image.sourcePath || image.path)
+      reconcileImageCollection(gallery, answer, items)
+      gallery.hidden = !large && items.every(image => image.final.hidden)
+      if (answer.nextSibling !== gallery) answer.after(gallery)
     }
 
     function stopGenerationLoader(entry) {
@@ -1246,6 +1341,7 @@ window.__ModuleLoader__.load({
         if (!generation.process) {
           const details = document.createElement('details')
           details.className = 'cs-image-process'
+          details.open = true
           const summary = document.createElement('summary')
           summary.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/></svg>'
           generation.countLabel = document.createElement('span')
@@ -1262,7 +1358,7 @@ window.__ModuleLoader__.load({
         const final = makeArtifactBlock(artifact, data.urls || {})
         generation.process.appendChild(process)
         generation.delivery.appendChild(final)
-        generation.images.set(artifact.path, { process, final, url: data.urls?.file })
+        generation.images.set(artifact.path, { process, final, url: data.urls?.file, path: artifact.path, sourcePath: artifact.sourcePath, artifact, urls: data.urls || {} })
         generation.countLabel.textContent = '已生成 ' + generation.images.size + ' 张图片'
         placeGenerationGroup(generation)
       } else {
@@ -1293,6 +1389,7 @@ window.__ModuleLoader__.load({
     // ---- 会话附件上传:📎 按钮 + 拖入 + 粘贴 ----
     const ATTACH_CSS = [
       '.cs-attachment-rail { display:flex; align-items:center; gap:8px; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden; min-width:0; padding:2px 14px 4px; scrollbar-width:none; scroll-padding:14px; overscroll-behavior-x:contain; }',
+      '.cs-unified-attachments > .cs-attachment-rail { margin-bottom:-10px; }',
       '.cs-attachment-rail::-webkit-scrollbar { display:none; }',
       '.cs-attachment-card { display:flex; flex:0 0 180px; align-items:center; gap:8px; height:52px; box-sizing:border-box; padding:8px 9px; border:1px solid var(--dsw-alias-border-l1); border-radius:10px; background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); position:relative; }',
       '.cs-attachment-icon { display:grid; place-items:center; width:26px; flex-shrink:0; color:var(--dsw-alias-label-secondary); } .cs-attachment-icon svg { width:22px; height:22px; }',
@@ -1390,6 +1487,25 @@ window.__ModuleLoader__.load({
     }
     function releaseImageDrafts(conversation, drafts) {
       return (conversation.releaseDraftAttachments || conversation.releaseDraftImages).call(conversation, drafts)
+    }
+
+    function removeImageDraft(input, conversation, image) {
+      if (!input || !conversation || !image?.id) return false
+      const remove = input.removeAttachment || input.removeImage
+      if (typeof remove !== 'function') return false
+      try {
+        const state = input.state?.getSnapshot?.()
+        if (!state || !['plain', 'claimed'].includes(state.phase)) return false
+        if (!(state.attachmentIds || state.imageIds || []).includes(image.id)) return false
+        remove.call(input, image.id)
+        const after = input.state.getSnapshot()
+        if ((after.attachmentIds || after.imageIds || []).includes(image.id)) return false
+        try {
+          if (typeof conversation.releaseDraftAttachment === 'function') conversation.releaseDraftAttachment(image.id)
+          else releaseImageDrafts(conversation, [image])
+        } catch (_) { /* The draft was removed; cleanup must not reverse it. */ }
+        return true
+      } catch (_) { return false }
     }
 
     function installNativeImageDraft(ctx, data) {
@@ -1882,9 +1998,10 @@ window.__ModuleLoader__.load({
       if (attachmentBridgeDisposed) return
       const sessionId = activeRuntimeSessionId()
       if (!sessionId) return
-      let state, conversation
+      let state, conversation, input
       try {
         const resolved = sessionInput(sessionId)
+        input = resolved.input
         if (resolved.input) restoreAttachmentReferences(resolved.input)
         state = resolved.input?.state?.getSnapshot()
         conversation = resolved.conversation
@@ -1937,7 +2054,9 @@ window.__ModuleLoader__.load({
         remove.textContent = '×'
         remove.setAttribute('aria-label', `移除图片 ${image.file.name}`)
         remove.onclick = () => {
-          composer.querySelectorAll('.JVDQca_remove')[index]?.click()
+          if (!removeImageDraft(input, conversation, image)) {
+            input?.notify?.('error', '暂时无法移除图片，请稍后重试')
+          }
           renderAttachmentCards()
         }
         tile.append(preview, remove)
@@ -2725,6 +2844,7 @@ window.__ModuleLoader__.load({
     exports.installShellMessageBridge = installShellMessageBridge
     exports.publishCurrentSession = publishCurrentSession
     exports.requestLlmConfigFromComposer = requestLlmConfigFromComposer
+    exports.removeImageDraft = removeImageDraft
     exports.handleDropAttachments = handleDropAttachments
     exports.insertAttachmentHint = insertAttachmentHint
     exports.queueAttachmentHint = queueAttachmentHint

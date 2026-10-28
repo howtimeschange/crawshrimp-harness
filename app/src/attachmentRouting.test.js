@@ -59,8 +59,23 @@ function fixture({ imagesAvailable = true, reject = [] } = {}) {
     handle(event)
     return event
   }
-  return { dispatch, messages, drafts, nativeFiles, resets }
+  return { client, dispatch, messages, drafts, nativeFiles, resets }
 }
+
+test('remove image uses its draft identity and releases only the removed image', () => {
+  const { client } = fixture()
+  let state = { phase: 'plain', attachmentIds: ['first', 'second', 'third'] }
+  const released = []
+  const input = { state: { getSnapshot: () => state }, removeAttachment: id => { state = { ...state, attachmentIds: state.attachmentIds.filter(x => x !== id) } } }
+  const conversation = { releaseDraftAttachment: id => released.push(id) }
+  assert.equal(client.removeImageDraft(input, conversation, { id: 'second' }), true)
+  assert.deepEqual(state.attachmentIds, ['first', 'third'])
+  assert.deepEqual(released, ['second'])
+  state = { phase: 'submitting', attachmentIds: ['first', 'third'] }
+  assert.equal(client.removeImageDraft(input, conversation, { id: 'first' }), false)
+  assert.deepEqual(state.attachmentIds, ['first', 'third'])
+  assert.deepEqual(released, ['second'])
+})
 
 for (const type of ['drop', 'paste']) {
   test(`${type}: regular documents are registered once and never enter native image validation`, () => {

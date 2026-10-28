@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 import time
 import threading
 from typing import Any, Mapping
-from uuid import uuid4
+from uuid import uuid4, uuid5, NAMESPACE_URL
 
 from core.one_xm_image import OneXMImageClient, OneXMImageError, RejectedOneXMImageError, _parse_json_bytes
 
@@ -169,12 +169,26 @@ class _ImageHTTPSHandler(urllib.request.HTTPSHandler):
         return self.do_open(_ImageHTTPSConnection, req, context=self._context)
 
 
-def _compatible_transport(method, url, *, headers, body, timeout):
+class _NoManagedRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def managed_image_request_id(idempotency_key):
+    if not idempotency_key:
+        raise ValueError('官方生图请求缺少持久身份')
+    return str(uuid5(NAMESPACE_URL, 'crawshrimp-managed-image:' + idempotency_key))
+
+
+def _compatible_transport(method, url, *, headers, body, timeout, direct=False):
     data = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    phase = 'before_headers'
     try:
-        opener = urllib.request.build_opener(_ImageHTTPHandler(), _ImageHTTPSHandler())
+        handlers = ([urllib.request.ProxyHandler({}), _NoManagedRedirect()] if direct else []) + [_ImageHTTPHandler(), _ImageHTTPSHandler()]
+        opener = urllib.request.build_opener(*handlers)
         with opener.open(request, timeout=timeout) as response:
+            phase = 'response_body'
             return response.status, _parse_json_bytes(response.read())
     except urllib.error.HTTPError as exc:
         try:
@@ -187,6 +201,12 @@ def _compatible_transport(method, url, *, headers, body, timeout):
         except (ValueError, UnicodeDecodeError):
             payload = {'error': {'message': f'HTTP {exc.code}'}}
         return exc.code, payload
+    except Exception as exc:
+        try:
+            exc.failure_phase = phase
+        except Exception:
+            pass
+        raise
 
 
 def _retryable_rejection(status, result):
@@ -198,6 +218,12 @@ def _retryable_rejection(status, result):
     if any(value in text for value in ('model_not_found', 'no available channel', 'support the requested model', 'quota', 'insufficient', 'balance', 'billing')):
         return False
     return status == 429 or any(value in text for value in ('overload', 'busy', 'temporarily', 'service_unavailable', 'capacity'))
+
+
+def _managed_response_unknown(message):
+    error = OneXMImageError(message)
+    error.failure_phase = 'response_body'
+    return error
 
 
 class CompatibleImageClient:
@@ -215,6 +241,12 @@ class CompatibleImageClient:
 
     def create_task(self, payload, *, idempotency_key='', timeout=240, request_retries=3, retry_delay_seconds=1.0, sleep_fn=time.sleep, **kwargs):
         headers = {'Content-Type': 'application/json', 'User-Agent': 'Crawshrimp-Harness/0.4'}
+        managed = self.provider.startswith('custom-managed-')
+        if managed:
+            parsed = urlsplit(self.base_url)
+            if parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or not parsed.port or parsed.username or parsed.password:
+                raise RejectedOneXMImageError('官方生图本机连接无效')
+            headers['X-Request-Id'] = managed_image_request_id(idempotency_key)
         images = payload.get('image') or []
         if isinstance(images, str): images = [images]
         if self.protocol == 'gemini':
@@ -251,8 +283,10 @@ class CompatibleImageClient:
         attempts = 1 if self.provider.startswith("custom-managed-") else max(1, min(3, int(request_retries or 1)))
         for attempt in range(1, attempts + 1):
             with _provider_submission_slot(self.provider):
-                status, result = self.transport('POST', url, headers=headers, body=body, timeout=max(240, timeout))
+                status, result = self.transport('POST', url, headers=headers, body=body, timeout=max(240, timeout), **({'direct': True} if managed else {}))
             if not isinstance(result, dict):
+                if managed:
+                    raise _managed_response_unknown('官方生图响应格式无效，无法确认结果')
                 raise RejectedOneXMImageError('供应商返回了无效的 JSON 响应')
             if not _retryable_rejection(status, result) or attempt >= attempts:
                 break
@@ -262,7 +296,9 @@ class CompatibleImageClient:
 
         if not 200 <= status < 300 or result.get('error'):
             error = result.get('error') or result.get('message') or f'HTTP {status}'
-            if status in {502, 504}:
+            if managed and 200 <= status < 300:
+                raise _managed_response_unknown('官方生图响应包含错误，无法确认结果')
+            if status in {502, 504} or (managed and (status == 409 or 300 <= status < 400)):
                 # A gateway can lose the upstream response after generation began.
                 # Its HTTP response is not proof that the provider rejected work.
                 raise OneXMImageError(f'网关 HTTP {status}，无法确认上游是否已受理')
@@ -281,6 +317,8 @@ class CompatibleImageClient:
                 if inline.get('data'):
                     urls.append(f'data:{inline.get("mimeType") or inline.get("mime_type") or "image/png"};base64,{inline["data"]}')
         if not urls:
+            if managed:
+                raise _managed_response_unknown('官方生图响应未包含图片，无法确认结果')
             raise RejectedOneXMImageError('供应商响应未包含图片：' + json.dumps({k: result.get(k) for k in ('promptFeedback', 'error', 'message') if result.get(k)}, ensure_ascii=False)[:300])
         return {'status': 'completed', 'data': [{'url': url} for url in urls], 'submission_attempts': attempt, 'submission_retry_history': retry_history}
 
