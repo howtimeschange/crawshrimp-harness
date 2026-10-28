@@ -166,6 +166,10 @@ td small { display: block; color: var(--text3); margin-top: 4px; overflow-wrap: 
 button { cursor: pointer; border: 1px solid var(--border, #3b3b47); border-radius: 7px; background: transparent; color: var(--text, #ededf3); padding: 8px 13px; font: inherit; font-size: 13px; white-space: nowrap; }
 button:hover { background: var(--bg3, #30303b); }
 button.primary { background: #ff7026; color: #191411; border-color: #ff7026; font-weight: 600; }
+:global(:root[data-theme-preference="lake"]) button.primary { background: var(--orange-strong); border-color: var(--orange-strong); color: var(--on-orange); }
+:global(:root[data-theme-preference="lake"]) button.primary:hover:not(:disabled) { background: var(--orange-hover); border-color: var(--orange-hover); }
+:global(:root[data-theme-preference="lake"]) :is(button,input,select,textarea):focus-visible { outline-color: var(--orange); }
+:global(:root[data-theme-preference="lake"]) .image-provider-dialog header p { color: var(--orange-text); }
 button:disabled { opacity: .5; cursor: default; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #ff8d56; outline-offset: 3px; }
 .provider-list { display: grid; gap: 12px; }

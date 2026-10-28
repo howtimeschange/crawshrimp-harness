@@ -129,6 +129,7 @@ import { DEEPSEEK_PLATFORM_URL } from '../utils/llmSettings.mjs'
 const props = defineProps({
   active: { type: Boolean, default: true },   // kept mounted behind settings/script views
   theme: { type: String, default: '' },        // effectiveTheme(light|dark)
+  themePreference: { type: String, default: 'system' },
   navItems: { type: Array, default: () => [] }, // 抓虾一级菜单(注入会话侧边栏底部)
   activeNav: { type: String, default: '' },     // 当前激活菜单 id
   appVersion: { type: String, default: '' },     // 抓虾桌面版本号,同步到 DSH 侧栏品牌区
@@ -164,7 +165,10 @@ const NATIVE_WEB_FOLLOW_RETRY_DELAYS_MS = [250, 750, 1500]
 const frameSrc = computed(() => {
   if (!webUrl.value) return ''
   const url = new URL(webUrl.value, window.location.href)
-  if (props.theme === 'light' || props.theme === 'dark') url.searchParams.set('theme', props.theme)
+  // Sample the current theme only when the runtime URL changes. Theme changes
+  // are delivered by the bridge and must not reload an active conversation.
+  const initialTheme = document.documentElement.dataset.theme
+  if (initialTheme === 'light' || initialTheme === 'dark') url.searchParams.set('theme', initialTheme)
   if (shouldUseShellDirectoryPicker()) url.searchParams.set('csDirectoryPicker', 'shell')
   if (runtimeNeedsModelKey.value) url.searchParams.set('csNeedsModelKey', '1')
   if (runtimeGeneration.value > 0) url.searchParams.set('csRuntimeGeneration', String(runtimeGeneration.value))
@@ -536,7 +540,7 @@ function pushRuntimeModelConfiguration() {
 }
 
 function pushTheme() {
-  postToFrame({ __crawshrimp: 'theme', theme: props.theme })
+  postToFrame({ __crawshrimp: 'theme', theme: props.theme, skin: props.themePreference === 'lake' ? 'lake' : 'default' })
 }
 
 function pushNav() {
@@ -673,6 +677,7 @@ function onWindowMessage(event) {
     // The slots client registers after the iframe's initial load event. Replay
     // the default workspace only after it explicitly confirms that its
     // postMessage listener is ready, so first launch cannot lose the binding.
+    pushTheme()
     pushWorkspace()
     pushRuntimeModelConfiguration()
     pushAccountMenuState()
@@ -934,7 +939,7 @@ onUnmounted(() => {
   nativeWebFollowSessionId = ''
 })
 
-watch(() => props.theme, (t) => {
+watch(() => [props.theme, props.themePreference], ([t]) => {
   if (t) pushTheme()
 })
 

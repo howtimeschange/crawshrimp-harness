@@ -253,6 +253,28 @@ def test_unavailable_snapshot_never_publishes_a_mutable_desktop_path(store, monk
     assert projected.get('path') in ('', None)
     assert not projected['exists']
     assert projected['file_snapshot']['status'] == 'too_large'
+    current = api.current_artifact_file('runtime-one', saved['file_snapshot']['version_id'])
+    assert current == {'path': str(path), 'versioned': False}
+    path.write_bytes(b'changed')
+    with pytest.raises(HTTPException) as exc:
+        api.current_artifact_file('runtime-one', saved['file_snapshot']['version_id'])
+    assert exc.value.status_code == 409
+    with pytest.raises(HTTPException) as exc:
+        api.current_artifact_file('other-session', saved['file_snapshot']['version_id'])
+    assert exc.value.status_code == 404
+
+
+def test_current_artifact_refuses_symlink_replacement(store, monkeypatch):
+    monkeypatch.setattr(snapshots, 'MAX_FILE_BYTES', 2)
+    path = store / 'original.txt'
+    path.write_bytes(b'large')
+    saved = publish(path)
+    moved = store / 'moved.txt'
+    path.rename(moved)
+    path.symlink_to(moved)
+    with pytest.raises(HTTPException) as exc:
+        api.current_artifact_file('runtime-one', saved['file_snapshot']['version_id'])
+    assert exc.value.status_code == 409
 
 
 def test_existing_failed_snapshot_events_cannot_advertise_mutable_path(store, monkeypatch):

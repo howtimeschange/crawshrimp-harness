@@ -83,6 +83,7 @@
         <AgentWebView
           :active="!activeScript && currentView === 'agent'"
           :theme="effectiveTheme"
+          :theme-preference="themePreference"
           :nav-items="filteredNavItems"
           :active-nav="currentView"
           :app-version="agentAppVersionLabel"
@@ -703,6 +704,41 @@ provide('repairCoreService', repairCoreService)
   --shadow-soft: 0 12px 30px rgba(34, 35, 43, 0.11);
   --scrim: rgba(28, 29, 35, 0.5);
 }
+
+/* Lake is a light appearance, so native controls and existing light-only
+   components keep their light semantics while the palette changes. */
+:root[data-theme-preference="lake"] {
+  --orange-rgb: 49, 92, 67;
+  --orange: #315c43;
+  --orange-text: #315c43;
+  --orange-dim: #365f48;
+  --orange-bg: rgba(var(--orange-rgb), .10);
+  --orange-hover: #3c7051;
+  --orange-strong: #294d37;
+  --on-orange: #ffffff;
+  --accent: #315c43;
+  --bg: #ffffff;
+  --bg2: #ffffff;
+  --bg3: #f5f6f5;
+  --bg4: #eceeec;
+  --dock-bg: #f7f8f7;
+  --border: #dfe4df;
+  --border-strong: #a8b9a6;
+  --agent-header-divider: #253b2d24;
+  --text: #202b23;
+  --text2: #505b52;
+  --text3: #606b62;
+  --soft-fill: rgba(30, 40, 32, .035);
+  --soft-fill-hover: rgba(30, 40, 32, .065);
+  --subtle-border: rgba(30, 40, 32, .12);
+  --input-focus: #ffffff;
+  --tooltip-bg: #283d30;
+  --shadow: rgba(31, 53, 38, .15);
+  --shadow-soft: 0 12px 30px rgba(31, 53, 38, .11);
+  --scrim: rgba(23, 42, 29, .5);
+}
+:root[data-theme-preference="lake"] :is(.task-btn-progress-fill, .card-progress-fill, .progress-strip-bar-fill, .ai-chain-submit-progress-bar span, .submit-progress-bar span) { background: #4c805b; }
+:root[data-theme-preference="lake"] :is(.favorite-btn:hover:not(:disabled), .favorite-btn:focus-visible:not(:disabled), .more-btn:hover) { color: var(--orange-text); }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html,
 body {

@@ -83,10 +83,11 @@ def test_managed_budgets_reach_runtime_without_64k_fallback(monkeypatch):
     assert catalog['maxTokens'] == 32768
 
 
-def test_managed_budget_floor_and_invalid_metadata():
-    for value in (None, False, -1, '1000000', 64000):
+def test_managed_budget_respects_catalog_and_invalid_metadata():
+    for value in (None, False, -1, '1000000'):
         budget = managed_models._text_model_budget({'id': 'unknown', 'contextWindow': value, 'maxTokens': False})
-        assert budget == {'context_window': 1_000_000, 'max_output_tokens': 8192}
+        assert budget == {'context_window': 128_000, 'max_output_tokens': 8192}
+    assert managed_models._text_model_budget({'id': 'unknown', 'contextWindow': 64000, 'maxTokens': 100000}) == {'context_window': 64000, 'max_output_tokens': 64000}
 
 
 def test_account_reasoning_reaches_runtime_and_preserves_legacy_ids(tmp_path, monkeypatch):

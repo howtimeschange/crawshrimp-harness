@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export the approved C1 logo without cropping, recoloring, or redrawing it.
+"""Export the approved C1 logo, with a native rounded macOS silhouette.
 
 Run from the repository root with venv/bin/python3 app/scripts/export-brand-icons.py.
 Pillow and macOS iconutil are required. This does not build or publish the app.
@@ -9,7 +9,7 @@ import hashlib
 import subprocess
 import tempfile
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
 SOURCE = ASSETS / "branding/crawshrimp-logo-final-C1-short-antennae.png"
@@ -30,10 +30,15 @@ def main():
     png.save(ASSETS / "icon.png")
     png.save(ASSETS / "icon.ico", sizes=[(size, size) for size in ICO_SIZES])
 
-    # Only add macOS Dock safety space outside the entire composition.
-    # No corner mask: the approved character already reaches the source's edges.
+    # Supply the macOS silhouette ourselves. An opaque square inside the
+    # transparent margin is treated as a legacy icon and gains a light bezel.
+    # Use the approved source pixels and clip only the rounded outer corners.
+    art = image.resize((824, 824), Image.Resampling.LANCZOS)
+    mask = Image.new("L", (824 * 4, 824 * 4), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, 824 * 4 - 1, 824 * 4 - 1), radius=184 * 4, fill=255)
+    art.putalpha(mask.resize((824, 824), Image.Resampling.LANCZOS))
     mac = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
-    mac.alpha_composite(image.resize((824, 824), Image.Resampling.LANCZOS), (100, 100))
+    mac.alpha_composite(art, (100, 100))
     with tempfile.TemporaryDirectory(prefix="crawshrimp-C1-icons-") as temporary:
         iconset = Path(temporary) / "C1.iconset"
         iconset.mkdir()

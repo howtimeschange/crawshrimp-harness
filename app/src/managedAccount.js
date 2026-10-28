@@ -14,11 +14,12 @@ const { createEncryptedStorage } = require('./accountAuth')
 const { diagnosticFetch, oauthFailure, inferenceFailure } = require('./managedDiagnostics')
 const { createBoundedDiagnostics } = require('./boundedDiagnostics')
 const billingRequestID = value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,64}$/.test(value)?value:null
-function requestTrace(value,requestId){
+function requestTrace(value,requestId,accountId){
   const row=value?.request
   if(row===null)return {request:null}
-  if(!row||row.requestId!==requestId)throw new Error('请求核对身份不匹配')
-  const date=typeof row.createdAt==='string'?new Date(row.createdAt):null
+  if(!row||(!row.requestId&&!row.id)||(row.requestId!==undefined&&row.requestId!==requestId)||(row.id!==undefined&&row.id!==`${accountId}:${requestId}`))throw new Error('请求核对身份不匹配')
+  const rawDate=row.createdAt??row.created_at
+  const date=typeof rawDate==='string'?new Date(rawDate):null
   return {request:{requestId,state:['in_progress','completed','unknown','upstream_rejected','not_dispatched','failed','canceled'].includes(row.state)?row.state:null,
     createdAt:date&&Number.isFinite(date.getTime())?date.toISOString():null,billingRequestId:billingRequestID(row.billingRequestId)}}
 }
@@ -75,7 +76,7 @@ function createManagedAccount({issuer,directory,runtimeDirectory,safeStorage,ope
             const bytes=await boundedResponse(response,8192)
             if(epoch!==generation||accountId!==profile?.user?.id)return fail(401,'账号已切换')
             if(!response.ok)return fail(response.status===401?401:503,'本次只读核对未确认，请核对登录状态；不要重新生成')
-            const payload=requestTrace(JSON.parse(bytes.toString()),traceId)
+            const payload=requestTrace(JSON.parse(bytes.toString()),traceId,accountId)
             res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(payload));return
           }catch{
             return fail(epoch!==generation||accountId!==profile?.user?.id?401:503,'本次只读核对未确认；不会重新生成')
@@ -98,7 +99,8 @@ function createManagedAccount({issuer,directory,runtimeDirectory,safeStorage,ope
         timing.bodyReadMs=elapsed();timing.requestBytes=size;timing.model=typeof body.model==='string'?body.model:url.pathname.split('/').pop().split(':')[0]
         if(!officialModelAvailable(timing.model,profile?.plan,catalog,profile?.paidModelAccess))return fail(403,modelAccessMessage)
         const originalId=req.headers['x-request-id']
-        const preserveOriginal=['/v1/responses','/v1/chat/completions'].includes(url.pathname)&&typeof originalId==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(originalId)
+        const isImage=url.pathname.startsWith('/v1/images/')||url.pathname.startsWith('/v1beta/models/')
+        const preserveOriginal=typeof originalId==='string'&&((['/v1/responses','/v1/chat/completions'].includes(url.pathname)&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(originalId))||(isImage&&/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(originalId)))
         const requestId=preserveOriginal?originalId:crypto.randomUUID();timing.requestId=requestId
         const authStarted=performance.now(),token=await access();timing.authMs=Math.round(performance.now()-authStarted)
         if(epoch!==generation||accountId!==profile?.user?.id)return fail(401,'账号已切换')

@@ -7,6 +7,7 @@ const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
 const test = require('node:test')
 const { pathToFileURL } = require('node:url')
+const vm = require('node:vm')
 
 const appRoot = resolve(__dirname, '..')
 const repoRoot = resolve(appRoot, '..')
@@ -498,10 +499,16 @@ test('clean-install dsh-im runtime exposes only the Crawshrimp Harness brand to 
 
   assert.equal(result.patched, true)
   assert.equal(result.marker, 'crawshrimp-dsh-im-411-product-patch-v1')
+  const patchSource = readFileSync(resolve(harnessRoot, 'scripts/patch-runtime-dependencies.mjs'), 'utf8')
+  const constants = ['UPSTREAM_HARNESS_BRAND', 'CRAWSHRIMP_HARNESS_BRAND', 'GENERIC_HARNESS_LABEL']
+    .map(name => patchSource.match(new RegExp(`^const ${name} = .*$`, 'm'))?.[0])
+  assert.ok(constants.every(Boolean))
+  const lexer = patchSource.slice(patchSource.indexOf('function replaceImUserVisibleText('), patchSource.indexOf('function patchDshImUserVisibleBrand('))
+  const brand = vm.runInNewContext([...constants, lexer, 'replaceImUserVisibleCopy'].join('\n'))
   for (const root of ['src', 'plugin-src', 'lib']) {
     for (const path of sourceFiles(resolve(dshImRoot, root))) {
       const source = readFileSync(path, 'utf8')
-      assert.doesNotMatch(source, /DeepSeek Harness/u, path)
+      assert.equal(brand(source), source, `unbranded user-visible copy: ${path}`)
     }
   }
   const question = readFileSync(resolve(dshImRoot, 'src/channels/shared/harness-question.mjs'), 'utf8')

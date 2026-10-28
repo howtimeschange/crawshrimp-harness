@@ -23,7 +23,7 @@ test("createVideoTask posts payload to Ark task endpoint", async () => {
   const result = await client.createVideoTask(payload);
 
   assert.deepEqual(result, { id: "cgt-test" });
-  assert.equal(calls[0].url, "https://ai-aigw.semir.com/doubao-seedance/api/v3/contents/generations/tasks");
+  assert.equal(calls[0].url, "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks");
   assert.equal(calls[0].init.method, "POST");
   assert.equal(calls[0].init.headers.Authorization, "Bearer test-key");
   assert.equal(calls[0].init.headers["Content-Type"], "application/json");
@@ -48,7 +48,7 @@ test("getVideoTask fetches task by path id", async () => {
 
   const result = await client.getVideoTask("cgt-test");
 
-  assert.equal(calls[0].url, "https://ai-aigw.semir.com/doubao-seedance/api/v3/contents/generations/tasks/cgt-test");
+  assert.equal(calls[0].url, "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/cgt-test");
   assert.equal(calls[0].init.method, "GET");
   assert.equal(result.status, "succeeded");
   assert.equal(result.content.video_url, "https://example.com/video.mp4");

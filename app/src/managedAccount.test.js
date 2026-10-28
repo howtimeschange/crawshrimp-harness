@@ -3,6 +3,27 @@ const {test}=require('node:test')
 const assert=require('node:assert/strict')
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path')
 const {createManagedAccount}=require('./managedAccount')
+test('image receipt preserves original identity and supports owner-bound legacy readback',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'image-receipt-'))
+ const storage={isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()}
+ fs.writeFileSync(path.join(dir,'modeljetty-session.enc'),JSON.stringify({session:JSON.stringify({access_token:'fixture-token',expiresAt:Date.now()+3600000})}))
+ const id='bf765baf-935b-5f75-8c93-4dd07aecb100';const calls=[]
+ const account=createManagedAccount({issuer:'https://account.example',directory:dir,runtimeDirectory:()=>dir,safeStorage:storage,openExternal:async()=>{},fetcher:async(url,init)=>{
+  const u=new URL(url);if(u.pathname==='/account/me')return Response.json({user:{id:'fixture-owner'},plan:'pro'})
+  if(u.pathname==='/account/models')return Response.json({models:[{id:'gpt-image-2',kind:'image',protocol:'openai',available:true}]})
+  calls.push({path:u.pathname,method:init.method,headers:init.headers})
+  if(u.pathname.startsWith('/account/requests/'))return Response.json({request:{id:`fixture-owner:${id}`,state:'unknown',created_at:'2026-10-28T09:00:00Z'}})
+  return Response.json({data:[{b64_json:'Zml4dHVyZQ=='}]})
+ }})
+ t.after(()=>{account.dispose();fs.rmSync(dir,{recursive:true,force:true})})
+ await account.run('status');const session=JSON.parse(fs.readFileSync(path.join(dir,'managed-model-session.json')))
+ const auth={Authorization:`Bearer ${session.brokerToken}`}
+ const response=await fetch(session.baseURL+'/v1/images/generations',{method:'POST',headers:{...auth,'Content-Type':'application/json','X-Request-Id':id},body:JSON.stringify({model:'gpt-image-2',prompt:'fixture'})})
+ assert.equal(response.status,200);assert.equal(response.headers.get('X-Request-Id'),id);assert.equal(new Headers(calls[0].headers).get('X-Request-Id'),id)
+ const read=await fetch(session.baseURL+'/account/requests/'+id,{headers:auth});assert.equal(read.status,200)
+ assert.deepEqual(await read.json(),{request:{requestId:id,state:'unknown',createdAt:'2026-10-28T09:00:00.000Z',billingRequestId:null}})
+ assert.deepEqual(calls.map(c=>c.method),['POST','GET'])
+})
 test('managed GPT image edits preserve binary multipart and reject unavailable models before forwarding',async t=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'image-edit-broker-'))
  const storage={isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()}

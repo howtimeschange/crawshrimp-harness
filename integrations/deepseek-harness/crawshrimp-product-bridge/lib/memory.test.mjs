@@ -45,22 +45,47 @@ test('old account mirrors cannot be recalled or edited before expiry hydration, 
   assert.deepEqual(offline.search('workspace', ''), [])
 })
 
-test('account preferences are isolated and a live old scope cannot follow a new login', t => {
+test('device preferences survive login and account preferences remain isolated on a live worker', t => {
   const { root } = fixture(t), file=join(root,'managed-model-session.json'), database=join(root,'account-memory.sqlite')
   const login=id=>writeFileSync(file,JSON.stringify({accountId:id}),{mode:0o600})
   const preference={key:'style',content:'A private preference',evidence:'fixture',level:'preference'}
   const local=new MemoryStore(database,Date.now,accountMemoryOptions(root));local.save('global',{...preference,content:'device-only'},'local')
   login('account-a')
-  assert.throws(()=>local.list('workspace'),/账号已切换/)
-  const a=new MemoryStore(database,Date.now,accountMemoryOptions(root));a.save('global',preference,'a')
+  assert.equal(local.list('workspace')[0].content,'device-only')
+  const a=new MemoryStore(database,Date.now,accountMemoryOptions(root));a.save('account',preference,'a')
   login('account-b')
-  assert.throws(()=>a.list('workspace'),/账号已切换/)
-  assert.throws(()=>a.save('global',{...preference,key:'late'},'a'),/账号已切换/)
-  const b=new MemoryStore(database,Date.now,accountMemoryOptions(root));assert.deepEqual(b.list('workspace'),[])
+  assert.deepEqual(a.list('workspace').map(row=>row.content),['device-only'])
+  const b=new MemoryStore(database,Date.now,accountMemoryOptions(root));assert.deepEqual(b.list('workspace').map(row=>row.content),['device-only'])
   login('account-a')
-  assert.equal(new MemoryStore(database,Date.now,accountMemoryOptions(root)).list('workspace')[0].content,'A private preference')
+  assert.deepEqual(new Set(a.list('workspace').map(row=>row.content)),new Set(['device-only','A private preference']))
   unlinkSync(file)
-  assert.equal(new MemoryStore(database,Date.now,accountMemoryOptions(root)).list('workspace')[0].content,'device-only')
+  assert.equal(a.list('workspace')[0].content,'device-only')
+  assert.throws(()=>a.save('account',preference,'a'),/请先登录/)
+})
+
+test('account change during a read never returns the previous account data', t => {
+  const { root } = fixture(t)
+  let calls = 0
+  const store = new MemoryStore(join(root, 'race.sqlite'), Date.now, { accountScope: () => ++calls === 1 ? 'account:a' : 'account:b' })
+  assert.throws(() => store.list('workspace'), /账号已切换/)
+})
+
+test('account change before commit rolls back save, correction and forget', t => {
+  const { root } = fixture(t), path = join(root, 'write-race.sqlite')
+  const stable = new MemoryStore(path, Date.now, { accountScope: () => 'account:a' })
+  const preference = { ...fact, level: 'preference' }
+  const existing = stable.save('account', preference, 's')
+  const changing = () => {
+    let calls = 0
+    return new MemoryStore(path, Date.now, { accountScope: () => ++calls === 1 ? 'account:a' : 'account:b' })
+  }
+  assert.throws(() => changing().save('account', { ...preference, key: 'new' }, 's'), /账号已切换/)
+  assert.throws(() => changing().save('account', { ...preference, content: 'changed', expected_revision: existing.revision }, 's'), /账号已切换/)
+  assert.throws(() => changing().forget('account', existing.id, existing.revision), /账号已切换/)
+  const rows = stable.list('account')
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].content, preference.content)
+  assert.equal(rows[0].revision, existing.revision)
 })
 
 test('durable Chinese and SKU recall, workspace isolation, global preferences', t => {

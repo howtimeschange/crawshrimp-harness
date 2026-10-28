@@ -14575,6 +14575,7 @@ def _public_settings() -> dict:
     public = json.loads(json.dumps(saved, ensure_ascii=False))
     public.pop("cloud_approval", None)  # Retired credentials never reach the renderer.
     ai = public.get("ai") if isinstance(public.get("ai"), dict) else {}
+    ai.pop("1xm", None)  # Retain legacy credentials on disk for rollback, never expose them.
     source_ai = saved.get("ai") if isinstance(saved.get("ai"), dict) else {}
     source_video = source_ai.get("video") if isinstance(source_ai.get("video"), dict) else {}
     source_llm = source_ai.get("llm") if isinstance(source_ai.get("llm"), dict) else {}

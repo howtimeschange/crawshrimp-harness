@@ -63,4 +63,5 @@ button, select { color: var(--text); background: var(--bg3); border: 1px solid v
 .model-grid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; }
 .model-grid span, footer span { font-size: 12px; color: var(--text2); }.model-grid .selected { border: 2px solid var(--orange, #ff7026); padding: 7px; }
 .primary { background: var(--orange, #ff7026); color: #161616; border-color: transparent; font-weight: 600; } button:disabled { opacity: .45; cursor: default; } button:focus-visible, select:focus-visible { outline: 2px solid var(--orange, #ff7026); outline-offset: 2px; }
+:global(:root[data-theme-preference="lake"]) .primary { color: var(--on-orange); }
 </style>

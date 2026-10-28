@@ -1,7 +1,7 @@
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
 const { applyManagedReasoning } = require('./managedReasoning')
-const catalog = ['low','medium','high','tiered'].map(e => ({id:`gemini-3.8-flash-${e}`,kind:'text',protocol:'openai'}))
+const catalog = ['low','medium','high','tiered'].map(e => ({id:`gemini-3.8-flash-${e}`,kind:'text',protocol:'openai',available:true}))
 test('Gemini canonical choice uses only offered route and forwards the selected effort', () => {
   for (const effort of ['low','medium','high']) {
     const request = {model:'gemini-3.8-flash',reasoning_effort:effort,messages:[{role:'user',content:'test'}]}
@@ -11,6 +11,13 @@ test('Gemini canonical choice uses only offered route and forwards the selected 
   assert.equal(applyManagedReasoning({model:'gemini-3.8-flash'},catalog).model,'gemini-3.8-flash-tiered')
   assert.throws(()=>applyManagedReasoning({model:'gemini-3.8-flash',reasoning_effort:'max'},catalog))
   assert.throws(()=>applyManagedReasoning({model:'gemini-3.8-flash',reasoning_effort:'high'},[]))
+})
+test('only available routes are selected, including partial catalogs', () => {
+  const high = catalog.filter(m => m.id.endsWith('-high'))
+  assert.equal(applyManagedReasoning({model:'gemini-3.8-flash'}, high).model, 'gemini-3.8-flash-high')
+  const partial = catalog.filter(m => m.id.endsWith('-medium') || m.id.endsWith('-tiered')).map(m => ({...m, available: !m.id.endsWith('-tiered')}))
+  assert.equal(applyManagedReasoning({model:'gemini-3.8-flash'}, partial).model, 'gemini-3.8-flash-medium')
+  assert.throws(() => applyManagedReasoning({model:'gemini-3.8-flash',reasoning_effort:'high'}, partial))
 })
 test('other models and legacy selections retain original payload',()=>{
   for(const model of ['gpt-6.1-sol','deepseek-flash','gemini-3.8-flash-low','gpt-image-2.5-flare']){

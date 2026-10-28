@@ -7,14 +7,16 @@
   </section>
 </template>
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { IconPuzzle } from '@tabler/icons-vue'
-const props = defineProps({ panel: { type: String, required: true } })
+const props = defineProps({ panel: { type: String, required: true }, theme: { type: String, default: 'dark' }, themePreference: { type: String, default: 'system' } })
 const url = ref(''), error = ref(''), frame = ref(null)
 let alive = true
 async function load() { error.value = ''; try { const runtime = await window.cs.agentApi('GET', '/agent/runtime'); if (!alive) return; if (!runtime.web_origin || runtime.state !== 'ready') throw Error('请先启动智能体运行时。'); const target = new URL(runtime.web_origin); target.searchParams.set('csPanel', props.panel); target.searchParams.set('csRuntimeGeneration', runtime.generation); url.value = target.href } catch (e) { if (alive) error.value = e.message || '加载失败' } }
-function syncTheme() { const theme = document.documentElement.dataset.theme || 'dark'; frame.value?.contentWindow?.postMessage({ __crawshrimp: 'theme', theme }, new URL(url.value).origin) }
-onMounted(load); onBeforeUnmount(() => { alive = false })
+function syncTheme() { if (url.value) frame.value?.contentWindow?.postMessage({ __crawshrimp: 'theme', theme: props.theme, skin: props.themePreference === 'lake' ? 'lake' : 'default' }, new URL(url.value).origin) }
+function onMessage(event) { if (url.value && event.source === frame.value?.contentWindow && event.origin === new URL(url.value).origin && event.data?.__crawshrimp === 'workspace-ready') syncTheme() }
+watch(() => [props.theme, props.themePreference], syncTheme)
+onMounted(() => { window.addEventListener('message', onMessage); void load() }); onBeforeUnmount(() => { alive = false; window.removeEventListener('message', onMessage) })
 </script>
 <style scoped>
 .native-runtime-panel { width: 100%; height: calc(100dvh - 160px); min-height: 0; display: flex; flex-direction: column; color: var(--text); }

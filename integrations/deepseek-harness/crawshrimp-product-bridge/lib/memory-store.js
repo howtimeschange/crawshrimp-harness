@@ -15,13 +15,20 @@ export function safeText(value, max = 2000) {
 // One short-lived connection per operation: no handles retained by scoped plugins.
 // SQLite transactions serialize writes across sessions and runtime processes.
 export class MemoryStore {
-  constructor(path, now = Date.now, { globalScope = 'global', assertAccount = () => {} } = {}) {
-    this.path = path; this.now = now; this.globalScope = globalScope; this.assertAccount = assertAccount
+  constructor(path, now = Date.now, { globalScope = 'global', assertAccount = () => {}, accountScope = () => null } = {}) {
+    this.path = path; this.now = now; this.globalScope = globalScope; this.assertAccount = assertAccount; this.accountScope = accountScope
   }
-  physicalScope(scope) { return scope === 'global' ? this.globalScope : scope }
-  logicalRow(row) { return row?.scope === this.globalScope ? { ...row, scope: 'global' } : row }
-  withDb(fn) {
+  physicalScope(scope, account) {
+    if (scope === 'account') { if (!account) throw new Error('请先登录对应账号后访问账号记忆'); return account }
+    return scope === 'global' ? this.globalScope : scope
+  }
+  logicalRow(row, account) {
+    if (row?.scope === this.globalScope) return { ...row, scope: 'global' }
+    return account && row?.scope === account ? { ...row, scope: 'account' } : row
+  }
+  withDb(fn, { write = false } = {}) {
     this.assertAccount()
+    const account = this.accountScope()
     mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 })
     const db = new DatabaseSync(this.path)
     try {
@@ -36,46 +43,52 @@ export class MemoryStore {
         CREATE INDEX IF NOT EXISTS memory_scope ON memories(scope);`)
       if (!db.prepare('PRAGMA table_info(memories)').all().some(r => r.name === 'expires_verified'))
         db.exec('ALTER TABLE memories ADD COLUMN expires_verified INTEGER NOT NULL DEFAULT 0')
-      return fn(db)
+      if (write) db.exec('BEGIN IMMEDIATE')
+      try {
+        const result = fn(db, account)
+        if (this.accountScope() !== account) throw new Error('账号已切换，请重试记忆操作')
+        if (write) db.exec('COMMIT')
+        return result
+      } catch (error) {
+        if (write) db.exec('ROLLBACK')
+        throw error
+      }
     } finally { db.close() }
   }
   save(scope, input, session) {
     const key = safeText(input.key, 120), content = safeText(input.content)
     const evidence = safeText(input.evidence, 1000)
     if (!LEVELS.includes(input.level)) throw new Error('未知记忆类型')
-    if (scope === 'global' && input.level !== 'preference') throw new Error('全局记忆仅用于用户偏好；业务事实请存当前工作区')
-    scope = this.physicalScope(scope)
+    if ((scope === 'global' || scope === 'account') && input.level !== 'preference') throw new Error('全局记忆仅用于用户偏好；业务事实请存当前工作区')
     const changesExpiry = Object.hasOwn(input, 'ttl_days')
     const days = changesExpiry ? input.ttl_days : (input.level === 'fact' ? 30 : 0)
     if (!Number.isInteger(days) || days < 0 || days > 3650 || (input.level === 'fact' && days === 0)) throw new Error('事实须设置 1–3650 天有效期；其他类型可用 0 表示长期')
     const now = this.now()
-    return this.withDb(db => {
-      db.exec('BEGIN IMMEDIATE')
-      try {
-        const old = db.prepare('SELECT * FROM memories WHERE scope=? AND key=?').get(scope, key)
-        if (old && scope.startsWith('account:') && !old.expires_verified)
-          throw new Error('这条账号记忆的有效期尚未同步，请连接新版服务后再纠正')
-        if (old && input.expected_revision !== old.revision) throw new Error('该记忆已存在或发生变化，请先查询并提供 expected_revision 后纠正')
-        if (!old && input.expected_revision != null) throw new Error('待纠正记忆不存在')
-        const id = old?.id || randomUUID()
-        const expiry = old && !changesExpiry ? old.expires_at : days ? now + days * 86400000 : null
-        if (input.level === 'fact' && expiry === null) throw new Error('事实须设置有效期')
-        db.prepare(`INSERT INTO memories(id,scope,key,level,content,evidence,session,created_at,updated_at,expires_at,expires_verified)
-          VALUES(?,?,?,?,?,?,?,?,?,?,1) ON CONFLICT(scope,key) DO UPDATE SET
-          level=excluded.level,content=excluded.content,evidence=excluded.evidence,session=excluded.session,
-          updated_at=excluded.updated_at,expires_at=excluded.expires_at,expires_verified=1,revision=memories.revision+1`)
-          .run(id, scope, key, input.level, content, evidence, session, now, now, expiry)
-        const row = db.prepare('SELECT * FROM memories WHERE id=?').get(id)
-        db.exec('COMMIT'); return this.logicalRow(row)
-      } catch (error) { db.exec('ROLLBACK'); throw error }
-    })
+    return this.withDb((db, account) => {
+      scope = this.physicalScope(scope, account)
+      const old = db.prepare('SELECT * FROM memories WHERE scope=? AND key=?').get(scope, key)
+      if (old && scope.startsWith('account:') && !old.expires_verified)
+        throw new Error('这条账号记忆的有效期尚未同步，请连接新版服务后再纠正')
+      if (old && input.expected_revision !== old.revision) throw new Error('该记忆已存在或发生变化，请先查询并提供 expected_revision 后纠正')
+      if (!old && input.expected_revision != null) throw new Error('待纠正记忆不存在')
+      const id = old?.id || randomUUID()
+      const expiry = old && !changesExpiry ? old.expires_at : days ? now + days * 86400000 : null
+      if (input.level === 'fact' && expiry === null) throw new Error('事实须设置有效期')
+      db.prepare(`INSERT INTO memories(id,scope,key,level,content,evidence,session,created_at,updated_at,expires_at,expires_verified)
+        VALUES(?,?,?,?,?,?,?,?,?,?,1) ON CONFLICT(scope,key) DO UPDATE SET
+        level=excluded.level,content=excluded.content,evidence=excluded.evidence,session=excluded.session,
+        updated_at=excluded.updated_at,expires_at=excluded.expires_at,expires_verified=1,revision=memories.revision+1`)
+        .run(id, scope, key, input.level, content, evidence, session, now, now, expiry)
+      const row = db.prepare('SELECT * FROM memories WHERE id=?').get(id)
+      return this.logicalRow(row, account)
+    }, { write: true })
   }
   list(scope, includeExpired = false) {
-    return this.withDb(db => db.prepare(`SELECT * FROM memories WHERE (scope=? OR scope=?)
+    return this.withDb((db, account) => db.prepare(`SELECT * FROM memories WHERE (scope=? OR scope=? OR scope=?)
       AND (scope NOT LIKE 'account:%' OR expires_verified=1)
       ${includeExpired ? '' : 'AND (expires_at IS NULL OR expires_at > ?)'} ORDER BY updated_at DESC, id`)
-      .all(...(includeExpired ? [this.physicalScope(scope), this.globalScope] : [this.physicalScope(scope), this.globalScope, this.now()]))
-      .map(row => this.logicalRow(row)))
+      .all(...(includeExpired ? [this.physicalScope(scope, account), this.globalScope, account || ''] : [this.physicalScope(scope, account), this.globalScope, account || '', this.now()]))
+      .map(row => this.logicalRow(row, account)))
   }
   search(scope, query, limit = 8) {
     const rows = this.list(scope)
@@ -85,10 +98,10 @@ export class MemoryStore {
       .map(hit => ({ ...byId.get(hit.id), score: hit.score }))
   }
   forget(scope, id, revision) {
-    return this.withDb(db => {
-      const result = db.prepare('DELETE FROM memories WHERE scope=? AND id=? AND revision=?').run(this.physicalScope(scope), id, revision)
+    return this.withDb((db, account) => {
+      const result = db.prepare('DELETE FROM memories WHERE scope=? AND id=? AND revision=?').run(this.physicalScope(scope, account), id, revision)
       if (!result.changes) throw new Error('记忆不存在、作用域不匹配或版本已变化；请重新查询')
       return { forgotten: id, note: '已从长期记忆库删除；历史会话中的原始消息和旧快照不会被改写。' }
-    })
+    }, { write: true })
   }
 }

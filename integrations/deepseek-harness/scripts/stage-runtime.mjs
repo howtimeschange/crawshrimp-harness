@@ -112,7 +112,6 @@ const required = [
   'node_modules/crawshrimp-product-bridge/lib/index.js',
   'node_modules/crawshrimp-product-bridge/lib/context-tools.js',
   'node_modules/crawshrimp-product-bridge/lib/memory.js',
-  'node_modules/crawshrimp-product-bridge/lib/apps.js',
   'node_modules/crawshrimp-product-bridge/lib/memory-store.js',
   'node_modules/crawshrimp-product-bridge/lib/session-state.js',
   'node_modules/crawshrimp-product-bridge/lib/memory-ranking.js',

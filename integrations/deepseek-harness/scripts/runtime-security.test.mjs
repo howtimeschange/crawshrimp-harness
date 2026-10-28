@@ -182,7 +182,8 @@ test('Office ZIP parser rejects malformed ZIP64 and native converter renders a g
   await assert.rejects(converter.render({ inputPath: invalidInput, outputPath: join(directory, 'invalid.pdf') }), /invalid|bounded|ZIP|document/i)
 })
 
-const bmallRoot = join(runtimeRoot, 'skills/cli/bmall-cli')
+const { resolveBuiltinCliRoot } = createRequire(import.meta.url)(join(integrationRoot, 'worker/builtin-runtime.cjs'))
+const bmallRoot = join(resolveBuiltinCliRoot(runtimeRoot), 'bmall-cli')
 test('Bmall Zod4 retains configuration records, defaults and strict order validation', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'c50-security-bmall-'))
   t.after(() => rm(directory, { recursive: true, force: true }))

@@ -31,7 +31,7 @@
               <h3>主题</h3><p class="panel-description">{{ activePanelDescription }}</p>
             </div>
             <span class="badge neutral">
-              当前为{{ props.effectiveTheme === 'light' ? '浅色' : '深色' }}
+              当前为{{ props.themePreference === 'lake' ? '湖光' : props.effectiveTheme === 'light' ? '浅色' : '深色' }}
             </span>
           </div>
 
@@ -68,7 +68,7 @@
           </div>
 
           <div class="appearance-note">
-            <span>品牌橙色、状态色和功能布局保持不变，仅调整背景、文字、边框和浮层层级。</span>
+            <span>湖光以白色与湖水绿呈现，状态颜色和功能布局保持不变。</span>
           </div>
         </section>
 
@@ -588,7 +588,7 @@
           <VideoProviderSettings :config="cfg" :save="saveVideoProviderConfig" />
         </section>
 
-        <NativeRuntimePanel v-else-if="activePanelId === 'plugins'" panel="plugins" />
+        <NativeRuntimePanel v-else-if="activePanelId === 'plugins'" panel="plugins" :theme="props.effectiveTheme" :theme-preference="props.themePreference" />
         <AccountPanel v-else-if="activePanelId === 'account'" key="account" @login="emit('login')" @navigate="focusPanel" @catalog-updated="refreshManagedProviders" />
         <UsagePanel v-if="usagePanelMountedOnce" v-show="activePanelId === 'account-usage'" :active="activePanelId === 'account-usage'" />
         <!-- Keep the authenticated IM iframe mounted while switching panels. -->
@@ -908,7 +908,7 @@ function onImSettingsFrameLoad(event) {
   const frameWindow = event?.target?.contentWindow || imSettingsFrame.value?.contentWindow
   if (!frameWindow || !imSettingsUrl.value) return
   try {
-    frameWindow.postMessage({ __crawshrimp: 'theme', theme: props.effectiveTheme }, new URL(imSettingsUrl.value).origin)
+    frameWindow.postMessage({ __crawshrimp: 'theme', theme: props.effectiveTheme, skin: props.themePreference === 'lake' ? 'lake' : 'default' }, new URL(imSettingsUrl.value).origin)
   } catch {
     // Runtime may have restarted between iframe load and message delivery.
   }
@@ -922,7 +922,8 @@ function onImSettingsMessage(event) {
   } catch {
     return
   }
-  if (event.data?.__crawshrimp === 'im-settings-ready') imSettingsReady.value = true
+  if (event.data?.__crawshrimp === 'im-settings-ready') { imSettingsReady.value = true; onImSettingsFrameLoad() }
+  if (event.data?.__crawshrimp === 'workspace-ready') onImSettingsFrameLoad()
 }
 
 async function refreshAgentRuntime() {
@@ -1046,6 +1047,7 @@ const themeOptions = [
   { value: 'system', label: '系统', description: '跟随 macOS / Windows' },
   { value: 'light', label: '浅色', description: '明亮、清晰' },
   { value: 'dark', label: '深色', description: '低光、专注' },
+  { value: 'lake', label: '湖光', description: '白底 · 湖水绿' },
 ]
 
 const isMacOS = window.cs?.platform === 'darwin'
@@ -2076,7 +2078,7 @@ watch(activePanelId, panelId => {
   if (panelId === 'ai-agent') refreshAgentRuntime()
 })
 
-watch(() => props.effectiveTheme, () => {
+watch(() => [props.effectiveTheme, props.themePreference], () => {
   if (activePanelId.value === 'im-bots') onImSettingsFrameLoad()
 })
 
@@ -2345,7 +2347,7 @@ watch(imSettingsUrl, () => {
 
 .theme-options {
   display: grid;
-  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 14px;
 }
 
@@ -2462,6 +2464,13 @@ watch(imSettingsUrl, () => {
   background: #222229;
   border-color: #393943;
 }
+
+.theme-preview-lake { border-color: #dfe4df; background: #ffffff; }
+.theme-preview-lake .theme-preview-titlebar { background: #ffffff; border-color: #dfe4df; }
+.theme-preview-lake .theme-preview-sidebar { background: #f5f6f5; border-color: #dfe4df; }
+.theme-preview-lake .theme-preview-canvas { background: #ffffff; }
+.theme-preview-lake .theme-preview-canvas i { background: #dfe4df; }
+.theme-preview-lake .theme-preview-canvas i:nth-child(3) { background: #315c43; border-color: #315c43; }
 
 .theme-preview-system {
   background: linear-gradient(90deg, #f4f4f5 0 50%, #1a1a1f 50%);

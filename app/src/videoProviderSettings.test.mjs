@@ -19,17 +19,24 @@ function fixture(save, config = {}) {
   const app = renderer.createApp(Component, { save, config }), vm = app.mount({})
   return { app, state: vm.$.setupState }
 }
-test('Seedance editor uses the Semir default and saves only its own nonblank fields', async () => {
+test('Seedance editor requires an explicit route and saves only its own nonblank fields', async () => {
   const calls=[], f=fixture(async patch=>calls.push(patch), { 'ai.video.bailian_api_key':'unrelated-key', 'ai.video.bailian_upload_api_key':'unrelated-upload', 'ai.video.seedance_api_key':AI_VIDEO_MASKED_CREDENTIAL_VALUE })
   try {
     await f.state.openEditor('seedance')
-    assert.equal(f.state.defaults['ai.video.seedance_base_url'], 'https://ai-aigw.semir.com/doubao-seedance/api/v3')
+    assert.equal(f.state.defaults['ai.video.seedance_base_url'], undefined)
     assert.deepEqual(f.state.draft, { 'ai.video.seedance_api_key':'', 'ai.video.seedance_base_url':'' })
     f.state.draft['ai.video.seedance_api_key']='fixture-new-key'
-    f.state.draft['ai.video.seedance_base_url']=AI_VIDEO_CONNECTION_DEFAULTS['ai.video.seedance_base_url']
+    f.state.draft['ai.video.seedance_base_url']='https://ai-aigw.semir.com/doubao-seedance/api/v3'
     await f.state.saveEditor()
     assert.deepEqual(calls,[{ 'ai.video.seedance_api_key':'fixture-new-key', 'ai.video.seedance_base_url':'https://ai-aigw.semir.com/doubao-seedance/api/v3' }])
     assert.deepEqual(f.state.draft,{});assert.equal(f.state.editor,'');assert.match(f.state.notice,/已保存/)
+  } finally { f.app.unmount() }
+})
+test('new Seedance key cannot be saved without an explicit endpoint', async () => {
+  const calls=[],f=fixture(async patch=>calls.push(patch))
+  try {
+    await f.state.openEditor('seedance');f.state.draft['ai.video.seedance_api_key']='fixture-key';await f.state.saveEditor()
+    assert.match(f.state.error,/服务地址/);assert.equal(calls.length,0)
   } finally { f.app.unmount() }
 })
 test('OSS uploads remain separate from generation credentials', async () => {
@@ -53,7 +60,7 @@ test('blank or masked credentials never replace a stored key', async () => {
 test('failure keeps a retryable draft, cancellation and unmount clear credentials', async () => {
   const f=fixture(async()=>{throw Error('fixture offline')})
   try {
-    await f.state.openEditor('seedance');f.state.draft['ai.video.seedance_api_key']='fixture-key';await f.state.saveEditor()
+    await f.state.openEditor('seedance');f.state.draft['ai.video.seedance_api_key']='fixture-key';f.state.draft['ai.video.seedance_base_url']='https://example.test';await f.state.saveEditor()
     assert.equal(f.state.error,'fixture offline');assert.equal(f.state.editor,'seedance');assert.equal(f.state.saving,false)
     assert.equal(f.state.draft['ai.video.seedance_api_key'],'fixture-key')
     f.state.closeEditor();assert.deepEqual(f.state.draft,{})
@@ -65,7 +72,7 @@ test('an in-flight save cannot be submitted twice or silently dismissed', async 
   let release,calls=0
   const f=fixture(()=>{calls++;return new Promise(resolve=>{release=resolve})})
   try {
-    await f.state.openEditor('seedance');f.state.draft['ai.video.seedance_api_key']='fixture-key'
+    await f.state.openEditor('seedance');f.state.draft['ai.video.seedance_api_key']='fixture-key';f.state.draft['ai.video.seedance_base_url']='https://example.test'
     const pending=f.state.saveEditor();await nextTick()
     await f.state.saveEditor();f.state.closeEditor();await f.state.openEditor('upload')
     assert.equal(calls,1);assert.equal(f.state.editor,'seedance');assert.equal(f.state.saving,true)

@@ -9,12 +9,17 @@ function applyManagedReasoning(body, catalog) {
   if (effort !== undefined && !['low', 'medium', 'high'].includes(effort)) {
     throw new Error('此模型不支持所选推理档位')
   }
-  const available = new Set(catalog.filter(m => m.kind === 'text' && m.protocol === 'openai').map(m => m.id))
+  const available = new Set(catalog.filter(m => m.kind === 'text' && m.protocol === 'openai' && m.available === true).map(m => m.id))
   const candidate = `${model}-${effort ?? 'tiered'}`
   if (available.has(candidate)) return { ...body, model: candidate }
   if (available.has(model)) return body
   // Default must preserve a real account route; never substitute an explicit effort.
   if (effort === undefined && available.has(`${model}-medium`)) return { ...body, model: `${model}-medium` }
+  if (effort === undefined) {
+    for (const fallback of ['low', 'high']) {
+      if (available.has(`${model}-${fallback}`)) return { ...body, model: `${model}-${fallback}` }
+    }
+  }
   throw new Error('账号当前未开放此模型的推理档位，请刷新模型列表')
 }
 module.exports = { applyManagedReasoning }

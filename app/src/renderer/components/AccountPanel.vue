@@ -250,6 +250,7 @@ button { border: 1px solid var(--border, #555); border-radius: 8px; background: 
 button.primary { background: var(--orange-strong, #c94d16); color: #fff; border-color: var(--orange-strong, #c94d16); }
 button:disabled { opacity: .5; cursor: wait; }
 button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid #e77836; outline-offset: 3px; }
+:global(:root[data-theme-preference="lake"]) :is(button,input,summary):focus-visible { outline-color: var(--orange); }
 .account-modes { display: flex; gap: 8px; margin-bottom: 24px; }
 .account-modes .selected { border-color: var(--orange-text, #e77836); color: var(--orange-text, #e77836); }
 .account-identity { margin-bottom: 24px; }

@@ -37,10 +37,10 @@ def _text_model_budget(model):
     cap = MODEL_CAPABILITIES.get(aliases.get(model_id, model_id), {})
     def positive_int(value, fallback):
         return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else fallback
-    context = positive_int(model.get('context_window', model.get('contextWindow')), cap.get('context_window', 1_000_000))
+    context = positive_int(model.get('context_window', model.get('contextWindow')), cap.get('context_window', 128_000))
     output = positive_int(model.get('max_output_tokens', model.get('maxTokens')), cap.get('max_output_tokens', 8192))
-    return {'context_window': max(1_000_000, context),
-            'max_output_tokens': min(output, max(1_000_000, context))}
+    return {'context_window': context,
+            'max_output_tokens': min(output, context)}
 
 
 def reasoning_capability(model_id):

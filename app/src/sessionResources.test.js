@@ -21,18 +21,36 @@ function harness({ sessionId = 'a', storage = new Map() } = {}) {
     defineProps: () => props, defineEmits: () => {}, defineExpose: () => {},
     ref: value => ({ value }), computed: fn => ({ get value() { return fn() } }),
     watch: () => {}, onMounted: () => {}, onUnmounted: () => {},
-    setInterval: () => 1, clearInterval() {}, setTimeout, clearTimeout,
+    setInterval: () => 1, clearInterval() {}, setTimeout, clearTimeout, URLSearchParams,
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     window: { innerWidth: 1600, innerHeight: 960, addEventListener: (name, fn) => pointerEvents.set(name, fn), removeEventListener: name => pointerEvents.delete(name), cs: {
       agentApi: method => method === 'POST' ? Promise.resolve({}) : new Promise(resolve => requests.push(resolve)),
       listAgentBrowserTabs: async () => ({ ok: true, tabs: [{ id: 'one' }, { id: 'two' }] }),
     } },
   }
-  vm.runInNewContext(script + '\nglobalThis.h = { dragOverResource, dropTarget, clearTabDrag, activePaneTab, switchPane, changeBrowserLayout, collapseBrowser, resizeSplit, startTabDrag, dropResource, tabArrow, splitRatio, draggedTab, retainedTabs, syncSessionPanel, refresh, workTabs, activeIds, split, focusedPane, effectiveSplit, openResource, closeResource, toggleSplit, followBrowserActivity, browserActivity, activeTabId, opened, selection, artifacts, tabs, unseen, openBrowser, back, width, adjustWidth, miniTab, browserReady, resize, onViewportResize, togglePanel, compactOpen, searching, query, toggleSearch, closeSearch, searchInput, searchButton, filteredTabs, filteredArtifacts };', context)
+  vm.runInNewContext(script + '\nglobalThis.h = { dragOverResource, dropTarget, clearTabDrag, activePaneTab, switchPane, changeBrowserLayout, collapseBrowser, resizeSplit, startTabDrag, dropResource, tabArrow, splitRatio, draggedTab, retainedTabs, syncSessionPanel, refresh, workTabs, activeIds, split, focusedPane, effectiveSplit, openResource, openArtifact, openCurrentArtifact, currentFileAvailable, error, closeResource, toggleSplit, followBrowserActivity, browserActivity, activeTabId, opened, selection, artifacts, tabs, unseen, openBrowser, back, width, adjustWidth, miniTab, browserReady, resize, onViewportResize, togglePanel, compactOpen, searching, query, toggleSearch, closeSearch, searchInput, searchButton, filteredTabs, filteredArtifacts };', context)
   return { ...context.h, props, requests, pointerEvents, viewport: context.window, storage,
     enterSession(id, _old, phase = id ? 'active' : 'hero') { props.sessionId = id; props.conversationPhase = phase; context.h.syncSessionPanel() },
   }
 }
+
+test('unavailable snapshot requires explicit current-file action and fences session changes', async () => {
+  const h = harness({ sessionId: 'a' }), opened = []
+  h.viewport.cs.openFile = async path => { opened.push(path); return { ok: true } }
+  const item = { filename:'large.mp4', file_snapshot:{ status:'too_large', version_id:'version-1' } }
+  assert.equal(h.currentFileAvailable(item), true)
+  h.openArtifact(item)
+  assert.match(h.error.value, /未保存历史版本/)
+  const first = h.openCurrentArtifact(item)
+  h.requests.shift()({ path:'/tmp/large.mp4' })
+  await first
+  assert.deepEqual(opened, ['/tmp/large.mp4'])
+  const second = h.openCurrentArtifact(item)
+  h.props.sessionId = 'b'
+  h.requests.shift()({ path:'/tmp/large.mp4' })
+  await second
+  assert.deepEqual(opened, ['/tmp/large.mp4'])
+})
 
 test('new-chat page stays collapsed and the first actual session opens by default', () => {
   const h = harness({ sessionId: '' })

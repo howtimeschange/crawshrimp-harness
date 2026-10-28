@@ -13,7 +13,7 @@ test('AI image app shell keeps DSH navigation mounted behind a bounded overlay',
   assert.match(app, /<AgentWebView[\s\S]*:nav-items="filteredNavItems"/)
   assert.match(app, /class="embed-overlay"/)
   assert.match(app, /:style="\{ left: `\$\{embedLeft\}px` \}"/)
-  assert.match(app, /const embedLeft = computed\(\(\) => \(activeScript\.value \? 0 : railWidth\.value\)\)/)
+  assert.match(app, /const embedLeft = computed\(\(\) => \(currentView\.value === 'settings' \|\| activeScript\.value \? 0 : railWidth\.value\)\)/)
 })
 
 test('AI image workbench switches between input and result panes instead of stacking a broken narrow layout', () => {

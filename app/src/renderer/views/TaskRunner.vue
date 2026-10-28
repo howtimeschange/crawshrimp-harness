@@ -6009,6 +6009,8 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 .btn-template:hover { background: rgba(255, 106, 41, 0.16); border-color: rgba(255, 106, 41, 0.42); }
+:global(:root[data-theme-preference="lake"] .btn-template) { background: rgba(var(--orange-rgb), 0.08); border-color: rgba(var(--orange-rgb), 0.28); }
+:global(:root[data-theme-preference="lake"] .btn-template:hover) { background: rgba(var(--orange-rgb), 0.14); border-color: rgba(var(--orange-rgb), 0.42); }
 .btn-template:disabled { opacity: 0.45; cursor: not-allowed; }
 .template-list {
   display: flex;

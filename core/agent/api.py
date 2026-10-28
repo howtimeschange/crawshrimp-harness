@@ -1339,6 +1339,37 @@ def session_resources(runtime_session_id: str) -> dict:
             "tabs": list(tabs.values()), "activeTabId": active, "browserActivity": activity}
 
 
+@router.get("/session-resources/current-file")
+def current_artifact_file(runtime_session_id: str, version_id: str) -> dict:
+    """Resolve a failed local snapshot only after an explicit desktop action.
+
+    This is not a versioned delivery: refuse replacement, symlinks and stale
+    identities. The operating system may still observe later changes.
+    """
+    import os
+    import stat
+    from pathlib import Path
+    from core.artifact_version import file_version
+
+    if not runtime_session_id or not version_id:
+        raise HTTPException(400, "缺少会话或文件标识")
+    items = session_resources(runtime_session_id)["artifacts"]
+    item = next((row for row in items if (row.get("file_snapshot") or {}).get("version_id") == version_id), None)
+    if not item or (item.get("file_snapshot") or {}).get("status") not in ("too_large", "quota_exceeded"):
+        raise HTTPException(404, "未找到可打开的本地原文件")
+    path = Path(str(item.get("source_path") or ""))
+    expected = item.get("source_file_version")
+    try:
+        if not path.is_absolute() or not isinstance(expected, dict):
+            raise OSError("invalid source")
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode) or file_version(info) != expected:
+            raise OSError("changed source")
+    except (OSError, ValueError):
+        raise HTTPException(409, "原文件已变化或不可用，请在原目录中重新确认")
+    return {"path": str(path), "versioned": False}
+
+
 class SessionPageRequest(BaseModel):
     runtime_session_id: str
 
