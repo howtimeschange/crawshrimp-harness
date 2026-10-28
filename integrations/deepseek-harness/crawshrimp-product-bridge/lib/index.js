@@ -50,6 +50,10 @@ const OUTPUT_CONTINUATION_MAX_CHARS = 2_000
 // snapshot immediately before an Automation prompt and removes it as that run
 // settles; no interactive Session permission state is changed or persisted.
 const automationNativePolicies = new Map()
+// Memory assembly performs a read without a tool call; keep it outside scoped automation runs.
+export function hasAutomationNativePolicy(sessionId) {
+  return automationNativePolicies.has(String(sessionId || ''))
+}
 
 // Read-only presentation hint. Returning tool names never grants execution;
 // automationNativeToolDecision and the MCP lease policy remain authoritative.
@@ -595,7 +599,7 @@ function modelSelectionFromValue(value) {
   }
 }
 
-function currentSessionModelSelection(ctx, agent) {
+export function currentSessionModelSelection(ctx, agent) {
   const session = agent?.session
   const events = typeof session?.snapshotEvents === 'function' ? session.snapshotEvents() : (Array.isArray(session?.events) ? session.events : [])
   for (let index = events.length - 1; index >= 0; index -= 1) {

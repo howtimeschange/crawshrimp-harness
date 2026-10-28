@@ -1,0 +1,19 @@
+{
+  "id": "C1-compact-transparent-avatar",
+  "originalSource": "/Users/xingyicheng/Documents/Codex/2026-10-25/harness-logo-github-https-github-com/outputs/app-ip-C1-20261026/01-brand-bust.png",
+  "sourceSha256": "d4e6c47c3e8a63c4e56af3eb83ce78d3c247685669c432e91f8f4a81b2dde57c",
+  "approvedAppIconSha256": "ae09393d9aa47cf11c32cf4052875f3fdd7cdeb93c98e24799eae39fb7749352",
+  "master": "crawshrimp-avatar-C1-source.png",
+  "derived": "crawshrimp-avatar-C1.png",
+  "derivedSha256": "79a6950d73bd5856258f6f2d09fee64173bc4a6052e7c5ef7425726d14262d40",
+  "derivation": "full 1254px image resized to 240px, centered on a transparent 256px canvas with 8px outer space; no crop, mask, recolor, or new generation",
+  "sourceManifest": "/Users/xingyicheng/Documents/Codex/2026-10-25/harness-logo-github-https-github-com/outputs/app-ip-C1-20261026/01-brand-bust-manifest.json",
+  "intendedDisplaySizes": [
+    20,
+    24,
+    28,
+    32,
+    44,
+    48
+  ]
+}

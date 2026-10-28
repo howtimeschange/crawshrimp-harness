@@ -38,3 +38,17 @@ test('invisible protocol steps do not split consecutive visible tool calls', asy
   nodes.get('protocol').data.status='interrupted'
   assert.deepEqual(groupToolCalls([...nodes.keys()],nodes).map(g=>g.keys), [['a'],['protocol'],['b']])
 })
+
+
+test('native process groups default to collapsed during live turns without replacing disclosure or saved preferences', async () => {
+  const { patchCompactChatSource } = await modulePromise
+  const installed = readFileSync(resolve(__dirname, '../../integrations/deepseek-harness/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js'), 'utf8')
+  const source = installed.replace('/* crawshrimp-native-compact-chat-v1 */\n', '').replace('const DEFAULT_TRANSCRIPT_VIEW_MODE = "standard";', 'const DEFAULT_TRANSCRIPT_VIEW_MODE = "detailed";')
+  const result = patchCompactChatSource(source)
+  assert.match(result, /const DEFAULT_TRANSCRIPT_VIEW_MODE = "standard";/)
+  assert.match(result, /saved \?\? this.defaultMode/)
+  assert.match(result, /function ProcessGroupHeader/)
+  assert.equal(result.replace('/* crawshrimp-native-compact-chat-v1 */\n', '').replace('const DEFAULT_TRANSCRIPT_VIEW_MODE = "standard";', 'const DEFAULT_TRANSCRIPT_VIEW_MODE = "detailed";'), source)
+  assert.equal(patchCompactChatSource(result), result)
+  assert.throws(() => patchCompactChatSource(source.replace('const DEFAULT_TRANSCRIPT_VIEW_MODE = "detailed";', 'const DEFAULT_TRANSCRIPT_VIEW_MODE = "changed";')), /anchor changed/)
+})

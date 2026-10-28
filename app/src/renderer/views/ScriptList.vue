@@ -123,9 +123,12 @@
     </div>
 
     <!-- 导入弹窗 -->
-    <div
+    <dialog
       v-if="showInstall"
+      ref="installDialog"
       class="modal-backdrop"
+      aria-label="导入脚本包"
+      @cancel.prevent="closeInstallModal"
       @click.self="closeInstallModal"
       @dragenter.prevent="handleDragEnter"
       @dragover.prevent="handleDragOver"
@@ -193,7 +196,7 @@
           </div>
         </template>
       </div>
-    </div>
+    </dialog>
   </div>
 </template>
 
@@ -206,6 +209,7 @@ import { partitionScriptGroups, shouldApplyScriptFavoritesSnapshot } from '../ut
 import { matchesScriptGroupSearch } from '../utils/scriptSearch'
 import { buildTaskOverviewProgress, isTaskLiveActive, resolveTaskProgressConfig } from '../utils/taskProgress'
 import { formatScriptListLoadError, isCoreStartupConnectionError } from '../utils/coreStartupErrors'
+import { useNativeDialog } from '../composables/useNativeDialog'
 
 const emit = defineEmits(['open-script', 'reload'])
 const scriptGroups = inject('scriptGroups')
@@ -218,6 +222,8 @@ const favoriteError = ref('')
 const favorites = ref({})
 const favoritePendingIds = ref(new Set())
 const showInstall = ref(false)
+const installDialog = ref(null)
+useNativeDialog(showInstall, installDialog)
 const installPath = ref('')
 const installType = ref('')
 const installMode = ref('copy')
@@ -840,9 +846,11 @@ onUnmounted(() => {
 .remove-btn:hover { color: var(--red); background: rgba(248,113,113,0.1); }
 
 /* Modal */
-.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.modal-backdrop { position: fixed; inset: 0; margin: 0; padding: 20px; width: 100vw; height: 100dvh; max-width: none; max-height: none; box-sizing: border-box; border: 0; color: var(--text); background: var(--scrim); align-items: center; justify-content: center; }
+.modal-backdrop[open] { display: flex; }
+.modal-backdrop::backdrop { background: transparent; }
 .modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 16px; padding: 28px; width: 500px; display: flex; flex-direction: column; gap: 16px; }
-.install-modal { width: 560px; }
+.install-modal { width: 560px; max-width: 100%; max-height: calc(100dvh - 40px); overflow-y: auto; box-sizing: border-box; }
 .install-modal.success {
   border-color: rgba(74, 222, 128, 0.25);
   background: linear-gradient(180deg, rgba(22, 101, 52, 0.12), var(--bg2));

@@ -892,6 +892,8 @@ def _workbench_transient_retry_patch(
     failure_patch: Mapping[str, Any],
     client: OneXMImageClient,
 ) -> dict[str, Any]:
+    if str(getattr(client, "provider", "")).startswith("custom-managed-"):
+        return dict(failure_patch)
     error = _compact(failure_patch.get("error"))
     try:
         retry_count = max(0, int(run.get("retry_count") or 0))

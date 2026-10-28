@@ -790,9 +790,7 @@ def test_agent_image_generate_passes_free_size_quality_and_4k_key_tier(tmp_path,
     monkeypatch.setattr("core.runtime_paths.data_root", lambda: tmp_path)
     data_sink.init_db()
     settings = {
-        "base_url": "https://one-xm-proxy.example/v1",
-        "ai.1xm.gpt_image_2k_key": "unit-2k-key",
-        "ai.1xm.gpt_image_4k_key": "unit-4k-key",
+        "ai.woka.api_key": "unit-provider-key",
     }
     captured = {}
 
@@ -820,19 +818,22 @@ def test_agent_image_generate_passes_free_size_quality_and_4k_key_tier(tmp_path,
             quality="high",
             output_format="jpeg",
             key_tier="4k",
+            model="woka/gpt-image-2",
         )
     finally:
         mcp_gateway.ctx.active_run = previous_run
 
     assert result["ok"] is True
+    assert "unit-provider-key" not in json.dumps(result)
+    assert result["data"]["model"] == "woka/gpt-image-2"
     assert result["data"]["size"] == "3840x2160"
     assert result["data"]["quality"] == "high"
     assert result["data"]["output_format"] == "jpeg"
-    assert result["data"]["key_tier"] == "4k"
+    assert result["data"]["key_tier"] == "ai.woka.api_key"
     assert captured["prompts"] == [{"prompt": "make a portrait", "count": 2}]
     assert captured["kwargs"]["settings"] is settings
     job = captured["job"]
-    assert job["model_key"] == "gpt-image-2"
+    assert job["model_key"] == "woka/gpt-image-2"
     assert job["params"]["size"] == "3840x2160"
     assert job["params"]["quality"] == "high"
     assert job["params"]["output_format"] == "jpeg"
@@ -1028,6 +1029,7 @@ def test_completed_run_broadcasts_artifacts(monkeypatch, tmp_path):
         run = {"run_id": "run-1", "session_id": "session-1", "status": "queued"}
         with (
             patch("core.agent.service.db.get_run", return_value=run),
+            patch("core.agent.service.db.mark_started_run_running", return_value=True),
             patch("core.agent.service.db.update_run"),
             patch("core.agent.service.db.update_turn"),
             patch("core.agent.service.db.update_session"),
@@ -1054,6 +1056,7 @@ def test_run_failure_before_status_assignment_keeps_original_error(monkeypatch, 
         run = {"run_id": "run-1", "session_id": "session-1", "status": "queued"}
         with (
             patch("core.agent.service.db.get_run", return_value=run),
+            patch("core.agent.service.db.mark_started_run_running", return_value=True),
             patch("core.agent.service.db.update_run") as update_run,
             patch("core.agent.service.db.update_turn"),
             patch("core.agent.service.db.update_session"),
@@ -1083,6 +1086,7 @@ def test_automation_execution_timeout_cancels_the_worker_and_projects_a_timeout(
         run = {"run_id": "run-1", "session_id": "session-1", "status": "queued"}
         with (
             patch("core.agent.service.db.get_run", return_value=run),
+            patch("core.agent.service.db.mark_started_run_running", return_value=True),
             patch("core.agent.service.db.update_run") as update_run,
             patch("core.agent.service.db.update_turn"),
             patch("core.agent.service.db.update_session"),
@@ -2311,11 +2315,12 @@ def test_dsh_web_profile_retains_official_pro_vision_bridge_and_other_image_rout
 
     profile = (Path(__file__).resolve().parents[1] / "integrations" / "deepseek-harness" / "profile" / "web" / "cordis.patch.yml").read_text(encoding="utf-8")
     assert re.search(r"id: gpt-5\.5[\s\S]*input: \[text, image\]", profile)
-    official_block = profile.split("crawshrimp-deepseek-official:", 1)[1].split("crawshrimp-overseas-openai:", 1)[0]
-    pro_block = official_block.split("- id: deepseek-v4-pro", 1)[1]
-    assert "input: [text]" in pro_block
-    assert "input: [text, image]" not in pro_block
-    assert re.search(r"id: deepseek-flash[\s\S]*input: \[text, image\]", profile)
+    from core.agent.service import _dsh_messages_settings
+    native = _dsh_messages_settings({})
+    models = {model["id"]: model for model in native["models"]}
+    assert models["deepseek-v4-pro"]["inputModalities"] == ["text"]
+    assert models["deepseek-flash"]["inputModalities"] == ["text", "image"]
+    assert "crawshrimp-deepseek-official:" not in profile
     glm_block = profile.split("crawshrimp-glm-official:", 1)[1].split("- id: session-persistence-jsonl", 1)[0]
     glm_flash_block = re.search(r"- id: glm-5\.3-flash\n(?P<block>[\s\S]*?)(?=\n\s+- id:)", glm_block)
     glm_53_block = re.search(r"- id: glm-5\.3\n(?P<block>[\s\S]*?)(?=\n\s+- id:)", glm_block)
@@ -2343,11 +2348,13 @@ def test_dsh_runtime_official_pro_keeps_paired_flash_vision_transport(tmp_path, 
         }
     custom = [{"id": "custom-pro", "models": [{"id": "deepseek-v4-pro"}]}]
     settings = _dsh_llm_pi_ai_settings(cfg, custom)
-    official = settings["providers"]["crawshrimp-deepseek-official"]
+    from core.agent.service import _dsh_messages_settings
+    assert "crawshrimp-deepseek-official" not in settings["providers"]
+    official = _dsh_messages_settings(cfg)
     pro = next(model for model in official["models"] if model["id"] == "deepseek-v4-pro")
     flash = next(model for model in official["models"] if model["id"] == "deepseek-flash")
-    assert pro["input"] == ["text"]
-    assert flash["input"] == ["text", "image"]
+    assert pro["inputModalities"] == ["text"]
+    assert flash["inputModalities"] == ["text", "image"]
     assert model_capabilities("deepseek-official-v4-pro", cfg)["input_modalities"] == ["text", "image"]
     if override:
         assert pro["name"] == "Edited Pro"
@@ -2361,8 +2368,8 @@ def test_dsh_runtime_official_pro_keeps_paired_flash_vision_transport(tmp_path, 
     import yaml
 
     saved = yaml.safe_load((tmp_path / "dsh-home/settings.yaml").read_text())
-    saved_models = saved["llm-pi-ai"]["providers"]["crawshrimp-deepseek-official"]["models"]
-    assert next(model for model in saved_models if model["id"] == "deepseek-v4-pro")["input"] == ["text"]
+    saved_models = saved["llm-deepseek"]["models"]
+    assert next(model for model in saved_models if model["id"] == "deepseek-v4-pro")["inputModalities"] == ["text"]
 
 
 @pytest.mark.parametrize("override", [False, True])
@@ -2418,38 +2425,18 @@ def test_dsh_native_deepseek_route_is_hidden_in_favor_of_crawshrimp_route():
     default_block = profile_patch.split("- id: agent-default-model", 1)[1].split("- id:", 1)[0]
     assert "CRAWSHRIMP_AGENT_PROVIDER ?? 'crawshrimp-deepseek-official'" in default_block
     assert "?? 'deepseek-official'" not in default_block
-    assert "disabled: true" in native_profile_block
+    assert "disabled: false" in native_profile_block
+    assert "baseURL: https://api.deepseek.com/anthropic" in native_profile_block
 
 
-def test_dsh_deepseek_official_models_expose_reasoning_efforts():
-    profile_patch = (Path(__file__).resolve().parents[1] / "integrations" / "deepseek-harness" / "profile" / "web" / "cordis.patch.yml").read_text(encoding="utf-8")
-    official_block = profile_patch.split("crawshrimp-deepseek-official:", 1)[1].split("crawshrimp-overseas-openai:", 1)[0]
-    flash_block = official_block.split("- id: deepseek-flash", 1)[1].split("- id:", 1)[0]
-    pro_block = official_block.split("- id: deepseek-v4-pro", 1)[1].split("- id:", 1)[0]
-    vision_block = official_block.split("- id: deepseek-flash", 1)[1]
-
-    assert "reasoning: high" not in official_block
-    for block in (flash_block, pro_block):
-        assert "reasoningEfforts:" in block
-        assert "low: low" in block
-        assert "high: high" in block
-        assert "max: max" in block
-    assert "input: [text, image]" in vision_block
-    assert "reasoningEfforts" in vision_block
-
-
-def test_dsh_runtime_settings_do_not_force_vision_models_to_text_reasoning_effort():
-    from core.agent.service import _dsh_llm_pi_ai_settings
-
-    settings = _dsh_llm_pi_ai_settings({"ai": {"llm": {}}}, [])
-    provider = settings["providers"]["crawshrimp-deepseek-official"]
-    flash = next(model for model in provider["models"] if model["id"] == "deepseek-flash")
-    vision = next(model for model in provider["models"] if model["id"] == "deepseek-flash")
-
-    assert "reasoning" not in provider
-    assert flash["reasoningEfforts"]["high"] == "high"
-    assert vision["input"] == ["text", "image"]
-    assert vision["reasoningEfforts"]["off"] == "off"
+def test_dsh_messages_preserves_native_capabilities():
+    from core.agent.service import _dsh_messages_settings
+    settings = _dsh_messages_settings({})
+    flash = next(m for m in settings["models"] if m["id"] == "deepseek-flash")
+    assert flash["inputModalities"] == ["text", "image"]
+    assert flash["systemPromptUpdate"] == "in-history"
+    assert flash["toolUpdate"] == "addition-only"
+    assert settings["reasoningEffort"] == "high"
 
 
 def test_dsh_runtime_guard_checks_rc1_and_dsh_im_contracts_with_verified_source_overlay():
@@ -2459,7 +2446,7 @@ def test_dsh_runtime_guard_checks_rc1_and_dsh_im_contracts_with_verified_source_
     assert "crawshrimp-dsh-im-411-product-patch-v1" in patcher
     assert "crawshrimp-dsh-im-411-natural-controls-v1" in patcher
     assert "crawshrimp-dsh-im-411-session-permission-v1" in patcher
-    assert '"0.1.2-rc.1"' in patcher
+    assert '"0.2.1-rc.2"' in patcher
     assert '"4.11.0"' in patcher
     assert "DEFAULT_INBOUND_TTL_HOURS = 168" in patcher
     assert "harness-session-binding.mjs" in patcher
@@ -2738,6 +2725,10 @@ def test_agent_model_catalog_endpoint_lists_configured_product_models(monkeypatc
     monkeypatch.delenv("CRAWSHRIMP_LLM_API_KEY", raising=False)
     monkeypatch.delenv("CRAWSHRIMP_DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("CRAWSHRIMP_GLM_API_KEY", raising=False)
+    # Catalog configuration must not depend on developer credentials.
+    for name in tuple(os.environ):
+        if name.startswith(("WOKA_IMAGE_", "SEMIR_IMAGE_")):
+            monkeypatch.delenv(name)
     cfg = {
         "ai": {
             "llm": {
@@ -2752,10 +2743,9 @@ def test_agent_model_catalog_endpoint_lists_configured_product_models(monkeypatc
                     "models": [{"id": "unit-model", "label": "Unit Model"}],
                 }],
             },
-            "1xm": {
-                "gpt_image_2k_key": "img-2k-secret",
-                "gemini_3_pro_image_preview_key": "gemini-pro-secret",
-            },
+            "woka": {"api_key": "img-provider-secret"},
+            "semir": {"gemini_api_key": "gemini-pro-secret"},
+            "1xm": {"gpt_image_2k_key": "retired-secret"},
         }
     }
     video_config = {
@@ -2796,15 +2786,19 @@ def test_agent_model_catalog_endpoint_lists_configured_product_models(monkeypatc
     assert llm_models["deepseek-official-flash"]["default"] is True
     assert llm_models["deepseek-official-v4-pro"]["configured"] is True
     assert llm_models["unit-model"]["provider"] == "unit-custom"
-    assert image_models["gpt-image-2k"]["configured"] is True
-    assert image_models["gpt-image-4k"]["configured"] is False
-    assert image_models["gemini-3-pro-image-preview"]["configured"] is True
+    assert image_models["woka/gpt-image-2"]["configured"] is True
+    assert image_models["semir/gpt-image-2"]["configured"] is False
+    assert image_models["semir/gemini-3-pro-image-preview"]["configured"] is True
+    assert all("/" in model_id for model_id in image_models)
+    assert all(model["provider"] != "1xm" for model in image_models.values())
+    assert groups["ai-image"]["configured_count"] == 5
     assert video_models["seedance-2.0"]["configured"] is True
     assert video_models["kling-v3"]["configured"] is False
     serialized = json.dumps(result, ensure_ascii=False)
     assert "sk-ds-official-unit" not in serialized
     assert "sk-custom-secret" not in serialized
-    assert "img-2k-secret" not in serialized
+    for secret in ("img-provider-secret", "gemini-pro-secret", "retired-secret"):
+        assert secret not in serialized
 
 
 def test_agent_start_generation_uses_authenticated_web_profile_without_install_write(tmp_path, monkeypatch):
@@ -2953,7 +2947,7 @@ def test_agent_start_generation_exposes_deepseek_compatibility_aliases_only_in_r
         {"ai": {"llm": {
             "api_key": "",
             "deepseek_api_key": "sk-ds-official-unit",
-            "deepseek_base_url": "https://api.deepseek.example/v1",
+            "deepseek_base_url": "https://api.deepseek.com/v1",
             "default_model": "deepseek-official-flash",
         }}},
     )
@@ -2966,7 +2960,7 @@ def test_agent_start_generation_exposes_deepseek_compatibility_aliases_only_in_r
     runtime_env = calls["worker_kwargs"]["runtime_env"]
     assert runtime_env["CRAWSHRIMP_DEEPSEEK_API_KEY"] == "sk-ds-official-unit"
     assert runtime_env["DEEPSEEK_API_KEY"] == "sk-ds-official-unit"
-    assert runtime_env["DEEPSEEK_BASE_URL"] == "https://api.deepseek.example/v1"
+    assert runtime_env["DEEPSEEK_BASE_URL"] == "https://api.deepseek.com/v1"
     assert "CRAWSHRIMP_DEEPSEEK_COMPAT_ALIAS" not in runtime_env
     assert "CRAWSHRIMP_DEEPSEEK_API_KEY" not in service_mod.os.environ
     settings = (data_root / "agent" / "dsh-home" / "settings.yaml").read_text(encoding="utf-8")
@@ -3038,7 +3032,8 @@ def test_dsh_settings_sync_writes_runtime_provider_profiles_without_secrets(tmp_
         "model": "deepseek-flash",
         "reasoningEffort": "high",
     }
-    assert "deepseek-flash" in [item["id"] for item in providers["crawshrimp-deepseek-official"]["models"]]
+    assert "crawshrimp-deepseek-official" not in providers
+    assert "deepseek-flash" in [item["id"] for item in settings["llm-deepseek"]["models"]]
     assert "glm-5.3-flash" in [item["id"] for item in providers["crawshrimp-glm-official"]["models"]]
     overseas_model_ids = {item["id"] for item in providers["crawshrimp-overseas-openai"]["models"]}
     assert {"gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"} <= overseas_model_ids
@@ -3235,15 +3230,21 @@ def test_deepseek_text_preserves_default_and_explicit_effort(tmp_path, model, ef
         )
         saved = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert saved["agent-default-model"].get("reasoningEffort") == effort
-        assert "reasoning" not in saved["llm-pi-ai"]["providers"]["crawshrimp-deepseek-official"]
+        assert "crawshrimp-deepseek-official" not in saved["llm-pi-ai"]["providers"]
+        assert saved["llm-deepseek"]["baseURL"] == "https://api.deepseek.com/anthropic"
 
 
-@pytest.mark.parametrize("tier,expected", [("", "4k"), ("4k", "4k"), ("2k", None)])
+@pytest.mark.parametrize("tier", ["", "4k", "2k"])
+@pytest.mark.parametrize("model,expected", [
+    ("woka/gpt-image-2", "ai.woka.api_key"),
+    ("semir/gemini-3-pro-image-preview", "ai.semir.gemini_api_key"),
+    ("semir/gpt-image-2", None),
+])
 @pytest.mark.parametrize("delivery_mode", ["connected", "no_emitter", "missing_file"])
-def test_image_config_selection_and_conversation_delivery(tmp_path, monkeypatch, tier, expected, delivery_mode):
+def test_image_config_selection_and_conversation_delivery(tmp_path, monkeypatch, tier, model, expected, delivery_mode):
     monkeypatch.setattr("core.runtime_paths.data_root", lambda: tmp_path)
     data_sink.init_db()
-    settings = {"ai.1xm.gpt_image_4k_key": "secret-test-4k"}
+    settings = {"ai.woka.api_key": "secret-test-woka", "ai.semir.gemini_api_key": "secret-test-gemini"}
     monkeypatch.setattr("core.api_server._resolve_one_xm_settings", lambda: settings)
     monkeypatch.setattr(mcp_gateway.ctx, "active_run", {"run_id": "image", "session_id": "session"})
     events = []
@@ -3255,22 +3256,28 @@ def test_image_config_selection_and_conversation_delivery(tmp_path, monkeypatch,
 
     def generate(job_uid, prompts, **kwargs):
         calls.append(job_uid)
-        assert data_sink.get_ai_image_job(job_uid)["params"]["model_key_tier"] == expected
+        job = data_sink.get_ai_image_job(job_uid)
+        assert job["model_key"] == model
+        assert job["params"].get("model_key_tier", "") == tier
+        assert kwargs["settings"] is settings
         return {"ok": True, "assets": [{"path": str(output)}], "output_dir": str(tmp_path)}
 
     monkeypatch.setattr("core.ai_image_service.generate_images_sync", generate)
-    result = mcp_gateway.tool_image_generate("winter jacket", size="1024x1024", key_tier=tier)
-    assert "secret-test-4k" not in json.dumps(result)
+    result = mcp_gateway.tool_image_generate("winter jacket", size="1024x1024", key_tier=tier, model=model)
+    for secret in settings.values():
+        assert secret not in json.dumps(result)
     if expected is None:
         assert not result["ok"]
         assert result["error"]["code"] == "MISSING_CONFIG"
-        assert result["error"]["configured_tiers"] == {"2k": False, "4k": True}
-        assert "2K 未配置、4K 已配置" in result["error"]["message"]
+        assert result["error"]["config_id"] == "ai.semir.gpt_api_key"
+        assert "ai.semir.gpt_api_key" in result["error"]["message"]
+        assert data_sink.list_ai_image_jobs() == []
         assert not calls
         assert not events
         return
     assert result["ok"]
     assert len(calls) == 1
+    assert result["data"]["model"] == model
     assert result["data"]["key_tier"] == expected
     delivery = result["data"]["delivery"]
     if delivery_mode == "connected":
@@ -3527,3 +3534,74 @@ def test_worker_run_result_keeps_existing_summary_preferred():
     summary = {"status": "failed", "reason": {"kind": "error", "error": {"code": "X"}}}
 
     assert _worker_run_result({"ok": False, "error": {"code": "WRAPPER"}, "summary": summary}) == summary
+
+
+@pytest.mark.parametrize("url", ["https://example.invalid/v1", "https://api.deepseek.com.evil.invalid", "http://api.deepseek.com", "https://api.deepseek.com?key=ignored"])
+def test_messages_route_rejects_third_party_without_blocking_other_providers(tmp_path, url):
+    from core.agent.service import _sync_dsh_default_model_settings, AgentModelConfigurationError
+    cfg = {"ai": {"llm": {"deepseek_base_url": url}}}
+    with pytest.raises(AgentModelConfigurationError):
+        _sync_dsh_default_model_settings(tmp_path, "crawshrimp-deepseek-official", "deepseek-flash", cfg)
+    assert not (tmp_path / "dsh-home/settings.yaml").exists()
+    _sync_dsh_default_model_settings(tmp_path, "crawshrimp-domestic-openai", "qwen3.7-plus", cfg)
+
+
+@pytest.mark.parametrize('ptc', [False, True])
+@pytest.mark.parametrize('failed', [False, True])
+def test_rc2_ecosystem_tool_projection(monkeypatch, tmp_path, ptc, failed):
+    async def scenario():
+        db = _init_temp_agent_db(monkeypatch, tmp_path)
+        db.create_session('eco-session', 'eco-native')
+        db.create_turn('eco-turn', 'eco-session', 1, 'eco-user')
+        run = db.create_run('eco-run', 'eco-session', 'eco-turn', 'p', 'm')
+        service = AgentService()
+        service.broadcast = AsyncMock()
+        deliveries = Mock(return_value=[{'artifact_id': 'asset-test'}])
+        monkeypatch.setattr('core.agent.artifact_delivery.collect_tool_deliveries', deliveries)
+        result = json.dumps({'ok': not failed, 'data': {'asset_id': 'test'}})
+        start = {'callId': 'eco-call', 'name': 'image_generate', 'arguments': {}}
+        finish = {'message': {'toolCallId': 'eco-call', 'content': [{'type': 'text', 'text': result}], 'isError': failed}}
+        if ptc:
+            start = {'subCallId': 'eco-call', 'parentCallId': 'code-call', 'name': 'image_generate', 'arguments': {}}
+            finish = {**start, 'content': [{'type': 'text', 'text': result}], 'isError': failed}
+        await service._project_event('eco-session', run, {'type': 'tool/ptc-dispatch-start' if ptc else 'tool/call', 'data': start})
+        await service._project_event('eco-session', run, {'type': 'tool/ptc-dispatch' if ptc else 'tool/result', 'data': finish})
+        call = db.get_tool_call('eco-run', 'eco-call')
+        assert call['status'] == ('failed' if failed else 'succeeded')
+        assert json.loads(call['result_json'])['text'] == result
+        assert deliveries.call_count == (0 if failed else 1)
+        completed = [c.args[3] for c in service.broadcast.await_args_list if c.args[2] == 'tool.completed']
+        assert completed[0]['is_error'] is failed
+        assert completed[0]['result'] == result
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('data,failed', [
+    ({'message': {'content': [{'type': 'text', 'text': '{"ok":false,"error":{"code":"GENERATION_FAILED"}}'}]}}, True),
+    ({'message': {'content': [{'type': 'tool-result', 'isError': True, 'content': 'legacy failure'}]}}, True),
+    ({'error': {'code': 'TIMEOUT'}, 'message': {'content': []}}, True),
+    ({'message': {'content': [{'type': 'text', 'text': '51'}]}}, False),
+])
+def test_tool_error_contract_formats(data, failed):
+    from core.agent.service import _tool_result_is_error
+    assert _tool_result_is_error(data) is failed
+
+
+def test_start_fence_does_not_start_canceled_run(monkeypatch, tmp_path):
+    agent_db = _init_temp_agent_db(monkeypatch, tmp_path)
+    agent_db.create_session("fence-session", "fence-runtime")
+    agent_db.create_run("fence-run", "fence-session", None, "provider", "model")
+    agent_db.update_run("fence-run", status="starting", started_at="2026-01-01T00:00:00Z")
+    agent_db.update_run("fence-run", status="canceled")
+    assert agent_db.mark_started_run_running("fence-run", "fence-session") is False
+    assert agent_db.get_run("fence-run")["status"] == "canceled"
+
+
+def test_start_fence_promotes_only_the_expected_session(monkeypatch, tmp_path):
+    agent_db = _init_temp_agent_db(monkeypatch, tmp_path)
+    agent_db.create_session("fence-session", "fence-runtime")
+    agent_db.create_run("fence-run", "fence-session", None, "provider", "model")
+    agent_db.update_run("fence-run", status="starting", started_at="2026-01-01T00:00:00Z")
+    assert agent_db.mark_started_run_running("fence-run", "other-session") is False
+    assert agent_db.mark_started_run_running("fence-run", "fence-session") is True
+    assert agent_db.get_run("fence-run")["status"] == "running"

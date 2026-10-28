@@ -1,6 +1,6 @@
 <template>
-  <div v-if="open" class="model-picker-backdrop" @click.self="$emit('close')" @keydown.esc.stop.prevent="$emit('close')">
-    <section ref="panel" class="model-picker" role="dialog" aria-modal="true" aria-label="选择 AI 模特" tabindex="-1" @keydown="trapDialogFocus">
+  <dialog v-if="open" ref="nativeDialog" class="model-picker-backdrop harness-modal-shell" aria-label="选择 AI 模特" @click.self="$emit('close')" @cancel.prevent="$emit('close')">
+    <section ref="panel" class="model-picker" tabindex="-1">
       <header><div><strong>选择 AI 模特</strong><p>按年龄和性别筛选</p></div><button type="button" @click="$emit('close')">关闭</button></header>
       <div class="filters">
         <label>年龄段<select v-model="age"><option value="">全部</option><option v-for="value in ages" :key="value">{{ value }}</option></select></label>
@@ -17,13 +17,16 @@
       </div>
       <footer><span>{{ draft?.label || '尚未选择模特' }}</span><button class="primary" type="button" :disabled="!draft" @click="$emit('select', draft)">确认选择</button></footer>
     </section>
-  </div>
+  </dialog>
 </template>
 <script setup>
+import { useNativeDialog } from '../composables/useNativeDialog'
 import { computed, nextTick, ref, watch } from 'vue'
 import { formatBalaModelDisplayLabel } from '../utils/balaAiVideoWorkflow'
-import { trapDialogFocus } from '../utils/dialogAccessibility.mjs'
+
 const props = defineProps({ open: Boolean, selected: Object })
+const nativeDialog = ref(null)
+useNativeDialog(computed(() => props.open), nativeDialog)
 defineEmits(['close', 'select'])
 const panel = ref(null), items = ref([]), loading = ref(false), error = ref(''), age = ref(''), gender = ref(''), draft = ref(null)
 let request = 0

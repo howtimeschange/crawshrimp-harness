@@ -1,0 +1,278 @@
+[
+  {
+    "round": 1,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "startup",
+    "elapsedMs": 1466
+  },
+  {
+    "round": 1,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "long-input",
+    "elapsedMs": 1281,
+    "success": true,
+    "metrics": {
+      "inputTokens": 10581,
+      "outputTokens": 5,
+      "cacheReadTokens": null,
+      "cacheWriteTokens": null
+    },
+    "tools": [],
+    "text": "READY-7319"
+  },
+  {
+    "round": 1,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "long-query",
+    "elapsedMs": 817,
+    "success": true,
+    "metrics": {
+      "inputTokens": 187,
+      "outputTokens": 2,
+      "cacheReadTokens": 10496,
+      "cacheWriteTokens": null
+    },
+    "tools": [],
+    "text": "1124"
+  },
+  {
+    "round": 1,
+    "label": "old",
+    "category": "compact",
+    "elapsedMs": 1757,
+    "result": {
+      "commandId": "cmd-bb7e5b74-1",
+      "result": {
+        "kind": "success",
+        "text": "Compacted 6 history items (~4886 tokens).",
+        "sourceEventSeq": 43
+      }
+    }
+  },
+  {
+    "round": 1,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "resume",
+    "elapsedMs": 493,
+    "success": true,
+    "metrics": {
+      "inputTokens": 818,
+      "outputTokens": 19,
+      "cacheReadTokens": 6016,
+      "cacheWriteTokens": null
+    },
+    "tools": [],
+    "text": "核验口令：LEDGER-7319\nRecord 160 库存数量：1124"
+  },
+  {
+    "round": 1,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "startup",
+    "elapsedMs": 1835
+  },
+  {
+    "round": 1,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "long-input",
+    "elapsedMs": 707,
+    "success": true,
+    "metrics": {
+      "inputTokens": 4748,
+      "outputTokens": 5,
+      "cacheReadTokens": 5120,
+      "cacheWriteTokens": 0
+    },
+    "tools": [],
+    "text": "READY-7319"
+  },
+  {
+    "round": 1,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "long-query",
+    "elapsedMs": 684,
+    "success": true,
+    "metrics": {
+      "inputTokens": 242,
+      "outputTokens": 2,
+      "cacheReadTokens": 9728,
+      "cacheWriteTokens": 0
+    },
+    "tools": [],
+    "text": "1124"
+  },
+  {
+    "round": 1,
+    "label": "new",
+    "category": "compact",
+    "elapsedMs": 2508,
+    "result": {
+      "commandId": "cmd-e64f7ddd-1",
+      "result": {
+        "kind": "success",
+        "text": "Compacted 6 history items (~4981 tokens).",
+        "sourceEventSeq": 32
+      }
+    }
+  },
+  {
+    "round": 1,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "resume",
+    "elapsedMs": 1035,
+    "success": true,
+    "metrics": {
+      "inputTokens": 873,
+      "outputTokens": 21,
+      "cacheReadTokens": 5248,
+      "cacheWriteTokens": 0
+    },
+    "tools": [],
+    "text": "本会话核验口令：LEDGER-7319\nRecord 160 库存数量：1124"
+  },
+  {
+    "round": 2,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "startup",
+    "elapsedMs": 1450
+  },
+  {
+    "round": 2,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "long-input",
+    "elapsedMs": 1623,
+    "success": true,
+    "metrics": {
+      "inputTokens": 268,
+      "outputTokens": 5,
+      "cacheReadTokens": 9600,
+      "cacheWriteTokens": 0
+    },
+    "tools": [],
+    "text": "READY-7319"
+  },
+  {
+    "round": 2,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "long-query",
+    "elapsedMs": 605,
+    "success": true,
+    "metrics": {
+      "inputTokens": 242,
+      "outputTokens": 2,
+      "cacheReadTokens": 9728,
+      "cacheWriteTokens": 0
+    },
+    "tools": [],
+    "text": "1124"
+  },
+  {
+    "round": 2,
+    "label": "new",
+    "category": "compact",
+    "elapsedMs": 3946,
+    "result": {
+      "commandId": "cmd-740034d6-1",
+      "result": {
+        "kind": "success",
+        "text": "Compacted 6 history items (~4981 tokens).",
+        "sourceEventSeq": 32
+      }
+    }
+  },
+  {
+    "round": 2,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "resume",
+    "elapsedMs": 1535,
+    "success": true,
+    "metrics": {
+      "inputTokens": 1018,
+      "outputTokens": 19,
+      "cacheReadTokens": 5248,
+      "cacheWriteTokens": 0
+    },
+    "tools": [],
+    "text": "核验口令：LEDGER-7319\nRecord 160 库存数量：1124"
+  },
+  {
+    "round": 2,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "startup",
+    "elapsedMs": 1013
+  },
+  {
+    "round": 2,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "long-input",
+    "elapsedMs": 1537,
+    "success": true,
+    "metrics": {
+      "inputTokens": 10581,
+      "outputTokens": 5,
+      "cacheReadTokens": null,
+      "cacheWriteTokens": null
+    },
+    "tools": [],
+    "text": "READY-7319"
+  },
+  {
+    "round": 2,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "long-query",
+    "elapsedMs": 1130,
+    "success": true,
+    "metrics": {
+      "inputTokens": 187,
+      "outputTokens": 2,
+      "cacheReadTokens": 10496,
+      "cacheWriteTokens": null
+    },
+    "tools": [],
+    "text": "1124"
+  },
+  {
+    "round": 2,
+    "label": "old",
+    "category": "compact",
+    "elapsedMs": 2997,
+    "result": {
+      "commandId": "cmd-a5617a29-1",
+      "result": {
+        "kind": "success",
+        "text": "Compacted 6 history items (~4886 tokens).",
+        "sourceEventSeq": 43
+      }
+    }
+  },
+  {
+    "round": 2,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "resume",
+    "elapsedMs": 681,
+    "success": true,
+    "metrics": {
+      "inputTokens": 849,
+      "outputTokens": 19,
+      "cacheReadTokens": 6016,
+      "cacheWriteTokens": null
+    },
+    "tools": [],
+    "text": "核验口令：LEDGER-7319\nRecord 160 库存数量：1124"
+  }
+]

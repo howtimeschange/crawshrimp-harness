@@ -3,16 +3,10 @@
     <header class="tc-head">
       <div>
         <h2>任务中心</h2>
-        <p>实例化管理脚本任务、审批状态、历史结果和定时运行</p>
+        <p>查看任务进展、处理异常，找到每次运行的结果。</p>
       </div>
       <div v-if="activeGroup !== 'automations'" class="tc-head-actions">
-        <button type="button" class="tc-secondary" @click="startCreateSchedule">
-          新增数据抓取定时任务
-        </button>
-        <button type="button" class="tc-secondary" @click="startCreateScriptSchedule">新增脚本定时任务</button>
-        <button type="button" class="tc-primary" :disabled="creating" @click="startCreateAiImageTask">
-          {{ creating ? '创建中...' : '新增 AI 测图任务' }}
-        </button>
+        <button type="button" class="tc-primary" data-task-create :disabled="creating" @click="showCreateKind = true">新建任务</button>
       </div>
     </header>
 
@@ -44,7 +38,7 @@
     </section>
 
     <section v-if="activeGroup === 'automations'" class="tc-automation-content">
-      <AutomationCenter @open-agent="emit('open-agent')" />
+      <AutomationCenter @open-agent="prompt => emit('open-agent', prompt)" />
     </section>
 
     <section v-else class="tc-content">
@@ -66,12 +60,12 @@
           <span class="tc-type-line">
             <span class="tc-type-label">任务类型</span>
             <b>{{ itemTypeLabel(item) }}</b>
-            <em>{{ item.adapter_id }} / {{ item.task_id }}</em>
+
           </span>
           <span v-if="item.rowType === 'schedule'">
             {{ scheduleFrequencyLabel(item) }} · {{ item.params?.output_dir || '默认导出目录' }} · {{ scheduleCloudSyncLabel(item) }}
           </span>
-          <span v-else>{{ item.current_step || 'config' }}</span>
+          <span v-else>{{ taskStepLabel(item.current_step) }}</span>
           <div v-if="aiPreviewImagesForTask(item).length" class="tc-ai-preview" aria-label="AI 图预览">
             <figure v-for="preview in aiPreviewImagesForTask(item)" :key="preview.id">
               <img :src="preview.url" :alt="preview.label" loading="lazy" />
@@ -99,12 +93,19 @@
       </article>
     </section>
 
-    <div v-if="showAiTaskDialog" class="tc-modal-backdrop" @click.self="cancelAiTaskCreate">
-      <section class="tc-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-task-dialog-title">
+    <dialog v-if="showCreateKind" ref="kindDialog" class="tc-modal-backdrop" aria-labelledby="task-kind-title" @cancel.prevent="showCreateKind = false" @click.self="showCreateKind = false">
+      <section class="tc-modal-dialog" aria-labelledby="task-kind-title">
+        <header class="tc-modal-head"><div><h3 id="task-kind-title">新建任务</h3><p>选择要完成的工作，再填写所需信息。</p></div><button class="tc-icon-button" aria-label="关闭新建任务" @click="showCreateKind = false">×</button></header>
+        <div class="tc-create-kinds"><button @click="chooseTaskKind('image')"><strong>AI 测图任务</strong><span>生成素材、提交测图并收集结果</span></button><button @click="chooseTaskKind('script')"><strong>脚本定时任务</strong><span>按计划运行已保存的脚本</span></button><button @click="chooseTaskKind('data')"><strong>数据抓取定时任务</strong><span>定期抓取测图数据并导出</span></button></div>
+      </section>
+    </dialog>
+
+    <dialog v-if="showAiTaskDialog" ref="aiTaskDialog" class="tc-modal-backdrop" aria-labelledby="ai-task-dialog-title" @cancel.prevent="cancelAiTaskCreate" @click.self="cancelAiTaskCreate">
+      <section class="tc-modal-dialog" aria-labelledby="ai-task-dialog-title">
         <header class="tc-modal-head">
           <div>
-            <h3 id="ai-task-dialog-title">新增 AI 测图任务</h3>
-            <p>创建一个新的巴拉-AI测图全链路任务实例</p>
+            <h3 id="ai-task-dialog-title">新建 AI 测图任务</h3>
+            <p>填写任务名称，创建后仍需配置并手动开始。</p>
           </div>
           <button type="button" class="tc-icon-button" aria-label="关闭" @click="cancelAiTaskCreate">×</button>
         </header>
@@ -122,10 +123,10 @@
           </div>
         </form>
       </section>
-    </div>
+    </dialog>
 
-    <div v-if="showScheduleDialog" class="tc-modal-backdrop" @click.self="cancelScheduleEdit">
-      <section class="tc-modal-dialog wide" role="dialog" aria-modal="true" aria-labelledby="schedule-dialog-title">
+    <dialog v-if="showScheduleDialog" ref="scheduleDialog" class="tc-modal-backdrop" aria-labelledby="schedule-dialog-title" @cancel.prevent="cancelScheduleEdit" @click.self="cancelScheduleEdit">
+      <section class="tc-modal-dialog wide" aria-labelledby="schedule-dialog-title">
         <header class="tc-modal-head">
           <div>
             <h3 id="schedule-dialog-title">{{ editingScheduleUid ? '编辑定时任务' : scheduleForm.script_mode ? '新增脚本定时任务' : '新增数据抓取定时任务' }}</h3>
@@ -212,12 +213,13 @@
           </div>
         </form>
       </section>
-    </div>
+    </dialog>
   </div>
 </template>
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useNativeDialog } from '../composables/useNativeDialog'
 import AutomationCenter from './AutomationCenter.vue'
 import { scriptSchedulePayload, scheduleScriptOptions } from '../utils/scriptScheduleState.mjs'
 
@@ -257,8 +259,15 @@ const loading = ref(false)
 const schedulesLoading = ref(false)
 const creating = ref(false)
 const savingSchedule = ref(false)
+const showCreateKind = ref(false)
+const kindDialog = ref(null), aiTaskDialog = ref(null), scheduleDialog = ref(null)
 const showAiTaskDialog = ref(false)
 const showScheduleDialog = ref(false)
+useNativeDialog(showCreateKind, kindDialog, '[data-task-create]')
+useNativeDialog(showAiTaskDialog, aiTaskDialog, '[data-task-create]')
+useNativeDialog(showScheduleDialog, scheduleDialog, '[data-task-create]')
+function chooseTaskKind(kind) { showCreateKind.value = false; if (kind === 'image') startCreateAiImageTask(); else if (kind === 'script') startCreateScriptSchedule(); else startCreateSchedule() }
+function taskStepLabel(step) { return ({ config: '待配置', create: '准备执行', run: '执行任务', completed: '已完成', done: '已完成', download: '下载素材', review: '等待审核', pending: '等待处理' })[step] || step || '待配置' }
 const editingScheduleUid = ref('')
 const error = ref('')
 const scheduleError = ref('')
@@ -1163,4 +1172,8 @@ onBeforeUnmount(stopAutoRefresh)
     flex-wrap: wrap;
   }
 }
+</style>
+
+<style scoped>
+.tc-create-kinds{display:flex;flex-direction:column;gap:10px;padding:20px}.tc-create-kinds button{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:15px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);color:var(--text);text-align:left}.tc-create-kinds button:hover{background:var(--bg3)}.tc-create-kinds span{color:var(--text2);font-size:12px}
 </style>

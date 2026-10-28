@@ -5,8 +5,8 @@
     <header class="aiw-topbar" :inert="workbenchDialogOpen || undefined" :aria-hidden="workbenchDialogOpen ? 'true' : undefined">
       <div>
         <p class="aiw-kicker">AI 生图</p>
-        <h1>AI 生图工作台</h1>
-        <p class="aiw-subtitle">支持主图、参考图、Prompt、比例尺寸联动和多模型生成</p>
+        <h1>AI 生图</h1>
+        <p class="aiw-subtitle">描述画面，添加参考素材，生成商品图片。</p>
       </div>
       <div class="aiw-top-actions">
         <button class="aiw-top-primary" type="button" @click="createNewTask">
@@ -27,7 +27,7 @@
     </nav>
 
     <div class="aiw-main-grid" :class="`compact-${compactPane}`" :inert="workbenchDialogOpen || undefined" :aria-hidden="workbenchDialogOpen ? 'true' : undefined">
-      <aside class="aiw-prompt-panel aiw-task-panel">
+      <aside class="aiw-prompt-panel aiw-task-panel"><div class="aiw-form-scroll">
         <div class="aiw-panel-head">
           <span>当前任务</span>
           <button type="button" @click="resetForm">
@@ -57,7 +57,7 @@
               </button>
             </div>
           </div>
-          <textarea v-model.trim="form.prompt" placeholder="描述商品、卖点、模特姿态、背景和禁用元素..."></textarea>
+          <textarea v-model.trim="form.prompt" aria-label="画面描述" placeholder="描述商品、卖点、模特姿态、背景和禁用元素..."></textarea>
         </section>
 
         <section
@@ -161,6 +161,7 @@
           </div>
         </section>
 
+        <details class="aiw-advanced-settings" :open="Boolean(advancedJsonError)"><summary>高级设置 · 输出位置与 JSON</summary>
         <section class="aiw-material-box">
           <div class="aiw-panel-head">
             <span>输出文件夹</span>
@@ -186,14 +187,16 @@
           <small v-if="advancedJsonError" id="aiw-advanced-json-error" class="aiw-inline-error" role="alert">{{ advancedJsonError }}</small>
         </section>
 
+        </details></div>
         <section class="aiw-generate-card">
           <span v-if="generationConfigMessage" id="aiw-generation-config-message" class="aiw-generation-config" role="alert"><AiwIcon name="alert-circle" /><strong>{{ generationConfigMessage }}</strong></span>
           <button v-if="generationConfigMessage" class="aiw-primary-action aiw-config-action" type="button" aria-describedby="aiw-generation-config-message" @click="openSettings">
             <span class="aiw-icon-button-content"><AiwIcon name="settings" />去配置</span>
           </button>
-          <button v-else class="aiw-primary-action" type="button" :disabled="generating || inputImportBusy || Boolean(advancedJsonError)" @click="generate">
+          <button v-else class="aiw-primary-action" type="button" :disabled="generating || inputImportBusy || Boolean(advancedJsonError) || submissionUnconfirmed" @click="generate">
             <span class="aiw-icon-button-content"><AiwIcon name="wand" />{{ generateLabel }}</span>
           </button>
+          <small v-if="submissionUnconfirmed" role="status">当前任务的提交结果待核对，请先核对任务与服务商记录；如需其他内容，可新建任务。</small>
           <small v-if="errorMessage" role="alert">{{ errorMessage }}</small>
         </section>
       </aside>
@@ -276,20 +279,15 @@
                   <button
                     v-if="!item.loading && !item.failed"
                     class="aiw-preview-button"
+                    :aria-label="`预览 ${item.label}`"
                     type="button"
                     :draggable="!item.loading"
                     @click.stop="openLightbox(item)"
                     @dragstart.stop="startResultDrag(item, $event)"
                     @dragend="endResultDrag"
                   >
-                    <ImageGenerationLoader
-                      v-if="resultPreviewSrc(item)"
-                      class="aiw-result-image-reveal"
-                      :images="[resultPreviewSrc(item)]"
-                      :mode="shouldRevealResult(item) ? 'reveal' : 'static'"
-                      :reveal-key="resultKey(item)"
-                    />
-                    <span v-else class="aiw-result-preview">{{ item.label }}</span>
+                    <img v-if="resultPreviewSrc(item)" :src="resultPreviewSrc(item)" class="aiw-result-still" :alt="item.label" @error="markResultPreviewBroken(item)" />
+                    <span v-else class="aiw-result-preview">图片已生成，预览暂不可用</span>
                   </button>
                   <div v-else-if="item.loading" class="aiw-loading-preview">
                     <ImageGenerationLoader
@@ -304,11 +302,12 @@
                     </div>
                   </div>
                   <div v-else class="aiw-failed-preview">
-                    <strong>{{ (item.error_code || item.errorCode) === 'UNKNOWN_SUBMIT_RESULT' ? '提交结果待核实' : '生成失败' }}</strong>
-                    <span>{{ generationFailureMessage(item.error, (item.error_code || item.errorCode)) }}</span>
+                    <strong>{{ isUnknownImageSubmission(item) ? '提交结果待核实' : '生成失败' }}</strong>
+                    <span>{{ generationFailureMessage(item.error, (item.error_code || item.errorCode)) }}</span><details><summary>诊断信息</summary><pre>{{ item.error }}</pre></details>
                     <small v-if="retrySummaryText(item)">{{ retrySummaryText(item) }}</small>
                     <div class="aiw-failed-actions">
-                      <button type="button" :disabled="retryingRunUids.has(item.runUid) || item.errorCode === 'UNKNOWN_SUBMIT_RESULT'" @click.stop="retryFailedRun(item)">
+                      <button v-if="isUnknownImageSubmission(item)" type="button" @click.stop="recheckResultRecord(item)">核对任务记录</button>
+                      <button v-else type="button" :disabled="retryingRunUids.has(item.runUid)" @click.stop="retryFailedRun(item)">
                         <span class="aiw-icon-button-content"><AiwIcon name="rotate-ccw" />{{ retryingRunUids.has(item.runUid) ? '重试提交中...' : '重试本队列' }}</span>
                       </button>
                       <button type="button" @click.stop="copyFailedPrompt(item)">
@@ -325,6 +324,8 @@
                       <span>{{ item.model || activeModel.label }} · {{ item.size || form.size }}</span>
                     </div>
                     <div class="aiw-result-card-actions">
+                      <button type="button" @click.stop="refreshResultPreviewCandidates([item], { force: true })">重载预览</button>
+                      <button type="button" @click.stop="openOriginalResult(item)">打开原文件</button>
                       <button type="button" @click.stop="reuseResultInputs(item)">沿用参数</button>
                       <button type="button" @click.stop="setAsMain(item)">
                         <span class="aiw-icon-button-content"><AiwIcon name="image" />设为主图</span>
@@ -924,6 +925,7 @@ import { parseAdvancedJsonConfig } from '../utils/aiImageAdvancedJson.mjs'
 import {
   formatAiImageRunStatus,
   generationFailureMessage,
+  isUnknownImageSubmission,
   retrySummaryText,
 } from '../utils/aiImageOperatorMessages.mjs'
 import { focusFirstInDialog, trapDialogFocus } from '../utils/dialogAccessibility.mjs'
@@ -1161,6 +1163,7 @@ const persistedCurrentJob = computed(() => mergeCurrentJobRecord(currentJob.valu
 const highlightedJobUid = computed(() => pendingActiveJobUid.value || activeJobUid.value)
 const resultQueues = computed(() => collectResultQueues(currentJob.value))
 const resultCards = computed(() => resultQueues.value.flatMap((queue) => queue.items || []))
+const submissionUnconfirmed = computed(() => resultCards.value.some(isUnknownImageSubmission))
 const loadingResultCards = computed(() => {
   if (!generationBelongsToCurrentJob.value) return []
   const snapshot = generatingSnapshot.value || {}
@@ -2340,6 +2343,7 @@ async function submitBatchGeneration() {
 }
 
 async function generate() {
+  if (submissionUnconfirmed.value) { errorMessage.value = '当前任务结果待核对，已阻止重复提交。'; return }
   errorMessage.value = ''
   if (!String(form.prompt || '').trim()) {
     errorMessage.value = '请输入生图提示词后再开始生成'
@@ -2628,6 +2632,7 @@ function latestTaskGenerationAt(job = {}) {
 }
 
 function taskMetaLine(job = {}) {
+  if (collectResultCards(job).some(isUnknownImageSubmission)) return '提交结果待核实'
   if (job.summary?.partial_success && !hasActiveRuns(job)) return '部分成功'
   if (latestTaskFailure(job) && !generationBelongsToJob(generatingJobUid.value, job.job_uid)) return '生成失败'
   const generatedAt = latestTaskGenerationAt(job)
@@ -2636,10 +2641,12 @@ function taskMetaLine(job = {}) {
 
 function taskResultLine(job = {}) {
   const summary = job.summary && typeof job.summary === 'object' ? job.summary : {}
-  const count = collectResultCards(job).length
+  const cards = collectResultCards(job)
+  const count = cards.filter(item => (item.path || item.url) && !item.failed && !item.loading).length
   const runCount = Array.isArray(summary.runs) ? summary.runs.length : (count ? 1 : 0)
   if (generationBelongsToJob(generatingJobUid.value, job.job_uid)) return '正在生成'
-  if (summary.partial_success) return `已有 ${count} 张结果 · ${summary.failed_runs} 组失败`
+  if (cards.some(isUnknownImageSubmission)) return count ? `已有 ${count} 张结果 · 另有提交结果待核实` : '提交结果待核实 · 暂无可用图片'
+  if (summary.partial_success && count) return `已有 ${count} 张结果 · ${summary.failed_runs} 组失败`
   const failure = latestTaskFailure(job)
   if (count && failure) return `已有 ${count} 张结果 · 上次失败：${compactTaskFailureText(failure)}`
   if (count) return `已有 ${count} 张结果 · ${runCount} 组生成`
@@ -2800,6 +2807,14 @@ function markResultPreviewBroken(item) {
   }
 }
 
+async function openOriginalResult(item) {
+  const path = resultPreviewCandidates(item).find(value => !isRemoteOrDataImage(value))
+  try {
+    if (!path) throw new Error('没有本地文件，请先保存图片或重载预览。')
+    const result = await window.cs.openFile(path)
+    if (result?.ok === false) throw new Error(result.error || '打开原文件失败')
+  } catch (error) { errorMessage.value = error.message || String(error) }
+}
 function refreshResultPreviewCandidates(items, options = {}) {
   for (const item of items || []) {
     resultPreviewCandidates(item).forEach((key) => {
@@ -3205,7 +3220,16 @@ function announceStatus(message) {
   }, 4200)
 }
 
+async function recheckResultRecord(item) {
+  try {
+    const result = await window.cs.getAiImageJob(resultOwnerJobUid(item))
+    const job = result?.job || result
+    if (job?.job_uid) { currentJob.value = job; upsertJob(job) }
+    errorMessage.value = '已读取任务记录，未重复生成。若结果仍未知，请核对服务商记录与账单。'
+  } catch (error) { errorMessage.value = '任务记录暂时无法读取，请稍后核对；不要重复生成。' }
+}
 async function retryFailedRun(item) {
+  if (isUnknownImageSubmission(item)) { errorMessage.value = '提交结果待核对，请先核实服务商记录，避免重复计费。'; return }
   const jobUid = resultOwnerJobUid(item)
   const runUid = String(item?.runUid || '').trim()
   if (!jobUid || !runUid || retryingRunUids.has(runUid)) return
@@ -6184,4 +6208,8 @@ button.active,
 .aiw-primary-action.aiw-config-action:hover { background: #b91c1c; border-color: #b91c1c; color: #fff; }
 .aiw-primary-action.aiw-config-action:focus-visible { outline: 2px solid var(--red); outline-offset: 3px; }
 .aiw-primary-action:disabled { background: var(--bg3); border-color: var(--border); color: var(--text2); opacity: .65; cursor: not-allowed; }
+</style>
+
+<style scoped>
+.aiw-task-panel{display:flex;flex-direction:column;overflow:hidden!important;padding:0!important;min-height:0}.aiw-form-scroll{flex:1;min-height:0;overflow:auto;padding:18px}.aiw-task-panel>.aiw-generate-card{flex:none;margin:0;padding:16px 18px;border-top:1px solid var(--border);background:var(--bg2)}.aiw-advanced-settings{margin-top:16px}.aiw-advanced-settings>summary{padding:12px 0;color:var(--text2);cursor:pointer}.aiw-result-still{width:100%;height:100%;object-fit:contain}.aiw-failed-preview pre{max-width:100%;max-height:140px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px}.aiw-kicker{display:none}
 </style>

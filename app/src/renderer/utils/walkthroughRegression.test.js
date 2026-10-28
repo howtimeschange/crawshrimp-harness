@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 import { mergeTaskLiveStatus } from './taskRunnerState.js'
 const imageSource = readFileSync(new URL('../views/AiImageWorkbench.vue', import.meta.url), 'utf8')
 function imageFunction(name, next, context) {
+  context.submissionUnconfirmed ??= { value: false }
   vm.runInNewContext(imageSource.slice(imageSource.indexOf(`async function ${name}(`), imageSource.indexOf(`\n${next}`, imageSource.indexOf(`async function ${name}(`))), context)
   return context[name]
 }
@@ -15,6 +16,12 @@ for (const prompt of ['', '   \n  ']) test(`blank prompt rejected before creatin
   assert.equal(submissions, 0)
   assert.equal(context.generating.value, false)
   assert.match(context.errorMessage.value, /请输入.*提示词/)
+})
+test('unconfirmed image submission blocks another run before any IPC or task creation', async () => {
+  const context = { submissionUnconfirmed: { value: true }, errorMessage: { value: '' } }
+  // Every other dependency is absent: a pending receipt must return before using it.
+  await imageFunction('generate', 'function normalizeGenerateError', context)()
+  assert.match(context.errorMessage.value, /结果待核对.*阻止重复提交/)
 })
 test('new run does not inherit old target or 100 percent progress', () => {
   const task = { live: { status:'done', run_id:14, current_target:'000000000000', progress_percent:100 } }

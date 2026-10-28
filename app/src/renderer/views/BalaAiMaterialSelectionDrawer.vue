@@ -1,12 +1,12 @@
 <template>
-  <div v-if="modelValue" class="bala-material-shell" @click.self="close">
-    <section class="bala-material-drawer" role="dialog" aria-modal="true" aria-label="巴拉 AI 视频素材选择">
+  <dialog v-if="modelValue" ref="nativeDialog" class="bala-material-shell harness-modal-shell" aria-label="巴拉 AI 视频素材选择" @cancel.prevent="close" @click.self="close">
+    <section class="bala-material-drawer">
       <header class="bala-material-head">
         <div>
           <strong>素材选择 / AI 动作</strong>
           <span>{{ batchSummary }}</span>
         </div>
-        <button type="button" class="bala-icon-button" aria-label="关闭" @click="close">×</button>
+        <button type="button" class="bala-icon-button" aria-label="关闭" autofocus @click="close">×</button>
       </header>
 
       <div v-if="error" class="bala-material-state error">{{ error }}</div>
@@ -130,10 +130,11 @@
       :initial-selected-ids="selectedModelIds"
       @confirm="handleModelSelection"
     />
-  </div>
+  </dialog>
 </template>
 
 <script setup>
+import { useNativeDialog } from '../composables/useNativeDialog'
 import { computed, defineComponent, h, ref, watch } from 'vue'
 import BalaModelLibraryPickerModal from '../components/BalaModelLibraryPickerModal.vue'
 import { buildBalaAiStageRequest, parseBalaMaterialBoardUrl } from '../utils/balaAiVideoWorkflow'
@@ -144,6 +145,8 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:modelValue', 'start-ai-stage'])
+const nativeDialog = ref(null)
+useNativeDialog(computed(() => props.modelValue), nativeDialog)
 
 const FilePathPicker = defineComponent({
   name: 'FilePathPicker',
@@ -353,6 +356,7 @@ async function exportToAi() {
 }
 
 .bala-material-drawer {
+  color: #0f172a;
   width: min(1180px, 96vw);
   height: 100%;
   display: grid;

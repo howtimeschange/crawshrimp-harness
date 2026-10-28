@@ -1,6 +1,6 @@
 <template>
-  <div v-if="open" class="face-backdrop" @click.self="close" @keydown.esc.stop.prevent="close">
-    <section ref="panel" class="face-dialog" role="dialog" aria-modal="true" aria-label="生成结果换脸" tabindex="-1" @keydown="trapDialogFocus">
+  <dialog v-if="open" ref="nativeDialog" class="face-backdrop harness-modal-shell" aria-label="生成结果换脸" @click.self="close" @cancel.prevent="close">
+    <section ref="panel" class="face-dialog" tabindex="-1">
       <header><div><strong>生成结果换脸</strong><p>{{ title }}</p></div><button type="button" :disabled="busy" @click="close">关闭</button></header>
       <div class="face-body">
         <div class="comparison"><figure><img :src="sourceUrl" alt="换脸前的生成图" /><figcaption>原生成图</figcaption></figure><figure v-if="resultUrl"><img :src="resultUrl" alt="换脸后的生成图" /><figcaption>换脸结果 · 待审批</figcaption></figure></div>
@@ -15,17 +15,20 @@
       </div>
       <BalaModelPicker :open="pickerOpen" :selected="model" @close="closePicker" @select="selectModel" />
     </section>
-  </div>
+  </dialog>
 </template>
 <script setup>
-import { nextTick, ref, watch } from 'vue'
+import { useNativeDialog } from '../composables/useNativeDialog'
+import { computed, nextTick, ref, watch } from 'vue'
 import BalaModelPicker from './BalaModelPicker.vue'
-import { trapDialogFocus } from '../utils/dialogAccessibility.mjs'
+
 const props = defineProps({ open: Boolean, busy: Boolean, sourceUrl: String, resultUrl: String, title: String, error: String })
+const nativeDialog = ref(null)
+useNativeDialog(computed(() => props.open), nativeDialog)
 const emit = defineEmits(['close', 'submit'])
 const model = ref(null), instruction = ref(''), pickerOpen = ref(false), panel = ref(null)
 function close() { if (!props.busy && !pickerOpen.value) emit('close') }
-function closePicker() { pickerOpen.value = false; nextTick(() => panel.value?.focus()) }
+function closePicker() { pickerOpen.value = false }
 function selectModel(value) { model.value = value; closePicker() }
 watch(() => props.open, async open => { if (open) { instruction.value = ''; await nextTick(); panel.value?.focus() } else pickerOpen.value = false })
 </script>

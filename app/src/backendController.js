@@ -57,6 +57,7 @@ function createBackendController(options) {
   const restartProbeFailures = Math.max(1, Number(options.restartProbeFailures || 3))
   const restartProbeUnavailableMs = Math.max(1, Number(options.restartProbeUnavailableMs || 10 * 60 * 1000))
   const stopProcess = options.stopProcess || (() => {})
+  const canStart = options.canStart || (() => true)
 
   let backendProcess = null
   let startupPromise = null
@@ -92,6 +93,7 @@ function createBackendController(options) {
 
   function assertActiveGeneration(expectedGeneration) {
     if (generation !== expectedGeneration) throw new Error('Backend startup canceled')
+    if (!canStart()) throw new Error('Backend startup canceled: app is shutting down')
   }
 
   function rememberProcess(proc) {
@@ -119,6 +121,7 @@ function createBackendController(options) {
 
   async function ensureReady() {
     const ensureGeneration = generation
+    assertActiveGeneration(ensureGeneration)
 
     async function acceptReadyBackend(expectedGeneration) {
       assertActiveGeneration(expectedGeneration)
@@ -170,7 +173,7 @@ function createBackendController(options) {
           setState(launchIndex > 0 ? 'restarting' : 'starting')
           try {
             const proc = await startProcess()
-            if (generation !== startupGeneration) {
+            if (generation !== startupGeneration || !canStart()) {
               if (proc) stopProcess(proc)
               assertActiveGeneration(startupGeneration)
             }

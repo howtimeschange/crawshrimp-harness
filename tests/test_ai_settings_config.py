@@ -7,43 +7,20 @@ from core.config import DEFAULT_CONFIG, load_config, patch_config, save_config
 
 
 class AiSettingsConfigTests(unittest.TestCase):
-    def test_default_config_exposes_1xm_keys_without_real_secret_values(self):
-        one_xm = DEFAULT_CONFIG["ai"]["1xm"]
-
-        self.assertEqual(one_xm["gpt_image_2k_key"], "")
-        self.assertEqual(one_xm["gpt_image_4k_key"], "")
-        self.assertEqual(one_xm["gemini_3_1_flash_image_preview_key"], "")
-        self.assertEqual(one_xm["gemini_3_pro_image_preview_key"], "")
-        self.assertEqual(one_xm["base_url"], "https://one-xm-proxy.crawshrimp.com/v1")
-        self.assertEqual(DEFAULT_CONFIG["notify"]["dingtalk_secret"], "")
-
-    def test_load_config_migrates_legacy_1xm_default_base_url_to_proxy(self):
-        with patch("core.config._config_path") as config_path:
-            import tempfile
-            from pathlib import Path
-
-            with tempfile.TemporaryDirectory() as tmpdir:
-                path = Path(tmpdir) / "config.json"
-                config_path.return_value = path
-                save_config({"ai.1xm.base_url": "https://api.1xm.ai/v1"})
-
-                loaded = load_config()
-
-        self.assertEqual(loaded["ai"]["1xm"]["base_url"], "https://one-xm-proxy.crawshrimp.com/v1")
-
-    def test_load_config_preserves_custom_1xm_base_url(self):
-        with patch("core.config._config_path") as config_path:
-            import tempfile
-            from pathlib import Path
-
-            with tempfile.TemporaryDirectory() as tmpdir:
-                path = Path(tmpdir) / "config.json"
-                config_path.return_value = path
-                save_config({"ai.1xm.base_url": "https://custom-proxy.example/v1"})
-
-                loaded = load_config()
-
-        self.assertEqual(loaded["ai"]["1xm"]["base_url"], "https://custom-proxy.example/v1")
+    def test_retired_provider_removed_from_defaults_load_and_save(self):
+        import tempfile
+        from pathlib import Path
+        self.assertNotIn("1xm", DEFAULT_CONFIG["ai"])
+        with tempfile.TemporaryDirectory() as tmpdir, patch("core.config._config_path") as config_path:
+            path = Path(tmpdir) / "config.json"
+            config_path.return_value = path
+            path.write_text(json.dumps({"ai": {"1xm": {"gpt_image_2k_key": "retired"}, "woka": {"api_key": "active"}}}))
+            loaded = load_config()
+            self.assertNotIn("1xm", loaded["ai"])
+            self.assertEqual(loaded["ai"]["woka"]["api_key"], "active")
+            result = patch_config({"ai.1xm.base_url": "https://old.test/v1"})
+            self.assertNotIn("1xm", result["ai"])
+            self.assertNotIn("1xm", json.loads(path.read_text())["ai"])
 
     def test_default_config_exposes_video_provider_fields_without_secret_values(self):
         video = DEFAULT_CONFIG["ai"]["video"]
@@ -77,17 +54,17 @@ class AiSettingsConfigTests(unittest.TestCase):
                 path = Path(tmpdir) / "config.json"
                 config_path.return_value = path
                 save_config({
-                    "ai.1xm.gpt_image_2k_key": "unit-2k",
-                    "ai.1xm.gemini_3_1_flash_image_preview_key": "unit-flash",
-                    "ai.1xm.gemini_3_pro_image_preview_key": "unit-pro",
+                    "ai.semir.gpt_api_key": "unit-2k",
+                    "ai.semir.gemini_api_key": "unit-flash",
+                    "ai.woka.api_key": "unit-pro",
                     "notify.dingtalk_webhook": "https://example.test/hook",
                     "notify.dingtalk_secret": "unit-secret",
                 })
                 loaded = load_config()
 
-        self.assertEqual(loaded["ai"]["1xm"]["gpt_image_2k_key"], "unit-2k")
-        self.assertEqual(loaded["ai"]["1xm"]["gemini_3_1_flash_image_preview_key"], "unit-flash")
-        self.assertEqual(loaded["ai"]["1xm"]["gemini_3_pro_image_preview_key"], "unit-pro")
+        self.assertEqual(loaded["ai"]["semir"]["gpt_api_key"], "unit-2k")
+        self.assertEqual(loaded["ai"]["semir"]["gemini_api_key"], "unit-flash")
+        self.assertEqual(loaded["ai"]["woka"]["api_key"], "unit-pro")
         self.assertEqual(loaded["notify"]["dingtalk_webhook"], "https://example.test/hook")
         self.assertEqual(loaded["notify"]["dingtalk_secret"], "unit-secret")
 

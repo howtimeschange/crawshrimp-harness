@@ -20,7 +20,25 @@ export function patchDeepSeekFlashSource(source) {
   return `// ${marker}\n${normalizeDeepSeekFlash.toString()}\n` + source
 }
 
+export function patchNativeFlashAliases(source) {
+  const marker = 'crawshrimp-native-flash-aliases-v1'
+  if (source.includes(marker)) return source
+  for (const [anchor, line] of [
+    ['function modelInfo(connection, provider, model) {', 'model = normalizeDeepSeekFlash(provider, model);'],
+    ['async prepareCall(provider, model, signal) {', 'model = normalizeDeepSeekFlash(provider, model);'],
+    ['stream(options) {', 'options = { ...options, model: normalizeDeepSeekFlash(options.provider, options.model) };'],
+  ]) {
+    if (source.split(anchor).length !== 2) throw new Error('Native Flash alias anchor changed: ' + anchor)
+    source = source.replace(anchor, anchor + '\n' + line)
+  }
+  return `// ${marker}\n${normalizeDeepSeekFlash.toString()}\n` + source
+}
+
 export function patchDeepSeekFlash(root) {
+  const native = join(root, 'node_modules/@deepseek-ai/dsh-llm-deepseek/lib/index.js')
+  const nativeSource = readFileSync(native, 'utf8')
+  const nativePatched = patchNativeFlashAliases(nativeSource)
+  if (nativeSource !== nativePatched) writeFileSync(native, nativePatched)
   const entry = join(root, 'node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js')
   const before = readFileSync(entry, 'utf8')
   const after = patchDeepSeekFlashSource(before).replaceAll('const CRAWSHRIMP_DEEPSEEK_VISION_MODEL = "deepseek-v4-flash-vision-exp"', 'const CRAWSHRIMP_DEEPSEEK_VISION_MODEL = "deepseek-flash"')

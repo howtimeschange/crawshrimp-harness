@@ -11,7 +11,7 @@ import {
 
 test('AI video connection defaults are visible without being credentials', () => {
   assert.deepEqual(AI_VIDEO_CONNECTION_DEFAULTS, {
-    'ai.video.seedance_base_url': 'https://ark.cn-beijing.volces.com',
+    'ai.video.seedance_base_url': 'https://ai-aigw.semir.com/doubao-seedance/api/v3',
     'ai.video.bailian_region': 'cn-beijing',
     'ai.video.bailian_base_url': 'https://ai-aigw.semir.com/bailian-vedio/api/v1',
     'ai.video.bailian_uploads_url': 'https://dashscope.aliyuncs.com/api/v1/uploads',

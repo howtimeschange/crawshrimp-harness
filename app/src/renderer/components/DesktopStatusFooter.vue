@@ -2,9 +2,9 @@
   <div ref="root" class="desktop-status-footer" :class="{ collapsed }" aria-label="个人账号与应用状态">
     <button ref="trigger" type="button" class="account-trigger" :class="{ active: open }"
       :title="`${identity.name} · ${serviceTitle}`" aria-haspopup="menu" :aria-expanded="open" :aria-controls="menuId"
-      :aria-label="`${identity.name}，打开账号与应用菜单`" @click="toggleMenu" @keydown.down.prevent="showMenu" @keydown.up.prevent="showMenu">
+      :aria-label="`${identity.name}${planLabel ? ` · ${planLabel}` : ''}，打开账号与应用菜单`" @click="toggleMenu" @keydown.down.prevent="showMenu" @keydown.up.prevent="showMenu">
       <span class="account-avatar" aria-hidden="true"><span v-if="identity.initial">{{ identity.initial }}</span><IconUser v-else :size="19" :stroke-width="1.7" /></span>
-      <span v-if="!collapsed" class="account-copy"><strong>{{ identity.name }}</strong><small v-if="identity.detail">{{ identity.detail }}</small></span>
+      <span v-if="!collapsed" class="account-copy"><strong>{{ identity.name }} <span v-if="planLabel" class="plan-badge">{{ planLabel }}</span></strong><small v-if="identity.detail">{{ identity.detail }}</small></span>
       <span v-if="collapsed && updateNoteworthy" class="collapsed-update-dot" :title="presentation.title"></span>
       <span class="health-pair" :aria-label="serviceTitle">
         <i :class="indicators.core.tone" :title="`核心服务：${indicators.core.label}`"></i>
@@ -25,10 +25,11 @@
       @toggle="onToggle" @keydown="onMenuKeydown" @focusout="onFocusOut">
       <button type="button" role="menuitem" class="menu-identity" @click="select('account')">
         <span class="account-avatar large" aria-hidden="true"><span v-if="identity.initial">{{ identity.initial }}</span><IconUser v-else :size="16" :stroke-width="1.6" /></span>
-        <span class="account-copy"><strong>{{ identity.name }}</strong><small v-if="identity.detail">{{ identity.detail }}</small></span>
+        <span class="account-copy"><strong>{{ identity.name }} <span v-if="planLabel" class="plan-badge">{{ planLabel }}</span></strong><small v-if="identity.detail">{{ identity.detail }}</small></span>
         <IconChevronRight :size="16" aria-hidden="true" />
       </button>
       <div class="menu-divider" role="separator"></div>
+      <button type="button" role="menuitem" class="menu-row" @click="select('usage')"><IconSettings :size="16" :stroke-width="1.6" /><span>套餐与用量</span><IconChevronRight class="row-tail" :size="15" /></button>
       <button type="button" role="menuitem" class="menu-row" @click="select('settings')"><IconSettings :size="16" :stroke-width="1.6" /><span>设置</span><IconChevronRight class="row-tail" :size="15" /></button>
       <button type="button" role="menuitem" class="menu-row" :class="`tone-${presentation.tone}`" :disabled="busy" :title="presentation.title" @click="select('update-details')">
         <UpdateProgressRing v-if="presentation.tone === 'downloading'" compact :percent="presentation.percent || 0" />
@@ -58,13 +59,14 @@ import { IconUser, IconSelector, IconChevronRight, IconSettings, IconDownload, I
 import UpdateProgressRing from './UpdateProgressRing.vue'
 import { accountIdentity, runtimeIndicators } from '../utils/desktopAccountMenu.js'
 const props = defineProps({ status: { type: Object, default: () => ({}) }, presentation: { type: Object, default: () => ({}) }, busy: Boolean, collapsed: Boolean, contextKey: String })
-const emit = defineEmits(['account', 'settings', 'services', 'update', 'update-details'])
+const emit = defineEmits(['usage','account', 'settings', 'services', 'update', 'update-details'])
 const root = ref(null)
 const trigger = ref(null)
 const menu = ref(null)
 const menuId = `account-menu-${useId()}`
 const open = ref(false)
 const account = ref({ user: null })
+const planLabel = computed(() => account.value.user ? ({free: 'Free', plus: 'Plus', pro: 'Pro'}[account.value.plan] || '') : '')
 const error = ref('')
 const signingOut = ref(false)
 const confirmGuestLogout = ref(false)
@@ -97,14 +99,19 @@ function positionMenu() {
   menu.value.style.bottom = `${Math.max(8, window.innerHeight - rect.top + 8)}px`
   menu.value.style.maxHeight = `${Math.max(80, rect.top - 16)}px`
 }
+function publishMenuState(value) { window.dispatchEvent(new CustomEvent('cs-account-menu-state', { detail: value })) }
 async function showMenu(event) {
+  if (!menu.value) return
   positionMenu()
-  if (!menu.value?.matches(':popover-open')) menu.value?.showPopover()
+  publishMenuState(true)
+  try { if (!menu.value.matches(':popover-open')) menu.value.showPopover() }
+  catch (error) { publishMenuState(false); throw error }
   await nextTick()
   menu.value?.querySelector('[role="menuitem"]:not(:disabled)')?.focus({ focusVisible: event?.type === 'keydown' })
   refreshAccount()
 }
 function closeMenu() {
+  publishMenuState(false)
   if (menu.value?.matches(':popover-open')) menu.value.hidePopover()
   open.value = false
   occlusionObserver?.disconnect()
@@ -114,6 +121,7 @@ function closeMenu() {
 function toggleMenu(event) { if (open.value) closeMenu(); else showMenu(event) }
 function onToggle(event) {
   open.value = event.newState === 'open'
+  publishMenuState(open.value)
   if (open.value) occlusionObserver?.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'open'] })
   else { confirmGuestLogout.value = false; occlusionObserver?.disconnect() }
 }
@@ -134,6 +142,7 @@ function select(action) {
   else emit(action)
 }
 function onMenuKeydown(event) {
+  if (event.key === 'Tab') { closeMenu(); return }
   if (event.key === 'Escape') { event.preventDefault(); closeMenu(); trigger.value?.focus(); return }
   if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
   event.preventDefault()
@@ -142,10 +151,23 @@ function onMenuKeydown(event) {
   const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
   items[next]?.focus()
 }
+function onWindowBlur() {
+  // Focusing the embedded conversation also blurs this Window, while the
+  // containing document still has focus. Only leaving the app dismisses it.
+  if (!document.hasFocus()) closeMenu()
+}
 function onFocusOut(event) {
   // focusout fires before the next control receives focus. Inspect the destination
   // instead of transient document.activeElement, so pointer clicks reach menu items.
   const destination = event.relatedTarget
+  if (!destination) {
+    const previous = event.target
+    void nextTick(() => {
+      // A late iframe autofocus must not steal an already open menu.
+      // Outside dismissal and Tab must still win; never reopen a closed menu.
+      if (menu.value?.matches(':popover-open') && document.hasFocus() && document.activeElement?.tagName === 'IFRAME') previous?.focus?.({ preventScroll: true })
+    })
+  }
   if (destination && open.value && !menu.value?.contains(destination) && destination !== trigger.value) closeMenu()
 }
 function requestLogout() { if (account.value.user?.anonymous) confirmGuestLogout.value = true; else logout() }
@@ -165,7 +187,8 @@ onMounted(() => {
   observer = new ResizeObserver(positionMenu)
   observer.observe(root.value)
   window.addEventListener('resize', positionMenu)
-  window.addEventListener('blur', closeMenu)
+  window.addEventListener('blur', onWindowBlur)
+  window.addEventListener('cs-account-menu-dismiss', closeMenu)
 })
 onBeforeUnmount(() => {
   mounted = false
@@ -173,11 +196,13 @@ onBeforeUnmount(() => {
   unsubscribe?.()
   observer?.disconnect()
   window.removeEventListener('resize', positionMenu)
-  window.removeEventListener('blur', closeMenu)
+  window.removeEventListener('blur', onWindowBlur)
+  window.removeEventListener('cs-account-menu-dismiss', closeMenu)
 })
 </script>
 
 <style scoped>
+.plan-badge{display:inline-flex;align-items:center;padding:1px 5px;margin-left:4px;border:1px solid var(--border);border-radius:5px;color:var(--text2);background:var(--bg3);font-size:10px;font-weight:550;line-height:15px;vertical-align:middle}
 .desktop-status-footer{height:44px;display:flex;align-items:center;gap:5px;padding:3px 8px;background:var(--bg2);color:var(--text);box-sizing:border-box;border-top:1px solid var(--border)}
 button{font:inherit;color:inherit;border:0;cursor:pointer;background:transparent;min-width:0}button:focus-visible{outline:2px solid var(--orange);outline-offset:-2px}button:disabled{opacity:.55;cursor:default}
 .account-trigger{display:flex;align-items:center;gap:8px;flex:1;height:36px;padding:3px 5px;border-radius:9px;text-align:left;transition:background .15s}

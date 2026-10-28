@@ -104,13 +104,19 @@ const required = [
   // transport into the long-lived Web Host.
   'node_modules/@deepseek-ai/dsh-acp-app/package.json',
   'node_modules/@deepseek-ai/dsh-acp-app/cordis.patch.yml',
-  'node_modules/@deepseek-ai/dsh-acp-app/node_modules/@deepseek-ai/dsh-acp/package.json',
+  'node_modules/@deepseek-ai/dsh-acp/package.json',
   'node_modules/@xmanrui/dsh-im/package.json',
   'node_modules/@xmanrui/dsh-im/lib/index.js',
   'node_modules/@xmanrui/dsh-im/lib/client.js',
   'node_modules/@xmanrui/dsh-im/src/channels/shared/inbound-ttl.mjs',
   'node_modules/crawshrimp-product-bridge/lib/index.js',
   'node_modules/crawshrimp-product-bridge/lib/context-tools.js',
+  'node_modules/crawshrimp-product-bridge/lib/memory.js',
+  'node_modules/crawshrimp-product-bridge/lib/apps.js',
+  'node_modules/crawshrimp-product-bridge/lib/memory-store.js',
+  'node_modules/crawshrimp-product-bridge/lib/session-state.js',
+  'node_modules/crawshrimp-product-bridge/lib/memory-ranking.js',
+  'node_modules/crawshrimp-product-bridge/MEOW-MEMORY-LICENSE',
   'skills/crawshrimp-product-guide/SKILL.md',
   ...['introduction', 'office', 'media', 'workflow', 'data', 'automation'].map(page => `skills/crawshrimp-product-guide/references/${page}.md`),
   'node_modules/crawshrimp-slots/lib/client.js',
@@ -299,6 +305,9 @@ const hashInputs = [
   hashTree(profileSource),
   readFileSync(fileURLToPath(import.meta.url)),
   readFileSync(join(here, 'patch-runtime-dependencies.mjs')),
+  readFileSync(join(here, 'messages-vision.mjs')),
+  readFileSync(join(here, 'deepseek-flash.mjs')),
+  readFileSync(join(here, 'stream-lifecycle.mjs')),
   readFileSync(join(here, 'stage-dws-runtime.mjs')),
   readFileSync(join(here, 'builtin-cli-patches.mjs')),
   readFileSync(dwsReleasePath),
@@ -316,7 +325,7 @@ const fingerprint = createHash('sha256').update(hashInputs).digest('hex')
 const current = existsSync(lockMarker) ? readFileSync(lockMarker, 'utf8').trim() : ''
 
 if (force || current !== fingerprint) {
-  console.log('[stage-runtime] staging DSH rc.1 Web profile closure -> ' + stageRoot)
+  console.log('[stage-runtime] staging DSH 0.2.1-rc.2 Web profile closure -> ' + stageRoot)
   rmSync(stageRoot, { recursive: true, force: true })
   mkdirSync(stageRoot, { recursive: true })
   copyFileSync(join(sourceRoot, 'package.json'), join(stageRoot, 'package.json'))
@@ -389,8 +398,8 @@ if (skipBootCheck) {
     },
   })
   const config = String(probe.stdout || '')
-  const duplicateDeepSeekRouteDisabled = /^- id: llm-deepseek\n(?:(?!^- id:)[\s\S])*?^  disabled: true$/mu.test(config)
-  if (probe.status !== 0 || !config.includes('@deepseek-ai/dsh-web-app') || !config.includes('@xmanrui/dsh-im') || !duplicateDeepSeekRouteDisabled) {
+  const officialMessagesRoute = /^- id: llm-deepseek\n(?:(?!^- id:)[\s\S])*?apiKeyEnv: CRAWSHRIMP_DEEPSEEK_API_KEY/mu.test(config)
+  if (probe.status !== 0 || !config.includes('@deepseek-ai/dsh-web-app') || !config.includes('@xmanrui/dsh-im') || !officialMessagesRoute) {
     fail('Web profile config check failed: ' + String(probe.stderr || probe.error?.message || '').slice(-3000))
   }
   console.log('[stage-runtime] Web profile config check OK')

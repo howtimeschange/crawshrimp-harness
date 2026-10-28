@@ -16,7 +16,7 @@ Mac 26 在对应 SDK/Swift 编译器可用时默认使用 NSGlassEffectView clea
 
 提示层默认请求从截图中排除，具体捕获工具可能不遵守。仅在本地视觉验收时通过 `CRAWSHRIMP_CU_FEEDBACK_CAPTURE=1` 将提示层纳入截图；不要用截图里看不到提示层来推断用户屏幕没有提示。
 
-Windows banner 使用随包附带的彩色 🦐 PNG（Twemoji U+1F990，CC BY 4.0），代替原来的“虾”字占位；正在操作、借用焦点、空闲等待均复用同一图标。无需系统 emoji 字体或运行时联网，来源与完整许可见 THIRD_PARTY_NOTICES.md / assets/LICENSE-twemoji.txt。
+macOS 与 Windows banner 使用随包附带的透明 C1 短须抓虾 IP（`assets/crawshrimp-C1.png`）；正在操作、借用焦点、空闲等待均复用同一图标，按比例完整显示。无需系统 emoji 字体或运行时联网。旧 Twemoji 文件及许可仅作历史归档保留，已不用于界面；来源说明见 THIRD_PARTY_NOTICES.md。
 
 ## 阶段文案（2026-09-10）
 

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com";
+export const DEFAULT_BASE_URL = "https://ai-aigw.semir.com/doubao-seedance/api/v3";
 
 export function loadEnvFiles(cwd = process.cwd(), fileNames = [".env.local", ".env"]) {
   for (const fileName of fileNames) {

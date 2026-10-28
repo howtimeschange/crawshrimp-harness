@@ -1,3 +1,6 @@
+import { patchManagedModelSelection } from './managed-model-selection.mjs'
+import { patchMessagesVision } from './messages-vision.mjs'
+import { patchStreamLifecycle } from './stream-lifecycle.mjs'
 import { prepareCompatibility } from '../compat/apply.mjs'
 import { patchDeepSeekFlash } from './deepseek-flash.mjs'
 import { patchSemirAnthropicAuth } from './semir-anthropic-auth.mjs'
@@ -34,8 +37,9 @@ const CRAWSHRIMP_HARNESS_BRAND = '抓虾 Harness'
 // Bundled i18n keys retain Chinese text as `\\uXXXX` escapes, whose final
 // hex digit is a word character. Do not require a leading word boundary here:
 // the negative product-prefix check plus trailing boundary still protects
-// identifiers such as HarnessClient and an already branded label.
-const GENERIC_HARNESS_LABEL = /(?<!抓虾 )Harness\b/gu
+// identifiers such as HarnessClient and an already branded label. Recognize
+// esbuild Unicode escapes (hex case included) as well as literal product text.
+const GENERIC_HARNESS_LABEL = /(?<!(?:抓|\\u6293)(?:虾|\\u867[eE]) )Harness\b/gu
 const DSH_SESSION_SYNC_LABELS = new Map([
   ['[来自 DSH]', '[来自抓虾 Harness]'],
   ['[DSH 助手]', '[抓虾 Harness]'],
@@ -610,6 +614,7 @@ function javascriptFiles(root) {
 // so a broad template match can accidentally rewrite an identifier inside one.
 function replaceImUserVisibleText(text) {
   const next = text
+    .replaceAll(UPSTREAM_HARNESS_BRAND, CRAWSHRIMP_HARNESS_BRAND)
     .replace(GENERIC_HARNESS_LABEL, CRAWSHRIMP_HARNESS_BRAND)
     .replace(/DSH-IM\b/gu, `${CRAWSHRIMP_HARNESS_BRAND} IM`)
     .replace(/DSH Session\b/gu, `${CRAWSHRIMP_HARNESS_BRAND} Session`)
@@ -659,32 +664,81 @@ function regularExpressionEnd(source, start) {
   return start + 1
 }
 
+// A slash following a value is division, not the start of a regexp. Keeping
+// that lexical context is essential for minified, single-line bundles.
+function imLexicalState(expression = false) {
+  return { operand: true, previous: '', parentheses: [], braces: [], expression, functionHeader: null, functionBody: null, classes: [] }
+}
+
+function imJavaScriptToken(source, start, state) {
+  const character = source[start], pair = source.slice(start, start + 2)
+  if (/\s/u.test(character)) return { end: start + 1, kind: 'space' }
+  if (pair === '//') return { end: lineCommentEnd(source, start), kind: 'comment' }
+  if (pair === '/*') return { end: blockCommentEnd(source, start), kind: 'comment' }
+  if (character === '\'' || character === '"' || character === '`') {
+    state.operand = false
+    state.previous = 'value'
+    return { end: character === '`' ? templateLiteralEnd(source, start) : quotedLiteralEnd(source, start), kind: character === '`' ? 'template' : 'quoted' }
+  }
+  if (character === '/' && state.operand) {
+    const end = regularExpressionEnd(source, start)
+    if (end > start + 1) {
+      state.operand = false
+      state.previous = 'value'
+      return { end, kind: 'regexp' }
+    }
+  }
+  if (/[\w$]/u.test(character) || character.charCodeAt(0) > 127) {
+    let end = start + 1
+    while (end < source.length && (/[\w$]/u.test(source[end]) || source.charCodeAt(end) > 127)) end += 1
+    const word = source.slice(start, end)
+    if (state.previous !== '.' && (word === 'function' || word === 'class')) {
+      const declaration = state.previous === '' && !state.expression || state.previous === ';' || state.previous === '{' && state.braces.at(-1) === 'block' || (state.previous === '}' || state.previous === ')') && state.operand || /^(?:export|default|else)$/u.test(state.previous)
+      const body = { expression: !declaration, parentheses: state.parentheses.length, braces: state.braces.length }
+      if (word === 'function') state.functionHeader = body
+      else state.classes.push(body)
+    }
+    state.operand = state.previous !== '.' && /^(?:return|throw|case|delete|void|typeof|new|in|instanceof|yield|await|else|do|of)$/u.test(word)
+    state.previous = word
+    return { end, kind: 'code' }
+  }
+  let token = character
+  if (['++', '--', '=>', '?.'].includes(pair)) token = pair
+  if (token === '(') {
+    state.parentheses.push({ control: /^(?:if|while|for|with|switch|catch)$/u.test(state.previous), body: state.functionHeader })
+    state.functionHeader = null
+    state.operand = true
+  } else if (token === ')') {
+    const header = state.parentheses.pop()
+    state.operand = header?.control ?? false
+    state.functionBody = header?.body ?? null
+  }
+  else if (token === '{') {
+    const classBody = state.classes.at(-1)
+    let body = state.functionBody
+    state.functionBody = null
+    if (!body && classBody?.parentheses === state.parentheses.length && classBody.braces === state.braces.length) body = state.classes.pop()
+    const block = state.previous === '' || state.previous === ';' || state.previous === '=>' || state.previous === ')' && state.operand || /^(?:else|try|finally|do)$/u.test(state.previous)
+    state.braces.push(body ? body.expression ? 'value' : 'block' : block || !state.operand ? 'block' : 'object')
+    state.operand = true
+  } else if (token === '}') state.operand = (state.braces.pop() ?? 'block') === 'block'
+  else if (token === ']' || token === '.' || token === '?.') state.operand = false
+  else if (token !== '++' && token !== '--') state.operand = true
+  if (token === ':') { state.functionHeader = null; if (state.classes.at(-1)?.braces === state.braces.length) state.classes.pop() }
+  state.previous = token === '?.' ? '.' : token
+  return { end: start + token.length, kind: 'code' }
+}
+
 function templateExpressionEnd(source, start) {
   let depth = 1
-  for (let index = start; index < source.length; index += 1) {
-    const character = source[index]
-    if (character === '\'' || character === '"') {
-      index = quotedLiteralEnd(source, index) - 1
-      continue
+  const state = imLexicalState(true)
+  for (let index = start; index < source.length;) {
+    const token = imJavaScriptToken(source, index, state)
+    if (token.kind === 'code') {
+      if (source[index] === '{') depth += 1
+      if (source[index] === '}' && --depth === 0) return index + 1
     }
-    if (character === '`') {
-      index = templateLiteralEnd(source, index) - 1
-      continue
-    }
-    if (character === '/' && source[index + 1] === '/') {
-      index = lineCommentEnd(source, index) - 1
-      continue
-    }
-    if (character === '/' && source[index + 1] === '*') {
-      index = blockCommentEnd(source, index) - 1
-      continue
-    }
-    if (character === '/') {
-      index = regularExpressionEnd(source, index) - 1
-      continue
-    }
-    if (character === '{') depth += 1
-    if (character === '}' && --depth === 0) return index + 1
+    index = token.end
   }
   return source.length
 }
@@ -704,7 +758,7 @@ function templateLiteralEnd(source, start) {
   return source.length
 }
 
-function replaceTemplateLiteralCopy(source, start, end) {
+function replaceTemplateLiteralCopy(source, start, end, lookupKeys, lookupOnly = false) {
   let result = '`'
   let segmentStart = start + 1
   for (let index = start + 1; index < end - 1; index += 1) {
@@ -714,49 +768,80 @@ function replaceTemplateLiteralCopy(source, start, end) {
       continue
     }
     if (character !== '$' || source[index + 1] !== '{') continue
-    result += replaceImUserVisibleText(source.slice(segmentStart, index))
+    const segment = source.slice(segmentStart, index)
+    result += lookupOnly ? segment : replaceImUserVisibleText(segment)
     const expressionEnd = templateExpressionEnd(source, index + 2)
-    result += source.slice(index, expressionEnd)
+    result += '${' + replaceImTemplateLookups(source.slice(index + 2, expressionEnd - 1), lookupKeys) + '}'
     index = expressionEnd - 1
     segmentStart = expressionEnd
   }
-  return result + replaceImUserVisibleText(source.slice(segmentStart, end - 1)) + '`'
+  const tail = source.slice(segmentStart, end - 1)
+  return result + (lookupOnly ? tail : replaceImUserVisibleText(tail)) + '`'
+}
+
+// Translation keys are data even when their lookup is inside ${...}. Apply
+// the same literal transform to those exact references; leave other expression
+// strings and all expression code untouched.
+function imTranslationKeys(source) {
+  const keys = new Set()
+  function visit(start, end) {
+    const state = imLexicalState(start !== 0)
+    for (let index = start; index < end;) {
+      const token = imJavaScriptToken(source, index, state)
+      if (token.kind === 'quoted') {
+        let after = token.end
+        while (/\s/u.test(source[after] ?? '') && after < end) after += 1
+        if (source[after] === ':') keys.add(source.slice(index + 1, token.end - 1))
+      } else if (token.kind === 'template') {
+        for (let cursor = index + 1; cursor < token.end - 1; cursor += 1) {
+          if (source[cursor] === '\\') { cursor += 1; continue }
+          if (source[cursor] !== '$' || source[cursor + 1] !== '{') continue
+          const expressionEnd = templateExpressionEnd(source, cursor + 2)
+          visit(cursor + 2, expressionEnd - 1)
+          cursor = expressionEnd - 1
+        }
+      }
+      index = token.end
+    }
+  }
+  visit(0, source.length)
+  return keys
+}
+
+function replaceImTemplateLookups(source, lookupKeys) {
+  let result = ''
+  let segmentStart = 0
+  const state = imLexicalState(true)
+  for (let index = 0; index < source.length;) {
+    const token = imJavaScriptToken(source, index, state), content = source.slice(index + 1, token.end - 1)
+    if (token.kind === 'quoted' && lookupKeys.has(content)) {
+      result += source.slice(segmentStart, index) + source[index] + replaceImUserVisibleText(content) + source[index]
+      segmentStart = token.end
+    } else if (token.kind === 'template') {
+      const staticLookup = !content.includes('${') && lookupKeys.has(content)
+      result += source.slice(segmentStart, index) + replaceTemplateLiteralCopy(source, index, token.end, lookupKeys, !staticLookup)
+      segmentStart = token.end
+    }
+    index = token.end
+  }
+  return result + source.slice(segmentStart)
 }
 
 function replaceImUserVisibleCopy(source) {
-  const branded = source.replaceAll(UPSTREAM_HARNESS_BRAND, CRAWSHRIMP_HARNESS_BRAND)
-  let result = ''
-  let segmentStart = 0
-  for (let index = 0; index < branded.length; index += 1) {
-    const character = branded[index]
-    if (character === '\'' || character === '"') {
-      const end = quotedLiteralEnd(branded, index)
-      result += branded.slice(segmentStart, index)
-      result += character + replaceImUserVisibleText(branded.slice(index + 1, end - 1)) + character
-      segmentStart = end
-      index = end - 1
-      continue
+  const lookupKeys = imTranslationKeys(source), state = imLexicalState()
+  let result = '', segmentStart = 0
+  for (let index = 0; index < source.length;) {
+    const token = imJavaScriptToken(source, index, state)
+    if (token.kind === 'quoted') {
+      result += source.slice(segmentStart, index) + source[index] + replaceImUserVisibleText(source.slice(index + 1, token.end - 1)) + source[index]
+      segmentStart = token.end
+    } else if (token.kind === 'template') {
+      result += source.slice(segmentStart, index) + replaceTemplateLiteralCopy(source, index, token.end, lookupKeys)
+      segmentStart = token.end
     }
-    if (character === '`') {
-      const end = templateLiteralEnd(branded, index)
-      result += branded.slice(segmentStart, index) + replaceTemplateLiteralCopy(branded, index, end)
-      segmentStart = end
-      index = end - 1
-      continue
-    }
-    if (character === '/' && branded[index + 1] === '/') {
-      index = lineCommentEnd(branded, index) - 1
-      continue
-    }
-    if (character === '/' && branded[index + 1] === '*') {
-      index = blockCommentEnd(branded, index) - 1
-      continue
-    }
-    if (character === '/') {
-      index = regularExpressionEnd(branded, index) - 1
-    }
+    index = token.end
   }
-  return result + branded.slice(segmentStart)
+  return result + source.slice(segmentStart)
 }
 
 /**
@@ -786,7 +871,8 @@ function patchDshImUserVisibleBrand(root) {
   }
 
   for (const path of files) {
-    if (readFileSync(path, 'utf8').includes(UPSTREAM_HARNESS_BRAND)) {
+    const source = readFileSync(path, 'utf8')
+    if (replaceImUserVisibleCopy(source) !== source) {
       throw new Error(`dsh-im user-visible brand patch did not converge: ${path}`)
     }
   }
@@ -842,7 +928,10 @@ function patchHarnessSessionPrompts(root) {
   for (const [pkg, kind] of [['dsh-app-boot', 'source'], ['dsh-web-app', 'web']]) {
     const entry = requireFile(root, `node_modules/@deepseek-ai/${pkg}/lib/index.js`)
     const source = readFileSync(entry, 'utf8')
-    const next = patchHarnessSurfaceSource(source, kind)
+    // rc.2 removed both prompt sections; surface context is now shellEnv-only.
+    const version = JSON.parse(readFileSync(join(root, 'node_modules/@deepseek-ai/dsh/package.json'))).version
+    const removed = version === '0.2.1-rc.2' && !source.includes('function webSurfacePrompt(') && !source.includes('function addHarnessSourceSection(')
+    const next = removed ? source : patchHarnessSurfaceSource(source, kind)
     if (next !== source) writeFileSync(entry, next, 'utf8')
   }
   // Upstream installs this section together with the registered file tool.
@@ -1255,7 +1344,9 @@ function patchDshWebApprovalAllowAll(root) {
     '.mna1RW_actionRow{justify-content:flex-end;gap:8px;padding:14px 16px;display:flex;flex-wrap:wrap}',
     'Web approval action row wrapping',
   )
-  source = replaceRequired(
+  const nativeReason = source.includes('function ApprovalFlow({ pending, reason, detail, t })')
+  if (nativeReason) source = replaceRequired(source, '\t\t\t\tdetail,\n\t\t\t\tt: props.t', '\t\t\t\tdetail,\n\t\t\t\trunCommand: props.runCommand,\n\t\t\t\tt: props.t', 'approval command prop rc2')
+  else source = replaceRequired(
     source,
     '\t\t\t\tdetail: approval.callId === void 0 ? null : props.renderSlot("conversation.approval.detail", { callId: approval.callId }),\n\t\t\t\tt: props.t',
     '\t\t\t\tdetail: approval.callId === void 0 ? null : props.renderSlot("conversation.approval.detail", { callId: approval.callId }),\n\t\t\t\trunCommand: props.runCommand,\n\t\t\t\tt: props.t',
@@ -1263,9 +1354,9 @@ function patchDshWebApprovalAllowAll(root) {
   )
   source = replaceRequired(
     source,
-    '\t\tfunction ApprovalFlow({ pending, detail, t }) {',
+    nativeReason ? '\t\tfunction ApprovalFlow({ pending, reason, detail, t }) {' : '\t\tfunction ApprovalFlow({ pending, detail, t }) {',
     `\t\t/* ${CRAWSHRIMP_DSH_WEB_APPROVAL_ALLOW_ALL_MARKER}: elevate the current Session, then resolve only this approval once. */
-\t\tfunction ApprovalFlow({ pending, detail, runCommand, t }) {`,
+\t\tfunction ApprovalFlow({ pending, ${nativeReason ? "reason, " : ""}detail, runCommand, t }) {`,
     'Web approval allow-all flow signature',
   )
   source = replaceRequired(
@@ -1273,12 +1364,14 @@ function patchDshWebApprovalAllowAll(root) {
     '\t\t\t};\n\t\t\treturn (0, react_jsx_runtime.jsx)("div", {',
     `\t\t\t};
 \t\t\tconst allowAll = () => {
-\t\t\t\tif (runCommand === void 0) return;
+\t\t\t\tif (runCommand === void 0${nativeReason ? " || waiting.current || !pending.answerable" : ""}) return;
+\t\t\t\t${nativeReason ? "waiting.current = true;" : ""}
 \t\t\t\tsetAnswered(true);
 \t\t\t\tPromise.resolve().then(() => runCommand("/permission danger-full-access")).then((matched) => {
 \t\t\t\t\tif (!matched) throw new Error("permission command unavailable");
 \t\t\t\t\treturn pending.answer("allowed-once");
 \t\t\t\t}).catch(() => {
+\t\t\t\t\t${nativeReason ? "if (!active.current || !pending.answerable) return; waiting.current = false;" : ""}
 \t\t\t\t\tsetAnswered(false);
 \t\t\t\t});
 \t\t\t};
@@ -1317,9 +1410,10 @@ function patchDshWebApprovalAllowAll(root) {
   )
   source = replaceRequired(
     source,
-    '\t\t\t\tlocale: NS,\n\t\t\t\tchildren: { "conversation.approval.detail": {',
+    (nativeReason ? '\t\t\t\tlocale: NS,\n\t\t\t\tinject: () => ({ resolveReason: (reason) => ctx.locale.resolveText(reason) }),\n\t\t\t\tchildren: { "conversation.approval.detail": {' : '\t\t\t\tlocale: NS,\n\t\t\t\tchildren: { "conversation.approval.detail": {'),
     `\t\t\t\tlocale: NS,
 \t\t\t\tinject: (sessionId) => ({
+\t\t\t\t\t${nativeReason ? "resolveReason: (reason) => ctx.locale.resolveText(reason)," : ""}
 \t\t\t\t\trunCommand: async (line) => {
 \t\t\t\t\t\tconst session = sessions.binding(sessionId)?.session;
 \t\t\t\t\t\tif (session === void 0 || typeof session.command !== "function") return false;
@@ -1712,7 +1806,7 @@ function permissionPresetsFor(ctx) {
 function buildPatchedDshImBundle(root) {
   const bundle = join(root, DSH_IM_RUNTIME_ROOT, 'lib/index.js')
   const built = readFileSync(bundle, 'utf8')
-  if (built.includes(CRAWSHRIMP_DSH_IM_BUILT_OVERLAY_MARKER) && built.includes('requires_file_return=false')) return bundle
+  if (built.includes(CRAWSHRIMP_DSH_IM_BUILT_OVERLAY_MARKER) && built.includes('crawshrimp-dsh-im-external-axios-v1: axios 1.20.0') && built.includes('requires_file_return=false')) return bundle
   const buildScript = fileURLToPath(new URL('./build-patched-dsh-im.mjs', import.meta.url))
   const result = spawnSync(process.execPath, [buildScript, root], {
     encoding: 'utf8',
@@ -1721,7 +1815,13 @@ function buildPatchedDshImBundle(root) {
   if (result.status !== 0) {
     throw new Error(`dsh-im host bundle build failed: ${result.stderr || result.stdout || String(result.status)}`)
   }
-  return requireText(root, `${DSH_IM_RUNTIME_ROOT}/lib/index.js`, CRAWSHRIMP_DSH_IM_BUILT_OVERLAY_MARKER)
+  const builtEntry = requireText(root, `${DSH_IM_RUNTIME_ROOT}/lib/index.js`, CRAWSHRIMP_DSH_IM_BUILT_OVERLAY_MARKER)
+  // The bundle embeds package metadata after the source-brand pass. Converge
+  // its final visible literals now so the next patch never changes that copy.
+  const source = readFileSync(builtEntry, 'utf8')
+  const branded = replaceImUserVisibleCopy(source)
+  if (branded !== source) writeFileSync(builtEntry, branded)
+  return builtEntry
 }
 
 /**
@@ -1756,7 +1856,7 @@ function assertEffectiveProfileRootClosure(root) {
 
 /** Verify a preset composition against the runtime-root package closure. */
 function assertStandardPresetRootClosure(root) {
-  const standardPath = 'node_modules/@deepseek-ai/dsh-agent-presets/presets/standard/agent.cordis.yml'
+  const standardPath = 'node_modules/@deepseek-ai/dsh-web-app/presets/standard.patch.yml'
   // Source development runtime keeps the profile under `profile/web`; the
   // package staging step copies it to `profiles/web`. Both execute this same
   // guard, so resolve the actual layout before checking the preset closure.
@@ -1767,6 +1867,11 @@ function assertStandardPresetRootClosure(root) {
   if (!crawshrimpPath) {
     throw new Error('DSH rc.1 product Crawshrimp standard preset is missing from the runtime')
   }
+  const profilePath = join(root, crawshrimpPath.split('/agent-presets/')[0], 'cordis.patch.yml')
+  const profile = readFileSync(profilePath, 'utf8').split('# Generated Crawshrimp preset declaration')[0].trimEnd()
+  const plugins = readFileSync(join(root, crawshrimpPath), 'utf8').trimEnd()
+  const declaration = '\n\n# Generated Crawshrimp preset declaration (source: agent-presets/crawshrimp-standard/agent.cordis.yml)\n- insert:\n    - id: preset-crawshrimp-standard\n      name: \'@deepseek-ai/dsh-agent-preset\'\n      config:\n        id: crawshrimp-standard\n        name: 抓虾工作模式\n        plugins:\n' + plugins.split('\n').map(line => line.trim() ? '          ' + line : '').join('\n') + '\n'
+  if (readFileSync(profilePath, 'utf8') !== profile + declaration) writeFileSync(profilePath, profile + declaration)
   const sources = [
     readFileSync(requireFile(root, standardPath), 'utf8'),
     readFileSync(requireFile(root, crawshrimpPath), 'utf8'),
@@ -1844,7 +1949,8 @@ function patchPiAiDeepSeekVisionBridge(root) {
 }`)
       .replaceAll(legacyHelperName, 'crawshrimpLatestImageUserMessageIndex')
       .replaceAll('crawshrimp-deepseek-vision-bridge-v2', CRAWSHRIMP_DEEPSEEK_VISION_BRIDGE_MARKER)
-    source = patchPiAiDeepSeekVisionAudit(source)
+    if (source.includes('const request = model.api')) source = source.replace('let requestOptions = options;', 'let requestOptions = request;')
+  source = patchPiAiDeepSeekVisionAudit(source)
     writeFileSync(entry, source, 'utf8')
     return { entry, patched: true }
   }
@@ -1969,7 +2075,7 @@ async function crawshrimpBridgeDeepSeekImages(snapshot, profile, options, apiKey
   )
   source = replaceRequired(
     source,
-    '\t\t\t\tconst context = attachments === void 0 ? toPiContext(options, void 0, onReplayDegrade) : await toPiContext({\n\t\t\t\t\t...options,\n\t\t\t\t\tsignal: watchdog.signal\n\t\t\t\t}, {\n\t\t\t\t\tattachments,\n\t\t\t\t\tresolveImageAccess: (ref) => this.config.resolveImageAccess?.(attachments, ref),\n\t\t\t\t\tmaxRequestImageBytes: profile.maxRequestImageBytes,\n\t\t\t\t\trequestImagePolicy: {\n\t\t\t\t\t\tmaxPixels: profile.requestImagePixelBudget,\n\t\t\t\t\t\tmaxBytes: profile.requestImageMaxBytes\n\t\t\t\t\t}\n\t\t\t\t}, onReplayDegrade);\n\t\t\t\tconst iterator = toStreamChunks(snapshot.models.streamSimple(model, context, {\n\t\t\t\t\t...profileOptions(profile, reasoning, apiKey),\n\t\t\t\t\t...options.temperature === void 0 ? {} : { temperature: options.temperature },\n\t\t\t\t\t...options.maxTokens === void 0 ? {} : { maxTokens: options.maxTokens },\n\t\t\t\t\t...options.sessionId === void 0 ? {} : { sessionId: String(options.sessionId) },',
+    '\t\t\t\tconst context = attachments === void 0 ? toPiContext(options, void 0, onReplayDegrade) : await toPiContext({\n\t\t\t\t\t...options,\n\t\t\t\t\tsignal: watchdog.signal\n\t\t\t\t}, {\n\t\t\t\t\tattachments,\n\t\t\t\t\tresolveImageAccess: (ref) => this.config.resolveImageAccess?.(attachments, ref),\n\t\t\t\t\tmaxRequestImageBytes: profile.maxRequestImageBytes,\n\t\t\t\t\trequestImagePolicy: {\n\t\t\t\t\t\tmaxPixels: profile.requestImagePixelBudget,\n\t\t\t\t\t\tmaxBytes: profile.requestImageMaxBytes\n\t\t\t\t\t}\n\t\t\t\t}, onReplayDegrade);\n\t\t\t\tconst iterator = toStreamChunks(snapshot.models.streamSimple(model, context, {\n\t\t\t\t\t...profileOptions(profile, reasoning, apiKey),\n\t\t\t\t\t...options.temperature === void 0 ? {} : { temperature: options.temperature },\n\t\t\t\t\t...options.maxTokens === void 0 ? {} : { maxTokens: options.maxTokens },\n\t\t\t\t\t...options.sessionId === void 0 ? {} : { sessionId: String(options.sessionId) },'.replace('toPiContext(options,', source.includes('const request = model.api') ? 'toPiContext(request,' : 'toPiContext(options,').replace('...options,', source.includes('const request = model.api') ? '...request,' : '...options,'),
     '\t\t\t\tconst context = attachments === void 0 ? toPiContext(requestOptions, void 0, onReplayDegrade) : await toPiContext({\n\t\t\t\t\t...requestOptions,\n\t\t\t\t\tsignal: watchdog.signal\n\t\t\t\t}, crawshrimpImageOptions(this, attachments, profile), onReplayDegrade);\n\t\t\t\tconst iterator = toStreamChunks(snapshot.models.streamSimple(model, context, {\n\t\t\t\t\t...profileOptions(profile, reasoning, apiKey),\n\t\t\t\t\t...requestOptions.temperature === void 0 ? {} : { temperature: requestOptions.temperature },\n\t\t\t\t\t...requestOptions.maxTokens === void 0 ? {} : { maxTokens: requestOptions.maxTokens },\n\t\t\t\t\t...requestOptions.sessionId === void 0 ? {} : { sessionId: String(requestOptions.sessionId) },',
     'llm-pi-ai DeepSeek vision bridge context replay',
   )
@@ -1979,6 +2085,7 @@ async function crawshrimpBridgeDeepSeekImages(snapshot, profile, options, apiKey
     '\t\tresolveAttachments: () => ctx.get("attachments"),\n\t\tresolveImageAccess: (attachments, ref) => resolveImageAttachmentAccess(attachments, (hostPath) => ctx.get("fs")?.processPathFromHostPath(hostPath), ref),\n\t\tonVisionPreflight: ({ provider, model, visionModel, sessionId }) => {\n\t\t\tctx.logger.info("crawshrimp.audit " + JSON.stringify({ event: "deepseek_vision_preflight", provider, model, vision_model: visionModel, session_id: sessionId ?? null }));\n\t\t},\n\t\tonReplayDegrade: ({ provider, model, reason }) => {',
     'llm-pi-ai DeepSeek vision bridge audit',
   )
+  if (source.includes('const request = model.api')) source = source.replace('let requestOptions = options;', 'let requestOptions = request;')
   source = patchPiAiDeepSeekVisionAudit(source)
   writeFileSync(entry, source, 'utf8')
   return { entry, patched: true }
@@ -2059,8 +2166,9 @@ function patchDeepSeekReadImage(root, visionBridge) {
  * instead of once per model step. Applied to both source and staged runtimes.
  */
 export function patchTimeContextSource(source) {
-  const marker = 'crawshrimp-time-context-per-message-v1'
+  const marker = 'crawshrimp-time-context-per-message-v2'
   if (source.includes(marker)) return source
+  if (source.includes('crawshrimp-time-context-per-message-v1')) return source.replaceAll('crawshrimp-time-context-per-message-v1', marker).replace('event.data.source.kind === "plugin" && event.data.source.plugin === "time-context"', '(event.data.source.kind === "time-context" || event.data.source.kind === "plugin" && event.data.source.plugin === "time-context")')
   return replaceRequired(
     source,
     '\t\tconst now = Date.now();\n\t\tconst state = ctx.sessionProjections.stateOf(agent.session, "timeContext");',
@@ -2074,7 +2182,7 @@ export function patchTimeContextSource(source) {
 \t\t\t\tconst event = agent.session.eventAt(SessionSeq(seq));
 \t\t\t\tif (event?.type === "turn/start") break;
 \t\t\t\tif (event?.type !== "user/message") continue;
-\t\t\t\tif (event.data.source.kind === "plugin" && event.data.source.plugin === "time-context") break;
+\t\t\t\tif (event.data.source.kind === "time-context" || event.data.source.kind === "plugin" && event.data.source.plugin === "time-context") break;
 \t\t\t\tif (event.data.source.kind === "user") {
 \t\t\t\t\thasNewUserMessage = true;
 \t\t\t\t\tbreak;
@@ -2140,22 +2248,20 @@ function patchWorkspaceAccessProbe(root) {
   )
   source = replaceWorkspace(
     source,
-    'import { realpath, stat } from "node:fs/promises";',
-    'import { open, readdir, realpath, rename, stat, unlink } from "node:fs/promises";',
+    source.includes('import { mkdir, realpath, stat }') ? 'import { mkdir, realpath, stat } from "node:fs/promises";' : 'import { realpath, stat } from "node:fs/promises";',
+    'import { mkdir, open, readdir, realpath, rename, stat, unlink } from "node:fs/promises";',
     'workspace fs imports',
   )
   source = replaceWorkspace(
     source,
-    'import { basename } from "node:path";',
-    'import { basename, join } from "node:path";',
+    source.includes('import { posix, win32 }') ? 'import { posix, win32 } from "node:path";' : 'import { basename } from "node:path";',
+    'import { basename, join, posix, win32 } from "node:path";',
     'workspace path imports',
   )
   source = replaceWorkspace(
     source,
-    'async function realpathNormalize(path) {\\n\\treturn await realpath(path);\\n}',
-    `async function realpathNormalize(path) {
-\\treturn await realpath(path);
-}
+    source.match(/async function realpathNormalize\(path\) \{[\s\S]*?\n\}/)?.[0] ?? 'missing realpathNormalize',
+    `${source.match(/async function realpathNormalize\(path\) \{[\s\S]*?\n\}/)?.[0]}
 // ${CRAWSHRIMP_WORKSPACE_ACCESS_PROBE_MARKER}
 async function probeWorkspaceDirectoryAccess(directory) {
 \\tawait readdir(directory);
@@ -2213,33 +2319,65 @@ async function probeWorkspaceDirectoryAccess(directory) {
  *
  * @returns source paths used as current-release evidence for staging/tests.
  */
+// Durable original IDs for the real managed text HTTP caller; no new remote route/schema.
+export function patchManagedCallerTrace(root) {
+  const entry=requireFile(root,'node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js')
+  const titleEntry=requireFile(root,'node_modules/@deepseek-ai/dsh-session-title-llm/lib/index.js')
+  let source=readFileSync(entry,'utf8'),title=readFileSync(titleEntry,'utf8')
+  const marker='crawshrimp-managed-original-id-v1',titleMarker='crawshrimp-managed-title-source-sequence-v1'
+  const before='async function* crawshrimpGlmStreamWithVisionFallback(snapshot, profile, model, context, requestOptions, apiKey, reasoning, streamSignal, onReplayDegrade, callerSignal) {\n\tconst streamOptions = {\n\t\t...profileOptions(profile, reasoning, apiKey),'
+  const after='async function* crawshrimpGlmStreamWithVisionFallback(snapshot, profile, model, context, requestOptions, apiKey, reasoning, streamSignal, onReplayDegrade, callerSignal) {\n\tconst managedFetch=createManagedCallerFetch({provider:requestOptions.provider,modelId:model.id,baseURL:model.baseUrl,apiKey,sessionId:requestOptions.sessionId,messages:requestOptions.messages,purpose:requestOptions.purpose});\n\tconst streamOptions = {\n\t\t...profileOptions(profile, reasoning, apiKey),\n\t\t...(managedFetch?{fetch:managedFetch,maxRetries:0}:{}),'
+  const helperImport='import { createManagedCallerFetch } from "./crawshrimp-managed-caller-trace.mjs";'
+  if(source.includes(marker)){
+    if(source.split(marker).length!==2||source.split(after).length!==2||!source.includes(helperImport))throw new Error('Managed caller trace hook drift')
+  }else{
+    if(source.split(before).length!==2)throw new Error('Managed caller trace hook drift')
+    source='// '+marker+'\n'+helperImport+'\n'+source.replace(before,after)
+  }
+  const titleBefore='source: { kind: "dsh-session-title-llm" }'
+  const titleAfter='source: { kind: "dsh-session-title-llm", managedCallerSourceSequence: {version:1,sessionId:request.session.id,purpose:"session-title",messageSeqs:[...prepared.messageSeqs]} }'
+  if(title.includes(titleMarker)){
+    if(title.split(titleMarker).length!==2||title.split(titleAfter).length!==2)throw new Error('Managed title source sequence hook drift')
+  }else{
+    if(title.split(titleBefore).length!==2)throw new Error('Managed title source sequence hook drift')
+    title='// '+titleMarker+'\n'+title.replace(titleBefore,titleAfter)
+  }
+  const helper=join(root,'node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/crawshrimp-managed-caller-trace.mjs')
+  const body=readFileSync(new URL('./managed-caller-trace.mjs',import.meta.url),'utf8')
+  // Validate both package anchors and read the helper before changing any output.
+  if(readFileSync(entry,'utf8')!==source)writeFileSync(entry,source,'utf8')
+  if(readFileSync(titleEntry,'utf8')!==title)writeFileSync(titleEntry,title,'utf8')
+  if(!existsSync(helper)||readFileSync(helper,'utf8')!==body)writeFileSync(helper,body,'utf8')
+  return {entry,helper,titleEntry,marker,titleMarker}
+}
+
 export function patchRuntimeDependencies(runtimeRoot) {
   const root = resolve(runtimeRoot)
   const applyCompatibility = prepareCompatibility(root)
   patchCompactChat(root)
   patchHistorySearch(root)
   patchSessionArchive(root)
-  const dshManifest = requireText(root, 'node_modules/@deepseek-ai/dsh/package.json', '"0.1.2-rc.1"')
+  const dshManifest = requireText(root, 'node_modules/@deepseek-ai/dsh/package.json', '"0.2.1-rc.2"')
   const dshBin = requireFile(root, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
   // Cordis resolves Web Host plugins from the product runtime root.  Keep the
   // complete official Web closure hoisted here instead of relying on npm's
   // nested copy below `dsh`, which cannot satisfy that resolver on a clean
   // install.
-  const dshWebAppManifest = requireText(root, 'node_modules/@deepseek-ai/dsh-web-app/package.json', '"0.1.2-rc.1"')
+  const dshWebAppManifest = requireText(root, 'node_modules/@deepseek-ai/dsh-web-app/package.json', '"0.2.1-rc.2"')
   const dshWebAppPatch = requireFile(root, 'node_modules/@deepseek-ai/dsh-web-app/cordis.patch.yml')
-  const dshWorkspaceController = requireText(root, 'node_modules/@deepseek-ai/dsh-api-workspace-controller/package.json', '"0.1.2-rc.1"')
-  const dshCordisHostRunner = requireText(root, 'node_modules/@deepseek-ai/dsh-cordis-host-runner/package.json', '"0.1.2-rc.1"')
-  const dshApiSessionController = requireText(root, 'node_modules/@deepseek-ai/dsh-api-session-controller/package.json', '"0.1.2-rc.1"')
+  const dshWorkspaceController = requireText(root, 'node_modules/@deepseek-ai/dsh-api-workspace-controller/package.json', '"0.2.1-rc.2"')
+  const dshCordisHostRunner = requireText(root, 'node_modules/@deepseek-ai/dsh-cordis-host-runner/package.json', '"0.2.1-rc.2"')
+  const dshApiSessionController = requireText(root, 'node_modules/@deepseek-ai/dsh-api-session-controller/package.json', '"0.2.1-rc.2"')
   // These active rows come from the standard Web profile plus Crawshrimp's
   // official-profile overlay.  They are intentionally direct dependencies:
   // the Cordis loader imports every active row from this runtime root.
-  const dshAttachmentLocal = requireText(root, 'node_modules/@deepseek-ai/dsh-attachment-local/package.json', '"0.1.2-rc.1"')
-  const dshLlMPiAi = requireText(root, 'node_modules/@deepseek-ai/dsh-llm-pi-ai/package.json', '"0.1.2-rc.1"')
-  const dshToolWeb = requireText(root, 'node_modules/@deepseek-ai/dsh-tool-web/package.json', '"0.1.2-rc.1"')
-  const dshTimeContext = requireText(root, 'node_modules/@deepseek-ai/dsh-time-context/package.json', '"0.1.2-rc.1"')
+  const dshAttachmentLocal = requireText(root, 'node_modules/@deepseek-ai/dsh-attachment-local/package.json', '"0.2.1-rc.2"')
+  const dshLlMPiAi = requireText(root, 'node_modules/@deepseek-ai/dsh-llm-pi-ai/package.json', '"0.2.1-rc.2"')
+  const dshToolWeb = requireText(root, 'node_modules/@deepseek-ai/dsh-tool-web/package.json', '"0.2.1-rc.2"')
+  const dshTimeContext = requireText(root, 'node_modules/@deepseek-ai/dsh-time-context/package.json', '"0.2.1-rc.2"')
   const timeContext = patchTimeContext(root)
   const reasoningRecovery = patchReasoningRecovery(root)
-  const dshSchedule = requireText(root, 'node_modules/@deepseek-ai/dsh-schedule/package.json', '"0.1.2-rc.1"')
+  const dshSchedule = requireText(root, 'node_modules/@deepseek-ai/dsh-schedule/package.json', '"0.2.1-rc.2"')
   const dshImManifest = requireText(root, 'node_modules/@xmanrui/dsh-im/package.json', '"4.11.0"')
   const dshImEntry = requireFile(root, 'node_modules/@xmanrui/dsh-im/lib/index.js')
   const dshImNaturalModelControls = patchDshImNaturalModelControls(root)
@@ -2266,6 +2404,18 @@ export function patchRuntimeDependencies(runtimeRoot) {
   patchSemirAnthropicAuth(root)
   patchReasoningCompatibility(root)
   const glmVisionBridge = patchGlmVision(root)
+  const managedCallerTrace = patchManagedCallerTrace(root)
+  // GLM patches the upstream onPayload anchor; managed reasoning wraps it afterwards.
+  patchManagedModelSelection(root)
+  // Retain the product provider identity so existing sessions and key storage
+  // resolve through the official Messages adapter, without changing gateway routes.
+  const messagesEntry = join(root, 'node_modules/@deepseek-ai/dsh-llm-deepseek-api-key/lib/index.js')
+  const messagesSource = readFileSync(messagesEntry, 'utf8')
+  if (!messagesSource.includes('const PROVIDER = "crawshrimp-deepseek-official";')) {
+    writeFileSync(messagesEntry, replaceRequired(messagesSource, 'const PROVIDER = "deepseek-official";', 'const PROVIDER = "crawshrimp-deepseek-official";', 'official Messages provider identity'))
+  }
+  patchMessagesVision(root)
+  patchStreamLifecycle(root)
   applyCompatibility()
   const profilePackages = assertEffectiveProfileRootClosure(root)
   const standardPreset = assertStandardPresetRootClosure(root)
@@ -2319,6 +2469,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
     deepseekVisionAdmission,
     deepseekReadImage,
     glmVisionBridge,
+    managedCallerTrace,
     profilePackages,
     standardPresetPackages: standardPreset.packages,
     crawshrimpPreset: standardPreset.crawshrimpPath,
@@ -2329,6 +2480,6 @@ export function patchRuntimeDependencies(runtimeRoot) {
 }
 
 if (import.meta.url === new URL(process.argv[1], 'file:').href) {
-  const result = patchRuntimeDependencies(resolve(new URL('..', import.meta.url).pathname))
+  const result = patchRuntimeDependencies(resolve(fileURLToPath(new URL('..', import.meta.url))))
   console.log(`[patch-runtime-dependencies] ${result.marker}: patched ${result.dshImBrandChangedFiles.length} dsh-im user-visible source files`)
 }

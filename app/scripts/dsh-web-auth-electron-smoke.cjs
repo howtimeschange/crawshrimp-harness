@@ -29,7 +29,7 @@ app.whenReady().then(async () => {
   server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1')
     if (url.searchParams.get('token') === 'launch') {
-      res.writeHead(303, { location: '/', 'set-cookie': cookie + '; Max-Age=120; Path=/; HttpOnly; SameSite=Strict' }).end()
+      res.writeHead(303, { location: './', 'set-cookie': cookie + '; Max-Age=120; Path=/; HttpOnly; SameSite=Strict' }).end()
       return
     }
     const authenticated = req.headers.cookie?.includes(cookie) === true

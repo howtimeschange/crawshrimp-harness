@@ -532,7 +532,7 @@ class BalaAiVideoAssistantPackagingTests(unittest.TestCase):
     def test_ai_capability_credentials_override_environment_fallbacks(self):
         config = {
             "ai": {
-                "1xm": {"gpt_image_4k_key": "config-placeholder-image"},
+                "woka": {"api_key": "config-placeholder-image"},
                 "video": {
                     "seedance_api_key": "config-placeholder-seedance",
                     "bailian_api_key": "config-placeholder-happyhorse",
@@ -540,19 +540,19 @@ class BalaAiVideoAssistantPackagingTests(unittest.TestCase):
             },
         }
         with patch.dict("os.environ", {
-            "ONE_XM_GPT_IMAGE_4K_KEY": "runtime-placeholder-image",
+            "WOKA_IMAGE_API_KEY": "runtime-placeholder-image",
             "ARK_API_KEY": "runtime-placeholder-seedance",
             "DASHSCOPE_API_KEY": "runtime-placeholder-happyhorse",
         }, clear=False), patch("core.api_server.load_config", return_value=config):
             secrets = api_server._bala_video_provider_secrets()
             status = api_server._bala_video_provider_status()
-            one_xm = api_server._resolve_one_xm_settings()
+            image_settings = api_server._resolve_one_xm_settings()
 
         self.assertEqual(secrets["seedance"], "config-placeholder-seedance")
         self.assertEqual(secrets["happyhorse"], "config-placeholder-happyhorse")
         self.assertEqual(status["seedance"]["source"], "AI 能力")
         self.assertEqual(status["happyhorse"]["source"], "AI 能力")
-        self.assertEqual(one_xm["4k"], "config-placeholder-image")
+        self.assertEqual(image_settings["ai.woka.api_key"], "config-placeholder-image")
 
     def test_video_provider_subprocess_environment_drops_runtime_credentials(self):
         config = {

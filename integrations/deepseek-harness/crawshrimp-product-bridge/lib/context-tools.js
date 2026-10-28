@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { automationToolPresentationHints } from './index.js'
+import { automationToolPresentationHints, currentSessionModelSelection } from './index.js'
 
 export const name = 'crawshrimp-context-tools'
 export const inject = ['tools', 'systemPrompt']
@@ -44,6 +44,10 @@ const SHORT_DESCRIPTIONS = Object.freeze({
   mcp__crawshrimp__skill_list: '发现内置技能与CLI，返回root/absolute_path、SKILL.md、cli_root、入口、运行时、ready状态；包括网页、办公、电商与钉钉。按需skill_read，不全量读取。',
   mcp__crawshrimp__automation_wait_next: '等待自然scheduled触发，after_run_uid传上次游标；最长60秒，不创建运行。超时保留游标；出现后automation_wait_run。源会话忙时回执暂存，验收结束暂停计划并结束回复后送达，勿轮询自己的回执。',
 })
+export function toolPresentationMode(mode, selection) {
+  return selection?.provider === 'crawshrimp-managed-openai' && selection?.model?.startsWith('managed-gemini-') ? 'domains' : mode
+}
+
 export function projectTools(tools, active, mode = 'compact') {
   return tools.filter(tool => mode !== 'domains' || !toolDomain(tool.name) || active.has(toolDomain(tool.name)))
     .map(tool => SHORT_DESCRIPTIONS[tool.name] ? { ...tool, description: SHORT_DESCRIPTIONS[tool.name] } : tool)
@@ -126,7 +130,9 @@ export function apply(ctx, config = {}) {
         kind: MARKER, active: [...active].sort(),
         domains: Object.fromEntries(Object.entries(DOMAINS).map(([d, info]) => [d, info.description])),
         unavailable: requested.filter(d => !available.includes(d)),
-        tools: schemas.filter(t => available.includes(toolDomain(t.name))).map(t => t.name).sort(),
+        // The account gateway consumes this as the full advertised tool set.
+        // Keep resident tools and previously enabled domains, including on discovery.
+        tools: projectTools(schemas, active, toolPresentationMode(mode, currentSessionModelSelection(null, exec.agent))).map(t => t.name).sort(),
         instructions,
         note: '下一次模型请求可调用以上工具，权限和审批保持原样。不得用原生schedule工具代替抓虾automation工具。',
       }
@@ -143,6 +149,7 @@ export function apply(ctx, config = {}) {
       const domain = toolDomain(name.startsWith('mcp__') ? name : `mcp__crawshrimp__${name}`) || toolDomain(name)
       if (domain) active.add(domain)
     }
-    return { ...assembled, tools: projectTools(assembled.tools, active, mode) }
+    const selected = currentSessionModelSelection(null, context.agent) || assembled.variables
+    return { ...assembled, tools: projectTools(assembled.tools, active, toolPresentationMode(mode, selected)) }
   })
 }

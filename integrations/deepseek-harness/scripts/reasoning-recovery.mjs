@@ -30,11 +30,17 @@ export function patchReasoningRecoverySource(source) {
     'content: [{ type: "text", text: recovery.notice }], source })',
     'content: [{ type: "text", text: recovery.notice }], source: { provider: "crawshrimp-output-recovery", model: "notice" } })')
   source = replaceOnce(source, '\t\tphase.turn = turn;', '\t\tphase.turn = turn;\n\t\tphase.crawshrimpReasoningRecoveries = 0;')
+  const nativeAttempt = source.includes('var AssistantStreamAttempt = class')
+  if (nativeAttempt) {
+    source = replaceOnce(source, 'assembler = new BlockAssembler();', 'assembler = new BlockAssembler();\n  crawshrimpSawToolCall = false;')
+    source = replaceOnce(source, 'this.assembler.push(timed.chunk);', 'this.crawshrimpSawToolCall ||= chunk.type === "tool-call-delta" || chunk.blockType === "tool-call" || chunk.block?.type === "tool-call";\n  this.assembler.push(timed.chunk);')
+  } else {
   source = replaceOnce(source, '\t\t\tconst assembler = new BlockAssembler();', '\t\t\tconst assembler = new BlockAssembler();\n\t\t\tlet crawshrimpSawToolCall = false;')
   source = replaceOnce(source, '\t\t\t\t\tassembler.push(chunk);', `\t\t\t\t\tcrawshrimpSawToolCall ||= chunk.type === "tool-call-delta" || chunk.blockType === "tool-call" || chunk.block?.type === "tool-call";
 \t\t\t\t\tassembler.push(chunk);`)
-  source = replaceOnce(source, '\t\t\tif (finish.kind === "max-tokens") return { kind: "max-tokens" };', `\t\t\tif (finish.kind === "max-tokens") {
-\t\t\t\tconst recovery = buildReasoningRecovery(message.content, crawshrimpSawToolCall, this.phase.crawshrimpReasoningRecoveries ?? 0);
+  }
+  source = replaceOnce(source, (nativeAttempt ? '\t\t\t\t' : '\t\t\t') + 'if (finish.kind === "max-tokens") return { kind: "max-tokens" };', `\t\t\tif (finish.kind === "max-tokens") {
+\t\t\t\tconst recovery = buildReasoningRecovery(message.content, ${nativeAttempt ? "live.crawshrimpSawToolCall" : "crawshrimpSawToolCall"}, this.phase.crawshrimpReasoningRecoveries ?? 0);
 \t\t\t\tif (recovery) {
 \t\t\t\t\tsignal.throwIfAborted();
 \t\t\t\t\tconst source = { kind: "plugin", plugin: "crawshrimp-output-recovery" };

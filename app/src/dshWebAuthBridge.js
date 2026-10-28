@@ -22,7 +22,7 @@ function exchangeLaunchCookie(url) {
       const cookies = res.headers['set-cookie'] || []
       const cookie = cookies.find(value => /^dsh-auth-[\w-]+=[\w.-]+;/.test(value))
       const maxAge = Number(/(?:^|;)\s*Max-Age=(\d+)/i.exec(cookie || '')?.[1])
-      if (res.statusCode !== 303 || res.headers.location !== '/' || !cookie || !maxAge) {
+      if (res.statusCode !== 303 || !['/', './'].includes(res.headers.location) || !cookie || !maxAge) {
         reject(new Error('智能体页面认证失败，请重新连接智能体'))
         return
       }

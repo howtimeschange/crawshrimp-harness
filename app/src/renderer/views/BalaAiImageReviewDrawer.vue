@@ -1,12 +1,12 @@
 <template>
-  <div v-if="modelValue" class="bala-review-shell" @click.self="close">
-    <section class="bala-review-drawer" role="dialog" aria-modal="true" aria-label="巴拉 AI 图片审核">
+  <dialog v-if="modelValue" ref="nativeDialog" class="bala-review-shell harness-modal-shell" aria-label="巴拉 AI 图片审核" @cancel.prevent="close" @click.self="close">
+    <section class="bala-review-drawer">
       <header class="bala-review-head">
         <div>
           <strong>巴拉 AI 图片审核</strong>
           <span>{{ summaryText }}</span>
         </div>
-        <button type="button" class="bala-icon-button" aria-label="关闭" @click="close">×</button>
+        <button type="button" class="bala-icon-button" aria-label="关闭" autofocus @click="close">×</button>
       </header>
 
       <div v-if="error" class="bala-review-state error">{{ error }}</div>
@@ -109,10 +109,11 @@
         </footer>
       </template>
     </section>
-  </div>
+  </dialog>
 </template>
 
 <script setup>
+import { useNativeDialog } from '../composables/useNativeDialog'
 import { computed, ref, watch } from 'vue'
 import {
   QN_VIDEO_MODEL_OPTIONS,
@@ -129,6 +130,8 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:modelValue', 'start-video-stage', 'batch-updated'])
+const nativeDialog = ref(null)
+useNativeDialog(computed(() => props.modelValue), nativeDialog)
 
 const statusTabs = [
   { value: '', label: '全部' },
@@ -318,6 +321,7 @@ function statusClass(value) {
 }
 
 .bala-review-drawer {
+  color: #0f172a;
   width: min(1180px, 96vw);
   height: 100%;
   display: grid;

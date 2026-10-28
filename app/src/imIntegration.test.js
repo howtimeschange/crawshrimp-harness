@@ -35,8 +35,8 @@ test('DSH rc.1 Web profile pins dsh-im 4.11 and registers it as a product-owned 
   const profilePatch = readFileSync(resolve(harnessRoot, 'profile/web/cordis.patch.yml'), 'utf8')
   const staging = readFileSync(resolve(harnessRoot, 'scripts/stage-runtime.mjs'), 'utf8')
 
-  assert.equal(runtimePackage.dependencies['@deepseek-ai/dsh'], '0.1.2-rc.1')
-  assert.equal(runtimeLock.packages['node_modules/@deepseek-ai/dsh']?.version, '0.1.2-rc.1')
+  assert.equal(runtimePackage.dependencies['@deepseek-ai/dsh'], '0.2.1-rc.2')
+  assert.equal(runtimeLock.packages['node_modules/@deepseek-ai/dsh']?.version, '0.2.1-rc.2')
   assert.equal(runtimePackage.dependencies['@xmanrui/dsh-im'], '4.11.0')
   assert.equal(runtimeLock.packages['node_modules/@xmanrui/dsh-im']?.version, '4.11.0')
   assert.deepEqual(profilePackage.dsh.profile.bundles, [
@@ -62,8 +62,9 @@ test('Crawshrimp settings keeps the dsh-im management surface mounted across nav
   assert.match(settings, /children: \[\{ id: 'im-bots', label: '机器人接入'/)
   assert.match(settings, /const imSettingsPanelMountedOnce = ref/)
   assert.match(settings, /v-show="activePanelId === 'im-bots'"/)
-  assert.match(settings, /v-else-if="activePanelId === 'im-bots'"[\s\S]*key="im-bots-transition-anchor"/)
-  assert.match(settings, /\.im-panel-transition-anchor\s*\{\s*display:\s*block;[\s\S]*flex:\s*0\s+0\s+0;[\s\S]*width:\s*0;[\s\S]*height:\s*0;/)
+  // With immediate panel switching there is no leaving Transition child to retain.
+  assert.doesNotMatch(settings, /<Transition[^>]*name="settings-panel"/)
+  assert.match(settings, /v-if="imSettingsPanelMountedOnce"\s+v-show="activePanelId === 'im-bots'"/)
   assert.match(settings, /event\.origin !== new URL\(imSettingsUrl\.value\)\.origin/)
   assert.match(settings, /event\.data\?\.__crawshrimp === 'im-settings-ready'/)
   assert.match(slots, /function openCrawshrimpImSettings\(/)

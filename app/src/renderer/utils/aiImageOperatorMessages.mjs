@@ -12,6 +12,11 @@ export function formatAiImageRunStatus(status) {
   return STATUS_LABELS[normalized] || String(status || '').trim()
 }
 
+export function isUnknownImageSubmission(item) {
+  return (item?.error_code || item?.errorCode) === 'UNKNOWN_SUBMIT_RESULT'
+    || /回执未知|UNKNOWN_SUBMIT_RESULT/.test(String(item?.error?.message || item?.error || ''))
+}
+
 export function generationFailureMessage(error, errorCode = '') {
   const message = String(error?.message || error || '').trim()
   if (errorCode === 'UNKNOWN_SUBMIT_RESULT' || /回执未知|UNKNOWN_SUBMIT_RESULT/.test(message)) {
@@ -26,7 +31,7 @@ export function generationFailureMessage(error, errorCode = '') {
   if (/unauthori[sz]ed|forbidden|invalid api key|\b401\b|\b403\b/i.test(message)) {
     return '当前模型的访问配置不可用。请打开配置检查对应 Key。'
   }
-  if (!message) return '生图任务未能完成。你可以重试本队列或打开参数检查。'
+  if (!message || /^[{[]/.test(message) || /no handler registered|Traceback|^Error invoking remote method/i.test(message)) return '生图任务未能完成。请展开诊断信息，核对结果后再决定是否重试。'
   return message
 }
 

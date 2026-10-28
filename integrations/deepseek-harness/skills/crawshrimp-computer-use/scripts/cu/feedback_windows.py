@@ -101,9 +101,8 @@ class DesktopFeedback:
 
     @lru_cache(maxsize=1)
     def brand_icon(self):
-        # Bundle a color emoji asset: GDI/Pillow text cannot reliably render
-        # Segoe UI Emoji's color tables on every supported Windows runtime.
-        with Image.open(Path(__file__).resolve().parents[2] / 'assets' / 'shrimp-emoji.png') as source:
+        # Use the same transparent C1 brand asset as the native macOS banner.
+        with Image.open(Path(__file__).resolve().parents[2] / 'assets' / 'crawshrimp-C1.png') as source:
             return source.convert('RGBA').resize((38,38),Image.Resampling.LANCZOS)
 
     def show(self,borrowed=False,background=True,idle=False):

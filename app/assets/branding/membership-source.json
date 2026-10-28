@@ -1,0 +1,28 @@
+{
+  "assets": [
+    {
+      "tier": "plus",
+      "source": "/Users/xingyicheng/Documents/Codex/2026-10-25/harness-logo-github-https-github-com/outputs/membership-C1-20261026/plus.png",
+      "sourceSha256": "efba537b8a4031f0f8d08532e0bcfade1e0135305d5641fb0ed692a8b6ac75bc",
+      "master": "app/assets/branding/crawshrimp-membership-plus-source.png",
+      "derived": "app/assets/branding/crawshrimp-membership-plus.png",
+      "derivedSha256": "0edaa100935eb135db806bf1199278f5a2a0ae56fc49a35d82bd64fd988a62fc",
+      "bytes": 76171,
+      "derivation": "full source at 240px on transparent 256px canvas, 8px margin, no cropping or corner mask",
+      "visualLanguage": "open circular frame + rounded plus sign"
+    },
+    {
+      "tier": "pro",
+      "source": "/Users/xingyicheng/Documents/Codex/2026-10-25/harness-logo-github-https-github-com/outputs/membership-C1-20261026/pro.png",
+      "sourceSha256": "3180907ddbbc3a1e15a98ca4c7864b2576e2dc9ec97af268cbefdfff86531edb",
+      "master": "app/assets/branding/crawshrimp-membership-pro-source.png",
+      "derived": "app/assets/branding/crawshrimp-membership-pro.png",
+      "derivedSha256": "84621ddecc8f975be03a1103bf38ede897b2138badfecd8709927f8d17900e40",
+      "bytes": 78557,
+      "derivation": "full source at 240px on transparent 256px canvas, 8px margin, no cropping or corner mask",
+      "visualLanguage": "rounded shield + four-point star"
+    }
+  ],
+  "sourceManifest": "/Users/xingyicheng/Documents/Codex/2026-10-25/harness-logo-github-https-github-com/outputs/membership-C1-20261026/result.json",
+  "tierSemantics": "presentation only; existing authoritative account/subscription plan remains unchanged"
+}

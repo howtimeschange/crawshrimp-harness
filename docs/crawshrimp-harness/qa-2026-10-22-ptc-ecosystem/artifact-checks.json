@@ -1,0 +1,34 @@
+{
+  "native": {
+    "artifactCount": 2,
+    "artifacts": [
+      {
+        "filename": "PTC-ECO-native_3.zip",
+        "exists": true,
+        "size": 52242
+      },
+      {
+        "filename": "深绘PDF截图结果_20261022-111212.xlsx",
+        "exists": true,
+        "size": 5331
+      }
+    ],
+    "pngSHA256": "57a3d0138999bb1eb2bb14ae0cd9ec53c07c71c9e4469dcb7c17f388659d3d17"
+  },
+  "ptc": {
+    "artifactCount": 2,
+    "artifacts": [
+      {
+        "filename": "PTC-ECO-ptc_3.zip",
+        "exists": true,
+        "size": 52236
+      },
+      {
+        "filename": "深绘PDF截图结果_20261022-111213.xlsx",
+        "exists": true,
+        "size": 5332
+      }
+    ],
+    "pngSHA256": "57a3d0138999bb1eb2bb14ae0cd9ec53c07c71c9e4469dcb7c17f388659d3d17"
+  }
+}

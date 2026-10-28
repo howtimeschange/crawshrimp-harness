@@ -137,6 +137,45 @@ class ShenhuiShoePackagingRuleTests(unittest.TestCase):
         )
         self.assertEqual(max_active, 2)
 
+    def test_pose_model_wave_pairs_results_after_reverse_completion(self):
+        model_ids = ["model-a", "model-b", "model-c"]
+        payloads = {model: {"model_id": model, "content": f"unique-{model}"}
+                    for model in model_ids}
+        ready = threading.Barrier(3)
+        gates = {model: threading.Event() for model in model_ids}
+        gates["model-c"].set()
+        completed = []
+        real_executor = shenhui_shoe_packaging.ThreadPoolExecutor
+
+        class ObservedExecutor(real_executor):
+            def submit(self, fn, model_id):
+                future = super().submit(fn, model_id)
+
+                def on_done(done):
+                    # Release the next worker only after this Future is complete.
+                    completed.append(model_id)
+                    next_model = {"model-c": "model-b", "model-b": "model-a"}.get(model_id)
+                    if next_model:
+                        gates[next_model].set()
+
+                future.add_done_callback(on_done)
+                return future
+
+        def invoke(model_id):
+            ready.wait(timeout=5)
+            self.assertTrue(gates[model_id].wait(timeout=5))
+            return payloads[model_id]
+
+        with patch.object(shenhui_shoe_packaging, "ThreadPoolExecutor", ObservedExecutor):
+            results = shenhui_shoe_packaging._run_pose_model_wave(
+                model_ids, invoke, max_workers=3,
+            )
+
+        self.assertEqual(completed, list(reversed(model_ids)))
+        self.assertEqual(results, [payloads[model] for model in model_ids])
+        for model, result in zip(model_ids, results):
+            self.assertIs(result, payloads[model])
+
     def test_default_analyzer_dispatches_initial_model_quorum_concurrently(self):
         lock = threading.Lock()
         active = 0
@@ -7154,7 +7193,8 @@ class ShenhuiShoePackagingRuleTests(unittest.TestCase):
                 item for item in calls
                 if Path(item[1]).stem.removeprefix("00317-focused-").isdigit()
             ]
-            self.assertEqual(
+            # Concurrent arrival order varies; each model must occur exactly once.
+            self.assertCountEqual(
                 [model for model, _name in base_focused_calls],
                 ["model-a", "model-b", "model-c"],
             )
@@ -7413,12 +7453,13 @@ class ShenhuiShoePackagingRuleTests(unittest.TestCase):
                 item for item in calls
                 if Path(item[1]).stem.removeprefix("60301-focused-").isdigit()
             ]
-            self.assertEqual(
+            # Concurrent arrival order varies; each model must occur exactly once.
+            self.assertCountEqual(
                 [model for model, _name, _prompt in base_focused_calls],
                 ["model-a", "model-b", "model-c"],
             )
             targeted_calls = [item for item in calls if "本轮只裁决 tmz3" in item[2]]
-            self.assertEqual([item[0] for item in targeted_calls], ["model-a", "model-b", "model-c"])
+            self.assertCountEqual([item[0] for item in targeted_calls], ["model-a", "model-b", "model-c"])
             self.assertEqual(payload["slots"]["tmz3"], "I03")
             self.assertEqual(payload["slots"]["wpz"][2], "I03")
             self.assertEqual(

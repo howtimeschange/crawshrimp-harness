@@ -91,7 +91,7 @@ test('exchanges a real HTTP redirect without following it, and rejects invalid r
   const server = http.createServer((req, res) => {
     requests++
     res.writeHead(req.url.includes('bad') ? 401 : 303, {
-      location: '/',
+      location: req.url.includes('relative') ? './' : req.url.includes('external') ? 'https://example.invalid/' : '/',
       'set-cookie': 'dsh-auth-test=credential; Max-Age=120; Path=/; HttpOnly; SameSite=Strict',
     }).end()
   })
@@ -100,6 +100,10 @@ test('exchanges a real HTTP redirect without following it, and rejects invalid r
   const url = new URL(`http://127.0.0.1:${server.address().port}/?token=test`)
   assert.equal((await exchangeLaunchCookie(url)).cookie, 'dsh-auth-test=credential')
   assert.equal(requests, 1)
+  url.search = '?token=relative'
+  assert.equal((await exchangeLaunchCookie(url)).cookie, 'dsh-auth-test=credential')
+  url.search = '?token=external'
+  await assert.rejects(exchangeLaunchCookie(url), /认证失败/)
   url.search = '?token=bad'
   await assert.rejects(exchangeLaunchCookie(url), /认证失败/)
 })

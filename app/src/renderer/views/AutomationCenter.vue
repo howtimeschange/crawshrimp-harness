@@ -8,8 +8,8 @@
       <div class="ac-head-actions">
         <button v-if="editing" type="button" class="ac-secondary" @click="closeEditor">返回列表</button>
         <template v-else>
-          <button type="button" class="ac-primary" @click="openAgent">从智能体对话创建</button>
-          <button type="button" class="ac-secondary" @click="startCreate">高级配置</button>
+
+
         </template>
         <button type="button" class="ac-secondary" :disabled="loading" @click="refresh">
           {{ loading ? '刷新中...' : '刷新' }}
@@ -20,7 +20,7 @@
     <p v-if="notice" class="ac-notice">{{ notice }}</p>
     <p v-if="error" class="ac-notice error">{{ error }}</p>
 
-    <section v-if="editing" class="ac-editor">
+    <section v-if="editing && editingUid" class="ac-editor">
       <div class="ac-editor-title">
         <div>
           <h3>{{ editingUid ? '编辑自动化' : '高级配置自动化' }}</h3>
@@ -209,7 +209,7 @@
           </label>
           <p v-if="hasProgram && !hasSuccessfulProgramTest" class="ac-policy-warning">请先测试 Program；已编辑的 Program 或测试输入会使原测试结果失效。</p>
           <p class="ac-help">工具列表和无人值守允许风险共同记录授权范围。风险类别：read_only（读取）、local_write（本地写入）、external_write（对外写入）、destructive（删除等操作）。脚本与命令可访问文件、网络和外部服务；有禁止项时请使用对应的文件或网页工具。网页恢复需要授权 browser_navigate 并填写任务网页地址。工具开关不会单独授予未列出的工具。继承会话会等待原会话空闲；超时会记录为“因并发跳过”，不会抢占用户对话。</p>
-          <p v-if="editingUid" class="ac-policy-warning">会话上下文和来源会话在创建后不可修改；如需更换，请使用“复制为新 Automation”。</p>
+          <p v-if="editingUid" class="ac-policy-warning">会话上下文和来源会话在创建后不可修改；如需更换，请使用“通过对话复制”。</p>
         </section>
 
         <section v-else class="ac-card">
@@ -234,13 +234,15 @@
     </section>
 
     <section v-else class="ac-list-shell">
+      <div class="ac-conversation-guide"><div><h3>在主会话中创建自动化</h3><p>说清任务、运行时间和需要的结果，抓虾会和你确认计划。这里负责查看、暂停和继续。</p></div><button class="ac-primary" @click="openAgent">去主会话创建</button></div>
+      <div class="ac-examples"><h4>试试这样说</h4><div v-for="example in automationExamples" :key="example.title"><strong>{{ example.title }}</strong><p>{{ example.prompt }}</p><button class="ac-secondary" @click="copyExampleAndOpen(example.prompt)">复制并去主会话</button></div><small>只复制示例，不会发送消息。回到主会话后粘贴并按需修改。</small></div>
       <div v-if="loading" class="ac-state">加载中...</div>
       <div v-else-if="!automations.length" class="ac-state empty">
         <strong>还没有智能体自动化</strong>
         <span>请先在智能体对话中用自然语言创建一次性定时任务或周期闭环；这里负责查看、暂停、恢复和审计运行证据。</span>
         <div class="ac-head-actions">
-          <button type="button" class="ac-primary" @click="openAgent">从智能体对话创建</button>
-          <button type="button" class="ac-secondary" @click="startCreate">高级配置</button>
+
+
         </div>
       </div>
       <template v-else>
@@ -275,7 +277,7 @@
             </div>
             <div class="ac-actions" @click.stop>
               <button type="button" @click="runNow(automation)">运行一次</button>
-              <button type="button" @click.stop="copyAutomation(automation)">复制为新 Automation</button>
+              <button type="button" @click.stop="copyAutomation(automation)">通过对话复制</button>
               <button v-if="automation.enabled" type="button" @click="pause(automation)">暂停</button>
               <button v-else type="button" @click="resume(automation)">恢复</button>
               <button type="button" @click="editAutomation(automation)">编辑</button>
@@ -362,6 +364,15 @@ function syncAutomationViewState() {
   runs.value = automationViewState.runsForSelected
 }
 
+const automationExamples = [
+  { title: '工作日销售汇总', prompt: '每个工作日早上 9 点，汇总店铺昨天的销售数据，保存为 Excel。先确认数据来源、范围和保存位置。' },
+  { title: '商品价格检查', prompt: '每小时检查指定商品的价格，发现异常时提醒我。先确认商品范围、异常规则和提醒方式。' },
+  { title: '每周素材整理', prompt: '每周一上午 10 点，按商品款号整理上周下载的素材，保留原文件。先预览整理规则。' },
+]
+async function copyExampleAndOpen(prompt) {
+  try { await navigator.clipboard.writeText(prompt); openAgent() }
+  catch { error.value = '示例复制失败，请手动选择上方文字复制，再进入主会话。' }
+}
 function openAgent() {
   emit('open-agent')
 }
@@ -641,20 +652,8 @@ async function editAutomation(automation) {
   }
 }
 
-async function copyAutomation(automation) {
-  error.value = ''
-  notice.value = ''
-  try {
-    const response = await window.cs.getAutomation(automation.automation_uid)
-    const item = response?.automation || response
-    form.value = formFromAutomation(item, defaultForm(), { copy: true })
-    form.value.title = `${form.value.title || '自动化'} 副本`
-    editingUid.value = ''
-    editing.value = true
-    invalidateProgramTest()
-  } catch (err) {
-    error.value = err?.message || String(err)
-  }
+function copyAutomation(automation) {
+  return copyExampleAndOpen(`参照自动化「${automation.title || '未命名自动化'}」创建一个新计划：${automation.objective_prompt || ''}。先和我确认执行范围与时间，不要直接运行。`)
 }
 
 async function loadAutomations() {
@@ -849,4 +848,8 @@ onBeforeUnmount(() => {
   .ac-grid.two { grid-template-columns: 1fr; }
   .ac-run-row { grid-template-columns: 1fr; }
 }
+</style>
+
+<style scoped>
+.ac-conversation-guide{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:22px 0;border-bottom:1px solid var(--border)}.ac-conversation-guide p{color:var(--text2);font-size:13px;line-height:1.8;margin-top:8px;max-width:70ch}.ac-examples{margin:24px 0}.ac-examples>div{display:grid;grid-template-columns:140px minmax(0,1fr) auto;gap:16px;align-items:start;padding:16px 0;border-bottom:1px solid var(--border)}.ac-examples p,.ac-examples small{color:var(--text2);font-size:12px;line-height:1.8}.ac-examples small{display:block;margin-top:12px}.ac-list-shell{min-width:0}@media(max-width:900px){.ac-conversation-guide{align-items:flex-start;flex-direction:column}.ac-examples>div{grid-template-columns:1fr}.ac-examples button{justify-self:start}}
 </style>

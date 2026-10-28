@@ -53,7 +53,7 @@ test('model switching drops unsupported carried effort; explicit same-model inva
   const end = patched.indexOf('\n//#endregion', start)
   class RemoteError extends Error { constructor(code, message) { super(message); this.code = code } }
   const Controller = vm.runInNewContext(patched.slice(start, end) + '; SessionCommandController', {
-    normalizeStoredReasoning, ReasoningEffortId: value => value, remoteErrorOf: () => undefined, RemoteError,
+    modelAvailable: async () => true, normalizeStoredReasoning, ReasoningEffortId: value => value, remoteErrorOf: () => undefined, RemoteError,
   })
   let current = { provider: 'official', model: 'deepseek-flash', reasoningEffort: 'high' }
   let saved
@@ -91,13 +91,13 @@ test('rendered effort menu updates from capabilities and Default/Off submit diff
       react: {
         useSyncExternalStore: (_subscribe, snapshot) => snapshot(),
         useState: value => [[true, 'effort', null][hook++] ?? value, () => {}],
-        useRef: value => ({ current: value }), useId: () => 'test', useMemo: fn => fn(), useEffect: () => {},
+        useRef: value => ({ current: value }), useId: () => 'test', useMemo: fn => fn(), useEffect: () => {}, useLayoutEffect: () => {}, useCallback: fn => fn(),
       },
-      react_jsx_runtime: { jsx, jsxs: jsx, Fragment: 'fragment' },
-      ModelSelect_module_css_default: {}, _deepseek_ai_dsh_client_ui_primitives: {},
-      clsx: () => '', queueMicrotask,
+      MEASURE_STYLE: {}, react_dom: { createPortal: node => node }, document: { body: {} }, react_jsx_runtime: { jsx, jsxs: jsx, Fragment: 'fragment' },
+      ModelSelect_module_css_default: {}, _deepseek_ai_dsh_client_ui_primitives: { rankByName: items => items },
+      orderModelProviders: groups => groups, clsx: () => '', queueMicrotask,
     })
-    const tree = Component({ available: true, locked: false, directory: { subscribe() {}, getSnapshot: () => state }, load() {}, select: async value => { selected.push(clone(value)); return true }, t: key => key })
+    const tree = Component({ renderSlot: () => null, available: true, locked: false, directory: { subscribe() {}, getSnapshot: () => state }, load() {}, select: async value => { selected.push(clone(value)); return {ok:true,value:{selected:value}} }, t: key => key })
     const nodes = []
     const visit = node => {
       if (Array.isArray(node)) return node.forEach(visit)
@@ -108,7 +108,7 @@ test('rendered effort menu updates from capabilities and Default/Off submit diff
     visit(tree)
     return { buttons: nodes.filter(node => node.props?.role === 'menuitemradio'), selected }
   }
-  const state = { current: stale, status: 'ready', error: null, failures: [], groups: [{ id: stale.provider, models: [{ id: stale.model, name: 'Test', reasoning: { efforts: ['off', 'low', 'high', 'max'].map(id => ({ id, name: id })) } }] }] }
+  const state = { pending: null, current: stale, status: 'ready', error: null, failures: [], groups: [{ id: stale.provider, models: [{ id: stale.model, name: 'Test', reasoning: { efforts: ['off', 'low', 'high', 'max'].map(id => ({ id, name: id })) } }] }] }
   const active = render(state)
   assert.deepEqual(active.buttons.map(node => node.key), ['provider-default', 'effort:off', 'effort:low', 'effort:high', 'effort:max'])
   active.buttons[0].props.onClick()
@@ -180,7 +180,7 @@ test('full patched pi adapter passes Default/Off intent through streamSimple to 
     compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true, requiresReasoningContentOnAssistantMessages: true },
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   }
-  const profiles = new Map([[stale.provider, { configuredMaxTokens: new Map(), streamIdleTimeoutMs: 10000 }]])
+  const profiles = new Map([[stale.provider, { configuredMaxTokens: new Map(), modelErrors: new Map(), streamIdleTimeoutMs: 10000 }]])
   const adapter = new PiAiAdapter({ profiles: () => profiles, resolveApiKey: async () => 'test-only' })
   let payload
   adapter.snapshot = { profiles, models: {

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import uuid
 from typing import Any, Optional
@@ -88,6 +89,12 @@ class GrantCreateRequest(BaseModel):
     toolset: list[str]
     url_prefix: Optional[str] = None
     tab_id: Optional[str] = None
+
+
+@router.get("/usage/activity")
+def usage_activity() -> dict:
+    from core.agent.usage import activity_summary
+    return activity_summary()
 
 
 # ---------- Runtime ----------
@@ -507,6 +514,14 @@ def artifact_zip_entry(path: str, entry: str) -> Response:
         media_type=_guess_media_type(entry_name),
         headers={"Cache-Control": "no-store", "Content-Disposition": "inline"},
     )
+
+
+@router.get("/artifacts/chunk")
+def artifact_chunk_endpoint(session_id: str, artifact_id: str, request: Request, offset: int = 0, length: int = 98304, sha256: str = ""):
+    from core.artifact_chunks import artifact_chunk
+    if set(request.query_params) - {'session_id','artifact_id','offset','length','sha256'}:
+        raise HTTPException(400, "Unsupported query parameter")
+    return artifact_chunk(db.get_session_artifact(session_id, artifact_id), artifact_id, offset, length, sha256)
 
 
 @router.get("/artifacts/file")
@@ -1245,8 +1260,15 @@ def session_resources(runtime_session_id: str) -> dict:
     for row in db.list_session_resource_events(runtime_session_id):
         data = json.loads(row["payload_json"])
         if row["event_type"] == "artifact.created":
-            key = data.get("path") or data.get("artifact_id")
+            snapshot = data.get("file_snapshot") if isinstance(data.get("file_snapshot"), dict) else {}
+            key = snapshot.get("version_id") or data.get("path") or data.get("artifact_id")
             if key:
+                previous = artifacts.get(key)
+                # A failed retry of this exact token cannot replace a committed
+                # delivery with its mutable source. Other versions stay distinct.
+                if (previous and (previous.get("file_snapshot") or {}).get("status") == "ready"
+                        and snapshot.get("status") != "ready"):
+                    continue
                 previous = artifacts.pop(key, None)
                 created_at = previous["created_at"] if previous else row["created_at"]
                 artifacts[key] = {**data, "created_at": created_at, "updated_at": row["created_at"]}
@@ -1269,18 +1291,40 @@ def session_resources(runtime_session_id: str) -> dict:
                 activity = {**data, "created_at": row["created_at"]}
     # Office render jobs freeze a new copy in a different job directory. Present
     # those revisions as one document, preferring the latest usable preview.
-    documents = {}
+    documents, versions = {}, {}
     for item in artifacts.values():
+        item.pop("document_id", None)
         office = item.get("office")
-        path = Path(item.get("path") or "")
+        path = Path(item.get("source_path") or item.get("path") or "")
         managed = office and path.parent.name == "editable" and path.parent.parent.name == office.get("job_id")
-        key = (str(path.parent.parent.parent), item.get("filename")) if managed else item.get("path") or item.get("artifact_id")
+        key = (str(path.parent.parent.parent), item.get("filename")) if managed else item.get("source_path") or item.get("path") or item.get("artifact_id")
+        snapshot = item.get("file_snapshot") if isinstance(item.get("file_snapshot"), dict) else {}
+        # Also sanitize failed events written by older builds: desktop opening
+        # and cloud dispatch must not bypass the fail-closed chunk endpoint.
+        if "file_snapshot" in item and snapshot.get("status") != "ready":
+            item["source_path"] = item.get("source_path") or item.get("path")
+            item["path"] = ""
+        if snapshot.get("status") == "ready":
+            # A snapshot token identifies bytes; this session/source grouping
+            # identifies the document across edits and Office render job copies.
+            # Derive it locally so tool payloads cannot assert another identity.
+            item["document_id"] = "document-" + hashlib.sha256(json.dumps(
+                [runtime_session_id, key], ensure_ascii=False, separators=(",", ":")
+            ).encode()).hexdigest()
+            versions.setdefault(key, []).append({"artifact_id": snapshot["version_id"], "name": item.get("filename") or snapshot.get("name"),
+                                               "size": snapshot["size"], "sha256": snapshot["sha256"],
+                                               "created_at": item["created_at"], "updated_at": item["updated_at"]})
+            item["source_artifact_id"] = item.get("artifact_id")
+            item["artifact_id"] = snapshot["version_id"]
         previous = documents.get(key)
         if previous and managed:
             rank = lambda value: (2 if (value.get("office", {}).get("delivery") or {}).get("status") == "final" else 1 if value.get("office", {}).get("pages") else 0)
             if rank(previous) > rank(item):
                 continue
         documents[key] = item
+    for key, item in documents.items():
+        if versions.get(key):
+            item["versions"] = list(reversed(versions[key]))
     for item in documents.values():
         try:
             path = Path(item.get("path") or "")

@@ -3,24 +3,25 @@
     <header class="lpl-head">
       <div>
         <h2>提示词库</h2>
-        <p>保存在本机的 Prompt 模板，支持编辑、导入和预览</p>
+        <p>整理常用提示词，编辑完整正文，按需设置匹配规则。</p>
       </div>
       <div class="lpl-head-actions">
         <template v-if="isListView">
           <button type="button" class="lpl-primary" :disabled="busy" @click="createLibrary">新建库</button>
         </template>
         <template v-else>
-          <button type="button" class="lpl-secondary" @click="backToLibraryList">返回列表</button>
+          <button type="button" class="lpl-secondary" :disabled="busy" @click="backToLibraryList">返回列表</button>
           <button type="button" class="lpl-secondary" :disabled="busy || !selectedLocalLibrary" @click="chooseWorkbookForImport">
             {{ importing ? '导入中...' : '导入更新' }}
           </button>
-          <button type="button" class="lpl-secondary" :disabled="busy || !selectedLocalLibrary" @click="saveLocalEdits">保存编辑</button>
+          <button type="button" class="lpl-primary" :disabled="busy || !selectedLocalLibrary" @click="saveLocalEdits">保存编辑</button>
 
         </template>
       </div>
     </header>
 
-    <p v-if="message" class="lpl-notice">{{ message }}</p>
+    <p v-if="!isListView && isDirty" class="lpl-notice warning" role="status">有未保存的更改。保存后可在其他任务中使用。</p>
+    <p v-if="message && !isDirty" class="lpl-notice" role="status">{{ message }}</p>
     <p v-if="error" class="lpl-notice error">{{ error }}</p>
     <p v-if="cloudError" class="lpl-notice warning">{{ cloudError }}</p>
 
@@ -30,7 +31,6 @@
           <h3>提示词库列表</h3>
           <p>{{ localLibraries.length }} 个本地库</p>
         </div>
-        <button type="button" class="lpl-primary" :disabled="busy" @click="createLibrary">新建库</button>
       </div>
       <div class="lpl-library-table">
         <div class="lpl-library-header" role="row">
@@ -57,24 +57,24 @@
       </div>
       <div v-if="!libraries.length" class="lpl-empty inline">
         <strong>暂无提示词库</strong>
-        <button type="button" class="lpl-primary" @click="createLibrary">新建库</button>
+        <p>点击右上角“新建库”，保存第一条常用提示词。</p>
       </div>
     </section>
 
     <section v-else-if="!selectedLibrary" class="lpl-empty">
       <strong>未选择提示词库</strong>
-      <button type="button" class="lpl-secondary" @click="backToLibraryList">返回列表</button>
+      <button type="button" class="lpl-secondary" :disabled="busy" @click="backToLibraryList">返回列表</button>
     </section>
 
     <section v-else class="lpl-detail">
       <section class="lpl-toolbar">
         <label class="wide">
           <span>库名称</span>
-          <input v-model="libraryDraft.name" :disabled="!selectedLocalLibrary" />
+          <input v-model="libraryDraft.name" :disabled="busy || !selectedLocalLibrary" />
         </label>
         <label>
           <span>场景</span>
-          <select v-model="libraryDraft.scenario" :disabled="!selectedLocalLibrary">
+          <select v-model="libraryDraft.scenario" :disabled="busy || !selectedLocalLibrary">
             <option v-for="scenario in scenarioOptions" :key="scenario">{{ scenario }}</option>
           </select>
         </label>
@@ -84,107 +84,31 @@
         </label>
       </section>
 
-      <section class="lpl-workspace">
-      <aside class="lpl-groups">
-        <div class="lpl-groups-head">
-          <strong>分组</strong>
-          <span>{{ groupSummaries.length }} 组</span>
-        </div>
-        <button type="button" :class="{ active: groupFilter === 'all' }" @click="groupFilter = 'all'">
-          <strong>全部</strong>
-          <span>{{ templates.length }} 条</span>
-        </button>
-        <button
-          v-for="group in groupSummaries"
-          :key="group.name"
-          type="button"
-          :class="{ active: groupFilter === group.name }"
-          @click="groupFilter = group.name"
-        >
-          <strong>{{ group.name }}</strong>
-          <span>{{ group.enabled }} / {{ group.total }} 启用</span>
-        </button>
-        <div class="lpl-sync-meta">
-          <span class="lpl-source-badge">{{ librarySourceLabel(selectedLibrary.source_type) }}</span>
-          <span>{{ statusLabel(selectedLibrary.status) }}</span>
-          <span v-if="selectedLibrary.cloud_library_id">云端 #{{ selectedLibrary.cloud_library_id }}</span>
-        </div>
-      </aside>
-
-      <main class="lpl-table-panel">
-        <div class="lpl-table-head">
-          <div>
-            <h3>Prompt 明细</h3>
-            <span class="lpl-source-badge">{{ librarySourceLabel(selectedLibrary.source_type) }}</span>
-            <span>{{ displayTemplates.length }} 条</span>
-          </div>
-          <button v-if="selectedCloudLibrary" type="button" class="lpl-secondary" @click="copyCloudLibraryToLocal">保存为本地副本</button>
-          <button v-else type="button" class="lpl-secondary" @click="addPromptRow">新增 Prompt</button>
-        </div>
-
-        <div class="lpl-edit-list">
-          <div class="lpl-template-table">
-            <div class="lpl-template-header" role="row">
-              <span>状态</span>
-              <span>分组</span>
-              <span>字段名</span>
-              <span>女优先</span>
-              <span>男/中</span>
-              <span>Prompt</span>
-              <span>操作</span>
-            </div>
-            <div class="lpl-template-body">
-              <div v-for="(template, index) in displayTemplates" :key="templateKey(template, index)" class="lpl-template-row" :class="{ disabled: !template.enabled }">
-                <div class="lpl-template-cell status">
-                  <label class="lpl-switch" :class="{ readonly: !selectedLocalLibrary }">
-                    <input v-model="template.enabled" type="checkbox" :disabled="!selectedLocalLibrary" aria-label="启用 Prompt" />
-                    <span class="lpl-switch-track" aria-hidden="true"></span>
-                    <strong>{{ template.enabled ? '启用' : '停用' }}</strong>
-                  </label>
-                </div>
-                <div class="lpl-template-cell">
-                  <input v-model="template.group_name" :disabled="!selectedLocalLibrary" aria-label="分组" />
-                </div>
-                <div class="lpl-template-cell">
-                  <input v-model="template.field_name" :disabled="!selectedLocalLibrary" aria-label="字段名" />
-                </div>
-                <div class="lpl-template-cell compact">
-                  <input v-model.number="template.female_priority" type="number" :disabled="!selectedLocalLibrary" aria-label="女优先" />
-                </div>
-                <div class="lpl-template-cell compact">
-                  <input v-model.number="template.male_neutral_priority" type="number" :disabled="!selectedLocalLibrary" aria-label="男/中优先" />
-                </div>
-                <div class="lpl-template-cell prompt">
-                  <textarea
-                    ref="promptTextareas"
-                    v-model="template.prompt_text"
-                    rows="2"
-                    :disabled="!selectedLocalLibrary"
-                    aria-label="Prompt"
-                    placeholder="输入完整生图 Prompt"
-                    @input="resizePromptTextarea"
-                  ></textarea>
-                  <details class="lpl-custom-fields">
-                    <summary>自定义匹配字段 · {{ Object.values(template.custom_fields || {}).filter(Boolean).length }}/10</summary>
-                    <p>与款号表中的同名字段对应，填写的字段须同时匹配。</p>
-                    <div><label v-for="name in PROMPT_CUSTOM_FIELDS" :key="name"><span>{{ name }}</span><input v-model="template.custom_fields[name]" :aria-label="name" :disabled="!selectedLocalLibrary" /></label></div>
-                  </details>
-                </div>
-                <div class="lpl-template-cell action">
-                  <button type="button" class="lpl-icon danger" :disabled="!selectedLocalLibrary" aria-label="删除 Prompt" @click="removePromptRow(template)">删除</button>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div v-if="!displayTemplates.length" class="lpl-empty inline">没有匹配的 Prompt</div>
-        </div>
-      </main>
+      <section class="lpl-workspace lpl-master-detail">
+        <aside class="lpl-entry-list" aria-label="提示词列表">
+          <label><span>筛选分组</span><select v-model="groupFilter"><option value="all">全部 · {{ templates.length }} 条</option><option v-for="group in groupSummaries" :key="group.name" :value="group.name">{{ group.name }} · {{ group.total }} 条</option></select></label>
+          <button v-for="(entry,index) in displayTemplates" :key="templateKey(entry,index)" class="lpl-entry" :class="{ active: selectedTemplate === entry }" :aria-pressed="selectedTemplate === entry" @click="selectedTemplateId = entry.local_uid || templateKey(entry, templates.indexOf(entry))"><strong>{{ entry.field_name || '未命名提示词' }}</strong><small>{{ entry.group_name || '未分组' }} · {{ entry.enabled ? '启用' : '停用' }}</small><p>{{ entry.prompt_text || '还没有正文' }}</p></button>
+          <p v-if="!displayTemplates.length" class="lpl-no-match">没有匹配的提示词，换个关键词或分组试试。</p>
+        </aside>
+        <main class="lpl-editor-panel">
+          <header class="lpl-table-head"><h3>提示词详情</h3><button v-if="selectedCloudLibrary" class="lpl-secondary" @click="copyCloudLibraryToLocal">保存为本地副本</button><button v-else class="lpl-secondary" :disabled="busy" @click="addPromptRow">新建提示词</button></header>
+          <template v-if="selectedTemplate">
+            <label class="lpl-editor-field"><span>标题 / 字段名</span><input v-model="selectedTemplate.field_name" :disabled="busy || !selectedLocalLibrary" /></label>
+            <label class="lpl-editor-field"><span>提示词正文</span><textarea v-model="selectedTemplate.prompt_text" :disabled="busy || !selectedLocalLibrary" placeholder="写下画面要求与需要保留的细节…" /></label>
+            <details class="lpl-editor-rules"><summary>匹配规则与排序</summary><div class="lpl-rule-fields"><label>分组<input v-model="selectedTemplate.group_name" :disabled="busy || !selectedLocalLibrary" /></label><label>女优先<input v-model.number="selectedTemplate.female_priority" type="number" :disabled="busy || !selectedLocalLibrary" /></label><label>男 / 中优先<input v-model.number="selectedTemplate.male_neutral_priority" type="number" :disabled="busy || !selectedLocalLibrary" /></label><label class="lpl-enabled"><input v-model="selectedTemplate.enabled" type="checkbox" :disabled="busy || !selectedLocalLibrary" />启用此提示词</label></div><p>自定义字段与款号表中的同名字段对应，填写的字段须同时匹配。</p><div class="lpl-rule-fields"><label v-for="name in PROMPT_CUSTOM_FIELDS" :key="name">{{ name }}<input v-model="selectedTemplate.custom_fields[name]" :disabled="busy || !selectedLocalLibrary" /></label></div></details>
+            <div class="lpl-editor-footer"><span>编辑保留在当前草稿，点击“保存编辑”后生效。</span><details><summary>更多操作</summary><button class="lpl-icon danger" :disabled="busy || !selectedLocalLibrary" @click="requestPromptRemoval(selectedTemplate)">删除当前提示词</button></details></div>
+          </template>
+          <div v-else class="lpl-empty inline">从左侧选择提示词，或新建一条内容。</div>
+        </main>
       </section>
     </section>
+    <dialog v-if="showLeaveConfirm" ref="leaveDialog" class="lpl-remove-dialog" aria-labelledby="lpl-leave-title" @cancel.prevent="cancelLeave"><h3 id="lpl-leave-title">保存当前更改？</h3><p>当前提示词库有未保存的更改，可以保存后继续，或放弃这次编辑。</p><p v-if="error" class="lpl-notice error" role="alert">{{ error }}</p><div><button class="lpl-secondary" :disabled="busy" @click="cancelLeave">继续编辑</button><button class="lpl-secondary" :disabled="busy" @click="discardAndLeave">放弃更改</button><button class="lpl-primary" :disabled="busy" @click="saveAndLeave">{{ saving ? '保存中…' : '保存并继续' }}</button></div></dialog>
+    <dialog v-if="showRemovePrompt" ref="removePromptDialog" class="lpl-remove-dialog" aria-labelledby="lpl-remove-title" @cancel.prevent="showRemovePrompt = false"><h3 id="lpl-remove-title">删除当前提示词？</h3><p>{{ removePromptTarget?.field_name || '未命名提示词' }}</p><p>将从当前草稿移除，保存编辑后生效。</p><div><button class="lpl-secondary" @click="showRemovePrompt = false">取消</button><button class="lpl-icon danger" @click="confirmPromptRemoval">确认移除</button></div></dialog>
   </div>
 </template>
 
 <script setup>
+import { useNativeDialog } from '../composables/useNativeDialog'
 import { computed, nextTick, onMounted, onUnmounted, onUpdated, ref, watch } from 'vue'
 import {
   DEFAULT_PROMPT_LIBRARY_NAME,
@@ -203,9 +127,16 @@ import { loadLocalPromptLibraryViewSources } from '../utils/localPromptLibraryVi
 const scenarioOptions = PROMPT_SCENARIOS
 const localLibraries = ref([])
 const cloudLibraries = ref([])
+const originalLibraries = ref({})
 const selectedLibraryUid = ref('')
 const viewMode = ref('list')
 const libraryDraft = ref({ name: DEFAULT_PROMPT_LIBRARY_NAME, scenario: PROMPT_SCENARIOS[0] })
+const selectedTemplateId = ref('')
+const selectedTemplate = computed(() => templates.value.find(item => (item.local_uid || templateKey(item, templates.value.indexOf(item))) === selectedTemplateId.value) || null)
+const showRemovePrompt = ref(false), removePromptDialog = ref(null), removePromptTarget = ref(null)
+useNativeDialog(showRemovePrompt, removePromptDialog)
+function requestPromptRemoval(template) { removePromptTarget.value = template; showRemovePrompt.value = true }
+function confirmPromptRemoval() { removePromptRow(removePromptTarget.value); showRemovePrompt.value = false; removePromptTarget.value = null }
 const groupFilter = ref('all')
 const keyword = ref('')
 const loading = ref(false)
@@ -234,6 +165,36 @@ const selectedCloudLibrary = computed(() => selectedLibrary.value?.source_type =
 const templates = computed(() => selectedLibrary.value?.templates || [])
 const cloudBaseUrl = computed(() => String(cloudStatus.value?.base_url || '').trim())
 const cloudPromptManageUrl = computed(() => buildCloudPromptManageUrl(cloudBaseUrl.value))
+const isDirty = computed(() => {
+  if (!selectedLocalLibrary.value) return false
+  const original = originalLibraries.value[selectedLibraryUid.value]
+  if (!original) return false
+  const payload = (library, name, scenario) => JSON.stringify({ name, scenario, templates: (library.templates || []).map(normalizePromptTemplate) })
+  return payload(selectedLocalLibrary.value, libraryDraft.value.name, libraryDraft.value.scenario) !== payload(original, original.name, original.scenario || PROMPT_SCENARIOS[0])
+})
+const showLeaveConfirm = ref(false), leaveDialog = ref(null)
+useNativeDialog(showLeaveConfirm, leaveDialog)
+let pendingLeave = null
+function requestLeave(action) {
+  if (busy.value) return
+  if (!isDirty.value) return action()
+  pendingLeave = action
+  showLeaveConfirm.value = true
+}
+function cancelLeave() { if (busy.value) return; pendingLeave = null; showLeaveConfirm.value = false }
+function finishLeave() { const action = pendingLeave; pendingLeave = null; showLeaveConfirm.value = false; action?.() }
+function discardAndLeave() {
+  if (busy.value) return
+  const original = originalLibraries.value[selectedLibraryUid.value]
+  if (original && selectedLocalLibrary.value) Object.assign(selectedLocalLibrary.value, JSON.parse(JSON.stringify(original)))
+  syncLibraryDraft()
+  message.value = ''; error.value = ''
+  finishLeave()
+}
+async function saveAndLeave() { if (await saveLocalEdits()) finishLeave() }
+function rememberSavedLibraries() { originalLibraries.value = Object.fromEntries(localLibraries.value.map(library => [library.library_uid, JSON.parse(JSON.stringify(library))])) }
+function warnBeforeUnload(event) { if (isDirty.value) { event.preventDefault(); event.returnValue = '' } }
+watch(isDirty, dirty => { if (dirty) message.value = '' })
 const groupSummaries = computed(() => {
   const groups = new Map()
   for (const template of templates.value) {
@@ -261,6 +222,15 @@ watch(selectedLibraryUid, () => {
 })
 
 watch(displayTemplates, resizePromptTextareas, { flush: 'post' })
+watch(templates, ensureSelectedTemplate)
+function ensureSelectedTemplate() {
+  if (!templates.value.some(item => item.local_uid === selectedTemplateId.value)) selectedTemplateId.value = templates.value[0]?.local_uid || ''
+}
+function prepareLibrary(library) {
+  const normalized = normalizePromptLibrary({ ...library, source_type: 'local' })
+  normalized.templates = normalized.templates.map(template => ({ ...template, local_uid: template.local_uid || createLocalPromptUid() }))
+  return normalized
+}
 
 function ensureSelectedLibrary() {
   if (!libraries.value.some(library => library.library_uid === selectedLibraryUid.value)) {
@@ -276,7 +246,8 @@ async function loadLibraries() {
       listLocalPromptLibraries: () => window.cs.listLocalPromptLibraries(),
       loadCloudLibraries,
       onLocalReady: libraries => {
-        localLibraries.value = libraries
+        localLibraries.value = libraries.map(prepareLibrary)
+        rememberSavedLibraries()
         ensureSelectedLibrary()
         syncLibraryDraft()
         loading.value = false
@@ -292,7 +263,8 @@ async function loadLibraries() {
 async function loadLocalLibraries() {
   const payload = await window.cs.listLocalPromptLibraries()
   localLibraries.value = (Array.isArray(payload?.libraries) ? payload.libraries : [])
-    .map(library => normalizePromptLibrary({ ...library, source_type: 'local' }))
+    .map(prepareLibrary)
+  rememberSavedLibraries()
 }
 
 async function refreshCloudApprovalStatus() {
@@ -326,7 +298,8 @@ async function createLibrary() {
   }
 }
 
-async function chooseWorkbookForImport() {
+function chooseWorkbookForImport() { requestLeave(importWorkbook) }
+async function importWorkbook() {
   importing.value = true
   error.value = ''
   message.value = ''
@@ -377,7 +350,7 @@ async function readPromptWorkbookTemplates(selected) {
 }
 
 async function saveLocalEdits() {
-  if (!selectedLocalLibrary.value) return
+  if (!selectedLocalLibrary.value || saving.value) return false
   saving.value = true
   error.value = ''
   message.value = ''
@@ -390,9 +363,12 @@ async function saveLocalEdits() {
     await loadLocalLibraries()
     selectedLibraryUid.value = response?.library?.library_uid || selectedLibraryUid.value
     viewMode.value = 'detail'
+    syncLibraryDraft()
     message.value = '本地提示词库已保存'
+    return true
   } catch (err) {
     error.value = err?.message || String(err)
+    return false
   } finally {
     saving.value = false
   }
@@ -420,6 +396,7 @@ async function syncSelectedLibrary() {
 }
 
 function syncLibraryDraft() {
+  ensureSelectedTemplate()
   if (!selectedLibrary.value) {
     libraryDraft.value = { name: DEFAULT_PROMPT_LIBRARY_NAME, scenario: PROMPT_SCENARIOS[0] }
     return
@@ -435,9 +412,12 @@ function addPromptRow() {
   const groupName = groupFilter.value !== 'all'
     ? groupFilter.value
     : templates.value[0]?.group_name || selectedLibrary.value.scenario || PROMPT_SCENARIOS[0]
+  const localUid = createLocalPromptUid()
+  keyword.value = ''
+  selectedTemplateId.value = localUid
   selectedLibrary.value.templates.unshift({
     ...defaultPromptTemplate(groupName),
-    local_uid: createLocalPromptUid(),
+    local_uid: localUid,
     field_name: '',
     prompt_text: '',
   })
@@ -482,10 +462,7 @@ function enterLibraryDetail(library) {
   resizePromptTextareas()
 }
 
-function backToLibraryList() {
-  viewMode.value = 'list'
-  keyword.value = ''
-}
+function backToLibraryList() { requestLeave(() => { viewMode.value = 'list'; keyword.value = '' }) }
 
 async function openCloudPromptManager() {
   const url = cloudPromptManageUrl.value
@@ -558,12 +535,14 @@ function buildCloudPromptManageUrl(baseUrl) {
 
 onMounted(async () => {
   componentMounted.value = true
+  window.addEventListener('beforeunload', warnBeforeUnload)
   await loadLibraries()
   resizePromptTextareas()
 })
 
 onUnmounted(() => {
   componentMounted.value = false
+  window.removeEventListener('beforeunload', warnBeforeUnload)
 })
 
 onUpdated(resizePromptTextareas)
@@ -1153,4 +1132,9 @@ onUpdated(resizePromptTextareas)
 .lpl-custom-fields summary { cursor: pointer; }
 .lpl-custom-fields > div { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
 .lpl-custom-fields label { display: grid; gap: 4px; }
+</style>
+
+<style scoped>
+.lpl-master-detail{display:grid;grid-template-columns:240px minmax(0,1fr);min-width:0;min-height:0;flex:1}.lpl-entry-list{padding:18px 14px;border-right:1px solid var(--border);overflow:auto;background:var(--bg2);min-width:0}.lpl-entry-list>label{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;color:var(--text2);font-size:12px}.lpl-entry-list select{max-width:100%;background:var(--bg);border:1px solid var(--border);padding:8px;border-radius:6px}.lpl-entry{width:100%;text-align:left;display:flex;flex-direction:column;gap:7px;border:1px solid transparent;background:transparent;color:var(--text);padding:12px;border-radius:8px;margin-bottom:5px;white-space:normal}.lpl-entry.active{border-color:var(--border-strong);background:var(--bg3)}.lpl-entry strong{font-size:13px;overflow-wrap:anywhere}.lpl-entry small,.lpl-entry p,.lpl-no-match{font-size:12px;line-height:1.65;color:var(--text2)}.lpl-entry p{overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}.lpl-editor-panel{min-width:0;overflow:auto;padding:20px 24px}.lpl-editor-panel .lpl-table-head{padding:0 0 20px}.lpl-editor-field{display:flex;flex-direction:column;gap:9px;margin-bottom:20px;font-size:13px}.lpl-editor-field input,.lpl-editor-field textarea,.lpl-rule-fields input{width:100%;padding:10px;background:var(--bg);border:1px solid var(--border-strong);border-radius:7px;color:var(--text);font:inherit}.lpl-editor-field textarea{min-height:300px;resize:vertical;line-height:1.9}.lpl-editor-rules>summary{padding:14px 0;color:var(--text2);cursor:pointer}.lpl-editor-rules p{font-size:12px;color:var(--text2);margin:15px 0}.lpl-rule-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.lpl-rule-fields label{display:flex;flex-direction:column;gap:7px;font-size:12px}.lpl-rule-fields .lpl-enabled{flex-direction:row;align-items:center}.lpl-enabled input{width:auto}.lpl-editor-footer{display:flex;justify-content:space-between;align-items:flex-start;gap:15px;padding:20px 0;font-size:12px;color:var(--text2)}.lpl-editor-footer details{flex:none}.lpl-editor-footer summary{cursor:pointer}.lpl-editor-footer button{margin-top:10px}.lpl-remove-dialog{margin:auto;width:min(440px,calc(100vw - 40px));padding:24px;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:12px}.lpl-remove-dialog::backdrop{background:var(--scrim)}.lpl-remove-dialog p{margin:15px 0;font-size:13px;overflow-wrap:anywhere}.lpl-remove-dialog>div{display:flex;justify-content:flex-end;gap:10px}.lpl-detail{min-height:0;display:flex;flex-direction:column}.lpl-toolbar{flex:none}
+@media(max-width:1000px){.lpl-master-detail{grid-template-columns:190px minmax(0,1fr)}.lpl-editor-panel{padding:18px}}@media(max-width:700px){.lpl-master-detail{display:flex;flex-direction:column;overflow:auto}.lpl-entry-list{max-height:230px;flex:none;border-right:0;border-bottom:1px solid var(--border)}.lpl-editor-panel{overflow:visible}.lpl-rule-fields{grid-template-columns:1fr}.lpl-editor-footer{flex-wrap:wrap}}
 </style>

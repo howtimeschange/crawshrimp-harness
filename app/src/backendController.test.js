@@ -3,6 +3,107 @@ const assert = require('node:assert/strict')
 const { EventEmitter } = require('node:events')
 
 const { createBackendController } = require('./backendController')
+const { createLifecycleController } = require('./lifecycleController')
+
+test('renderer polling cannot restart the backend while normal quit waits for its exit', async () => {
+  let ready = false
+  let starts = 0
+  let operations = 0
+  let releaseStop
+  let signalStopping
+  const stopping = new Promise(resolve => { signalStopping = resolve })
+  const stopFinished = new Promise(resolve => { releaseStop = resolve })
+  const backend = createBackendController({
+    canStart: () => !lifecycle.isShuttingDown(),
+    probeReady: async () => ready,
+    startProcess: () => {
+      starts += 1
+      ready = true
+      return new EventEmitter()
+    },
+    stopProcess: () => { ready = false },
+    intervalMs: 1,
+    attempts: 1,
+  })
+  const lifecycle = createLifecycleController({
+    getActiveTasks: async () => ({ active: false, tasks: [] }),
+    stopBackend: async () => {
+      backend.stop()
+      signalStopping()
+      await stopFinished
+    },
+  })
+
+  await backend.ensureReady()
+  const quitting = lifecycle.handleBeforeQuit()
+  await stopping
+  try {
+    await assert.rejects(
+      backend.runWhenReady(async () => { operations += 1 }),
+      /startup canceled/
+    )
+    assert.equal(starts, 1)
+    assert.equal(operations, 0)
+    assert.equal(backend.getState(), 'stopped')
+  } finally {
+    releaseStop()
+    await quitting
+  }
+})
+
+test('shutdown during an asynchronous launch disposes the newly returned child', async () => {
+  let allowed = true
+  let releaseStart
+  let signalStart
+  const starting = new Promise(resolve => { signalStart = resolve })
+  const proc = new EventEmitter()
+  proc.pid = 4322
+  const stopped = []
+  const controller = createBackendController({
+    canStart: () => allowed,
+    probeReady: async () => false,
+    startProcess: () => {
+      signalStart()
+      return new Promise(resolve => { releaseStart = resolve })
+    },
+    stopProcess: child => stopped.push(child.pid),
+    intervalMs: 1,
+    attempts: 1,
+  })
+
+  const startup = controller.ensureReady()
+  await starting
+  allowed = false
+  releaseStart(proc)
+
+  await assert.rejects(startup, /startup canceled/)
+  assert.deepEqual(stopped, [4322])
+})
+
+test('canceling quit permits backend polling again before restoring the window', async () => {
+  let ready = false
+  let starts = 0
+  const backend = createBackendController({
+    canStart: () => !lifecycle.isShuttingDown(),
+    probeReady: async () => ready,
+    startProcess: () => {
+      starts += 1
+      ready = true
+      return new EventEmitter()
+    },
+    intervalMs: 1,
+    attempts: 1,
+  })
+  const lifecycle = createLifecycleController({
+    getActiveTasks: async () => ({ active: 'unknown', tasks: [] }),
+    confirmQuitWithActiveTasks: async () => false,
+    onQuitCanceled: () => backend.ensureReady(),
+  })
+
+  assert.equal(await lifecycle.handleBeforeQuit(), false)
+  assert.equal(starts, 1)
+  assert.equal(backend.getState(), 'ready')
+})
 
 test('ensureReady reuses the same in-flight startup', async () => {
   let probeCount = 0

@@ -124,7 +124,11 @@ final class DesktopFeedback {
             glass.wantsLayer=true;glass.layer?.cornerRadius=22;glass.layer?.masksToBounds=true
             glass.addSubview(content);surface=glass
         }
-        let icon=NSTextField(labelWithString:"🦐"); icon.font = .systemFont(ofSize:25); icon.frame=NSRect(x:20,y:18,width:40,height:32)
+        let assetRoot=URL(fileURLWithPath:CommandLine.arguments[0]).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let icon=NSImageView(frame:NSRect(x:20,y:16,width:40,height:36))
+        icon.image=NSImage(contentsOf:assetRoot.appendingPathComponent("assets/crawshrimp-C1.png"))
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.setAccessibilityElement(false)
         let title=NSTextField(labelWithString:"")
         title.font = .systemFont(ofSize:14,weight:.semibold); title.textColor = .labelColor; title.frame=NSRect(x:68,y:32,width:235,height:20)
         let subtitle=NSTextField(labelWithString:"")

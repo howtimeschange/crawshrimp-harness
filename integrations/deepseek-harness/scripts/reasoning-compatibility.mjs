@@ -81,7 +81,8 @@ export function patchReasoningControllerSource(source) {
 
 export function patchReasoningMenuSource(source) {
   if (source.includes(REASONING_COMPATIBILITY_MARKER)) return source
-  source = replaceOnce(source, '\t\t\t\tconst current = projected.next ?? catalog.value.default;', '\t\t\t\tconst current = normalizeCatalogReasoning(projected.next ?? catalog.value.default, catalog.value.groups);')
+  const variable = source.includes('const selection = projected.next ?? catalog.value.default;') ? 'selection' : 'current'
+  source = replaceOnce(source, `const ${variable} = projected.next ?? catalog.value.default;`, `const ${variable} = normalizeCatalogReasoning(projected.next ?? catalog.value.default, catalog.value.groups);`)
   source = replaceOnce(source, '\t\t\t\t\t...model.reasoning?.defaultEffort === void 0 ? {} : { reasoningEffort: model.reasoning.defaultEffort }', '')
   source = replaceOnce(source, 'const effectiveEffort = state.current?.reasoningEffort ?? reasoning?.defaultEffort;', 'const effectiveEffort = state.current?.reasoningEffort;')
   source = replaceOnce(source, 'reasoning === void 0 ? [] : [...reasoning.defaultEffort === void 0 ? [{', 'reasoning === void 0 ? [] : [{')

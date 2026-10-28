@@ -1,12 +1,12 @@
 <template>
-  <div v-if="modelValue" class="bala-model-modal" @click.self="close">
-    <section class="bala-model-dialog" role="dialog" aria-modal="true" aria-label="选择 AI 模特素材">
+  <dialog v-if="modelValue" ref="nativeDialog" class="bala-model-modal harness-modal-shell" aria-label="选择 AI 模特素材" @cancel.prevent="close" @click.self="close">
+    <section class="bala-model-dialog">
       <header class="bala-model-head">
         <div>
           <strong>选择 AI 模特素材</strong>
           <span>已选 {{ selectedModelIds.length }} 张</span>
         </div>
-        <button type="button" class="bala-icon-button" aria-label="关闭" @click="close">×</button>
+        <button type="button" class="bala-icon-button" aria-label="关闭" autofocus @click="close">×</button>
       </header>
 
       <div class="bala-model-toolbar">
@@ -83,10 +83,11 @@
         </button>
       </footer>
     </section>
-  </div>
+  </dialog>
 </template>
 
 <script setup>
+import { useNativeDialog } from '../composables/useNativeDialog'
 import { computed, reactive, ref, watch } from 'vue'
 
 const props = defineProps({
@@ -95,6 +96,8 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:modelValue', 'confirm'])
+const nativeDialog = ref(null)
+useNativeDialog(computed(() => props.modelValue), nativeDialog)
 
 const ageOptions = ['', '新生儿', '婴童', '幼童', '中大童']
 const genderOptions = ['', '通用', '女', '男']
@@ -218,6 +221,7 @@ function confirmSelection() {
 }
 
 .bala-model-dialog {
+  color: #0f172a;
   width: min(980px, 92vw);
   height: 100%;
   display: grid;

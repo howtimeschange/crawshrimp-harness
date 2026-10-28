@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { repairReceiptTurns } from './repair-automation-receipts.mjs'
+import { repairReceiptTurns, readLegacyReceiptLog } from './repair-automation-receipts.mjs'
 const turn = (n, provider = 'model') => [
   { type: 'turn/start', data: { turn: n } },
   { type: 'step/start', data: { turn: n, step: 1 } },
@@ -26,7 +26,6 @@ test('disk repair backs up original bytes and produces readable, idempotent hist
   const { tmpdir } = await import('node:os')
   const { join, resolve } = await import('node:path')
   const { zstdCompressSync } = await import('node:zlib')
-  const { JsonlSessionPersistence: P } = await import('../node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js')
   const { repairAutomationReceiptLogs } = await import('./repair-automation-receipts.mjs')
   const root = await mkdtemp(join(tmpdir(), 'cs-history-repair-test-'))
   try {
@@ -40,7 +39,7 @@ test('disk repair backs up original bytes and produces readable, idempotent hist
     const options = { runtimeRoot: resolve(import.meta.dirname, '..'), dshHome }
     assert.deepEqual(await repairAutomationReceiptLogs(options), [])
     assert.deepEqual(await readFile(path), bytes)
-    assert.equal((await P.prototype.readZstdPrefix.call({}, bytes)).events.length, 0)
+    assert.equal((await readLegacyReceiptLog(bytes)).events.length, 0)
     const { createAssistantMessage } = await import('../node_modules/@deepseek-ai/dsh-llm/lib/index.js')
     const rows = [...turn(1), ...turn(1, 'crawshrimp-automation'), ...turn(2)].map((e, seq) => ({
       ...e, seq, time: seq + 1,
@@ -52,8 +51,57 @@ test('disk repair backs up original bytes and produces readable, idempotent hist
     const result = await repairAutomationReceiptLogs(options)
     assert.equal(result.length, 1)
     assert.deepEqual(await readFile(result[0].backup), damaged)
-    const restored = await P.prototype.readZstdPrefix.call({}, await readFile(path))
+    const restored = await readLegacyReceiptLog(await readFile(path))
     assert.deepEqual(restored.events.filter(e => e.type === 'turn/start').map(e => e.data.turn), [1, 2, 3])
     assert.deepEqual(await repairAutomationReceiptLogs(options), [])
   } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('unsupported, inherited and torn histories remain owned by the native migration reader', async () => {
+  const { zstdCompressSync } = await import('node:zlib')
+  for (const text of [
+    JSON.stringify({ type: 'session', version: 4, id: 'current' }) + '\n',
+    JSON.stringify({ type: 'session', version: 0, id: 'fork', inheritedEventCount: 2 }) + '\n',
+    JSON.stringify({ type: 'session', version: 0, id: 'torn' }),
+    '{broken-json}\n',
+  ]) assert.equal(await readLegacyReceiptLog(zstdCompressSync(Buffer.from(text))), null)
+  const bytes = zstdCompressSync(Buffer.from('{"type":"session","version":0,"id":"torn"}\n'))
+  assert.equal(await readLegacyReceiptLog(bytes.subarray(0, bytes.length - 2)), null)
+})
+
+test('interrupted repairs resume with a matching, partial or older backup and preserve stale evidence', async () => {
+  const { mkdtemp, mkdir, writeFile, readFile, readdir, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { zstdCompressSync } = await import('node:zlib')
+  const { repairAutomationReceiptLogs } = await import('./repair-automation-receipts.mjs')
+  for (const existing of ['matching', 'partial', 'older', 'partial-addressed']) {
+    const root = await mkdtemp(join(tmpdir(), 'cs-repair-resume-'))
+    try {
+      const dshHome = join(root, 'dsh-home'), dir = join(root, 'harness-sessions/group/session-test')
+      await mkdir(dir, { recursive: true })
+      const path = join(dir, 'session.jsonl.zstd')
+      const events = [...turn(1), ...turn(1, 'crawshrimp-automation')].map((e, seq) => ({ ...e, seq }))
+      const original = zstdCompressSync(Buffer.from([JSON.stringify({ type: 'session', version: 0, id: 'session-test' }), ...events.map(e => JSON.stringify(e))].join('\n') + '\n'))
+      await writeFile(path, original)
+      const oldBackup = existing === 'matching' ? original : Buffer.from(existing)
+      await writeFile(path + '.before-product-history-repair-v2', oldBackup)
+      if (existing === 'partial-addressed') {
+        const { createHash } = await import('node:crypto')
+        await writeFile(path + '.before-product-history-repair-v2.' + createHash('sha256').update(original).digest('hex'), 'partial addressed evidence')
+      }
+      await writeFile(path + '.receipt-repair-tmp', 'interrupted evidence')
+      const cacheDir = join(dshHome, 'storages/session_projcache/sessions')
+      await mkdir(cacheDir, { recursive: true }); await writeFile(join(cacheDir, 'session-test.json'), 'stale cache')
+      const [result] = await repairAutomationReceiptLogs({ dshHome })
+      assert.deepEqual(await readFile(result.backup), original)
+      assert.deepEqual(await readFile(path + '.before-product-history-repair-v2'), oldBackup)
+      assert.equal(await readFile(path + '.receipt-repair-tmp', 'utf8'), 'interrupted evidence')
+      assert.deepEqual((await readLegacyReceiptLog(await readFile(path))).events.filter(e => e.type === 'turn/start').map(e => e.data.turn), [1, 2])
+      const cacheFiles = await readdir(cacheDir)
+      assert.equal(cacheFiles.length, 1); assert.notEqual(cacheFiles[0], 'session-test.json')
+      assert.equal(await readFile(join(cacheDir, cacheFiles[0]), 'utf8'), 'stale cache')
+      assert.deepEqual(await repairAutomationReceiptLogs({ dshHome }), [])
+    } finally { await rm(root, { recursive: true, force: true }) }
+  }
 })

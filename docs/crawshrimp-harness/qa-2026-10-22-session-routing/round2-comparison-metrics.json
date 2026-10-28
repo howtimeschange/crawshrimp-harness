@@ -1,0 +1,72 @@
+{
+  "old": {
+    "duration_s": 220.285,
+    "usage": {
+      "inputTokens": 46518,
+      "outputTokens": 23088,
+      "totalTokens": 2792550,
+      "cacheReadTokens": 2722944
+    },
+    "calls": 61,
+    "steps": 49,
+    "tools": {
+      "mcp__crawshrimp__skill_list": 1,
+      "mcp__crawshrimp__skill_read": 2,
+      "bash": 50,
+      "todo_write": 2,
+      "write": 3,
+      "edit": 1,
+      "job_output": 1,
+      "mcp__crawshrimp__artifact_present": 1
+    },
+    "chars": {
+      "reasoning": 27154,
+      "text": 1909,
+      "tool-call": 0
+    },
+    "blocks": {
+      "reasoning": 40,
+      "text": 12,
+      "tool-call": 61
+    },
+    "model_step_total_s": 132.754,
+    "model_step_median_s": 2.433,
+    "tool_sum_s": 86.892,
+    "max_context_input": 83595,
+    "first_tool_s": 1.954
+  },
+  "new": {
+    "duration_s": 221.506,
+    "usage": {
+      "inputTokens": 50819,
+      "outputTokens": 18355,
+      "totalTokens": 2013238,
+      "cacheReadTokens": 1944064
+    },
+    "calls": 44,
+    "steps": 44,
+    "tools": {
+      "mcp__crawshrimp__skill_list": 1,
+      "mcp__crawshrimp__tasks_search": 1,
+      "mcp__crawshrimp__skill_read": 1,
+      "bash": 39,
+      "job_output": 1,
+      "mcp__crawshrimp__artifact_present": 1
+    },
+    "chars": {
+      "reasoning": 25324,
+      "text": 1696,
+      "tool-call": 0
+    },
+    "blocks": {
+      "reasoning": 38,
+      "text": 12,
+      "tool-call": 44
+    },
+    "model_step_total_s": 188.198,
+    "model_step_median_s": 3.81,
+    "tool_sum_s": 32.298,
+    "max_context_input": 65068,
+    "first_tool_s": 3.247
+  }
+}

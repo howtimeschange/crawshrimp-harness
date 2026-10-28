@@ -238,11 +238,14 @@ test('restored receipts become native cards while existing chips and ordinary te
 function transactionFixture() {
   let declaration, receiveMessage
   const parent = { postMessage: () => {} }
+  const documentEvents = new EventTarget()
   vm.runInNewContext(readFileSync(slotsPath, 'utf8'), {
     window: { __ModuleLoader__: { load: value => { declaration = value } }, location: { search: '' },
       parent, addEventListener: (type, callback) => { if (type === 'message') receiveMessage = callback }, removeEventListener: () => {},
       localStorage: { getItem: () => null } }, URLSearchParams,
-    MutationObserver: class { observe() {} }, document: { body: {}, querySelector: () => null },
+    MutationObserver: class { observe() {} }, document: { body: {}, querySelector: () => null,
+      addEventListener: documentEvents.addEventListener.bind(documentEvents),
+      removeEventListener: documentEvents.removeEventListener.bind(documentEvents) },
   })
   const client = declaration.factory(() => ({}))
   const sessions = new Map(), cleanup = []

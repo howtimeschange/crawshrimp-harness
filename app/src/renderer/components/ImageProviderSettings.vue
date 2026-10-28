@@ -1,50 +1,52 @@
 <template>
-  <div class="image-provider-settings">
-    <div class="provider-toolbar">
-      <p>按供应商管理连接与模型，配置后可在生图和工作流中选择。</p>
-      <button class="primary" type="button" @click="openEditor()">＋ 添加自定义供应商</button>
+  <div class="image-provider-settings model-provider-settings">
+    <div class="provider-toolbar model-provider-toolbar">
+      <p>按服务商管理连接与模型，配置后可在生图和工作流中选择。</p>
+      <button class="primary" type="button" @click="openEditor()">添加服务商</button>
     </div>
-    <div class="provider-list" aria-label="图片模型供应商列表">
-      <article v-for="provider in providers" :key="provider.id" class="provider-card">
-        <div :class="['provider-logo', provider.id]">{{ provider.logo }}</div>
-        <div class="provider-main">
-          <div class="provider-heading">
+    <div class="provider-list model-provider-list" aria-label="图片模型服务商列表">
+      <article v-for="provider in providers" :key="provider.id" class="provider-card model-provider-row">
+        <div class="model-provider-content">
+        <div :class="['provider-logo', 'model-provider-logo', provider.id, { 'modeljetty-logo': provider.preset, 'crawshrimp-logo': provider.id.startsWith('custom-managed-') }]"><img v-if="provider.id.startsWith('custom-managed-')" :src="crawshrimpLogoUrl" alt="抓虾" /><img v-else-if="provider.preset" :src="modeljettyLogoUrl" alt="ModelJetty" /><span v-else>{{ provider.logo }}</span></div>
+        <div class="provider-main model-provider-main">
+          <div class="provider-heading model-provider-heading">
             <h4>{{ provider.name }}</h4>
-            <span :class="['status', provider.configured ? 'ready' : '']">{{ provider.configured ? '已配 Key' : '未配 Key' }}</span>
-            <span class="tag">{{ provider.protocolLabel }}</span>
-            <span v-if="provider.custom" class="tag">自定义</span>
+            <span :class="['status', 'model-provider-status', provider.configured ? 'ready' : '']">{{ provider.id.startsWith('custom-managed-') ? '账号已连接' : provider.configured ? '已配 Key' : '未配 Key' }}</span>
+            <span class="tag model-provider-tag">{{ provider.protocolLabel }}</span>
+            <span v-if="provider.custom && !provider.preset && !provider.id.startsWith('custom-managed-')" class="tag model-provider-tag">自定义</span>
           </div>
-          <p class="endpoint">{{ provider.baseUrl || '尚未填写接口地址' }}</p>
-          <div class="model-tags"><span v-for="model in provider.previewModels" :key="model">{{ model }}</span><span v-if="provider.more">+{{ provider.more }}</span></div>
+          <p class="endpoint model-provider-endpoint">{{ provider.id.startsWith('custom-managed-') ? '网页登录后使用，无需 API Key' : provider.baseUrl || '尚未填写接口地址' }}</p>
+          <div class="model-tags model-provider-models"><span v-for="model in provider.previewModels" :key="model">{{ model }}</span><span v-if="provider.more">+{{ provider.more }}</span></div>
         </div>
-        <div class="provider-actions">
+        </div>
+        <div class="provider-actions model-provider-actions">
           <small>{{ provider.modelCount }} 个模型</small>
-          <button type="button" :aria-label="`编辑${provider.name}`" @click="openEditor(provider)">编辑</button>
+          <button v-if="!provider.id.startsWith('custom-managed-')" type="button" :aria-label="`编辑${provider.name}`" @click="openEditor(provider)">编辑</button>
         </div>
       </article>
     </div>
-    <p class="provider-footnote">密钥保存在本机。</p>
+    <p class="provider-footnote model-provider-note">密钥保存在本机。</p>
     <p v-if="savedMessage" class="saved-message" role="status">{{ savedMessage }}</p>
 
 
     <Teleport to="body">
-      <div v-if="editor.open" class="image-provider-backdrop" @click.self="closeEditor" @keydown.esc="closeEditor">
-        <section ref="dialog" class="image-provider-dialog" role="dialog" aria-modal="true" aria-labelledby="image-provider-title" tabindex="-1" @keydown.tab="trapFocus">
-          <header>
-            <div><p>{{ editor.isNew ? '新增供应商' : '编辑供应商' }}</p><h3 id="image-provider-title">{{ draft.name || '自定义供应商' }}</h3></div>
-            <button type="button" aria-label="关闭供应商编辑" :disabled="editor.saving" @click="closeEditor">×</button>
+      <div v-if="editor.open" class="image-provider-backdrop model-config-backdrop" @click.self="closeEditor" @keydown.esc="closeEditor">
+        <section ref="dialog" class="image-provider-dialog model-config-dialog" role="dialog" aria-modal="true" aria-labelledby="image-provider-title" tabindex="-1" @keydown.tab="trapFocus">
+          <header class="model-config-header">
+            <div><p>{{ editor.isNew ? '图片模型 · 新增服务商' : '图片模型 · 连接配置' }}</p><h3 id="image-provider-title">{{ draft.name || '自定义服务商' }}</h3></div>
+            <button type="button" aria-label="关闭服务商编辑" :disabled="editor.saving" @click="closeEditor">×</button>
           </header>
           <form @submit.prevent="saveEditor">
-            <div class="editor-body">
+            <div class="editor-body model-config-body">
               <template v-if="draft.custom">
                 <div class="editor-grid">
-                  <label>供应商名称<input v-model="draft.name" required placeholder="例如：团队生图网关" /></label>
-                  <label>接口协议<select v-model="draft.protocol"><option value="openai">OpenAI Images</option><option value="gemini">Gemini 原生</option><option value="one_xm">1XM 异步任务</option></select></label>
+                  <label>服务商名称<input v-model="draft.name" required placeholder="例如：团队生图网关" /></label>
+                  <label>接口协议<select v-model="draft.protocol"><option value="openai">OpenAI Images</option><option value="gemini">Gemini 原生</option><option v-if="draft.protocol === 'one_xm'" value="one_xm">异步任务（旧配置）</option></select></label>
                 </div>
                 <label>Base URL<input v-model="draft.baseUrl" required type="url" :placeholder="draft.protocol === 'gemini' ? 'https://api.example.com/v1beta' : 'https://api.example.com/v1'" /></label>
-                <label>API Key<input v-model="draft.apiKey" type="password" autocomplete="off" placeholder="填写供应商密钥" /></label>
+                <label>API Key<input v-model="draft.apiKey" type="password" autocomplete="off" placeholder="填写服务商密钥" /></label>
                 <label>模型 ID<textarea v-model="draft.modelsText" rows="4" required placeholder="每行一个模型 ID，例如 gpt-image-2" /></label>
-                <p class="help">模型 ID 使用供应商的原始名称。保存后，各生图入口会显示“供应商 · 模型”。</p>
+                <p class="help">模型 ID 使用服务商的原始名称。保存后，各生图入口会显示“服务商 · 模型”。</p>
               </template>
               <template v-else>
                 <div v-for="group in draft.groups" :key="group.title" class="connection-group">
@@ -53,15 +55,15 @@
                     <input v-model="draft.values[field.id]" :type="field.secret ? 'password' : 'url'" :placeholder="field.placeholder || ''" autocomplete="off" />
                   </label>
                 </div>
-                <div class="supported-models"><h4>可选模型</h4><div class="model-tags"><span v-for="model in draft.models" :key="model">{{ model }}</span></div></div>
+                <div class="supported-models"><h4>可选模型</h4><div class="model-tags model-provider-models"><span v-for="model in draft.models" :key="model">{{ model }}</span></div></div>
               </template>
               <p v-if="editor.error" class="editor-error" role="alert">{{ editor.error }}</p>
             </div>
-            <footer>
-              <button v-if="draft.custom && !editor.isNew" type="button" class="danger" :disabled="editor.saving" @click="removeProvider">移除供应商</button>
+            <footer class="model-config-footer">
+              <button v-if="draft.custom && !draft.preset && !editor.isNew" type="button" class="danger" :disabled="editor.saving" @click="removeProvider">移除服务商</button>
               <span class="spacer" />
               <button type="button" :disabled="editor.saving" @click="closeEditor">取消</button>
-              <button class="primary" type="submit" :disabled="editor.saving">{{ editor.saving ? '保存中…' : '保存供应商' }}</button>
+              <button class="primary" type="submit" :disabled="editor.saving">{{ editor.saving ? '保存中…' : '保存服务商' }}</button>
             </footer>
           </form>
         </section>
@@ -71,15 +73,13 @@
 </template>
 
 <script setup>
+import modeljettyLogoUrl from '../assets/modeljetty-mark.svg'
+import crawshrimpLogoUrl from '../../../assets/branding/crawshrimp-avatar-C1.png'
+import { MODELJETTY_IMAGE_PRESETS } from '../utils/modeljettyPresets.mjs'
 import { computed, nextTick, reactive, ref } from 'vue'
 import { AI_IMAGE_MODELS, CUSTOM_IMAGE_PROVIDERS_FIELD, customImageProviders } from '../utils/aiImageModels.js'
 const props = defineProps({ config: { type: Object, required: true }, save: { type: Function, required: true } })
 const builtin = [
-  { id: '1xm', name: '1XM', logo: '1XM', protocolLabel: '异步任务', groups: [
-    { title: '连接', fields: [{ id: 'ai.1xm.base_url', label: 'Base URL' }] },
-    { title: 'GPT Image 2', description: '1XM 按分辨率使用不同密钥。', fields: [{ id: 'ai.1xm.gpt_image_2k_key', label: '2K API Key', secret: true }, { id: 'ai.1xm.gpt_image_4k_key', label: '4K API Key', secret: true }] },
-    { title: 'Nano Banana', fields: [{ id: 'ai.1xm.gemini_3_1_flash_image_preview_key', label: 'Nano Banana 2 API Key', secret: true }, { id: 'ai.1xm.gemini_3_pro_image_preview_key', label: 'Nano Banana Pro API Key', secret: true }] },
-  ] },
   { id: 'woka', name: '沃卡', logo: 'WOKA', protocolLabel: 'OpenAI / Gemini', groups: [
     { title: '身份验证', description: 'GPT Image 与 Nano Banana 共用此密钥。', fields: [{ id: 'ai.woka.api_key', label: 'API Key', secret: true }] },
     { title: '接口地址', fields: [{ id: 'ai.woka.base_url', label: 'GPT Image · OpenAI Base URL' }, { id: 'ai.woka.gemini_base_url', label: 'Nano Banana · Gemini Base URL' }] },
@@ -90,12 +90,19 @@ const builtin = [
   ] },
 ]
 const providers = computed(() => [
-  ...builtin.map(item => {
-    const models = AI_IMAGE_MODELS.filter(model => (model.provider || '1xm') === item.id)
-    return { ...item, baseUrl: props.config[`ai.${item.id}.base_url`], configured: item.groups.some(group => group.fields.some(field => field.secret && props.config[field.id])), previewModels: item.id === '1xm' ? ['GPT Image 2 · 2K / 4K', 'Nano Banana 2', 'Nano Banana Pro'] : ['GPT Image 2', 'Nano Banana 2', 'Nano Banana Pro'], modelCount: models.length, models: models.map(model => model.label.replace(/^.* · /, '')) }
+  ...MODELJETTY_IMAGE_PRESETS.map(preset => {
+    const saved = customImageProviders(props.config).find(item => item.id === preset.id)
+    const item = saved || preset
+    return { ...item, preset: true, custom: true, baseUrl: item.base_url,
+      protocolLabel: item.protocol === 'gemini' ? 'Gemini 原生' : 'OpenAI Images',
+      configured: Boolean(item.api_key || item.configured), previewModels: item.models, modelCount: item.models.length }
   }),
-  ...customImageProviders(props.config).map(item => ({ ...item, custom: true, logo: item.name?.slice(0, 2).toUpperCase() || 'API', baseUrl: item.base_url, protocolLabel: { openai: 'OpenAI Images', gemini: 'Gemini 原生', one_xm: '异步任务' }[item.protocol], configured: Boolean(item.api_key), previewModels: (item.models || []).slice(0, 3), modelCount: item.models?.length || 0, more: Math.max(0, (item.models?.length || 0) - 3) })),
-])
+  ...builtin.map(item => {
+    const models = AI_IMAGE_MODELS.filter(model => model.provider === item.id)
+    return { ...item, baseUrl: props.config[`ai.${item.id}.base_url`], configured: item.groups.some(group => group.fields.some(field => field.secret && props.config[field.id])), previewModels: ['GPT Image 2', 'Nano Banana 2', 'Nano Banana Pro'], modelCount: models.length, models: models.map(model => model.label.replace(/^.* · /, '')) }
+  }),
+  ...customImageProviders(props.config).filter(item => !MODELJETTY_IMAGE_PRESETS.some(preset => preset.id === item.id)).map(item => ({ ...item, custom: true, logo: item.name?.slice(0, 2).toUpperCase() || 'API', baseUrl: item.base_url, protocolLabel: { openai: 'OpenAI Images', gemini: 'Gemini 原生', one_xm: '异步任务' }[item.protocol], configured: Boolean(item.api_key || item.configured), previewModels: (item.models || []).slice(0, 3), modelCount: item.models?.length || 0, more: Math.max(0, (item.models?.length || 0) - 3) })),
+].sort((left, right) => Number(right.id.startsWith('custom-managed-')) - Number(left.id.startsWith('custom-managed-'))))
 const editor = reactive({ open: false, isNew: false, saving: false, error: '' })
 const draft = reactive({ id: '', name: '', custom: false, protocol: 'openai', baseUrl: '', apiKey: '', modelsText: '', groups: [], models: [], values: {} })
 const dialog = ref(null)
@@ -105,7 +112,7 @@ async function openEditor(provider) {
   restoreFocus = document.activeElement
   editor.isNew = !provider
   editor.error = ''
-  Object.assign(draft, { id: provider?.id || `custom-${crypto.randomUUID()}`, name: provider?.name || '', custom: !provider || Boolean(provider.custom), protocol: provider?.protocol || 'openai', baseUrl: provider?.baseUrl || '', apiKey: provider?.api_key || '', modelsText: (provider?.models || []).join('\n'), groups: provider?.groups || [], models: provider?.models || [], values: { ...props.config } })
+  Object.assign(draft, { preset: Boolean(provider?.preset), id: provider?.id || `custom-${crypto.randomUUID()}`, name: provider?.name || '', custom: !provider || Boolean(provider.custom), protocol: provider?.protocol || 'openai', baseUrl: provider?.baseUrl || '', apiKey: provider?.api_key || '', modelsText: (provider?.models || []).join('\n'), groups: provider?.groups || [], models: provider?.models || [], values: { ...props.config } })
   editor.open = true
   await nextTick()
   dialog.value?.focus()
@@ -128,10 +135,10 @@ async function saveEditor() {
   const patch = {}
   if (draft.custom) {
     const models = [...new Set(draft.modelsText.split(/[\n,，]+/).map(value => value.trim()).filter(Boolean))]
-    if (!draft.name.trim() || !validUrl(draft.baseUrl) || !models.length) { editor.error = '请填写供应商名称、有效接口地址和至少一个模型 ID。'; return }
+    if (!draft.name.trim() || !validUrl(draft.baseUrl) || !models.length) { editor.error = '请填写服务商名称、有效接口地址和至少一个模型 ID。'; return }
     if (models.some(model => /\s/.test(model))) { editor.error = '模型 ID 不能包含空格。'; return }
     const next = { id: draft.id, name: draft.name.trim(), protocol: draft.protocol, base_url: draft.baseUrl.trim().replace(/\/$/, ''), api_key: draft.apiKey.trim(), models }
-    patch[CUSTOM_IMAGE_PROVIDERS_FIELD] = [...customImageProviders(props.config).filter(item => item.id !== draft.id), next]
+    patch[CUSTOM_IMAGE_PROVIDERS_FIELD] = [...customImageProviders(props.config).filter(item => item.id !== draft.id && !item.id.startsWith('custom-managed-')), next]
   } else {
     for (const group of draft.groups) for (const field of group.fields) {
       const value = String(draft.values[field.id] || '').trim()
@@ -142,7 +149,7 @@ async function saveEditor() {
   await commit(patch, `${draft.name} 已保存`)
 }
 async function removeProvider() {
-  await commit({ [CUSTOM_IMAGE_PROVIDERS_FIELD]: customImageProviders(props.config).filter(item => item.id !== draft.id) }, '自定义供应商已移除')
+  await commit({ [CUSTOM_IMAGE_PROVIDERS_FIELD]: customImageProviders(props.config).filter(item => item.id !== draft.id && !item.id.startsWith('custom-managed-')) }, '自定义服务商已移除')
 }
 </script>
 
@@ -163,7 +170,7 @@ button:disabled { opacity: .5; cursor: default; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #ff8d56; outline-offset: 3px; }
 .provider-list { display: grid; gap: 12px; }
 .provider-card { display: flex; align-items: flex-start; gap: 16px; padding: 20px; border: 1px solid var(--border, #34343e); border-radius: 11px; background: var(--bg3, #252531); }
-.provider-logo { display: grid; place-items: center; flex: 0 0 90px; height: 46px; border-radius: 8px; background: #32323d; color: #fff; font-weight: 750; font-size: 19px; letter-spacing: -.6px; }
+.provider-logo { display: grid; place-items: center; width: 76px; flex: 0 0 76px; height: 36px; border-radius: 8px; background: #32323d; color: #fff; font-weight: 750; font-size: 19px; letter-spacing: -.6px; }
 .provider-logo.woka { background: #583f91; }.provider-logo.semir { background: #008e50; }.provider-logo.\31 xm { background: #355da9; }
 .provider-main { flex: 1; min-width: 0; }
 .provider-heading { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -188,5 +195,13 @@ input, select, textarea { box-sizing: border-box; width: 100%; min-width: 0; bor
 textarea { resize: vertical; }.editor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .help { font-size: 12px; line-height: 1.6; margin: 0; color: var(--text3, #9696aa); }.editor-error { color: #fa8c8c; font-size: 13px; margin: 0; }
 footer { position: sticky; bottom: 0; display: flex; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--border, #34343e); background: var(--bg2, #1e1e27); }.spacer { flex: 1; }.danger { color: #f08c8c; }
-@media (max-width: 820px) { .provider-toolbar { align-items: flex-start; flex-direction: column; }.provider-card { padding: 15px; gap: 12px; }.provider-logo { flex-basis: 62px; font-size: 15px; }.provider-heading { gap: 5px; }.editor-grid { grid-template-columns: 1fr; } }
+@media (max-width: 820px) { .provider-toolbar { align-items: flex-start; flex-direction: column; }.provider-card { padding: 15px; gap: 12px; }.provider-logo { flex-basis: 76px; font-size: 15px; }.provider-heading { gap: 5px; }.editor-grid { grid-template-columns: 1fr; } }
 </style>
+
+<style scoped>
+.provider-logo.modeljetty-logo { background: #fff; border: 1px solid #ddd; }
+.modeljetty-logo img, .crawshrimp-logo img { width: 28px; height: 28px; object-fit: contain; }
+.crawshrimp-logo img { border-radius: 0; }
+</style>
+
+<style scoped src="../styles/modelProviders.css"></style>

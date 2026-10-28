@@ -144,6 +144,56 @@ export function redactWebDiagnostic(value) {
   })
 }
 
+// A diagnostic is an allowlisted projection, never a request/body/log dump.
+// Error messages, stacks, launch queries, cookies and prompt text stay private.
+const DIAGNOSTIC_CODES = /\b(?:ECONNREFUSED|ECONNRESET|EPIPE|ETIMEDOUT|EADDRINUSE|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|ECANCELED|ERR_HTTP_HEADERS_SENT|UND_ERR_(?:SOCKET|CONNECT_TIMEOUT|HEADERS_TIMEOUT|BODY_TIMEOUT|ABORTED|CLOSED|DESTROYED))\b/gu
+const RPC_DIAGNOSTICS = new WeakMap()
+const ERROR_NAMES = new Set(['Error','TypeError','AggregateError','AbortError','TimeoutError','SocketError','ConnectTimeoutError','HeadersTimeoutError','BodyTimeoutError','SyntaxError','RangeError'])
+const ERROR_CODES = new Set(['DSH_RPC_RESPONSE_BODY_FAILED','ABORT_ERR','ERR_INVALID_URL','OWNED_LOCAL_ONLY'])
+function safeErrorCause(error, depth = 0, seen = new Set()) {
+  if (!error || typeof error !== 'object' || depth > 4 || seen.has(error)) return null
+  seen.add(error)
+  const result = {
+    name: ERROR_NAMES.has(error.name) ? error.name : 'Error',
+    ...((ERROR_CODES.has(error.code) || typeof error.code === 'string' && error.code.match(DIAGNOSTIC_CODES)?.[0] === error.code) ? { code: error.code } : {}),
+    ...(['connect','read','write','getaddrinfo','listen','bind','recv','send'].includes(error.syscall) ? { syscall: error.syscall } : {}),
+  }
+  if (Number.isSafeInteger(error.errno)) result.errno = error.errno
+  if (Number.isSafeInteger(error.port) && error.port > 0 && error.port <= 65535) result.port = error.port
+  if (['127.0.0.1', '::1', 'localhost'].includes(error.address)) result.address = error.address
+  const socket = error.socket
+  if (socket && typeof socket === 'object') {
+    result.socket = Object.fromEntries(['bytesWritten', 'bytesRead', 'localPort', 'remotePort'].filter(k => Number.isSafeInteger(socket[k]) && socket[k] >= 0).map(k => [k, socket[k]]))
+    for (const k of ['localAddress', 'remoteAddress']) if (['127.0.0.1', '::1'].includes(socket[k])) result.socket[k] = socket[k]
+  }
+  const cause = safeErrorCause(error.cause, depth + 1, seen)
+  if (cause) result.cause = cause
+  if (Array.isArray(error.errors)) result.errors = error.errors.slice(0, 4).map(item => safeErrorCause(item, depth + 1, seen)).filter(Boolean)
+  return result
+}
+function hostDiagnostics() {
+  const state = { stdoutBytes: 0, stderrBytes: 0, lastOutputAt: null, classified: [], unclassifiedLines: 0 }
+  const pending = { stdout: '', stderr: '' }
+  return {
+    append(stream, chunk) {
+      state[stream + 'Bytes'] += Buffer.byteLength(chunk)
+      state.lastOutputAt = new Date().toISOString()
+      pending[stream] = (pending[stream] + String(chunk)).slice(-8192)
+      const lines = pending[stream].split(/\r?\n/u);pending[stream] = lines.pop()
+      for (const line of lines) {
+        const codes = [...new Set(line.match(DIAGNOSTIC_CODES) || [])].slice(0, 4)
+        const level = /\b(?:fatal|error|warn)\b/iu.exec(line)?.[0]?.toLowerCase()
+        // Never retain arbitrary Host text: a provider/plugin may echo input.
+        if (codes.length || level) {
+          state.classified.push({ at: state.lastOutputAt, stream, ...(level ? { level } : {}), codes })
+          state.classified = state.classified.slice(-12)
+        } else state.unclassifiedLines += 1
+      }
+    },
+    snapshot() { return structuredClone(state) },
+  }
+}
+
 function childHasExited(child) {
   return child.exitCode != null || child.signalCode != null || !child.pid
 }
@@ -222,13 +272,20 @@ export class DshWebRuntime {
   #launchUrl
   #runtimeToken
   #output = ''
+  #hostDiagnostics
+  #lastRPC = null
 
-  constructor({ child, origin, cookie, launchUrl, runtimeToken = '' }) {
+  constructor({ child, origin, cookie, launchUrl, runtimeToken = '', diagnostics = null }) {
     this.#child = child
     this.#origin = origin
     this.#cookie = cookie
     this.#launchUrl = launchUrl
     this.#runtimeToken = String(runtimeToken || '').trim()
+    this.#hostDiagnostics = diagnostics || hostDiagnostics()
+    if (!diagnostics) {
+      child.stdout?.on('data', chunk => this.#hostDiagnostics.append('stdout', chunk))
+      child.stderr?.on('data', chunk => this.#hostDiagnostics.append('stderr', chunk))
+    }
   }
 
   static async launch({
@@ -262,6 +319,7 @@ export class DshWebRuntime {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let output = ''
+    const diagnostics = hostDiagnostics()
     const bootSignal = AbortSignal.timeout(timeoutMs)
     try {
       const launchUrl = await new Promise((resolveReady, rejectReady) => {
@@ -283,8 +341,8 @@ export class DshWebRuntime {
           clearTimeout(timer)
           resolveReady(match[1])
         }
-        child.stdout.on('data', append)
-        child.stderr.on('data', append)
+        child.stdout.on('data', chunk => { diagnostics.append('stdout', chunk);append(chunk) })
+        child.stderr.on('data', chunk => { diagnostics.append('stderr', chunk);append(chunk) })
         child.once('error', fail)
         child.once('exit', (code, signal) => {
           fail(new Error('DSH Web exited before ready: ' + String(code) + '/' + String(signal) + '\n' + redactWebDiagnostic(output).slice(-4000)))
@@ -302,6 +360,7 @@ export class DshWebRuntime {
         cookie,
         launchUrl,
         runtimeToken: env.CRAWSHRIMP_MCP_TOKEN,
+        diagnostics,
       })
       runtime.#output = output
       return runtime
@@ -328,24 +387,45 @@ export class DshWebRuntime {
     return this.#origin
   }
 
-  async request(method, args, signal) {
-    const response = await fetch(this.#origin + '/api/' + method, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', cookie: this.#cookie },
-      signal,
-      body: JSON.stringify({
-        type: 'client-request',
-        rpcId: 'crawshrimp-' + randomUUID(),
-        method,
-        payload: { args },
-      }),
-    })
-    let body
-    try { body = await response.json() } catch {
-      throw new Error('DSH Web RPC ' + method + ' returned HTTP ' + String(response.status))
+  diagnostics(error = null, stage = 'runtime') {
+    const child = this.#child
+    return {
+      version: 1, stage,
+      ...(error ? { error: safeErrorCause(error) } : {}),
+      rpc: error && typeof error === 'object' && RPC_DIAGNOSTICS.has(error) ? { ...RPC_DIAGNOSTICS.get(error) } : this.#lastRPC ? { ...this.#lastRPC } : null,
+      host: { pid: Number.isSafeInteger(child?.pid) ? child.pid : null, exited: childHasExited(child), exitCode: child?.exitCode ?? null, signal: child?.signalCode ?? null, ...this.#hostDiagnostics.snapshot() },
     }
-    if (!response.ok || body?.result?.ok !== true) throw rpcFailure(method, body)
-    return body.result.value
+  }
+
+  async request(method, args, signal) {
+    const started = performance.now()
+    const known = ['session/create', 'session/prompt', 'session/cancel'].includes(method) ? method : 'other'
+    const record = { method: known, phase: 'fetch', startedAt: new Date().toISOString(), httpStatus: null, elapsedMs: 0 }
+    this.#lastRPC = record
+    try {
+      const response = await fetch(this.#origin + '/api/' + method, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: this.#cookie },
+        signal,
+        body: JSON.stringify({ type: 'client-request', rpcId: 'crawshrimp-' + randomUUID(), method, payload: { args } }),
+      })
+      Object.assign(record, { phase: 'response_body', httpStatus: response.status })
+      let body
+      try { body = await response.json() } catch (cause) {
+        const failure = new Error('DSH Web RPC ' + known + ' returned HTTP ' + String(response.status), { cause })
+        failure.code = 'DSH_RPC_RESPONSE_BODY_FAILED'
+        throw failure
+      }
+      record.phase = 'response_received'
+      if (!response.ok || body?.result?.ok !== true) throw rpcFailure(method, body)
+      return body.result.value
+    } catch (error) {
+      record.elapsedMs = Math.round(performance.now() - started)
+      if (error && typeof error === 'object') RPC_DIAGNOSTICS.set(error, { ...record })
+      throw error
+    } finally {
+      record.elapsedMs = Math.round(performance.now() - started)
+    }
   }
 
   async createSession({ sessionId, cwd, agentPreset = 'crawshrimp-standard' }) {

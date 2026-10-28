@@ -38,7 +38,7 @@ def reasoning_runtime_fields(protocol: str, efforts: list) -> dict:
         "compat": {"supportsReasoningEffort": True},
     }
     if protocol == "deepseek":
-        fields["compat"].update(thinkingFormat="deepseek", requiresReasoningContentOnAssistantMessages=True)
+        fields["compat"].update(thinkingFormat="deepseek", requiresReasoningContentOnAssistantMessages=True, supportsDeveloperRole=False)
     else:
         fields["compat"]["thinkingFormat"] = "openai"
     return fields
@@ -370,7 +370,8 @@ def any_llm_api_key_configured(config: dict | None = None) -> bool:
 
 
 def _normalize_protocol(value: Any) -> str:
-    return "anthropic" if _compact(value).lower() == "anthropic" else "openai"
+    protocol = _compact(value).lower()
+    return protocol if protocol in {"anthropic", "openai-responses"} else "openai"
 
 
 def _normalize_custom_models(value: Any, *, preserve_default_reasoning: bool = False) -> list[dict[str, Any]]:
@@ -407,7 +408,8 @@ def _normalize_custom_models(value: Any, *, preserve_default_reasoning: bool = F
 
 def custom_llm_providers(config: dict | None = None, *, include_secrets: bool = True) -> list[dict[str, Any]]:
     llm = _llm_settings(config)
-    raw = llm.get("custom_providers")
+    from core.managed_models import text_providers
+    raw = list(llm.get("custom_providers") or []) + text_providers()
     providers: list[dict[str, Any]] = []
     if not isinstance(raw, list):
         return providers
@@ -506,18 +508,22 @@ def custom_providers_runtime_payload(config: dict | None = None) -> tuple[list[d
             "id": provider["id"],
             "displayName": provider["name"],
             "apiKeyEnv": env_key,
-            "api": "anthropic-messages" if provider["protocol"] == "anthropic" else "openai-completions",
+            "api": {"anthropic": "anthropic-messages", "openai-responses": "openai-responses"}.get(provider["protocol"], "openai-completions"),
             "baseURL": base_url,
             "models": [
                 {
                     "id": model["id"],
+                    "name": model.get("label") or model.get("name") or model["id"],
                     "contextWindow": int(model.get("context_window") or 256000),
                     "maxTokens": int(model.get("max_output_tokens") or 32768),
                     "input": list(model.get("input_modalities") or ["text"]),
-                    **reasoning_runtime_fields(
-                        model.get("reasoning_protocol", "default") if provider["protocol"] == "openai" else "default",
-                        model.get("reasoning_efforts") or [],
-                    ),
+                    "name": model.get("label") or model["id"],
+                    **({"reasoningEfforts": {level: level for level in model.get("reasoning_efforts", [])}}
+                       if provider["id"] == "crawshrimp-managed-openai-responses" and model.get("reasoning_efforts") else
+                       reasoning_runtime_fields(
+                           model.get("reasoning_protocol", "default") if provider["protocol"] == "openai" else "default",
+                           model.get("reasoning_efforts") or [],
+                       )),
                 }
                 for model in provider.get("models") or []
                 if model.get("id")
@@ -589,8 +595,10 @@ def route_for_model(model_id: str, config: dict | None = None) -> LlmRoute:
         raise LlmConfigurationError(f"不支持的文本模型：{selected}")
 
     provider = _provider_for_builtin_model(selected, cfg)
-    custom = None
-    if provider and not _key_for_builtin_provider(provider, llm):
+    custom = next((item for item in custom_llm_providers(cfg)
+                   if selected == llm.get("default_model") and item["id"] == llm.get("default_provider")
+                   and item.get("api_key") and any(model["id"] == selected for model in item["models"])), None)
+    if not custom and provider and not _key_for_builtin_provider(provider, llm):
         custom = custom_provider_for_configured_model(selected, cfg)
 
     if provider and (provider.get("official_deepseek") or provider.get("official_glm")) and not custom:
@@ -862,7 +870,23 @@ def _user_prompt(product_title: str, correction: str = "") -> str:
     return prompt
 
 
+def _responses_request(route, system_prompt, user_prompt, image_references, *, timeout_seconds=None):
+    content = [{"type": "input_text", "text": _compact(user_prompt)}]
+    content.extend({"type": "input_image", "image_url": reference, "detail": "high"}
+                   for value in image_references
+                   if (reference := _image_reference_for_openai_model(route, value)))
+    timeout = 240 if timeout_seconds is None else max(1, float(timeout_seconds))
+    return _post_json(
+        _endpoint(route.base_url, "responses"),
+        {"model": route.model_id, "instructions": _compact(system_prompt),
+         "input": [{"role": "user", "content": content}], "store": False, "stream": False},
+        {"Authorization": f"Bearer {route.api_key}"}, timeout=timeout, total_timeout=timeout,
+    )
+
+
 def _openai_request(route: LlmRoute, product_title: str, image_urls: list[str], correction: str) -> dict:
+    if route.protocol == "openai-responses":
+        return _responses_request(route, VIDEO_COPY_SYSTEM_PROMPT, _user_prompt(product_title, correction), image_urls)
     content: list[dict[str, Any]] = [{"type": "text", "text": _user_prompt(product_title, correction)}]
     content.extend({
         "type": "image_url",
@@ -890,6 +914,8 @@ def _generic_openai_json_request(
     *,
     timeout_seconds: float | None = None,
 ) -> dict:
+    if route.protocol == "openai-responses":
+        return _responses_request(route, system_prompt, user_prompt, image_references, timeout_seconds=timeout_seconds)
     content: list[dict[str, Any]] = [{"type": "text", "text": _compact(user_prompt)}]
     content.extend({
         "type": "image_url",
@@ -989,6 +1015,15 @@ def _anthropic_request(route: LlmRoute, product_title: str, image_urls: list[str
 
 
 def _response_text(payload: dict) -> str:
+    if "output" in payload:
+        if payload.get("status") not in (None, "completed"):
+            raise LlmResponseError("Responses 请求未完成")
+        text = "".join(part.get("text", "") for item in payload.get("output", [])
+                       if isinstance(item, dict) and item.get("type") == "message"
+                       for part in item.get("content", [])
+                       if isinstance(part, dict) and part.get("type") == "output_text")
+        if text:
+            return text
     choices = payload.get("choices")
     if isinstance(choices, list) and choices:
         content = _nested(choices[0] if isinstance(choices[0], dict) else {}, "message", "content")
@@ -1129,9 +1164,9 @@ def generate_video_copies(
     route = route_for_model(model_id, config=config)
     correction = ""
     validation_attempt = 0
-    max_validation_attempts = 2
+    max_validation_attempts = 1 if route.model_id.startswith("managed-") else 2
     transport_attempt = 0
-    max_transport_attempts = 3
+    max_transport_attempts = 1 if route.model_id.startswith("managed-") else 3
     while validation_attempt < max_validation_attempts and transport_attempt < max_transport_attempts:
         try:
             response = (
@@ -1217,6 +1252,8 @@ def generate_multimodal_json(
         if len(model_ids) > 1 or not retry_same_model
         else [model_ids[0], model_ids[0]]
     )
+    if str(model_id).startswith("managed-"):
+        attempts = [model_id]  # Never silently retry or switch billing source.
     last_error: LlmGatewayError | None = None
     for attempt_index, current_model_id in enumerate(attempts):
         route = route_for_model(current_model_id, config=config)
@@ -1244,7 +1281,7 @@ def generate_multimodal_json(
         except LlmGatewayError as exc:
             last_error = exc
             retryable = _is_retryable_llm_error(exc)
-            if attempt_index == len(attempts) - 1 or not retryable:
+            if route.model_id.startswith("managed-") or attempt_index == len(attempts) - 1 or not retryable:
                 raise
     raise last_error or LlmGatewayError("文本模型接口调用失败")
 
@@ -1288,6 +1325,8 @@ def generate_multimodal_text(
         if len(model_ids) > 1 or not retry_same_model
         else [model_ids[0], model_ids[0]]
     )
+    if str(model_id).startswith("managed-"):
+        attempts = [model_id]  # Never silently retry or switch billing source.
     last_error: LlmGatewayError | None = None
     for attempt_index, current_model_id in enumerate(attempts):
         route = route_for_model(current_model_id, config=config)
@@ -1315,7 +1354,7 @@ def generate_multimodal_text(
         except LlmGatewayError as exc:
             last_error = exc
             retryable = _is_retryable_llm_error(exc)
-            if attempt_index == len(attempts) - 1 or not retryable:
+            if route.model_id.startswith("managed-") or attempt_index == len(attempts) - 1 or not retryable:
                 raise
     raise last_error or LlmGatewayError("文本模型接口调用失败")
 

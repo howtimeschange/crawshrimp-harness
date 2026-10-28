@@ -1,0 +1,71 @@
+{
+  "session": "session-5b95d3a9-e0cd-4db6-a304-10e1f9e3eb93",
+  "context": [
+    {
+      "provider": "crawshrimp-managed-openai",
+      "model": "managed-deepseek-flash",
+      "contextWindow": 1000000
+    }
+  ],
+  "calls": 44,
+  "tools": {
+    "mcp__crawshrimp__skill_list": 1,
+    "mcp__crawshrimp__tasks_search": 1,
+    "mcp__crawshrimp__skill_read": 1,
+    "bash": 39,
+    "job_output": 1,
+    "mcp__crawshrimp__artifact_present": 1
+  },
+  "elapsedSeconds": 221.506,
+  "turnEnds": [
+    {
+      "turn": 1,
+      "reason": {
+        "kind": "completed"
+      }
+    }
+  ],
+  "firstCalls": [
+    {
+      "name": "mcp__crawshrimp__skill_list",
+      "seconds": 3.247
+    },
+    {
+      "name": "mcp__crawshrimp__tasks_search",
+      "seconds": 3.281
+    },
+    {
+      "name": "mcp__crawshrimp__skill_read",
+      "seconds": 6.48
+    },
+    {
+      "name": "bash",
+      "seconds": 8.613
+    },
+    {
+      "name": "bash",
+      "seconds": 10.782
+    }
+  ],
+  "lastCalls": [
+    {
+      "name": "bash",
+      "description": "解码校验全部图片",
+      "seconds": 198.886
+    },
+    {
+      "name": "bash",
+      "description": "生成核对报告与清单",
+      "seconds": 208.224
+    },
+    {
+      "name": "bash",
+      "description": "复核产物目录与报告",
+      "seconds": 212.288
+    },
+    {
+      "name": "mcp__crawshrimp__artifact_present",
+      "seconds": 215.792
+    }
+  ]
+}

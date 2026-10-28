@@ -7,6 +7,7 @@ import json
 import re
 import urllib.request
 import urllib.error
+from urllib.parse import urlsplit
 import time
 import threading
 from typing import Any, Mapping
@@ -60,7 +61,8 @@ def provider_settings(config: Mapping[str, Any], environ: Mapping[str, str]) -> 
                 value = (config.get('ai') or {}).get(provider, {}).get(field)
             result[name] = str(value or environ.get(f'{provider.upper()}_IMAGE_{field.upper()}') or defaults.get(field, '')).strip()
     customs = config.get('ai.image.custom_providers', (config.get('ai') or {}).get('image', {}).get('custom_providers', []))
-    result['ai.image.custom_providers'] = customs if isinstance(customs, list) else []
+    from core.managed_models import image_providers
+    result['ai.image.custom_providers'] = (list(customs) if isinstance(customs, list) else []) + image_providers()
     for custom in result['ai.image.custom_providers']:
         if isinstance(custom, dict):
             result[f"ai.image.custom.{custom.get('id')}.api_key"] = custom.get('api_key') or ''
@@ -143,7 +145,7 @@ class _EarlyResponseMixin:
     def request(self, *args, **kwargs):
         try:
             return super().request(*args, **kwargs)
-        except BrokenPipeError:
+        except (BrokenPipeError, ConnectionResetError):
             # Some gateways reject a large body before it finishes uploading.
             # Read the response on this connection; never resend the POST.
             pass
@@ -212,13 +214,17 @@ class CompatibleImageClient:
         self.protocol = protocol or ("gemini" if model.startswith("gemini-") else "openai")
 
     def create_task(self, payload, *, idempotency_key='', timeout=240, request_retries=3, retry_delay_seconds=1.0, sleep_fn=time.sleep, **kwargs):
-        headers = {'Content-Type': 'application/json'}
+        headers = {'Content-Type': 'application/json', 'User-Agent': 'Crawshrimp-Harness/0.4'}
         images = payload.get('image') or []
         if isinstance(images, str): images = [images]
         if self.protocol == 'gemini':
             if payload.get('mask'):
                 raise RejectedOneXMImageError('Nano Banana 不支持独立蒙版参数，请通过提示词和参考图编辑')
-            headers['x-goog-api-key'] = self.api_key
+            # ModelJetty documents Bearer authentication for its native Gemini route.
+            if urlsplit(self.base_url).hostname == 'api.modeljetty.com':
+                headers['Authorization'] = 'Bearer ' + self.api_key
+            else:
+                headers['x-goog-api-key'] = self.api_key
             parts = [{'text': payload.get('prompt', '')}]
             for value in images:
                 mime, data = _image_bytes(value)
@@ -242,7 +248,7 @@ class CompatibleImageClient:
             url = re.sub(r'/images/(?:generations|edits)$', '', self.base_url) + '/images/' + endpoint
             if images: body, headers['Content-Type'] = _multipart(body)
         retry_history = []
-        attempts = max(1, min(3, int(request_retries or 1)))
+        attempts = 1 if self.provider.startswith("custom-managed-") else max(1, min(3, int(request_retries or 1)))
         for attempt in range(1, attempts + 1):
             with _provider_submission_slot(self.provider):
                 status, result = self.transport('POST', url, headers=headers, body=body, timeout=max(240, timeout))

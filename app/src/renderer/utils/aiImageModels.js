@@ -3,44 +3,7 @@ import { shallowReactive, shallowRef } from 'vue'
 export const AI_IMAGE_PROVIDER_SETTINGS = shallowRef({})
 let providerConfigRevision = 0
 
-export const AI_IMAGE_MODELS = shallowReactive([
-  {
-    id: 'gpt-image-2k',
-    key: 'gpt-image-2',
-    label: '1XM · GPT Image 2K',
-    configId: 'ai.1xm.gpt_image_2k_key',
-    size: '1024x1024',
-    keyTier: '2k',
-    providerFamily: 'gpt-image',
-  },
-  {
-    id: 'gpt-image-4k',
-    key: 'gpt-image-2',
-    label: '1XM · GPT Image 4K',
-    configId: 'ai.1xm.gpt_image_4k_key',
-    size: '2880x2880',
-    keyTier: '4k',
-    providerFamily: 'gpt-image',
-  },
-  {
-    id: 'gemini-3.1-flash-image-preview',
-    key: 'gemini-3.1-flash-image-preview',
-    label: '1XM · Gemini 3.1 Flash Image Preview',
-    configId: 'ai.1xm.gemini_3_1_flash_image_preview_key',
-    size: '1K',
-    keyTier: 'ai.1xm.gemini_3_1_flash_image_preview_key',
-    providerFamily: 'nano-banana',
-  },
-  {
-    id: 'gemini-3-pro-image-preview',
-    key: 'gemini-3-pro-image-preview',
-    label: '1XM · Gemini 3 Pro Image Preview',
-    configId: 'ai.1xm.gemini_3_pro_image_preview_key',
-    size: '2K',
-    keyTier: 'ai.1xm.gemini_3_pro_image_preview_key',
-    providerFamily: 'nano-banana',
-  },
-])
+export const AI_IMAGE_MODELS = shallowReactive([])
 
 // Provider-qualified keys survive scripts, saved jobs, retries and cloud dispatch.
 for (const [provider, label] of [['woka', '沃卡'], ['semir', '森马网关']]) {
@@ -62,7 +25,7 @@ export const CUSTOM_IMAGE_PROVIDERS_FIELD = 'ai.image.custom_providers'
 
 export function customImageProviders(settings = {}) {
   const value = settings[CUSTOM_IMAGE_PROVIDERS_FIELD] ?? settings.ai?.image?.custom_providers
-  return Array.isArray(value) ? value : []
+  return [...(Array.isArray(value) ? value : []), ...(Array.isArray(settings.managed_image_providers) ? settings.managed_image_providers : [])]
 }
 
 export function configureAiImageProviders(settings = {}) {
@@ -80,7 +43,7 @@ export function configureAiImageProviders(settings = {}) {
     }
   }
   const builtin = AI_IMAGE_MODELS.filter(model => !model.custom)
-  AI_IMAGE_MODELS.splice(0, AI_IMAGE_MODELS.length, ...builtin, ...models)
+  AI_IMAGE_MODELS.splice(0, AI_IMAGE_MODELS.length, ...models.filter(model => model.provider.startsWith('custom-modeljetty-')), ...builtin, ...models.filter(model => !model.provider.startsWith('custom-modeljetty-')))
 }
 
 // Ignore a slow read that started before a newer configuration was saved.
@@ -128,7 +91,7 @@ export function outputDirHint(platform = '') {
 }
 
 export function getAiImageModel(modelId) {
-  return AI_IMAGE_MODELS.find((model) => model.id === modelId) || AI_IMAGE_MODELS[0]
+  return AI_IMAGE_MODELS.find((model) => model.id === modelId) || AI_IMAGE_MODELS.find(model => !missingKeyForModel(model.id, AI_IMAGE_PROVIDER_SETTINGS.value)) || AI_IMAGE_MODELS[0]
 }
 
 export function isNanoBananaModel(modelIdOrKey) {
@@ -213,15 +176,10 @@ export function modelIdForJob(job = {}) {
   const directModel = AI_IMAGE_MODELS.find((model) => model.key === modelKey && model.key !== 'gpt-image-2')
   if (directModel) return directModel.id
 
-  if (modelKey === 'gpt-image-2') {
-    const tier = String(job.model_key_tier || job.params?.model_key_tier || '').toLowerCase()
-    if (tier === '4k') return 'gpt-image-4k'
-    if (tier === '2k') return 'gpt-image-2k'
-    if (maxDimension(job.params?.size || job.size) > 2048) return 'gpt-image-4k'
-    return 'gpt-image-2k'
-  }
+  // Historical jobs retain their retired model ID so generation requires an explicit reselection.
+  if (modelKey && !modelKey.includes('/')) return job.model_id || job.modelId || modelKey
+  return getAiImageModel('').id
 
-  return AI_IMAGE_MODELS[0].id
 }
 
 export function defaultAiImageForm(overrides = {}) {
@@ -257,10 +215,9 @@ export function defaultAiImageForm(overrides = {}) {
 export function normalizeSettings(settings = {}) {
   const direct = settings && typeof settings === 'object' ? settings : {}
   const ai = direct.ai && typeof direct.ai === 'object' ? direct.ai : {}
-  const oneXm = ai['1xm'] && typeof ai['1xm'] === 'object' ? ai['1xm'] : {}
   const providerKeys = {}
   for (const custom of customImageProviders(direct)) {
-    providerKeys[`ai.image.custom.${custom.id}.api_key`] = custom.api_key || ''
+    providerKeys[`ai.image.custom.${custom.id}.api_key`] = custom.api_key || (custom.id?.startsWith('custom-managed-') && custom.configured ? 'managed-session' : '')
   }
   for (const model of AI_IMAGE_MODELS.filter(item => item.provider && !item.custom)) {
     const [, provider, field] = model.configId.split('.')
@@ -269,12 +226,7 @@ export function normalizeSettings(settings = {}) {
   return {
     ...direct,
     ...providerKeys,
-    'ai.1xm.gpt_image_2k_key': direct['ai.1xm.gpt_image_2k_key'] ?? oneXm.gpt_image_2k_key ?? direct['2k'] ?? '',
-    'ai.1xm.gpt_image_4k_key': direct['ai.1xm.gpt_image_4k_key'] ?? oneXm.gpt_image_4k_key ?? direct['4k'] ?? '',
-    'ai.1xm.gemini_3_1_flash_image_preview_key':
-      direct['ai.1xm.gemini_3_1_flash_image_preview_key'] ?? oneXm.gemini_3_1_flash_image_preview_key ?? '',
-    'ai.1xm.gemini_3_pro_image_preview_key':
-      direct['ai.1xm.gemini_3_pro_image_preview_key'] ?? oneXm.gemini_3_pro_image_preview_key ?? '',
+
   }
 }
 

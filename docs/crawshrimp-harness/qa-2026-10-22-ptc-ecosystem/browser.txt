@@ -1,0 +1,1 @@
+这是隔离生态验证。请读取 crawshrimp-skill 的 SKILL.md，并通过 enable_tools 启用浏览器工具。必须用抓虾 MCP 浏览器工具观察现有 CDP 9222，再新建测试标签访问 http://127.0.0.1:20180/ ，观察页面，点击 #verify，重新读取 #result，报告库存合计和按钮结果。不要操作其他标签，不要用 bash、curl、Python 或自行 CDP 调用替代 MCP 工具。

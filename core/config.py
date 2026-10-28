@@ -26,13 +26,6 @@ DEFAULT_CONFIG = {
         "custom_webhook": "",
     },
     "ai": {
-        "1xm": {
-            "base_url": DEFAULT_ONE_XM_BASE_URL,
-            "gpt_image_2k_key": "",
-            "gpt_image_4k_key": "",
-            "gemini_3_1_flash_image_preview_key": "",
-            "gemini_3_pro_image_preview_key": "",
-        },
         "image": {"custom_providers": []},
         "woka": {
             "base_url": "https://4.0.wk-best.com/v1",
@@ -47,7 +40,7 @@ DEFAULT_CONFIG = {
         },
         "video": {
             "seedance_api_key": "",
-            "seedance_base_url": "https://ark.cn-beijing.volces.com",
+            "seedance_base_url": "https://ai-aigw.semir.com/doubao-seedance/api/v3",
             "bailian_api_key": "",
             "bailian_workspace_id": "",
             "bailian_region": "cn-beijing",
@@ -68,6 +61,7 @@ DEFAULT_CONFIG = {
             "deepseek_base_url": "https://api.deepseek.com",
             "glm_base_url": "https://open.bigmodel.cn/api/paas/v4",
             "default_model": "deepseek-official-flash",
+            "default_provider": "",
             "custom_providers": [],
             "builtin_provider_models": {},
         },
@@ -131,10 +125,20 @@ def _config_path() -> Path:
 
 
 def _apply_config_migrations(cfg: dict) -> dict:
+    cfg.pop("managed_image_providers", None)
+    cfg.pop("managed_text_providers", None)
     ai = cfg.get("ai")
-    one_xm = ai.get("1xm") if isinstance(ai, dict) else None
-    if isinstance(one_xm, dict) and str(one_xm.get("base_url") or "").strip().rstrip("/") == LEGACY_ONE_XM_BASE_URL:
-        one_xm["base_url"] = DEFAULT_ONE_XM_BASE_URL
+    if isinstance(ai, dict):
+        for kind, prefix in (("image", "custom-managed-"), ("llm", "crawshrimp-managed-")):
+            section = ai.get(kind)
+            if isinstance(section, dict) and isinstance(section.get("custom_providers"), list):
+                section["custom_providers"] = [p for p in section["custom_providers"] if not isinstance(p, dict) or not str(p.get("id", "")).startswith(prefix)]
+    # The retired provider must not reappear when older settings are loaded/saved.
+    if isinstance(ai, dict):
+        ai.pop("1xm", None)
+    for key in list(cfg):
+        if key.startswith("ai.1xm."):
+            cfg.pop(key)
     return cfg
 
 
@@ -159,7 +163,7 @@ def load_config() -> dict:
 
 def save_config(cfg: dict) -> None:
     path = _config_path()
-    atomic_write_json(path, _expand_dotted_keys(cfg), ensure_ascii=False, indent=2)
+    atomic_write_json(path, _apply_config_migrations(deepcopy(_expand_dotted_keys(cfg))), ensure_ascii=False, indent=2)
 
 
 def validate_video_base_url(value: str) -> str:
@@ -187,7 +191,7 @@ def patch_config(patch: dict) -> dict:
     for field in ("seedance_base_url", "bailian_base_url", "bailian_uploads_url"):
         if field in video:
             video[field] = validate_video_base_url(video[field])
-    cfg = _deep_merge(load_config(), expanded)
+    cfg = _apply_config_migrations(_deep_merge(load_config(), expanded))
     save_config(cfg)
     return cfg
 

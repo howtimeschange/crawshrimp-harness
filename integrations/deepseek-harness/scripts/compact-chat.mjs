@@ -74,10 +74,21 @@ export function patchCompactChatSource(source) {
       '"data-turn-process-answer": compactAnswer || void 0,\n                "data-chat-final-answer": processAnswer || void 0,')
   }
   if (!source.includes('"data-chat-call-id"')) {
-    source = replaceOnce(source, '"data-chat-anchor-key": routedNode.key,',
-      '"data-chat-anchor-key": routedNode.key,\n                "data-chat-call-id": routedNode.kind === "tool-call" ? routedNode.data.root.callId : void 0,')
+    const anchor = source.includes('"data-chat-anchor-key": flowKey,') ? '"data-chat-anchor-key": flowKey,' : '"data-chat-anchor-key": routedNode.key,'
+    source = replaceOnce(source, anchor, anchor + '\n                "data-chat-call-id": routedNode.kind === "tool-call" ? routedNode.data.root.callId : void 0,')
   }
   if (source.includes(COMPACT_CHAT_MARKER)) return source
+  // rc.2 replaces ChatNodeList with native step-process groups and inspectCall.
+  // Keep its group-aware paging and disclosure instead of replacing its renderer.
+  if (source.includes('function ChatFlow({ entries,') && source.includes('function processTitle(summary, t)') && source.includes('inspectCall,')) {
+    // Embedded web clients otherwise default to detailed, exposing every live call.
+    // Standard uses native collapsed groups, including while running, and keeps
+    // explicit transcript preferences and the accessible disclosure intact.
+    const marker = 'crawshrimp-native-compact-chat-v1'
+    if (source.includes(marker)) return source
+    return replaceOnce(source, 'const DEFAULT_TRANSCRIPT_VIEW_MODE = "detailed";',
+      `/* ${marker} */\nconst DEFAULT_TRANSCRIPT_VIEW_MODE = "standard";`)
+  }
   const start = source.indexOf('\t\tconst ChatNodeList =')
   const end = source.indexOf('\n\t\t/**', start)
   if (start < 0 || end < 0) throw new Error('ChatNodeList boundary changed')
@@ -101,7 +112,11 @@ export function patchConversationSource(source) {
     source = replaceOnce(source, 'todos: useProjection("todos") ?? [],', 'running: useSession(s => s.running),\n                todos: useProjection("todos") ?? [],')
     source = replaceOnce(source, 'function TodoPanel({ todos, t }) {', 'function TodoPanel({ todos, running, t }) {')
     source = replaceOnce(source, 'children: progressLabel(todos, t)', 'children: !running && todos.some(item => item.status !== "completed") ? "本轮已结束 · 计划尚未收尾（" + progressLabel(todos, t) + "）" : progressLabel(todos, t)')
+    if (source.includes('state: statusDotState(item.status)')) {
+      source = replaceOnce(source, 'state: statusDotState(item.status)', 'state: statusDotState(!running && item.status === "in_progress" ? "pending" : item.status)')
+    } else {
     source = replaceOnce(source, 'jsx)(StatusGlyph, { status: item.status })', 'jsx)(StatusGlyph, { status: !running && item.status === "in_progress" ? "pending" : item.status })')
+    }
   }
   if (source.includes(COMPACT_CHAT_MARKER)) return source
   // Resolve old saved trajectory preferences to chat as well as removing the tab strip.

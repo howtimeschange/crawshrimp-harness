@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { apply, projectTools, createDomainState, DOMAIN_TOOL, DOMAINS, toolDomain } from './context-tools.js'
+import { apply, projectTools, createDomainState, DOMAIN_TOOL, DOMAINS, toolDomain, toolPresentationMode } from './context-tools.js'
 import { automationNativeToolDecision } from './index.js'
 const schemas = [
   { name: 'read', description: 'read file', parameters: { type: 'object', properties: { path: { type: 'string' } } } },
@@ -39,10 +39,13 @@ test('domain tool actually exposes callable registered schemas next request and 
   const browser = await f.assemble()
   assert(browser.tools.some(t => t.name.includes('browser_act')))
   assert.deepEqual((await f.assemble()).tools, browser.tools)
-  await f.enable(['office'])
+  const loadedOffice = await f.enable(['office'])
   const both = await f.assemble()
   assert(both.tools.some(t => t.name.includes('browser_act')))
   assert(both.tools.some(t => t.name.includes('office_render')))
+  assert.deepEqual(loadedOffice.tools, both.tools.map(t => t.name).sort())
+  assert(loadedOffice.tools.includes('mcp__crawshrimp__skill_read'))
+  assert.deepEqual((await f.enable([])).tools, loadedOffice.tools)
   assert.deepEqual(both.sections, baseline.sections)
   assert.equal(automationNativeToolDecision({ toolset: [], allow_filesystem: false, allow_network: false }, DOMAIN_TOOL)?.startsWith('AUTOMATION_POLICY_DENIED'), true)
 })
@@ -122,4 +125,19 @@ test('every domain can be loaded together; script and skill tools keep their par
   const enabled = await f.enable(['browser', 'office', 'automation', 'media', 'delegation'])
   assert.deepEqual(Object.keys(enabled.instructions).sort(), ['automation', 'media', 'office', 'workflow'])
   assert.deepEqual((await f.assemble()).tools.map(t => t.name), [...schemas.map(t => t.name), DOMAIN_TOOL])
+})
+
+// Large inactive catalogs previously caused upstream malformed calls on managed Gemini.
+test('managed Gemini scopes tools while preserving cumulative and resident tools', async () => {
+  const f = fixture('compact')
+  f.agent.session.snapshotEvents = () => [{type:'model/selection', data:{provider:'crawshrimp-managed-openai', model:'managed-gemini-3.5-flash-lite'}}]
+  assert(!(await f.assemble()).tools.some(t => t.name.includes('office_render')))
+  const first = await f.enable(['browser'])
+  assert(first.tools.includes('mcp__crawshrimp__skill_read'))
+  assert(!first.tools.includes('mcp__crawshrimp__office_render'))
+  const second = await f.enable(['office'])
+  assert(second.tools.includes('mcp__crawshrimp__browser_act'))
+  assert.deepEqual(second.tools, (await f.assemble()).tools.map(t=>t.name).sort())
+  assert.equal(toolPresentationMode('compact', {provider:'other',model:'managed-gemini-3.5-flash-lite'}),'compact')
+  assert.equal(toolPresentationMode('compact', {provider:'crawshrimp-managed-openai',model:'managed-deepseek-flash'}),'compact')
 })
