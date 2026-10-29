@@ -645,31 +645,6 @@ def latest_event_seq() -> int:
             conn.close()
 
 
-# ---------- 智能体数据清除(设置页) ----------
-
-AGENT_PROJECTION_TABLES = (
-    "agent_messages", "agent_events", "agent_tool_calls", "agent_approvals",
-    "agent_execution_plans", "agent_turns", "agent_runs", "agent_sessions",
-    "agent_capability_grants", "agent_script_revisions", "agent_workspace_files",
-    "agent_attachments",
-)
-
-
-def clear_agent_data() -> None:
-    """清空智能体投影表(会话/运行/消息/审批/草稿/附件)。
-
-    保留:任务实例与产物(产品数据)、模型/能力配置。
-    """
-    with _lock:
-        conn = _conn()
-        try:
-            for table in AGENT_PROJECTION_TABLES:
-                conn.execute(f"DELETE FROM {table}")
-            conn.commit()
-        finally:
-            conn.close()
-
-
 # ---------- 工具调用 ----------
 
 def upsert_tool_call(run_id: str, dsh_call_id: str, tool_name: str, arguments: Any) -> dict:
@@ -1070,23 +1045,6 @@ def list_attachments(session_id: str, turn_id: Optional[str] = None) -> list[dic
             if turn_id:
                 return _fetch(conn, "SELECT * FROM agent_attachments WHERE session_id = ? AND turn_id = ? ORDER BY created_at", (session_id, turn_id))
             return _fetch(conn, "SELECT * FROM agent_attachments WHERE session_id = ? ORDER BY created_at", (session_id,))
-        finally:
-            conn.close()
-
-
-# ---------- 清理 ----------
-
-def delete_all_agent_data() -> None:
-    with _lock:
-        conn = _conn()
-        try:
-            conn.executescript(
-                "DELETE FROM agent_events; DELETE FROM agent_tool_calls; DELETE FROM agent_approvals;"
-                " DELETE FROM agent_execution_plans; DELETE FROM agent_capability_grants;"
-                " DELETE FROM agent_workspace_files; DELETE FROM agent_script_revisions;"
-                " DELETE FROM agent_messages; DELETE FROM agent_runs; DELETE FROM agent_turns; DELETE FROM agent_sessions;"
-            )
-            conn.commit()
         finally:
             conn.close()
 

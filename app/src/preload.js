@@ -627,6 +627,11 @@ contextBridge.exposeInMainWorld('cs', {
     () => apiCall('GET', `/ai-image/jobs/${encodePathPart(uid)}`)),
   traceAiImageManagedRequest: (uid, runUid) => invokeWithApiFallback('trace-ai-image-managed-request', [uid, runUid],
     () => apiCall('GET', `/ai-image/jobs/${encodePathPart(uid)}/runs/${encodePathPart(runUid)}/managed-request`)),
+  listManagedTextRequests: (offset = 0) => {
+    const pageOffset = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0
+    return invokeWithApiFallback('list-managed-text-requests', [pageOffset], () => apiCall('GET', `/managed-text/requests?offset=${pageOffset}`))
+  },
+  traceManagedTextRequest: (requestId) => invokeWithApiFallback('trace-managed-text-request', [requestId], () => apiCall('GET', `/managed-text/requests/${encodePathPart(requestId)}`)),
   updateAiImageJob: (uid, payload) => invokeWithApiFallback('update-ai-image-job', [uid, payload],
     () => apiCall('PATCH', `/ai-image/jobs/${encodePathPart(uid)}`, payload || {})),
   setAiImageJobPinned: (uid, pinned) => invokeWithApiFallback('set-ai-image-job-pinned', [uid, pinned],

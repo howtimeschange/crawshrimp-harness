@@ -298,7 +298,7 @@ class CompatibleImageClient:
             error = result.get('error') or result.get('message') or f'HTTP {status}'
             if managed and 200 <= status < 300:
                 raise _managed_response_unknown('官方生图响应包含错误，无法确认结果')
-            if status in {502, 504} or (managed and (status == 409 or 300 <= status < 400)):
+            if status in {502, 504} or (managed and (status in {409, 503} or 300 <= status < 400)):
                 # A gateway can lose the upstream response after generation began.
                 # Its HTTP response is not proof that the provider rejected work.
                 raise OneXMImageError(f'网关 HTTP {status}，无法确认上游是否已受理')

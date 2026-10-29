@@ -115,6 +115,9 @@ const BACKEND_READY_PROBE_TIMEOUT_MS = Number(process.env.CRAWSHRIMP_BACKEND_REA
 const BACKEND_READY_RESTART_UNAVAILABLE_MS = Number(process.env.CRAWSHRIMP_BACKEND_READY_RESTART_UNAVAILABLE_MS || 10 * 60 * 1000)
 const BACKEND_STOP_GRACE_MS = 7000
 const BACKEND_INSTANCE_ID = crypto.randomUUID()
+// Bind the transient account capability to this desktop process, so a file
+// left by an unclean exit cannot authorize account memory on the next launch.
+const ACCOUNT_RUNTIME_EPOCH = crypto.randomUUID()
 const AI_VIDEO_CAPABILITY_SECRET = crypto.randomBytes(32).toString('hex')
 const LEGACY_RUNTIME_MARKERS = [
   'adapters',
@@ -1024,6 +1027,7 @@ function spawnBackendProcess() {
       CRAWSHRIMP_ALLOW_DATA_FALLBACK: '1',
       CRAWSHRIMP_API_TOKEN: apiToken,
       CRAWSHRIMP_BACKEND_INSTANCE_ID: BACKEND_INSTANCE_ID,
+      CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH: ACCOUNT_RUNTIME_EPOCH,
       CRAWSHRIMP_AI_VIDEO_CAPABILITY_SECRET: AI_VIDEO_CAPABILITY_SECRET,
       CRAWSHRIMP_AGENT_ATTACHMENT_TMP_ROOT: path.join(app.getPath('userData'), 'tmp-agent-attachments'),
       CRAWSHRIMP_APP_ENV: CLOUD_APPROVAL_APP_ENV,
@@ -2562,6 +2566,7 @@ let accountAuth = null
 function desktopAccountAuth() {
   if (!accountAuth) {
     accountAuth = require('./managedAccount').createManagedAccount({
+      runtimeEpoch: ACCOUNT_RUNTIME_EPOCH,
       issuer: process.env.CRAWSHRIMP_ACCOUNT_ISSUER || 'https://modeljetty.com/oidc',
       fetcher: require('./managedFetch').createManagedFetch(session.fromPartition('crawshrimp-managed-account')),
       development: !app.isPackaged,
@@ -2922,6 +2927,12 @@ secureHandle('get-ai-image-job', async (_, jobUid) =>
   apiCall('GET', `/ai-image/jobs/${encodeURIComponent(String(jobUid || ''))}`))
 secureHandle('trace-ai-image-managed-request', async (_, jobUid, runUid) =>
   apiCall('GET', `/ai-image/jobs/${encodeURIComponent(String(jobUid || ''))}/runs/${encodeURIComponent(String(runUid || ''))}/managed-request`, undefined, { timeoutMs: 40000 }))
+secureHandle('list-managed-text-requests', (_, offset = 0) => {
+  const pageOffset = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0
+  return apiCall('GET', `/managed-text/requests?offset=${pageOffset}`)
+})
+secureHandle('trace-managed-text-request', (_, requestId) =>
+  apiCall('GET', `/managed-text/requests/${encodeURIComponent(String(requestId || ''))}`, undefined, { timeoutMs: 40000 }))
 secureHandle('update-ai-image-job', async (_, jobUid, payload) =>
   apiCall('PATCH', `/ai-image/jobs/${encodeURIComponent(String(jobUid || ''))}`, payload || {}))
 secureHandle('set-ai-image-job-pinned', async (_, jobUid, pinned) =>

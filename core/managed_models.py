@@ -16,6 +16,9 @@ def session():
         if path.is_symlink() or (os.name != 'nt' and path.stat().st_mode & 0o077):
             return None
         value = json.loads(path.read_text(encoding='utf-8'))
+        runtime_epoch = os.environ.get('CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH')
+        if not runtime_epoch or value.get('desktopRuntimeEpoch') != runtime_epoch:
+            return None
         url = urlsplit(value['baseURL'])
         if url.scheme != 'http' or url.hostname != '127.0.0.1' or not url.port or url.path or url.query or url.fragment or url.username:
             return None

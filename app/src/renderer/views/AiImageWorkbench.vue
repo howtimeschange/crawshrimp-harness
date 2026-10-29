@@ -1079,7 +1079,10 @@ const promptDialogPanel = ref(null)
 const deleteTaskDialogPanel = ref(null)
 const unknownRetryDialogPanel = ref(null)
 const unknownRetryDialogOpen = ref(false)
-let confirmedUnknownRetry = false
+let unknownRetryIntent = null
+let taskSelectionGeneration = 0
+let resultRecheckGeneration = 0
+let batchDialogOwner = null
 const lightboxItem = ref(null)
 const lightboxEditPrompt = ref('')
 const lightboxEditReferencePaths = ref([])
@@ -2070,18 +2073,30 @@ function upsertJob(job) {
   else jobs.value.unshift(job)
 }
 
-async function ensureCurrentTask() {
-  if (currentJob.value?.job_uid) {
-    const saved = await autosaveCurrentTask({ force: true, allowDuringGeneration: true })
-    if (saved) return saved
-    try {
-      const existing = await window.cs.getAiImageJob(currentJob.value.job_uid)
-      if (existing?.job_uid) return existing
-    } catch (error) {
-      if (!isAiImageJobNotFoundError(error)) throw error
-      forgetStaleJob(currentJob.value.job_uid)
+async function ensureCurrentTask(options = {}) {
+  const assertOwner = () => {
+    if (options.confirmedJobUid && (options.confirmedJobUid !== activeJobUid.value
+      || options.selectionGeneration !== taskSelectionGeneration || pendingActiveJobUid.value)) {
+      throw new Error('任务已切换，请重新检查后提交')
     }
   }
+  assertOwner()
+  if (currentJob.value?.job_uid) {
+    const targetJobUid = currentJob.value.job_uid
+    const saved = await autosaveCurrentTask({ force: true, allowDuringGeneration: true })
+    assertOwner()
+    if (saved) return saved
+    try {
+      const existing = await window.cs.getAiImageJob(targetJobUid)
+      assertOwner()
+      if (existing?.job_uid) return existing
+    } catch (error) {
+      assertOwner()
+      if (!isAiImageJobNotFoundError(error)) throw error
+      forgetStaleJob(targetJobUid)
+    }
+  }
+  assertOwner()
   const created = await createTaskFromCurrentForm('draft')
   return created
 }
@@ -2101,6 +2116,7 @@ function nextTaskTitle() {
 
 async function createNewTask() {
   if (generating.value) return
+  taskSelectionGeneration++
   connectionNotice.value = ''
   inputImportIssues.value = []
   saveDraftForCurrentTask()
@@ -2156,6 +2172,7 @@ function openBatchGenerationDialog() {
     return
   }
   const snapshot = formSnapshot()
+  batchDialogOwner = { jobUid: activeJobUid.value, selectionGeneration: taskSelectionGeneration }
   const initialPrompt = String(snapshot.prompt || '').trim()
   batchGenerationDialog.open = true
   batchGenerationDialog.submitting = false
@@ -2185,6 +2202,7 @@ function openBatchGenerationDialog() {
 function closeBatchGenerationDialog() {
   if (batchGenerationDialog.submitting) return
   batchGenerationDialog.open = false
+  batchDialogOwner = null
   batchGenerationDialog.error = ''
   closeBatchPromptLibraryPicker()
 }
@@ -2258,7 +2276,7 @@ function selectPromptLibraryTemplate(template) {
   closeBatchPromptLibraryPicker()
 }
 
-async function submitBatchGeneration() {
+async function submitBatchGeneration(confirmationKey = null) {
   batchGenerationDialog.error = ''
   try {
     assertAdvancedJsonValid()
@@ -2271,6 +2289,11 @@ async function submitBatchGeneration() {
     return
   }
   if (generating.value || batchGenerationDialog.submitting || inputImportBusy.value) return
+  if (!batchDialogOwner || batchDialogOwner.jobUid !== activeJobUid.value
+    || batchDialogOwner.selectionGeneration !== taskSelectionGeneration || pendingActiveJobUid.value) {
+    batchGenerationDialog.error = '任务已切换，请重新打开批量生成并检查内容。'
+    return
+  }
   if (connectionNotice.value) { batchGenerationDialog.error = connectionNotice.value; return }
   const promptCards = batchPromptCards.value
     .map((card) => ({
@@ -2298,13 +2321,23 @@ async function submitBatchGeneration() {
     quality: batchGenerationDialog.quality,
     format: batchGenerationDialog.format,
   }
+  if (submissionUnconfirmed.value && confirmationKey !== unknownRetryKey('batch')) {
+    beginUnknownRetry('batch')
+    return
+  }
+  const confirmedJobUid = activeJobUid.value
+  const confirmedSelectionGeneration = taskSelectionGeneration
   batchGenerationDialog.submitting = true
   generating.value = true
   selectedResults.clear()
   try {
-    const activeTask = await ensureCurrentTask()
+    const activeTask = await ensureCurrentTask(typeof confirmationKey === 'string'
+      ? { confirmedJobUid, selectionGeneration: confirmedSelectionGeneration } : {})
     const jobUid = activeTask?.job_uid
     if (!jobUid) throw new Error('后端未返回 job_uid')
+    if (typeof confirmationKey === 'string' && (confirmedSelectionGeneration !== taskSelectionGeneration || confirmedJobUid !== jobUid || pendingActiveJobUid.value)) {
+      throw new Error('任务已切换，请重新检查后提交')
+    }
     beginResultRevealTracking(activeTask)
     generatingJobUid.value = jobUid
     generatingSnapshot.value = batchSnapshot
@@ -2346,7 +2379,7 @@ async function submitBatchGeneration() {
     clearResultRevealTracking(generatingJobUid.value)
     const message = normalizeGenerateError(error)
     batchGenerationDialog.error = message
-    errorMessage.value = message
+    if (confirmedSelectionGeneration === taskSelectionGeneration && activeJobUid.value === confirmedJobUid && !pendingActiveJobUid.value) errorMessage.value = message
     logs.value.push(`批量生成失败：${message}`)
   } finally {
     batchGenerationDialog.submitting = false
@@ -2357,10 +2390,8 @@ async function submitBatchGeneration() {
   }
 }
 
-async function generate() {
-  const confirmedUnknown = confirmedUnknownRetry
-  confirmedUnknownRetry = false
-  if (submissionUnconfirmed.value && !confirmedUnknown) { unknownRetryDialogOpen.value = true; return }
+async function generate(confirmationKey = null) {
+  if (submissionUnconfirmed.value && confirmationKey !== unknownRetryKey('single')) { beginUnknownRetry('single'); return }
   errorMessage.value = ''
   if (!String(form.prompt || '').trim()) {
     errorMessage.value = '请输入生图提示词后再开始生成'
@@ -2378,6 +2409,8 @@ async function generate() {
   }
   if (generating.value || inputImportBusy.value) return
   if (connectionNotice.value) { errorMessage.value = connectionNotice.value; return }
+  const confirmedJobUid = activeJobUid.value
+  const confirmedSelectionGeneration = taskSelectionGeneration
   generating.value = true
   compactPane.value = 'results'
   selectedResults.clear()
@@ -2385,9 +2418,13 @@ async function generate() {
   try {
     const payload = structuredClonePlain(buildJobPayload())
     const submittedSnapshot = formSnapshot()
-    const activeTask = await ensureCurrentTask()
+    const activeTask = await ensureCurrentTask(typeof confirmationKey === 'string'
+      ? { confirmedJobUid, selectionGeneration: confirmedSelectionGeneration } : {})
     const jobUid = activeTask?.job_uid
     if (!jobUid) throw new Error('后端未返回 job_uid')
+    if (typeof confirmationKey === 'string' && (confirmedSelectionGeneration !== taskSelectionGeneration || confirmedJobUid !== jobUid || pendingActiveJobUid.value)) {
+      throw new Error('任务已切换，请重新检查后提交')
+    }
     beginResultRevealTracking(activeTask)
     const previousSummary = currentJob.value?.summary || activeTask.summary || {}
     generatingJobUid.value = jobUid
@@ -3238,23 +3275,39 @@ function announceStatus(message) {
 }
 
 async function recheckResultRecord(item) {
+  const ownerJobUid = resultOwnerJobUid(item)
+  if (!ownerJobUid || ownerJobUid !== activeJobUid.value || pendingActiveJobUid.value) return
+  const selectionGeneration = taskSelectionGeneration
+  const requestGeneration = ++resultRecheckGeneration
+  const isCurrent = () => requestGeneration === resultRecheckGeneration
+    && selectionGeneration === taskSelectionGeneration
+    && activeJobUid.value === ownerJobUid && !pendingActiveJobUid.value
   try {
-    const result = await window.cs.getAiImageJob(resultOwnerJobUid(item))
+    const result = await window.cs.getAiImageJob(ownerJobUid)
+    if (!isCurrent()) return
     const job = result?.job || result
-    if (job?.job_uid) { currentJob.value = job; upsertJob(job) }
+    if (job?.job_uid !== ownerJobUid) throw new Error('任务记录不匹配')
+    currentJob.value = job
+    upsertJob(job)
     const runUid = String(item?.runUid || item?.run_uid || '').trim()
     const run = (job?.summary?.runs || []).find(entry => entry.run_uid === runUid)
     if (run?.managed_request_id && typeof window.cs.traceAiImageManagedRequest === 'function') {
-      const trace = await window.cs.traceAiImageManagedRequest(resultOwnerJobUid(item), runUid)
+      const trace = await window.cs.traceAiImageManagedRequest(ownerJobUid, runUid)
+      if (!isCurrent()) return
       if (trace.status === 'found') {
-        const labels = { in_progress: '处理中', completed: '服务端已完成', unknown: '结果未知', upstream_rejected: '上游拒绝', not_dispatched: '未转发', failed: '失败', canceled: '已取消' }
-        errorMessage.value = `官方请求 ${trace.request_id}：${labels[trace.state] || '状态待确认'}。请核对账单和图片，未重复生成。`
+        if (trace.request_id !== run.managed_request_id) throw new Error('请求记录不匹配')
+        const labels = { waiting: '等待中（需以队列回执核实）', in_progress: '处理中', completed: '服务端已完成', unknown: '结果未知', upstream_rejected: '上游拒绝', not_dispatched: '未转发', failed: '失败', canceled: '已取消' }
+        const queueLabels = { waiting: '排队中', running: '已开始处理', unknown: '结果未知', completed: '处理完成', rejected: '已拒绝', not_dispatched: '未派发' }
+        const queue = trace.queue?.request_id === trace.request_id ? queueLabels[trace.queue.state] : ''
+        const queueText = queue ? `；队列：${queue}` : trace.queue_status || trace.queue === null ? '；队列状态暂不可确认' : ''
+        errorMessage.value = `官方请求 ${trace.request_id}：${labels[trace.state] || '状态待确认'}${queueText}。请核对账单和图片，未重复生成。`
       } else {
         errorMessage.value = '官方请求记录暂未确认；未找到记录也不能证明未受理或未计费，请继续核对，未重复生成。'
       }
     } else errorMessage.value = '已读取任务记录，未重复生成。此记录没有可核对的官方请求编号，请核对服务商记录与账单。'
-  } catch (error) { errorMessage.value = '任务记录暂时无法读取，请稍后核对；不要重复生成。' }
+  } catch (error) { if (isCurrent()) errorMessage.value = '任务记录暂时无法读取，请稍后核对；不要重复生成。' }
 }
+
 async function retryFailedRun(item) {
   if (isUnknownImageSubmission(item)) { errorMessage.value = '提交结果待核对，请先核实服务商记录，避免重复计费。'; return }
   const jobUid = resultOwnerJobUid(item)
@@ -3298,16 +3351,38 @@ async function copyFailedPrompt(item) {
   }
 }
 
-function closeUnknownRetryDialog() { unknownRetryDialogOpen.value = false }
+function unknownRetryKey(mode) {
+  return JSON.stringify({
+    mode,
+    jobUid: activeJobUid.value,
+    selectionGeneration: taskSelectionGeneration,
+    pendingJobUid: pendingActiveJobUid.value,
+    form: formSnapshot(),
+    batch: mode === 'batch' ? structuredClonePlain(batchGenerationDialog) : null,
+  })
+}
+function beginUnknownRetry(mode) {
+  unknownRetryIntent = { mode, key: unknownRetryKey(mode) }
+  unknownRetryDialogOpen.value = true
+}
+function closeUnknownRetryDialog() {
+  unknownRetryDialogOpen.value = false
+  unknownRetryIntent = null
+}
 function confirmUnknownRetry() {
-  if (!unknownRetryDialogOpen.value) return
+  const intent = unknownRetryIntent
+  if (!unknownRetryDialogOpen.value || !intent) return
   closeUnknownRetryDialog()
-  confirmedUnknownRetry = true
-  void generate()
+  if (intent.key !== unknownRetryKey(intent.mode) || pendingActiveJobUid.value) {
+    errorMessage.value = '任务或生成内容已变化，请重新检查后提交。'
+    return
+  }
+  if (intent.mode === 'batch') void submitBatchGeneration(intent.key)
+  else void generate(intent.key)
 }
 function prepareUnknownRetry(item) {
   restoreFailedRunInputs(item)
-  unknownRetryDialogOpen.value = true
+  beginUnknownRetry('single')
 }
 
 function restoreFailedRunInputs(item) {
@@ -3698,6 +3773,7 @@ function removeMainImage(index = 0) {
 }
 
 async function restoreJob(job, options = {}) {
+  taskSelectionGeneration++
   if (job?.job_uid) pendingActiveJobUid.value = job.job_uid
   if (options.preserveCurrentDraft !== false) {
     saveDraftForCurrentTask()
@@ -3863,6 +3939,7 @@ function clearDeletedTaskEditSessions(jobUid) {
 }
 
 function resetToEmptyTaskAfterDeletion() {
+  taskSelectionGeneration++
   const previous = formSnapshot()
   const next = defaultAiImageForm({
     title: nextTaskTitle(),

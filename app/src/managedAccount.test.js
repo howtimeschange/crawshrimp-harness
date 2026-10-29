@@ -226,3 +226,158 @@ test('desktop account broker does not expose excluded agent and app routes', asy
  }
  assert.equal(calls.length,before)
 })
+
+test('temporary token refresh failure retains encrypted session and can recover', async t => {
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'account-refresh-recovery-'))
+ const storage={isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()}
+ const file=path.join(dir,'modeljetty-session.enc')
+ fs.writeFileSync(file,JSON.stringify({session:JSON.stringify({access_token:'old-fixture',refresh_token:'refresh-fixture',expiresAt:Date.now()-1000})}))
+ const issuer='http://127.0.0.1:19875/oidc';let offline=true
+ const account=createManagedAccount({issuer,development:true,directory:dir,runtimeDirectory:()=>dir,runtimeEpoch:'desktop-fixture',safeStorage:storage,openExternal:async()=>{},fetcher:async url=>{
+  const p=new URL(url).pathname
+  if(offline)throw new Error('fixture offline')
+  if(p.endsWith('/.well-known/openid-configuration'))return Response.json({issuer,authorization_endpoint:issuer+'/auth',token_endpoint:issuer+'/token',jwks_uri:issuer+'/jwks',response_types_supported:['code'],subject_types_supported:['public'],id_token_signing_alg_values_supported:['RS256']})
+  if(p==='/oidc/token')return Response.json({access_token:'new-fixture',token_type:'Bearer',expires_in:3600,refresh_token:'new-refresh-fixture'})
+  if(p==='/account/me')return Response.json({user:{id:'fixture-owner'}})
+  if(p==='/account/models')return Response.json({models:[]})
+  throw new Error('unexpected route')
+ }})
+ t.after(()=>{account.dispose();fs.rmSync(dir,{recursive:true,force:true})})
+ await assert.rejects(account.run('status'))
+ assert.ok(fs.existsSync(file),'offline refresh must retain credentials')
+ assert.equal(fs.existsSync(path.join(dir,'managed-model-session.json')),false)
+ offline=false
+ const result=await account.run('status')
+ assert.equal(result.user.id,'fixture-owner')
+ const current=JSON.parse(fs.readFileSync(path.join(dir,'managed-model-session.json')))
+ assert.equal(current.desktopRuntimeEpoch,'desktop-fixture')
+ assert.match(current.accountSessionEpoch,/^[0-9a-f-]{36}$/)
+ const initial=current.accountSessionEpoch
+ await account.run('refresh-models')
+ assert.equal(JSON.parse(fs.readFileSync(path.join(dir,'managed-model-session.json'))).accountSessionEpoch,initial)
+})
+
+test('definitive invalid_grant clears rejected refresh credentials', async t => {
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'account-refresh-invalid-'))
+ const storage={isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()}
+ const file=path.join(dir,'modeljetty-session.enc')
+ fs.writeFileSync(file,JSON.stringify({session:JSON.stringify({access_token:'old-fixture',refresh_token:'revoked-fixture',expiresAt:Date.now()-1000})}))
+ const issuer='http://127.0.0.1:19875/oidc'
+ const account=createManagedAccount({issuer,development:true,directory:dir,runtimeDirectory:()=>dir,safeStorage:storage,openExternal:async()=>{},fetcher:async url=>{
+  if(new URL(url).pathname.endsWith('/.well-known/openid-configuration'))return Response.json({issuer,authorization_endpoint:issuer+'/auth',token_endpoint:issuer+'/token',jwks_uri:issuer+'/jwks',response_types_supported:['code'],subject_types_supported:['public'],id_token_signing_alg_values_supported:['RS256']})
+  return Response.json({error:'invalid_grant'}, {status:400})
+ }})
+ t.after(()=>{account.dispose();fs.rmSync(dir,{recursive:true,force:true})})
+ await assert.rejects(account.run('status'))
+ assert.equal(fs.existsSync(file),false)
+})
+
+function oauthRecoveryFixture(t, behavior) {
+ const crypto=require('node:crypto')
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'oauth-recovery-'))
+ const file=path.join(dir,'modeljetty-session.enc')
+ const storage={isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()}
+ const issuer='http://127.0.0.1:19875/oidc'
+ let destination,resolveFinished
+ const finished=new Promise(resolve=>{resolveFinished=resolve})
+ const key=crypto.generateKeyPairSync('rsa',{modulusLength:2048}).privateKey
+ const token=()=>{
+  const encode=value=>Buffer.from(JSON.stringify(value)).toString('base64url')
+  const now=Math.floor(Date.now()/1000)
+  const input=encode({alg:'RS256',typ:'JWT'})+'.'+encode({iss:issuer,sub:'oauth-user',aud:'crawshrimp-desktop',iat:now,exp:now+3600,nonce:destination.searchParams.get('nonce')})
+  return input+'.'+crypto.sign('RSA-SHA256',Buffer.from(input),key).toString('base64url')
+ }
+ const account=createManagedAccount({issuer,development:true,directory:dir,runtimeDirectory:()=>dir,runtimeEpoch:'oauth-fixture',safeStorage:storage,openExternal:async url=>{destination=new URL(url)},notify:()=>resolveFinished(),fetcher:async(url,init)=>{
+  const route=new URL(url).pathname
+  if(route.endsWith('/.well-known/openid-configuration'))return Response.json({issuer,authorization_endpoint:issuer+'/auth',token_endpoint:issuer+'/token',jwks_uri:issuer+'/jwks',response_types_supported:['code'],subject_types_supported:['public'],id_token_signing_alg_values_supported:['RS256']})
+  if(route==='/oidc/token')return behavior.tokenFailure?Response.json({error:'invalid_grant'},{status:400}):Response.json({access_token:'oauth-access',refresh_token:'oauth-refresh',token_type:'Bearer',expires_in:3600,id_token:token()})
+  if(route==='/account/me')return behavior.me()
+  if(route==='/account/models')return behavior.models?behavior.models():Response.json({models:[]})
+  if(route==='/account/session')return Response.json({ok:true})
+  throw new Error('Unexpected test route '+route)
+ }})
+ t.after(()=>{account.dispose();fs.rmSync(dir,{recursive:true,force:true})})
+ return {account,file,dir,finished,async start(){await account.run('login');const callback=new URL(destination.searchParams.get('redirect_uri'));callback.searchParams.set('state',destination.searchParams.get('state'));callback.searchParams.set('code','test-code');const response=await fetch(callback);assert.equal(response.status,200)}}
+}
+
+test('authorization succeeds but temporarily offline profile loading retains credentials and later recovers', async t => {
+ let offline=true
+ const fixture=oauthRecoveryFixture(t,{me:async()=>{if(offline)throw new Error('offline fixture');return Response.json({user:{id:'recovered-owner'}})}})
+ await fixture.start();await fixture.finished
+ assert.equal(fs.existsSync(fixture.file),true)
+ assert.equal(fs.existsSync(path.join(fixture.dir,'managed-model-session.json')),false)
+ assert.equal(JSON.parse(JSON.parse(fs.readFileSync(fixture.file)).session).refresh_token,'oauth-refresh')
+ offline=false
+ const result=await fixture.account.run('status')
+ assert.equal(result.user.id,'recovered-owner');assert.equal(result.message,'')
+ assert.equal(fs.existsSync(path.join(fixture.dir,'managed-model-session.json')),true)
+})
+
+test('authorization failure clears credentials and cannot hydrate an account', async t => {
+ const fixture=oauthRecoveryFixture(t,{tokenFailure:true,me:async()=>{throw new Error('unexpected profile request')}})
+ await fixture.start();await fixture.finished
+ assert.equal(fs.existsSync(fixture.file),false)
+ assert.equal((await fixture.account.run('status')).user,null)
+})
+
+test('logout during authorized profile loading never restores stale account', async t => {
+ let release,started
+ const profileStarted=new Promise(resolve=>{started=resolve})
+ const fixture=oauthRecoveryFixture(t,{me:()=>new Promise(resolve=>{release=resolve;started()})})
+ await fixture.start();await profileStarted
+ assert.equal(fs.existsSync(fixture.file),true)
+ await fixture.account.run('logout')
+ release(Response.json({user:{id:'stale-owner'}}));await fixture.finished
+ assert.equal(fs.existsSync(fixture.file),false)
+ assert.equal(fs.existsSync(path.join(fixture.dir,'managed-model-session.json')),false)
+ assert.equal((await fixture.account.run('status')).user,null)
+})
+
+test('account memory broker requires Bearer authorization and rejects alternate API key header', async t => {
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'memory-bearer-only-'))
+ const storage={isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()}
+ fs.writeFileSync(path.join(dir,'modeljetty-session.enc'),JSON.stringify({session:JSON.stringify({access_token:'fixture-token',expiresAt:Date.now()+3600000})}))
+ const account=createManagedAccount({issuer:'https://account.example',directory:dir,runtimeDirectory:()=>dir,safeStorage:storage,openExternal:async()=>{},fetcher:async url=>Response.json(new URL(url).pathname==='/account/me'?{user:{id:'fixture-owner'}}:{models:[]})})
+ t.after(()=>{account.dispose();fs.rmSync(dir,{recursive:true,force:true})})
+ await account.run('status')
+ const runtime=JSON.parse(fs.readFileSync(path.join(dir,'managed-model-session.json')))
+ const url=runtime.baseURL+'/account/memory-session'
+ assert.equal((await fetch(url,{headers:{'x-goog-api-key':runtime.brokerToken}})).status,401)
+ const response=await fetch(url,{headers:{Authorization:`Bearer ${runtime.brokerToken}`}})
+ assert.equal(response.status,200)
+ assert.deepEqual(await response.json(),{accountId:'fixture-owner',accountSessionEpoch:runtime.accountSessionEpoch})
+})
+
+test('authorization succeeds but catalogue is temporarily offline and can recover cleanly', async t => {
+ let offline=true
+ const fixture=oauthRecoveryFixture(t,{me:async()=>Response.json({user:{id:'recovered-owner'}}),models:async()=>{if(offline)throw new Error('catalogue offline');return Response.json({models:[]})}})
+ await fixture.start();await fixture.finished
+ assert.equal(fs.existsSync(fixture.file),true)
+ assert.equal(fs.existsSync(path.join(fixture.dir,'managed-model-session.json')),false)
+ offline=false
+ const result=await fixture.account.run('status')
+ assert.equal(result.user.id,'recovered-owner');assert.equal(result.message,'')
+ assert.equal(fs.existsSync(path.join(fixture.dir,'managed-model-session.json')),true)
+})
+
+test('switching accounts while first authorized profile is delayed keeps the new account', async t => {
+ let release,started,count=0
+ const firstStarted=new Promise(resolve=>{started=resolve})
+ const fixture=oauthRecoveryFixture(t,{me:()=>{count++;if(count===1)return new Promise(resolve=>{release=resolve;started()});return Promise.resolve(Response.json({user:{id:'new-owner'}}))}})
+ await fixture.start();await firstStarted
+ await fixture.account.run('logout')
+ await fixture.start()
+ let state
+ for(let i=0;i<100;i++){
+  await new Promise(resolve=>setImmediate(resolve))
+  try { state=await fixture.account.run('status') } catch { continue }
+  if(state.user?.id==='new-owner')break
+ }
+ assert.equal(state?.user?.id,'new-owner')
+ release(Response.json({user:{id:'old-owner'}}))
+ await new Promise(resolve=>setImmediate(resolve))
+ await new Promise(resolve=>setImmediate(resolve))
+ assert.equal((await fixture.account.run('status')).user.id,'new-owner')
+ const runtime=JSON.parse(fs.readFileSync(path.join(fixture.dir,'managed-model-session.json')))
+ assert.equal(runtime.accountId,'new-owner')
+})

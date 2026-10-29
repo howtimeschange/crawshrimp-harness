@@ -2,6 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { createServer } from 'node:http'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { join } from 'node:path'
 import { MemoryStore } from './memory-store.js'
 import { DatabaseSync } from 'node:sqlite'
@@ -43,24 +46,6 @@ test('old account mirrors cannot be recalled or edited before expiry hydration, 
   assert.equal(store.list('workspace').length, 1)
   const offline = new MemoryStore(path, () => 1002, {globalScope:'account:a'})
   assert.deepEqual(offline.search('workspace', ''), [])
-})
-
-test('device preferences survive login and account preferences remain isolated on a live worker', t => {
-  const { root } = fixture(t), file=join(root,'managed-model-session.json'), database=join(root,'account-memory.sqlite')
-  const login=id=>writeFileSync(file,JSON.stringify({accountId:id}),{mode:0o600})
-  const preference={key:'style',content:'A private preference',evidence:'fixture',level:'preference'}
-  const local=new MemoryStore(database,Date.now,accountMemoryOptions(root));local.save('global',{...preference,content:'device-only'},'local')
-  login('account-a')
-  assert.equal(local.list('workspace')[0].content,'device-only')
-  const a=new MemoryStore(database,Date.now,accountMemoryOptions(root));a.save('account',preference,'a')
-  login('account-b')
-  assert.deepEqual(a.list('workspace').map(row=>row.content),['device-only'])
-  const b=new MemoryStore(database,Date.now,accountMemoryOptions(root));assert.deepEqual(b.list('workspace').map(row=>row.content),['device-only'])
-  login('account-a')
-  assert.deepEqual(new Set(a.list('workspace').map(row=>row.content)),new Set(['device-only','A private preference']))
-  unlinkSync(file)
-  assert.equal(a.list('workspace')[0].content,'device-only')
-  assert.throws(()=>a.save('account',preference,'a'),/请先登录/)
 })
 
 test('account change during a read never returns the previous account data', t => {
@@ -188,4 +173,114 @@ test('real DSH Cordis plugin: save, fresh session recall, restrictions, forget, 
       finally { await disabled.scope.dispose() }
     })
   } finally { await ctx.fiber.dispose() }
+})
+
+
+test('authenticated account memory fails closed after broker stops while local memory remains available', async t => {
+  const { root } = fixture(t), file = join(root, 'managed-model-session.json')
+  const oldEpoch = process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH
+  process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH = 'test-desktop'
+  t.after(() => { if (oldEpoch === undefined) delete process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH; else process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH = oldEpoch })
+  let account = 'a', epoch = 'one', live = true
+  const token = 'a'.repeat(43)
+  const server = createServer((req, res) => {
+    if (!live || req.url !== '/account/memory-session' || req.headers.authorization !== `Bearer ${token}`) { res.writeHead(401).end(); return }
+    res.writeHead(200, {'content-type':'application/json'}).end(JSON.stringify({accountId:account,accountSessionEpoch:epoch}))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => server.close())
+  const login = (id, sessionEpoch, desktop='test-desktop') => writeFileSync(file, JSON.stringify({accountId:id,accountSessionEpoch:sessionEpoch,desktopRuntimeEpoch:desktop,baseURL:`http://127.0.0.1:${server.address().port}`,brokerToken:token}), {mode:0o600})
+  const store = new MemoryStore(join(root,'account.sqlite'), Date.now, accountMemoryOptions(root))
+  const pref = {key:'style',content:'account A private',evidence:'fixture',level:'preference'}
+  await store.save('global',{...pref, content:'device'},'s')
+  login('a','one')
+  await store.save('account',pref,'s')
+  assert.deepEqual(new Set((await store.list('workspace')).map(r=>r.content)),new Set(['device','account A private']))
+  account='b'; epoch='two'; login('b','two')
+  assert.deepEqual((await store.list('workspace')).map(r=>r.content),['device'])
+  account='a'; epoch='three'; login('a','three')
+  assert((await store.list('workspace')).some(r=>r.content==='account A private'))
+  // Simulate failed unlink: the runtime file remains byte-for-byte intact.
+  live=false
+  assert.deepEqual((await store.list('workspace')).map(r=>r.content),['device'])
+  await assert.rejects(store.save('account',{...pref,key:'no-write'},'s'),/请先登录/)
+  await store.save('workspace',{...pref,key:'local',content:'local'},'s')
+  assert((await store.list('workspace')).some(r=>r.content==='local'))
+  live=true; login('a','three','stale-desktop')
+  assert(!(await store.list('workspace')).some(r=>r.content==='account A private'))
+})
+
+test('account revocation during authenticated transaction rolls back without blocking the broker', async t => {
+  const {root} = fixture(t), file=join(root,'managed-model-session.json')
+  const oldEpoch=process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH; process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH='desktop'
+  t.after(()=>{ if(oldEpoch===undefined) delete process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH; else process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH=oldEpoch })
+  let requests=0, postStarted, releasePost
+  const entered = new Promise(resolve=>{postStarted=resolve})
+  const server=createServer((req,res)=>{
+    requests++
+    if(requests===2) { postStarted(); releasePost=()=>res.writeHead(401).end(); return }
+    res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({accountId:'a',accountSessionEpoch:'one'}))
+  })
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve)); t.after(()=>server.close())
+  writeFileSync(file,JSON.stringify({accountId:'a',accountSessionEpoch:'one',desktopRuntimeEpoch:'desktop',baseURL:`http://127.0.0.1:${server.address().port}`,brokerToken:'a'.repeat(43)}),{mode:0o600})
+  const path=join(root,'race.sqlite'),store=new MemoryStore(path,Date.now,accountMemoryOptions(root))
+  const pending=store.save('account',{key:'secret',content:'private',evidence:'fixture',level:'preference'},'s')
+  await entered
+  // A competing connection fails immediately instead of freezing the JS loop.
+  const { stdout } = await promisify(execFile)(process.execPath, ['-e', `const {DatabaseSync}=require('node:sqlite'); const db=new DatabaseSync(process.argv[1]); db.exec('PRAGMA busy_timeout=0'); try { db.exec('BEGIN IMMEDIATE'); process.stdout.write('unexpected-lock'); } catch(e) { process.stdout.write(e.message); } finally { db.close() }`, path])
+  assert.match(stdout,/locked/)
+  releasePost(); await assert.rejects(pending,/会话已失效/)
+  const db=new DatabaseSync(path)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM memories').get().n,0); db.close()
+})
+
+test('prompt recall discards account data when broker session changes during assembly', async t => {
+  const { root } = fixture(t), file = join(root, 'managed-model-session.json')
+  const oldRoot=process.env.CRAWSHRIMP_DATA, oldEpoch=process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH
+  process.env.CRAWSHRIMP_DATA=root; process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH='desktop'
+  t.after(()=>{ if(oldRoot===undefined) delete process.env.CRAWSHRIMP_DATA; else process.env.CRAWSHRIMP_DATA=oldRoot; if(oldEpoch===undefined) delete process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH; else process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH=oldEpoch })
+  let epoch='one'; const token='a'.repeat(43)
+  const server=createServer((req,res)=>res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({accountId:'a',accountSessionEpoch:epoch})))
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve)); t.after(()=>server.close())
+  writeFileSync(file,JSON.stringify({accountId:'a',accountSessionEpoch:'one',desktopRuntimeEpoch:'desktop',baseURL:`http://127.0.0.1:${server.address().port}`,brokerToken:token}),{mode:0o600})
+  await new MemoryStore(join(root,'agent','memory','memory.sqlite'),Date.now,accountMemoryOptions(root)).save('account',{key:'style',content:'private preference',evidence:'fixture',level:'preference'},'s')
+  const {apply}=await import('./memory.js'); let assemble
+  apply({tools:{register(){}},systemPrompt:{section(){}},on(_name,fn){assemble=fn}})
+  const original=MemoryStore.prototype.searchRows
+  MemoryStore.prototype.searchRows=function(...args){const rows=original.apply(this,args);epoch='two';return rows}
+  t.after(()=>{MemoryStore.prototype.searchRows=original})
+  const agent={id:'s',session:{header:{cwd:root},snapshotEvents:()=>[]}}
+  const result=await assemble({}, {agent}, async()=>({tools:[{name:'memory_search'}],contexts:[]}))
+  assert.doesNotMatch(JSON.stringify(result.contexts),/private preference/)
+  assert.equal(result.contexts[0].name,'crawshrimp-memory-status')
+})
+
+
+test('same-account new session during correction or forget rolls back', async t => {
+  const { root } = fixture(t), path=join(root,'switch.sqlite')
+  const one={scope:'account:a',identity:'session-one'}, two={scope:'account:a',identity:'session-two'}
+  const stable=new MemoryStore(path,Date.now,{accountSession:async()=>one})
+  const saved=await stable.save('account',{key:'style',content:'original',evidence:'fixture',level:'preference'},'s')
+  const change=()=>{let count=0;return new MemoryStore(path,Date.now,{accountSession:async()=>++count===1?one:two})}
+  await assert.rejects(change().save('account',{key:'style',content:'changed',evidence:'fixture',level:'preference',expected_revision:saved.revision},'s'),/会话已失效/)
+  await assert.rejects(change().forget('account',saved.id,saved.revision),/会话已失效/)
+  const rows=await stable.list('account')
+  assert.equal(rows.length,1); assert.equal(rows[0].content,'original'); assert.equal(rows[0].revision,saved.revision)
+})
+
+test('memory tools await authenticated account save and search', async t => {
+  const {root}=fixture(t), file=join(root,'managed-model-session.json')
+  const oldRoot=process.env.CRAWSHRIMP_DATA, oldEpoch=process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH
+  process.env.CRAWSHRIMP_DATA=root; process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH='desktop'
+  t.after(()=>{if(oldRoot===undefined)delete process.env.CRAWSHRIMP_DATA;else process.env.CRAWSHRIMP_DATA=oldRoot;if(oldEpoch===undefined)delete process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH;else process.env.CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH=oldEpoch})
+  const server=createServer((req,res)=>res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({accountId:'a',accountSessionEpoch:'one'})))
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.close())
+  writeFileSync(file,JSON.stringify({accountId:'a',accountSessionEpoch:'one',desktopRuntimeEpoch:'desktop',baseURL:`http://127.0.0.1:${server.address().port}`,brokerToken:'a'.repeat(43)}),{mode:0o600})
+  const tools=new Map(), {apply}=await import('./memory.js')
+  apply({tools:{register(tool){tools.set(tool.name,tool)}},systemPrompt:{section(){}},on(){}})
+  const agent={id:'s',session:{header:{cwd:root},snapshotEvents:()=>[{type:'user/message',data:{source:{kind:'user'},content:[{type:'text',text:'请记住偏好'}]}}]}}
+  const saved=await tools.get('memory_save').execute({key:'style',content:'account preference',evidence:'偏好',level:'preference',scope:'account'},{agent})
+  assert(saved.memory.id)
+  const result=await tools.get('memory_search').execute({query:'account'},{agent})
+  assert(result.memories.some(row=>row.content==='account preference'))
 })

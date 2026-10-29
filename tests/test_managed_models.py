@@ -1,4 +1,10 @@
 import json
+import pytest
+
+@pytest.fixture(autouse=True)
+def desktop_epoch(monkeypatch):
+    monkeypatch.setenv('CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH', 'fixture-epoch')
+
 from core import managed_models
 from core.config import save_config, load_config
 from core.llm_gateway import custom_llm_providers, route_for_model
@@ -7,7 +13,7 @@ from core.image_providers import provider_settings
 def test_managed_routing_is_ephemeral_and_provider_qualified(tmp_path, monkeypatch):
     monkeypatch.setattr(managed_models.runtime_paths, 'data_root', lambda: tmp_path)
     file = tmp_path / 'managed-model-session.json'
-    file.write_text(json.dumps({'version': 1, 'accountId': 'test', 'baseURL': 'http://127.0.0.1:45678', 'brokerToken': 'x' * 40,
+    file.write_text(json.dumps({'version': 1, 'desktopRuntimeEpoch': 'fixture-epoch', 'accountId': 'test', 'baseURL': 'http://127.0.0.1:45678', 'brokerToken': 'x' * 40,
                                'models': [{'id': 'deepseek-flash', 'name': 'DeepSeek', 'kind': 'text', 'protocol': 'openai', 'available': True},
                                           {'id': 'gemini-3.1-flash-image', 'name': 'Nano', 'kind': 'image', 'protocol': 'gemini', 'available': True}]}))
     file.chmod(0o600)
@@ -97,7 +103,7 @@ def test_account_reasoning_reaches_runtime_and_preserves_legacy_ids(tmp_path, mo
     models += [{'id': 'deepseek-flash', 'name': 'DeepSeek Flash', 'kind': 'text', 'protocol': 'openai', 'available': True},
                {'id': 'gpt-6.1-sol', 'name': 'GPT-6.1 Sol', 'kind': 'text', 'protocol': 'openai-responses', 'available': True}]
     file = tmp_path / 'managed-model-session.json'
-    file.write_text(json.dumps({'version': 1, 'baseURL': 'http://127.0.0.1:45678', 'brokerToken': 'x'*40, 'models': models}))
+    file.write_text(json.dumps({'version': 1, 'desktopRuntimeEpoch': 'fixture-epoch', 'baseURL': 'http://127.0.0.1:45678', 'brokerToken': 'x'*40, 'models': models}))
     file.chmod(0o600)
     payload, _ = custom_providers_runtime_payload({})
     entries = {m['id']: m for p in payload for m in p['models']}
@@ -114,7 +120,7 @@ def test_account_reasoning_reaches_runtime_and_preserves_legacy_ids(tmp_path, mo
 def test_locked_member_models_do_not_enter_text_or_image_runtime_catalog(tmp_path, monkeypatch):
     monkeypatch.setattr(managed_models.runtime_paths, 'data_root', lambda: tmp_path)
     file = tmp_path / 'managed-model-session.json'
-    file.write_text(json.dumps({'version': 1, 'accountId': 'free', 'baseURL': 'http://127.0.0.1:45678', 'brokerToken': 'x' * 40,
+    file.write_text(json.dumps({'version': 1, 'desktopRuntimeEpoch': 'fixture-epoch', 'accountId': 'free', 'baseURL': 'http://127.0.0.1:45678', 'brokerToken': 'x' * 40,
         'models': [{'id': 'gpt-6.1-sol', 'name': 'GPT', 'kind': 'text', 'protocol': 'openai-responses', 'available': False},
                    {'id': 'deepseek-flash', 'name': 'DeepSeek', 'kind': 'text', 'protocol': 'openai', 'available': False},
                    {'id': 'gemini-3.8-flash-high', 'name': 'Gemini', 'kind': 'text', 'protocol': 'openai', 'available': True},
@@ -131,7 +137,7 @@ def test_free_paid_model_catalog_reaches_text_and_image_without_upgrading_plan(t
     catalog = [{'id': 'gpt-6.1-sol', 'name': 'GPT', 'kind': 'text', 'protocol': 'openai-responses', 'available': True},
                {'id': 'deepseek-flash', 'name': 'DeepSeek', 'kind': 'text', 'protocol': 'openai', 'available': True},
                {'id': 'gpt-image-2.5-flare', 'name': 'GPT Image', 'kind': 'image', 'protocol': 'openai', 'available': True}]
-    state = {'version': 1, 'accountId': 'free-paid', 'plan': 'free', 'paidModelAccess': True,
+    state = {'version': 1, 'desktopRuntimeEpoch': 'fixture-epoch', 'accountId': 'free-paid', 'plan': 'free', 'paidModelAccess': True,
              'baseURL': 'http://127.0.0.1:45678', 'brokerToken': 'x' * 40, 'models': catalog}
     for remaining in [10, 3.25, 0]:
         file.write_text(json.dumps({**state, 'permanentRemaining': remaining}))
@@ -153,8 +159,23 @@ def test_runtime_uses_explicit_catalog_boolean_for_future_and_disabled_models(tm
     for value in [False, None, 1, 'true']:
         models.extend([{'id': 'gemini-disabled-' + str(value), 'name': 'Denied', 'kind': kind, 'protocol': 'openai', 'available': value} for kind in ['text', 'image']])
     models.extend([{'id': 'missing-' + kind, 'name': 'Unknown', 'kind': kind, 'protocol': 'openai'} for kind in ['text', 'image']])
-    file.write_text(json.dumps({'version': 1, 'accountId': 'server-authority', 'plan': 'pro', 'paidModelAccess': True,
+    file.write_text(json.dumps({'version': 1, 'desktopRuntimeEpoch': 'fixture-epoch', 'accountId': 'server-authority', 'plan': 'pro', 'paidModelAccess': True,
                                'baseURL': 'http://127.0.0.1:45678', 'brokerToken': 'x' * 40, 'models': models}))
     file.chmod(0o600)
     assert {m['id'] for p in managed_models.text_providers() for m in p['models']} == {'managed-future-provider-v9'}
     assert [m for p in managed_models.image_providers() for m in p['models']] == ['future-image-v9']
+
+
+def test_desktop_runtime_epoch_rejects_stale_capability(tmp_path, monkeypatch):
+    monkeypatch.setattr(managed_models.runtime_paths, 'data_root', lambda: tmp_path)
+    monkeypatch.setenv('CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH', 'current-desktop')
+    file = tmp_path / 'managed-model-session.json'
+    value = {'version': 1, 'baseURL': 'http://127.0.0.1:45678', 'brokerToken': 'x' * 40,
+             'desktopRuntimeEpoch': 'previous-desktop', 'models': []}
+    file.write_text(json.dumps(value)); file.chmod(0o600)
+    assert managed_models.session() is None
+    value['desktopRuntimeEpoch'] = 'current-desktop'
+    file.write_text(json.dumps(value)); file.chmod(0o600)
+    assert managed_models.session()['desktopRuntimeEpoch'] == 'current-desktop'
+    monkeypatch.delenv('CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH')
+    assert managed_models.session() is None

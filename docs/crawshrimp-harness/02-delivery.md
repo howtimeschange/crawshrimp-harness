@@ -56,7 +56,7 @@ MCP transport 本身不携带 DSH session。`crawshrimp-product-bridge` 在每�
 正式发布流程同时保留两类快照：
 
 - 短期 rollback snapshot：本次安装或数据库提交失败时立即恢复。
-- 首次发布前长期 baseline：多次智能体覆盖不改写；清除智能体数据时恢复用户原 Adapter。
+- 首次发布前长期 baseline：多次智能体覆盖不改写，用于保留用户原 Adapter。
 
 测试重装失败会清理半安装包并把修订退回 `pending_review`。卸载 test Adapter 前先停止其活动任务，避免 Windows 文件占用和孤儿实例。
 

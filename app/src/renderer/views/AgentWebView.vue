@@ -117,6 +117,7 @@
 
 <script setup>
 import { adaptivePoll } from '../utils/adaptivePoll'
+import { createAccountRuntimeSync } from '../utils/accountRuntimeSync.mjs'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { focusFirstInDialog, trapDialogFocus } from '../utils/dialogAccessibility.mjs'
 import WelcomeOnboarding from '../components/WelcomeOnboarding.vue'
@@ -225,7 +226,15 @@ watch(() => onboardingAccount.value.pending, async () => {
 })
 const onboardingBusy = ref(false)
 const onboardingError = ref('')
-let appliedManagedAccountId = ''
+const accountRestartPendingMessage = '当前任务结束后将更新账号模型配置。'
+const accountRuntimeSync = createAccountRuntimeSync({
+  restart: () => window.cs.agentApi('POST', '/agent/runtime/restart'),
+  onPending: pending => {
+    if (pending) onboardingError.value = accountRestartPendingMessage
+    else if (onboardingError.value === accountRestartPendingMessage) onboardingError.value = ''
+  },
+  onError: message => { onboardingError.value = `账号模型配置更新失败：${message}` },
+})
 let onboardingRefreshGeneration = 0
 const completedOnboardingOwners = new Set()
 function onboardingIsComplete(owner) { return completedOnboardingOwners.has(owner) || Boolean(firstRunCompletion(window.localStorage, owner)) }
@@ -255,10 +264,10 @@ async function refreshOnboardingAccount() {
     onboardingAccount.value = state
     if (previousOwner !== state.user?.id) onboardingStep.value = 'choice'
     const accountId = state.user?.id || ''
-    if (accountId !== appliedManagedAccountId) {
-      appliedManagedAccountId = accountId
-      await window.cs.agentApi('POST', '/agent/runtime/restart')
-    }
+    // A renewed broker for the same account has a new capability and must be
+    // applied to DSH just like an account switch.
+    const runtimeIdentity = accountId ? JSON.stringify([accountId, state.accountSessionEpoch || '']) : ''
+    await accountRuntimeSync.setAccount(runtimeIdentity)
     if (refreshGeneration !== onboardingRefreshGeneration) return
     if (hasManagedTextModel(state)) {
       if (!showOnboardingSetup()) inlineLlmModalOpen.value = false
@@ -886,6 +895,10 @@ onMounted(() => {
     runtimePollInFlight = true
     try {
       const st = await window.cs.agentApi('GET', '/agent/runtime')
+      if (await accountRuntimeSync.retryIfIdle(st?.active_run)) {
+        await loadRuntime()
+        return
+      }
       const state = String(st?.state || '')
       lastRuntimeState.value = state
       syncRuntimeModelConfiguration(st)
@@ -925,6 +938,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  accountRuntimeSync.dispose()
   releaseAccountMenuState()
   window.removeEventListener('cs-account-menu-state', onAccountMenuState)
   unsubscribeOnboardingAccount?.()

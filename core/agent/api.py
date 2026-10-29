@@ -377,19 +377,6 @@ async def create_turn(session_id: str, req: TurnCreateRequest) -> dict:
     return JSONResponse(status_code=202, content=result)
 
 
-@router.post("/data/clear")
-async def clear_agent_data() -> dict:
-    """清除智能体数据及受控附件/草稿/运行日志/智能体发布适配包。
-
-    不清任务实例、任务产物与模型配置。
-    """
-    service = get_agent_service()
-    result = await service.clear_agent_data()
-    if not result.get("ok"):
-        raise HTTPException(409, result.get("error", "存在进行中的运行,无法清除"))
-    return result
-
-
 @router.get("/task-instances/{instance_uid}")
 def get_task_instance_status(instance_uid: str) -> dict:
     """任务实例状态(任务卡实时刷新)。"""
@@ -867,7 +854,7 @@ def _discard_adapter_snapshot(adapter_id: str) -> None:
 
 
 def _published_adapter_baseline_dir(adapter_id: str):
-    """智能体首次发布前的长期基线；清除智能体数据时用于恢复用户原包。"""
+    """智能体首次发布前的长期基线，用于保留用户原包。"""
     from core.models import SLUG_PATTERN
     from core.agent.service import _data_root
     value = str(adapter_id or "").strip()
@@ -1291,7 +1278,7 @@ def session_resources(runtime_session_id: str) -> dict:
                 activity = {**data, "created_at": row["created_at"]}
     # Office render jobs freeze a new copy in a different job directory. Present
     # those revisions as one document, preferring the latest usable preview.
-    documents, versions = {}, {}
+    documents, versions, last_ready, latest = {}, {}, {}, {}
     for item in artifacts.values():
         item.pop("document_id", None)
         office = item.get("office")
@@ -1316,6 +1303,8 @@ def session_resources(runtime_session_id: str) -> dict:
                                                "created_at": item["created_at"], "updated_at": item["updated_at"]})
             item["source_artifact_id"] = item.get("artifact_id")
             item["artifact_id"] = snapshot["version_id"]
+            last_ready[key] = item
+        latest[key] = item
         previous = documents.get(key)
         if previous and managed:
             rank = lambda value: (2 if (value.get("office", {}).get("delivery") or {}).get("status") == "final" else 1 if value.get("office", {}).get("pages") else 0)
@@ -1325,7 +1314,19 @@ def session_resources(runtime_session_id: str) -> dict:
     for key, item in documents.items():
         if versions.get(key):
             item["versions"] = list(reversed(versions[key]))
-    for item in documents.values():
+    visible = []
+    for key, item in reversed(list(documents.items())):
+        newest = latest[key]
+        snapshot = newest.get("file_snapshot") if isinstance(newest.get("file_snapshot"), dict) else {}
+        failed_newest = snapshot.get("status") and snapshot.get("status") != "ready"
+        visible.append(newest if failed_newest and key in last_ready else item)
+        if failed_newest and key in last_ready:
+            # Keep the failed newest event and expose the last immutable copy
+            # as its own openable row. Never substitute the mutable source.
+            historical = {**last_ready[key], "historical_after_failure": True,
+                          "versions": list(reversed(versions[key]))}
+            visible.append(historical)
+    for item in visible:
         try:
             path = Path(item.get("path") or "")
             item["exists"] = path.is_file()
@@ -1334,7 +1335,7 @@ def session_resources(runtime_session_id: str) -> dict:
         except OSError:
             item["exists"] = False
     delivered_calls = {item.get("tool_call_id") for item in artifacts.values() if item.get("media_kind") == "image"}
-    return {"artifacts": list(reversed(list(documents.values()))),
+    return {"artifacts": visible,
             "imageGenerations": [value for key, value in image_calls.items() if key in delivered_calls],
             "tabs": list(tabs.values()), "activeTabId": active, "browserActivity": activity}
 

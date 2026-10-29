@@ -441,51 +441,57 @@
 
         </section>
 
-        <section v-else-if="activePanelId === 'ai-agent'" key="ai-agent" class="panel">
+        <section v-else-if="activePanelId === 'ai-agent'" key="ai-agent" class="panel agent-runtime-panel">
           <div class="panel-head">
             <div>
-              <p class="panel-kicker">AI 能力</p>
-              <h3>智能体运行时</h3><p class="panel-description">{{ activePanelDescription }}</p>
+              <h3>智能体运行时</h3>
+              <p class="panel-description">查看运行状态，并在需要时恢复服务。</p>
             </div>
-            <span :class="['badge', agentRuntime.state === 'ready' ? 'on' : agentRuntime.state === 'needs_configuration' ? 'neutral' : 'off']">
-              {{ agentRuntimeLabel }}
-            </span>
           </div>
 
-          <div class="panel-layout">
-            <div class="form-stack">
-              <div class="field">
-                <label>运行状态</label>
-                <div class="key-states">
-                  <span :class="['key-pill', agentRuntime.state === 'ready' ? 'on' : 'off']">运行时</span>
-                  <span :class="['key-pill', agentRuntime.api_key_configured ? 'on' : 'off']">API Key</span>
-                  <span class="key-pill neutral">模型 {{ agentRuntime.model || '—' }}</span>
-                </div>
-                <p class="field-hint">状态:{{ agentRuntime.state || '—' }} · 代次 {{ agentRuntime.generation }}<span v-if="agentRuntime.error"> · {{ agentRuntime.error }}</span></p>
-                <p v-if="agentRuntime.web_verified" class="field-hint">嵌入式 Web 会话已认证（启动地址不会显示）。</p>
+          <div class="agent-overview" :class="`is-${agentRuntimeTone}`" aria-live="polite">
+            <div class="agent-overview-main">
+              <span class="agent-status-icon" aria-hidden="true"><IconRobot :size="22" :stroke="1.6" /></span>
+              <div class="agent-overview-copy">
+                <span class="agent-overview-label">运行状态</span>
+                <strong><span class="agent-status-dot" aria-hidden="true"></span>{{ agentRuntimeLabel }}</strong>
+                <p>{{ agentRuntimeDescription }}</p>
               </div>
-              <div class="field">
-                <label>操作</label>
-                <div class="agent-op-row">
-                  <button class="btn-ghost" type="button" :disabled="Boolean(agentBusy)" @click="onAgentRestartRuntime">
-                    {{ agentBusy === 'runtime' ? '重启中…' : '重启智能体运行时' }}
-                  </button>
-                  <button class="btn-ghost" type="button" :disabled="Boolean(agentBusy)" @click="onAgentRepairCore">
-                    {{ agentBusy === 'core' ? '修复中…' : '修复核心服务' }}
-                  </button>
-                  <button class="btn-danger" type="button" :disabled="Boolean(agentBusy)" @click="onAgentClearData">
-                    清除智能体数据
-                  </button>
-                </div>
-                <p class="field-hint">重启运行时保留会话历史;修复核心服务重启本地后端;清除数据会清空会话历史/审批记录/草稿(不影响已执行任务与产物),需确认。</p>
-              </div>
-              <div v-if="agentNotice" class="agent-notice">{{ agentNotice }}</div>
             </div>
-            <div class="side-note">
-              <strong>说明</strong>
-              <p>智能体会话界面带自动恢复:运行中掉线会静默自愈。这里提供手动诊断与重置入口。</p>
-            </div>
+            <span v-if="agentRuntime.generation > 0" class="agent-generation">运行代次 {{ agentRuntime.generation }}</span>
           </div>
+
+          <div v-if="agentRuntime.error" class="agent-runtime-error" role="alert">
+            <IconInfoCircle :size="18" :stroke="1.7" aria-hidden="true" />
+            <div><strong>状态信息</strong><p>{{ agentRuntime.error }}</p></div>
+          </div>
+
+          <section class="agent-details" aria-labelledby="agent-details-title">
+            <div class="agent-section-heading"><h4 id="agent-details-title">当前配置</h4><p>凭据检测覆盖本机配置，不能代表模型请求已验证。</p></div>
+            <dl class="agent-details-list">
+              <div><dt>当前模型</dt><dd class="agent-model">{{ agentRuntime.model || '暂不可用' }}</dd></div>
+              <div><dt>模型服务凭据</dt><dd>{{ agentRuntimeKnown ? (agentRuntime.api_key_configured ? '已检测到' : '未检测到') : '状态未知' }}<button v-if="agentRuntimeKnown && !agentRuntime.api_key_configured" type="button" class="agent-inline-link" @click="selectPanel('ai', 'ai-llm')">配置模型</button></dd></div>
+              <div><dt>会话界面连接</dt><dd>{{ agentRuntime.web_verified ? '已就绪' : agentRuntimeKnown ? '未就绪' : '状态未知' }}</dd></div>
+            </dl>
+          </section>
+
+          <section class="agent-actions" aria-labelledby="agent-actions-title">
+            <div class="agent-section-heading"><h4 id="agent-actions-title">服务恢复</h4><p>遇到连接或运行问题时，可以尝试以下操作。</p></div>
+            <div class="agent-action-list">
+              <div class="agent-action-row">
+                <span class="agent-action-icon" aria-hidden="true"><IconRefresh :size="19" :stroke="1.6" /></span>
+                <div class="agent-action-copy"><strong>重启智能体运行时</strong><p>重新启动智能体服务，保留会话历史。</p></div>
+                <button class="btn-ghost agent-action-button" type="button" :disabled="Boolean(agentBusy)" @click="onAgentRestartRuntime">{{ agentBusy === 'runtime' ? '重启中…' : '重启运行时' }}</button>
+              </div>
+              <div class="agent-action-row">
+                <span class="agent-action-icon" aria-hidden="true"><IconShield :size="19" :stroke="1.6" /></span>
+                <div class="agent-action-copy"><strong>修复核心服务</strong><p>重启本地后端服务，恢复服务连接。</p></div>
+                <button class="btn-ghost agent-action-button" type="button" :disabled="Boolean(agentBusy)" @click="onAgentRepairCore">{{ agentBusy === 'core' ? '修复中…' : '修复服务' }}</button>
+              </div>
+            </div>
+            <p class="agent-recovery-note"><IconInfoCircle :size="16" :stroke="1.6" aria-hidden="true" />连接中断时，会话界面会尝试自动恢复。</p>
+            <div v-if="agentNotice" :class="['agent-notice', { 'is-error': !agentNoticeOk }]" :role="agentNoticeOk ? 'status' : 'alert'">{{ agentNotice }}</div>
+          </section>
         </section>
 
         <section v-else-if="activePanelId === 'ai-llm'" key="ai-llm" class="panel">
@@ -875,15 +881,37 @@ const emit = defineEmits(['back', 'runtime-refresh', 'check-update', 'theme-chan
 const agentRuntime = ref({ state: 'unknown', generation: 0, model: '', web_origin: '', web_verified: false, api_key_configured: false, error: '' })
 const agentBusy = ref('')
 const agentNotice = ref('')
+const agentNoticeOk = ref(true)
 const imSettingsFrame = ref(null)
 const imSettingsReady = ref(false)
 const agentRuntimeLabel = computed(() => {
   const state = String(agentRuntime.value?.state || '')
-  if (state === 'ready') return '就绪'
+  if (state === 'ready') return '运行正常'
   if (state === 'needs_configuration') return '待配置'
-  if (state === 'crashed') return '异常'
+  if (state === 'crashed') return '运行异常'
+  if (state === 'disabled_until_manual_restart') return '需要手动重启'
   if (state === 'stopped') return '已停止'
-  return '启动中'
+  if (state === 'offline') return '服务不可用'
+  if (state === 'starting') return '正在启动'
+  return '状态未知'
+})
+const agentRuntimeKnown = computed(() => ['ready', 'needs_configuration', 'crashed', 'disabled_until_manual_restart', 'stopped', 'starting'].includes(String(agentRuntime.value?.state || '')))
+const agentRuntimeTone = computed(() => {
+  const state = agentRuntime.value?.state
+  if (state === 'ready') return 'ready'
+  if (['crashed', 'offline'].includes(state)) return 'error'
+  if (['needs_configuration', 'disabled_until_manual_restart', 'stopped'].includes(state)) return 'attention'
+  return 'neutral'
+})
+const agentRuntimeDescription = computed(() => {
+  const state = agentRuntime.value?.state
+  if (state === 'ready') return '本机智能体服务已就绪。'
+  if (state === 'needs_configuration') return '请先完成模型服务配置，再使用智能体。'
+  if (state === 'crashed' || state === 'disabled_until_manual_restart') return '可以尝试重启运行时，或检查下方状态信息。'
+  if (state === 'stopped') return '运行时当前未启动，可以在下方手动重启。'
+  if (state === 'offline') return '无法连接本地服务，请尝试修复核心服务。'
+  if (state === 'starting') return '服务正在启动，请稍候。'
+  return '正在等待运行状态，请稍后查看。'
 })
 const imSettingsUrl = computed(() => {
   // AgentWebView is persistent and consumes the one-time launch URL.  This
@@ -937,11 +965,14 @@ async function refreshAgentRuntime() {
 async function onAgentRestartRuntime() {
   agentBusy.value = 'runtime'
   agentNotice.value = ''
+  agentNoticeOk.value = true
   try {
     const result = await window.cs.agentApi('POST', '/agent/runtime/restart')
-    agentNotice.value = result?.ok ? '智能体运行时已重启。' : `重启失败:${result?.error || ''}`
+    agentNoticeOk.value = result?.ok === true
+    agentNotice.value = agentNoticeOk.value ? '智能体运行时已重启。' : `重启失败：${result?.message || result?.error || '请稍后重试'}`
   } catch (error) {
-    agentNotice.value = `重启失败:${error?.message || error}`
+    agentNoticeOk.value = false
+    agentNotice.value = `重启失败：${error?.message || error}`
   } finally {
     agentBusy.value = ''
     await refreshAgentRuntime()
@@ -951,28 +982,17 @@ async function onAgentRestartRuntime() {
 async function onAgentRepairCore() {
   agentBusy.value = 'core'
   agentNotice.value = ''
+  agentNoticeOk.value = true
   try {
-    await window.cs.restartBackend()
+    const result = await window.cs.restartBackend()
+    if (result?.ok === false || result?.error) throw new Error(result.error || '请稍后重试')
     agentNotice.value = '核心服务已重启。'
   } catch (error) {
-    agentNotice.value = `修复失败:${error?.message || error}`
+    agentNoticeOk.value = false
+    agentNotice.value = `修复失败：${error?.message || error}`
   } finally {
     agentBusy.value = ''
     await refreshAgentRuntime()
-  }
-}
-
-async function onAgentClearData() {
-  if (!window.confirm('确定清除智能体数据?将清空会话历史、审批记录与草稿,已执行的任务与产物不受影响。')) return
-  agentBusy.value = 'clear'
-  agentNotice.value = ''
-  try {
-    await window.cs.agentApi('POST', '/agent/data/clear')
-    agentNotice.value = '智能体数据已清除。'
-  } catch (error) {
-    agentNotice.value = `清除失败:${error?.message || error}`
-  } finally {
-    agentBusy.value = ''
   }
 }
 
@@ -2078,6 +2098,26 @@ watch(activePanelId, panelId => {
   if (panelId === 'ai-agent') refreshAgentRuntime()
 })
 
+// A repaired backend may report `starting` before its agent is ready. Keep
+// the open panel current for a bounded period without polling other settings.
+let agentStartupTimer = null
+let agentStartupWatch = 0
+watch([activePanelId, () => agentRuntime.value?.state], ([panel, state], _old, onCleanup) => {
+  const revision = ++agentStartupWatch
+  if (agentStartupTimer) clearTimeout(agentStartupTimer)
+  agentStartupTimer = null
+  if (panel !== 'ai-agent' || state !== 'starting') return
+  let attempts = 0
+  const poll = async () => {
+    if (revision !== agentStartupWatch) return
+    await refreshAgentRuntime()
+    if (revision !== agentStartupWatch || agentRuntime.value?.state !== 'starting' || ++attempts >= 30) return
+    agentStartupTimer = setTimeout(poll, 2000)
+  }
+  agentStartupTimer = setTimeout(poll, 2000)
+  onCleanup(() => { agentStartupWatch++; if (agentStartupTimer) clearTimeout(agentStartupTimer); agentStartupTimer = null })
+})
+
 watch(() => [props.effectiveTheme, props.themePreference], () => {
   if (activePanelId.value === 'im-bots') onImSettingsFrameLoad()
 })
@@ -2180,8 +2220,54 @@ watch(imSettingsUrl, () => {
 .settings-content :deep(.panel-head h3) { font-size: 22px; font-weight: 600; }
 .settings-content :deep(.panel-kicker) { color: var(--text3); font-weight: 400; }
 
-.agent-op-row { display: flex; flex-wrap: wrap; gap: 10px; }
-.agent-notice { font-size: 12.5px; color: var(--green); padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); }
+/* Runtime settings: one clear status surface, followed by readable data and actions. */
+.agent-runtime-panel { --agent-status: var(--text2); }
+.agent-overview { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 22px 24px; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; }
+.agent-overview.is-ready { --agent-status: var(--green); }
+.agent-overview.is-attention { --agent-status: var(--yellow); }
+.agent-overview.is-error { --agent-status: var(--red); }
+.agent-overview-main { min-width: 0; display: flex; align-items: flex-start; gap: 15px; }
+.agent-status-icon, .agent-action-icon { display: grid; place-items: center; flex: none; color: var(--text2); background: var(--bg3); border-radius: 8px; }
+.agent-status-icon { width: 42px; height: 42px; color: var(--orange-text); background: var(--orange-bg); }
+.agent-overview-copy { min-width: 0; }
+.agent-overview-label { display: block; color: var(--text2); font-size: 12px; line-height: 1.4; }
+.agent-overview-copy strong { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 17px; line-height: 1.4; font-weight: 600; }
+.agent-status-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--agent-status); }
+.agent-overview-copy p, .agent-section-heading p, .agent-action-copy p { margin: 5px 0 0; color: var(--text2); font-size: 13px; line-height: 1.6; }
+.agent-generation { flex: none; color: var(--text2); font-size: 12px; font-variant-numeric: tabular-nums; line-height: 1.5; }
+.agent-runtime-error { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: 8px; color: var(--red); background: color-mix(in srgb, var(--red) 8%, var(--bg2)); font-size: 13px; }
+.agent-runtime-error svg { flex: none; margin-top: 1px; }
+.agent-runtime-error p { margin: 4px 0 0; color: var(--text); overflow-wrap: anywhere; line-height: 1.5; }
+.agent-section-heading { margin-bottom: 14px; }
+.agent-section-heading h4 { margin: 0; font-size: 15px; font-weight: 600; }
+.agent-details-list { margin: 0; padding: 0 20px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg2); }
+.agent-details-list > div { display: flex; justify-content: space-between; align-items: baseline; gap: 24px; padding: 14px 0; }
+.agent-details-list > div + div { border-top: 1px solid var(--border); }
+.agent-details-list dt, .agent-details-list dd { margin: 0; font-size: 13px; line-height: 1.5; }
+.agent-details-list dt { color: var(--text2); }
+.agent-details-list dd { text-align: right; color: var(--text); font-weight: 550; overflow-wrap: anywhere; }
+.agent-model { font-variant-numeric: tabular-nums; }
+.agent-inline-link { margin-left: 12px; padding: 2px 0; border: 0; background: transparent; color: var(--orange-text); font: inherit; cursor: pointer; }
+.agent-inline-link:hover { text-decoration: underline; }
+.agent-action-list { border-top: 1px solid var(--border); }
+.agent-action-row { display: flex; align-items: center; gap: 14px; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.agent-action-icon { width: 38px; height: 38px; }
+.agent-action-copy { min-width: 0; flex: 1; }
+.agent-action-copy strong { font-size: 13px; font-weight: 600; }
+.agent-action-copy p { margin-top: 3px; }
+.agent-action-button { white-space: nowrap; flex: none; }
+.agent-recovery-note { display: flex; align-items: flex-start; gap: 8px; margin: 16px 0 0; color: var(--text2); font-size: 12px; line-height: 1.6; }
+.agent-recovery-note svg { flex: none; margin-top: 2px; }
+.agent-notice { margin-top: 14px; font-size: 13px; color: var(--green); padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--green) 8%, var(--bg2)); overflow-wrap: anywhere; }
+.agent-notice.is-error { color: var(--red); background: color-mix(in srgb, var(--red) 8%, var(--bg2)); }
+@container (max-width: 480px) {
+  .agent-overview { padding: 18px; flex-wrap: wrap; }
+  .agent-generation { padding-left: 57px; }
+  .agent-action-row { flex-wrap: wrap; }
+  .agent-action-copy { flex-basis: calc(100% - 52px); }
+  .agent-action-button { margin-left: 52px; }
+  .agent-details-list > div { gap: 12px; }
+}
 .btn-danger { border: 1px solid var(--red); color: var(--red); background: transparent; font-size: 13px; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
 .btn-danger:hover { background: rgba(248, 113, 113, 0.12); }
 .btn-danger:disabled { opacity: 0.6; cursor: default; }

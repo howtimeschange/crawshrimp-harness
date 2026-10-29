@@ -50,7 +50,7 @@ def test_managed_redirect_does_not_resubmit_or_forward_credentials():
         server.shutdown(); server.server_close(); thread.join()
 
 
-@pytest.mark.parametrize('reply', [(200, {}), (200, {'error': 'failed'}), (409, {'error': 'request_already_submitted'})])
+@pytest.mark.parametrize('reply', [(200, {}), (200, {'error': 'failed'}), (409, {'error': 'request_already_submitted'}), (503, {'error': 'image_admission_outcome_unknown'}), (503, {'error': 'image_request_not_dispatched'})])
 def test_ambiguous_managed_responses_do_not_become_retryable_rejections(reply):
     from core.one_xm_image import OneXMImageError, RejectedOneXMImageError
     client = CompatibleImageClient('fixture-token', provider='custom-managed-openai', model='gpt-image-2', base_url='http://127.0.0.1:12345/v1', transport=lambda *a, **k: reply)

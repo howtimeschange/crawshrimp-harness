@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from core import data_sink
-from core.atomic_file import atomic_write_text, remove_path_with_retry
+from core.atomic_file import atomic_write_text
 from core.agent import db
 from core.agent import mcp_gateway
 from core.agent.redaction import REDACTED, redact_text as _redact_secret_text, redact_value
@@ -395,10 +395,6 @@ Get-CimInstance Win32_Process |
         except Exception:  # noqa: BLE001
             pass
 
-
-def _remove_owned_tree(path: Path) -> None:
-    """删除智能体自有目录；符号链接只移除链接本身，绝不跟随到外部目标。"""
-    remove_path_with_retry(path)
 
 # 不写入产品事件表的 Harness 事件(窄 spec §7.1)
 FILTERED_EVENT_TYPES = {"request/header", "request/context"}
@@ -3700,61 +3696,6 @@ class AgentService:
             except Exception as exc:  # noqa: BLE001
                 print(f"[agent] DSH 原生审批桥不可用({exc}),安全失败", flush=True)
                 return "rejected"
-
-    async def clear_agent_data(self) -> dict:
-        """清除智能体投影及其受控附件、草稿、运行日志和智能体发布适配包。"""
-        async with self._runtime_mutation_lock:
-            return await self._clear_agent_data_unlocked()
-
-    async def _clear_agent_data_unlocked(self) -> dict:
-        if self.active_run is not None or self.active_runs_by_runtime:
-            return {"ok": False, "error": "存在进行中的运行,请先停止后再清除"}
-        await self._stop_worker()
-        try:
-            with db._lock:
-                conn = db._conn()
-                try:
-                    revisions = [dict(row) for row in conn.execute(
-                        "SELECT status, adapter_id, target_adapter_id, test_adapter_id"
-                        " FROM agent_script_revisions"
-                    ).fetchall()]
-                finally:
-                    conn.close()
-            from core import adapter_loader as _adapter_loader
-            from core.agent import api as _agent_api
-            published_ids = {
-                str(revision.get("target_adapter_id") or revision.get("adapter_id") or "")
-                for revision in revisions if revision.get("status") == "published"
-            }
-            for adapter_id in sorted(published_ids - {""}):
-                if not _agent_api._restore_published_adapter_baseline(adapter_id):
-                    _adapter_loader.uninstall(adapter_id)
-            for revision in revisions:
-                candidate_ids = [revision.get("test_adapter_id")]
-                for adapter_id in candidate_ids:
-                    if adapter_id:
-                        _adapter_loader.uninstall(str(adapter_id))
-            agent_root = Path(_data_root()) / "agent"
-            for child_name in ("attachments", "workspace", "harness-sessions", "runtime-workdir",
-                               "publish-backups", "review-backups"):
-                _remove_owned_tree(agent_root / child_name)
-            tmp_root = os.environ.get("CRAWSHRIMP_AGENT_ATTACHMENT_TMP_ROOT", "").strip()
-            if tmp_root:
-                tmp_path = Path(tmp_root).expanduser().resolve()
-                if tmp_path.name == "tmp-agent-attachments" and tmp_path.is_dir():
-                    _remove_owned_tree(tmp_path)
-            db.clear_agent_data()
-            # 基线留到数据库清理成功后再删；此前任一步失败都能重复恢复，
-            # 不会在重试时把刚恢复的用户原适配器误当成智能体包卸载。
-            baseline_root = agent_root / "published-baselines"
-            _remove_owned_tree(baseline_root)
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": f"清除失败: {exc}"}
-        self.shadow_runs.clear()
-        self.approval_waits.clear()
-        mcp_gateway.ctx.plan_params.clear()
-        return {"ok": True, "cleared": True, "removed_runtime_files": True,
-                "removed_agent_adapters": True}
 
     def decide_approval(self, approval_id: str, decision: str) -> dict:
         approval = db.get_approval(approval_id)

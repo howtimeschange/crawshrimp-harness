@@ -11513,6 +11513,20 @@ def trace_ai_image_managed_request(job_uid: str, run_uid: str):
         raise HTTPException(404, str(exc)) from exc
 
 
+@app.get("/managed-text/requests")
+def list_managed_text_requests(offset: int = 0):
+    from core import managed_text_receipts
+    offset = max(0, offset)
+    rows = managed_text_receipts.list_current(offset=offset, limit=101)
+    return {"requests": rows[:100], "next_offset": offset + 100 if len(rows) > 100 else None}
+
+
+@app.get("/managed-text/requests/{request_id}")
+def trace_managed_text_request(request_id: str):
+    from core import managed_text_receipts
+    return managed_text_receipts.trace(request_id)
+
+
 @app.patch("/ai-image/jobs/{job_uid}")
 def update_ai_image_job(job_uid: str, req: AiImageJobPatchRequest):
     payload = _model_payload(req, exclude_unset=True, exclude_none=True)

@@ -264,6 +264,24 @@ def test_unavailable_snapshot_never_publishes_a_mutable_desktop_path(store, monk
     assert exc.value.status_code == 404
 
 
+def test_failed_latest_snapshot_keeps_previous_ready_copy_visible(store, monkeypatch):
+    path = store / 'report.txt'
+    path.write_bytes(b'old')
+    old = publish(path)
+    monkeypatch.setattr(snapshots, 'MAX_FILE_BYTES', 3)
+    path.write_bytes(b'new is too large')
+    failed = publish(path)
+    items = api.session_resources('runtime-one')['artifacts']
+    assert len(items) == 2
+    assert items[0]['file_snapshot']['status'] == 'too_large'
+    assert items[0]['path'] == ''
+    assert items[1]['historical_after_failure'] is True
+    assert items[1]['artifact_id'] == old['file_snapshot']['version_id']
+    assert Path(items[1]['path']).read_bytes() == b'old'
+    assert read('one', items[1]['artifact_id']) == b'old'
+    assert api.current_artifact_file('runtime-one', failed['file_snapshot']['version_id'])['path'] == str(path)
+
+
 def test_current_artifact_refuses_symlink_replacement(store, monkeypatch):
     monkeypatch.setattr(snapshots, 'MAX_FILE_BYTES', 2)
     path = store / 'original.txt'
@@ -323,3 +341,54 @@ def test_index_commit_failure_keeps_event_failed_and_retained_bytes_in_quota(sto
     second.write_bytes(b'next')
     assert publish(second)['file_snapshot']['status'] == 'quota_exceeded'
     assert not list((store / 'data/agent/artifact_versions').rglob('.copy-*'))
+
+
+def test_office_newest_failed_snapshot_does_not_hide_behind_older_final(store, monkeypatch):
+    office = store / 'office' / 'session'
+    old_path = office / 'render-final' / 'editable' / 'report.docx'
+    old_path.parent.mkdir(parents=True)
+    old_path.write_bytes(b'old')
+    old = verified_artifact({'path': str(old_path), 'filename': 'report.docx',
+        'office': {'job_id': 'render-final', 'pages': [{'path': '/page.png'}],
+                   'delivery': {'status': 'final'}}}, source='office')
+    old['office'] = {'job_id': 'render-final', 'pages': [{'path': '/page.png'}], 'delivery': {'status': 'final'}}
+    old = db.append_session_event('one', 'artifact.created', old)[1]
+    monkeypatch.setattr(snapshots, 'MAX_FILE_BYTES', 3)
+    new_path = office / 'new-edit' / 'editable' / 'report.docx'
+    new_path.parent.mkdir(parents=True)
+    new_path.write_bytes(b'new too large')
+    failed = verified_artifact({'path': str(new_path), 'filename': 'report.docx',
+        'office': {'job_id': 'new-edit', 'pages': []}}, source='office')
+    failed['office'] = {'job_id': 'new-edit', 'pages': []}
+    failed = db.append_session_event('one', 'artifact.created', failed)[1]
+
+    items = api.session_resources('runtime-one')['artifacts']
+    assert len(items) == 2
+    assert items[0]['file_snapshot']['version_id'] == failed['file_snapshot']['version_id']
+    assert items[0]['file_snapshot']['status'] == 'too_large'
+    assert items[0]['path'] == ''
+    assert items[1]['historical_after_failure'] is True
+    assert items[1]['artifact_id'] == old['file_snapshot']['version_id']
+    assert read('one', items[1]['artifact_id']) == b'old'
+    assert api.current_artifact_file('runtime-one', failed['file_snapshot']['version_id'])['path'] == str(new_path)
+
+
+def test_removed_clear_endpoint_cannot_destroy_sessions_or_snapshots(store):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    source = store / 'keep.txt'
+    source.write_bytes(b'keep this artifact')
+    record = publish(source)
+    version_id = record['file_snapshot']['version_id']
+    db.update_session('two', archived_at='2026-10-28T00:00:00Z')
+    application = FastAPI()
+    application.include_router(api.router)
+    with TestClient(application) as client:
+        response = client.post('/agent/data/clear')
+    assert response.status_code == 404
+    assert db.get_session('one') is not None
+    assert db.get_session('two')['archived_at'] is not None
+    assert read('one', version_id) == b'keep this artifact'
+    assert source.read_bytes() == b'keep this artifact'
+    assert api.session_resources('runtime-one')['artifacts'][0]['artifact_id'] == version_id

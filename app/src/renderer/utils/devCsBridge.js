@@ -450,6 +450,8 @@ export function createDevCsBridge() {
     createAiImageJob: (payload) => apiCall('POST', '/ai-image/jobs', payload || {}),
     getAiImageJob: (uid) => apiCall('GET', `/ai-image/jobs/${encodePathPart(uid)}`),
     traceAiImageManagedRequest: (uid, runUid) => apiCall('GET', `/ai-image/jobs/${encodePathPart(uid)}/runs/${encodePathPart(runUid)}/managed-request`),
+    listManagedTextRequests: (offset = 0) => apiCall('GET', `/managed-text/requests?offset=${Number.isSafeInteger(offset) && offset >= 0 ? offset : 0}`),
+    traceManagedTextRequest: (requestId) => apiCall('GET', `/managed-text/requests/${encodePathPart(requestId)}`),
     updateAiImageJob: (uid, payload) => apiCall('PATCH', `/ai-image/jobs/${encodePathPart(uid)}`, payload || {}),
     setAiImageJobPinned: (uid, pinned) => apiCall('PATCH', `/ai-image/jobs/${encodePathPart(uid)}/pin`, { pinned: Boolean(pinned) }),
     deleteAiImageJob: (uid) => apiCall('DELETE', `/ai-image/jobs/${encodePathPart(uid)}`),

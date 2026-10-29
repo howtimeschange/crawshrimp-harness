@@ -51,12 +51,14 @@
         <h3 id="billing-title">计费说明</h3>
         <dl><div><dt>官方模型</dt><dd>文字与图片共用以上额度，按实际调用结算。</dd></div><div><dt>订阅额度</dt><dd>按实际月订阅账期更新，到期后未用额度不结转。</dd></div><div><dt>永久额度</dt><dd>ModelJetty 充值金额及赠金、增量包余额，不会过期。</dd></div><div><dt>自带 API Key</dt><dd>由你配置的服务商独立结算，不计入这里的用量。</dd></div></dl>
       </section>
+      <ManagedTextReceipts :key="state.user.id" />
     </template>
   </section>
 </template>
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import CrawshrimpMembershipMark from './CrawshrimpMembershipMark.vue'
+import ManagedTextReceipts from './ManagedTextReceipts.vue'
 import { IconRefresh, IconArrowUpRight, IconInfoCircle, IconAlertCircle, IconUser, IconClock, IconInfinity, IconWallet } from '@tabler/icons-vue'
 import { usageView, validateAllowance, validateSubscription } from '../utils/managedUsage.mjs'
 const props = defineProps({ active: { type: Boolean, default: true } })

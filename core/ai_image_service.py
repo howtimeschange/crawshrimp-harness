@@ -1195,9 +1195,22 @@ def trace_managed_image_request(job_uid, run_uid):
         if row.get('requestId') != request_id:
             raise ValueError('request identity mismatch')
         state = row.get('state')
-        if state not in ('in_progress', 'completed', 'unknown', 'upstream_rejected', 'not_dispatched', 'failed', 'canceled'):
+        if state not in ('waiting', 'in_progress', 'completed', 'unknown', 'upstream_rejected', 'not_dispatched', 'failed', 'canceled'):
             raise ValueError('unknown request state')
-        return {'status': 'found', 'request_id': request_id, 'state': state, 'billing_request_id': row.get('billingRequestId')}
+        trace = {'status': 'found', 'request_id': request_id, 'state': state, 'billing_request_id': row.get('billingRequestId')}
+        if 'queue' in row:
+            queue = row['queue']
+            if queue is None:
+                trace['queue'] = None
+            elif (isinstance(queue, dict) and queue.get('request_id') == request_id
+                  and queue.get('state') in ('waiting', 'running', 'unknown', 'completed', 'rejected', 'not_dispatched')):
+                trace['queue'] = {'request_id': request_id, 'state': queue['state']}
+            else:
+                trace['queue'] = None
+                trace['queue_status'] = 'invalid'
+        if 'queue_status' not in trace and row.get('queueStatus') in ('unavailable', 'classification_unconfirmed', 'invalid'):
+            trace['queue_status'] = row['queueStatus']
+        return trace
     except (OSError, ValueError, TypeError, AttributeError):
         return {'status': 'unavailable', 'request_id': request_id}
 

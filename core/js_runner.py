@@ -372,6 +372,8 @@ def _recognize_wash_care_media_sync(
                     "errors": errors,
                 }
             errors.append("多模态模型未返回可映射的洗护说明")
+        except llm_gateway.LlmUnknownSubmissionError:
+            raise
         except Exception as exc:
             errors.append(f"多模态识别失败: {_clean_runtime_text(exc)}")
 
