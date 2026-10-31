@@ -9,9 +9,10 @@ import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
 
-from core import managed_models, runtime_paths
+from core import managed_caller_receipts, managed_models, runtime_paths
 from core.windows_acl import assert_no_reparse_components_windows, harden_windows_path
 
 
@@ -84,15 +85,28 @@ def list_current(*, offset=0, limit=101):
     current = managed_models.session()
     if not current or not current.get('accountId') or not current.get('accountServiceOrigin'):
         return []
-    if not (runtime_paths.data_root() / 'managed-text-receipts.sqlite3').exists():
-        return []
-    with _connect(read_only=True) as db:
-        if 'issuer' not in {column[1] for column in db.execute('PRAGMA table_info(receipts)')}:
-            return []
-        rows = db.execute("SELECT request_id, model, state, created_at FROM receipts WHERE owner=? AND issuer=? ORDER BY CASE WHEN state='unknown' THEN 0 ELSE 1 END, rowid DESC LIMIT ? OFFSET ?", (current['accountId'], current['accountServiceOrigin'], limit, offset)).fetchall()
+    rows = []
+    if (runtime_paths.data_root() / 'managed-text-receipts.sqlite3').exists():
+        with _connect(read_only=True) as db:
+            if 'issuer' in {column[1] for column in db.execute('PRAGMA table_info(receipts)')}:
+                rows = db.execute("SELECT request_id, model, state, created_at FROM receipts WHERE owner=? AND issuer=? ORDER BY CASE WHEN state='unknown' THEN 0 ELSE 1 END, created_at DESC, rowid DESC LIMIT ?", (current['accountId'], current['accountServiceOrigin'], offset + limit)).fetchall()
+    rows = [dict(zip(('request_id', 'model', 'state', 'created_at'), row)) for row in rows]
+    rows.extend(managed_caller_receipts.list_current(current))
+    # Sort and paginate the combined sources, keeping unknown results first.
+    # Stable ties preserve SQLite rowid order and the deterministic journal order.
+    def order(row):
+        created = datetime.fromisoformat(row['created_at'].replace('Z', '+00:00'))
+        created = created if created.tzinfo else created.replace(tzinfo=timezone.utc)
+        return row['state'] != 'unknown', -created.timestamp()
+    rows.sort(key=order)
+    unique, seen = [], set()
+    for row in rows:
+        if row['request_id'] not in seen:
+            seen.add(row['request_id'])
+            unique.append(row)
     if not _same_session(current, managed_models.session()):
         return []
-    return [dict(zip(('request_id', 'model', 'state', 'created_at'), row)) for row in rows]
+    return unique[offset:offset + limit]
 
 
 def trace(request_id):
@@ -101,16 +115,18 @@ def trace(request_id):
     current = managed_models.session()
     if not current or not current.get('accountId') or not current.get('accountServiceOrigin'):
         return {'status': 'account_changed'}
-    if not (runtime_paths.data_root() / 'managed-text-receipts.sqlite3').exists():
-        return {'status': 'identity_unavailable'}
-    with _connect(read_only=True) as db:
-        if 'issuer' not in {column[1] for column in db.execute('PRAGMA table_info(receipts)')}:
-            return {'status': 'identity_unavailable'}
-        row = db.execute('SELECT owner, issuer FROM receipts WHERE request_id=?', (request_id,)).fetchone()
-    if not row or row != (current['accountId'], current['accountServiceOrigin']):
-        return {'status': 'account_changed'}
-    request = Request(current['baseURL'] + '/account/requests/' + request_id, headers={'Authorization': 'Bearer ' + current['brokerToken']}, method='GET')
     try:
+        row = None
+        if (runtime_paths.data_root() / 'managed-text-receipts.sqlite3').exists():
+            with _connect(read_only=True) as db:
+                if 'issuer' in {column[1] for column in db.execute('PRAGMA table_info(receipts)')}:
+                    row = db.execute('SELECT owner, issuer FROM receipts WHERE request_id=?', (request_id,)).fetchone()
+        if row != (current['accountId'], current['accountServiceOrigin']):
+            if not any(receipt['request_id'] == request_id for receipt in managed_caller_receipts.list_current(current)):
+                return {'status': 'account_changed' if row else 'identity_unavailable'}
+        if not _same_session(current, managed_models.session()):
+            return {'status': 'account_changed'}
+        request = Request(current['baseURL'] + '/account/requests/' + request_id, headers={'Authorization': 'Bearer ' + current['brokerToken']}, method='GET')
         with build_opener(ProxyHandler({}), _NoRedirect()).open(request, timeout=35) as response:
             raw = response.read(8193)
         if len(raw) > 8192:
@@ -127,7 +143,7 @@ def trace(request_id):
         if not isinstance(result, dict) or result.get('requestId') != request_id or result.get('state') not in ('in_progress', 'completed', 'unknown', 'upstream_rejected', 'not_dispatched', 'failed', 'canceled'):
             raise ValueError('invalid trace')
         return {'status': 'found', 'request_id': request_id, 'state': result['state'], 'billing_request_id': result.get('billingRequestId')}
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, sqlite3.Error):
         if not _same_session(current, managed_models.session()):
             return {'status': 'account_changed'}
         return {'status': 'unavailable', 'request_id': request_id}

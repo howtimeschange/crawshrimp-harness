@@ -183,7 +183,9 @@ test('Office ZIP parser rejects malformed ZIP64 and native converter renders a g
 })
 
 const { resolveBuiltinCliRoot } = createRequire(import.meta.url)(join(integrationRoot, 'worker/builtin-runtime.cjs'))
-const bmallRoot = join(resolveBuiltinCliRoot(runtimeRoot), 'bmall-cli')
+// CI tests the explicitly built source CLI; packaged-runtime checks retain the
+// bundled closure by default. Never depend on a developer's old staging tree.
+const bmallRoot = join(resolve(process.env.CRAWSHRIMP_SECURITY_CLI_ROOT || resolveBuiltinCliRoot(runtimeRoot)), 'bmall-cli')
 test('Bmall Zod4 retains configuration records, defaults and strict order validation', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'c50-security-bmall-'))
   t.after(() => rm(directory, { recursive: true, force: true }))

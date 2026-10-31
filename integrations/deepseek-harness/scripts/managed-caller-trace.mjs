@@ -9,9 +9,15 @@ const BILL=/^[A-Za-z0-9_-]{1,64}$/;
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const fail=code=>{throw Object.assign(new Error(code),{code})};
 function rootPath(value){if(typeof value!=='string'||!path.isAbsolute(value))fail('managed_trace_data_root_required');return path.resolve(value)}
+function syncDirectory(dir){
+ // Windows FlushFileBuffers cannot sync a read-only directory handle. Keep
+ // file fsync and exclusive creation on every platform; do not mask IO errors.
+ if(process.platform==='win32')return;
+ const fd=fs.openSync(dir,'r');try{fs.fsyncSync(fd)}finally{fs.closeSync(fd)}
+}
 function privateDirectory(dir){
  if(fs.existsSync(dir)){const st=fs.lstatSync(dir);if(st.isSymbolicLink()||!st.isDirectory())fail('managed_trace_unsafe_directory')}
- else{fs.mkdirSync(dir,{mode:0o700});const parent=fs.openSync(path.dirname(dir),'r');try{fs.fsyncSync(parent)}finally{fs.closeSync(parent)}}
+ else{fs.mkdirSync(dir,{mode:0o700});syncDirectory(path.dirname(dir))}
 }
 function readSession(dataRoot){
  const file=path.join(dataRoot,'managed-model-session.json'),st=fs.lstatSync(file);
@@ -36,7 +42,7 @@ function durable(file,value,exclusive=false){
  const fd=fs.openSync(target,fs.constants.O_EXCL|fs.constants.O_CREAT|fs.constants.O_WRONLY|(fs.constants.O_NOFOLLOW||0),0o600);
  try{fs.writeFileSync(fd,JSON.stringify(value,null,2)+'\n');fs.fsyncSync(fd)}finally{fs.closeSync(fd)}
  if(!exclusive)fs.renameSync(target,file);
- const dir=fs.openSync(path.dirname(file),'r');try{fs.fsyncSync(dir)}finally{fs.closeSync(dir)}
+ syncDirectory(path.dirname(file));
 }
 function receiptRows(root,identity){
  const dir=receiptDirectory(root,identity.owner);if(!fs.existsSync(dir))return [];
