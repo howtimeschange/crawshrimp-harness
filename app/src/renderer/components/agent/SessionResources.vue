@@ -72,6 +72,7 @@
 import { liveSessionBrowserPages, isClosedBrowserPageError } from '../../utils/sessionBrowserPages.js'
 import { resourceId, restoreWorkspace } from '../../utils/resourceWorkspace.js'
 import ResourcePreview from './resources/ResourcePreview.vue'
+import { adaptivePoll } from '../../utils/adaptivePoll.js'
 import ResourceMenu from './ResourceMenu.vue'
 import { formatArtifactAge, sortArtifactsByUpdated } from '../../utils/artifactTime.js'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -384,8 +385,8 @@ watch([() => props.sessionId, () => props.conversationPhase], syncSessionPanel, 
 watch([opened, selection, width, maximized, workTabs, activeIds, split, splitRatio, focusedPane], () => saveState(props.sessionId), { deep: true })
 watch(() => props.revision, () => { clearTimeout(timer); timer = setTimeout(refresh, 150) })
 const ageTimer = setInterval(() => { now.value = Date.now() }, 30000)
-const polling = setInterval(refresh, 5000)
-onUnmounted(() => { emit('viewing-change', false); window.removeEventListener('resize', onViewportResize); generation++; clearInterval(polling); clearInterval(ageTimer); clearTimeout(timer); stopResize?.(); stopSplitResize?.() })
+const stopPolling = adaptivePoll(refresh)
+onUnmounted(() => { emit('viewing-change', false); window.removeEventListener('resize', onViewportResize); generation++; stopPolling(); clearInterval(ageTimer); clearTimeout(timer); stopResize?.(); stopSplitResize?.() })
 </script>
 
 <style scoped>

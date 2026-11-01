@@ -21,7 +21,7 @@
       <template v-else-if="type === 'image'">
         <div class="image-controls"><button aria-label="缩小图片" title="缩小图片（最低 25%）" @click="setZoom(zoom - .25)">−</button><span>{{ Math.round(zoom * 100) }}%</span><button aria-label="放大图片" title="放大图片（最高 400%）" @click="setZoom(zoom + .25)">＋</button><button title="恢复图片为 100%" @click="setZoom(1)">适应</button></div>
         <p v-if="loading" role="status">正在读取图片…</p>
-        <div v-else class="image-scroll" tabindex="0" aria-label="图片预览"><img v-if="url" :src="url" :alt="item.filename" :style="{ width: `${zoom * 100}%`, maxWidth: 'none' }" @error="error = '文件无法加载，可能已移动或删除'" /></div>
+        <div ref="imageContainer" class="image-scroll" tabindex="0" aria-label="图片预览"><div :style="{ width: `${zoom * 100}%`, aspectRatio: imageSize ? `${imageSize.width} / ${imageSize.height}` : undefined }"><img v-if="url && active" :src="url" :alt="item.filename" style="width:100%;max-width:none" @load="rememberImageSize" @error="error = '文件无法加载，可能已移动或删除'" /></div></div>
       </template>
       <video v-else-if="type === 'video' && url" ref="mediaElement" :src="url" controls @play="pauseInactiveMedia" />
       <audio v-else-if="type === 'audio' && url" ref="mediaElement" :src="url" controls @play="pauseInactiveMedia" />
@@ -30,26 +30,38 @@
 </template>
 <script setup>
 import { computed, ref, watch, onUnmounted } from 'vue'
-import DocumentPreview from './DocumentPreview.vue'
-import OfficePreview from '../OfficePreview.vue'
+import { lazyView } from '../../../utils/lazyView.js'
 import { documentKind, readDocumentText } from '../../../utils/documentPreview.js'
 import { isOfficeFile } from '../../../utils/artifactTime.js'
 import { previewType, parseDelimited } from '../../../utils/resourceWorkspace.js'
+const DocumentPreview = lazyView(() => import('./DocumentPreview.vue'))
+const OfficePreview = lazyView(() => import('../OfficePreview.vue'))
 const props = defineProps({ active: {type:Boolean,default:true}, item: Object, mode: { type: String, default: 'preview' }, zoom: { type: Number, default: 1 } })
 const emit = defineEmits(['update:mode', 'update:zoom'])
 const type = computed(() => previewType(props.item)), office = computed(() => isOfficeFile(props.item))
 const views = computed(() => office.value || documentKind(props.item.filename) === 'pdf' || type.value === 'video' || type.value === 'audio' || type.value === 'image' ? [] : [{ id: 'preview', label: type.value === 'table' ? '表格' : '预览' }, { id: 'source', label: '原文' }])
 const revision = ref(0), url = ref(''), rows = ref([]), loading = ref(false), error = ref(''), truncated = ref(false)
 const mediaElement = ref(null)
+const imageContainer = ref(null), imageSize = ref(null)
+function rememberImageSize(event) {
+  const image = event.target
+  if (image.src === url.value && image.naturalWidth && image.naturalHeight) imageSize.value = { width: image.naturalWidth, height: image.naturalHeight }
+}
 function pauseInactiveMedia() { if (!props.active) mediaElement.value?.pause() }
 watch(() => props.active, pauseInactiveMedia, { flush: 'sync' })
 const setZoom = value => emit('update:zoom', Math.max(.25, Math.min(4, value)))
 let blobUrl = ''
 function releaseBlob() { if (blobUrl) URL.revokeObjectURL(blobUrl); blobUrl = '' }
-watch(() => [props.item.path, props.item.updated_at, revision.value], async (_, __, cleanup) => {
+watch(() => [props.item.path, props.item.updated_at, revision.value, type.value === 'image' ? props.active : true], async (key, previous, cleanup) => {
   const controller = new AbortController(), signal = controller.signal
   cleanup(() => controller.abort()); releaseBlob(); url.value = ''; error.value = ''; rows.value = []; loading.value = false
-  if (office.value || type.value === 'document') return
+  if (!previous || key.slice(0, 3).some((value, index) => value !== previous[index])) {
+    imageSize.value = null
+    if (imageContainer.value) { imageContainer.value.scrollTop = 0; imageContainer.value.scrollLeft = 0 }
+  }
+  // Retain only the dimensions/scroll container for hidden image tabs. Revoking
+  // the blob and removing the image lets Chromium release encoded/decoded data.
+  if (office.value || type.value === 'document' || type.value === 'image' && !props.active) return
   loading.value = true
   try {
     const media = await window.cs.agentMediaUrl(props.item.path, null); signal.throwIfAborted()
@@ -60,7 +72,7 @@ watch(() => [props.item.path, props.item.updated_at, revision.value], async (_, 
     } else if (type.value === 'image') {
       const response = await fetch(media, { signal, cache: 'no-store' }); if (!response.ok) throw new Error('文件不存在或无法读取')
       // Refuse unbounded allocations; SVG retains the existing static image boundary.
-      if (Number(response.headers.get('content-length')) > 32 * 1024 * 1024) throw new Error('图片超过 32 MB，请使用系统打开')
+      if (Number(response.headers.get('content-length')) > 32 * 1024 * 1024) { await response.body?.cancel(); throw new Error('图片超过 32 MB，请使用系统打开') }
       const reader = response.body.getReader(), chunks = []; let size = 0
       try { while (true) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > 32 * 1024 * 1024) throw new Error('图片超过 32 MB，请使用系统打开'); chunks.push(value) } } finally { await reader.cancel() }
       signal.throwIfAborted(); blobUrl = URL.createObjectURL(new Blob(chunks, { type: response.headers.get('content-type') || 'application/octet-stream' })); url.value = blobUrl

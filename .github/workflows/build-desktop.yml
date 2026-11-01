@@ -174,6 +174,9 @@ jobs:
       - name: Check managed caller receipt durability on the build platform
         run: node --test integrations/deepseek-harness/scripts/managed-caller-trace.test.mjs
 
+      - name: Check preview resource lifecycle on the build platform
+        run: node --test app/src/continuousPdfPreview.test.js app/src/resourcePreview.test.js app/src/renderer/components/ImageGenerationLoader.test.js
+
       - name: Enable Corepack for bundled CLI builds
         run: corepack enable
 

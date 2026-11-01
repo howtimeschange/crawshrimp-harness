@@ -6,21 +6,25 @@ import { liveSessionBrowserPages, isClosedBrowserPageError } from './renderer/ut
 import { resourceId, restoreWorkspace } from './renderer/utils/resourceWorkspace.js'
 import { documentKind } from './renderer/utils/documentPreview.js'
 import { formatArtifactAge, sortArtifactsByUpdated, isOfficeDocument } from './renderer/utils/artifactTime.js'
+import { adaptivePoll } from './renderer/utils/adaptivePoll.js'
 
 const source = readFileSync(new URL('./renderer/components/agent/SessionResources.vue', import.meta.url), 'utf8')
 const script = source.split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm, '')
-function harness({ sessionId = 'a', storage = new Map() } = {}) {
+function harness({ sessionId = 'a', storage = new Map(), poll = () => () => {} } = {}) {
   const requests = []
   const pointerEvents = new Map()
+  const listeners = new Map(), unmounts = []
+  const doc = { hidden: false, getElementById: () => null, addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: name => listeners.delete(name) }
   const props = { sessionId, conversationPhase: 'active' }
   const context = {
     resourceId, restoreWorkspace, formatArtifactAge, sortArtifactsByUpdated, isOfficeDocument, documentKind, liveSessionBrowserPages, isClosedBrowserPageError,
     defineAsyncComponent: () => ({}),
-    document: { getElementById: () => null },
+    adaptivePoll: callback => poll(callback, { document: doc }),
+    document: doc,
     nextTick: fn => Promise.resolve().then(fn),
-    defineProps: () => props, defineEmits: () => {}, defineExpose: () => {},
+    defineProps: () => props, defineEmits: () => () => {}, defineExpose: () => {},
     ref: value => ({ value }), computed: fn => ({ get value() { return fn() } }),
-    watch: () => {}, onMounted: () => {}, onUnmounted: () => {},
+    watch: () => {}, onMounted: () => {}, onUnmounted: fn => unmounts.push(fn),
     setInterval: () => 1, clearInterval() {}, setTimeout, clearTimeout, URLSearchParams,
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     window: { innerWidth: 1600, innerHeight: 960, addEventListener: (name, fn) => pointerEvents.set(name, fn), removeEventListener: name => pointerEvents.delete(name), cs: {
@@ -29,10 +33,26 @@ function harness({ sessionId = 'a', storage = new Map() } = {}) {
     } },
   }
   vm.runInNewContext(script + '\nglobalThis.h = { dragOverResource, dropTarget, clearTabDrag, activePaneTab, switchPane, changeBrowserLayout, collapseBrowser, resizeSplit, startTabDrag, dropResource, tabArrow, splitRatio, draggedTab, retainedTabs, syncSessionPanel, refresh, workTabs, activeIds, split, focusedPane, effectiveSplit, openResource, openArtifact, openCurrentArtifact, currentFileAvailable, error, closeResource, toggleSplit, followBrowserActivity, browserActivity, activeTabId, opened, selection, artifacts, tabs, unseen, openBrowser, back, width, adjustWidth, miniTab, browserReady, resize, onViewportResize, togglePanel, compactOpen, searching, query, toggleSearch, closeSearch, searchInput, searchButton, filteredTabs, filteredArtifacts };', context)
-  return { ...context.h, props, requests, pointerEvents, viewport: context.window, storage,
+  return { ...context.h, props, requests, pointerEvents, viewport: context.window, storage, doc, listeners, unmount: () => unmounts.forEach(fn => fn()),
     enterSession(id, _old, phase = id ? 'active' : 'hero') { props.sessionId = id; props.conversationPhase = phase; context.h.syncSessionPanel() },
   }
 }
+
+test('resource polling slows while hidden, refreshes on return and stops on unmount', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const h = harness({ poll: adaptivePoll })
+  h.doc.hidden = true; h.listeners.get('visibilitychange')()
+  t.mock.timers.tick(5000); assert.equal(h.requests.length, 0)
+  h.doc.hidden = false; h.listeners.get('visibilitychange')()
+  assert.equal(h.requests.length, 1)
+  h.requests.shift()({ artifacts: [], tabs: [] }); await new Promise(setImmediate)
+  h.doc.hidden = true; h.listeners.get('visibilitychange')()
+  t.mock.timers.tick(59999); assert.equal(h.requests.length, 0)
+  t.mock.timers.tick(1); assert.equal(h.requests.length, 1)
+  h.unmount(); h.requests.shift()({ artifacts: [], tabs: [] }); await new Promise(setImmediate)
+  t.mock.timers.tick(60000); assert.equal(h.requests.length, 0)
+  assert.equal(h.listeners.has('visibilitychange'), false)
+})
 
 test('unavailable snapshot requires explicit current-file action and fences session changes', async () => {
   const h = harness({ sessionId: 'a' }), opened = []

@@ -1050,14 +1050,24 @@ def list_attachments(session_id: str, turn_id: Optional[str] = None) -> list[dic
 
 
 def list_session_resource_events(runtime_session_id: str) -> list[dict]:
-    """Read durable resource metadata for one runtime session, in event order."""
+    """Read resource metadata, without materializing unrelated tool arguments."""
     with _lock:
         conn = _conn()
         try:
             return _fetch(conn, """
-                SELECT e.* FROM agent_events e JOIN agent_sessions s ON s.session_id=e.session_id
-                WHERE s.runtime_session_id=? AND e.event_type IN
-                ('artifact.created', 'browser.activity', 'browser.page.closed', 'tool.requested') ORDER BY e.seq
+                SELECT e.seq, e.session_id, e.run_id, e.event_type, e.created_at,
+                    CASE WHEN e.event_type='tool.requested' THEN json_object(
+                        'tool_name', json_extract(e.payload_json, '$.tool_name'),
+                        'tool_call_id', json_extract(e.payload_json, '$.tool_call_id'),
+                        'dsh_call_id', json_extract(e.payload_json, '$.dsh_call_id'),
+                        'turn', json_extract(e.payload_json, '$.turn')
+                    ) ELSE e.payload_json END AS payload_json
+                FROM agent_events e JOIN agent_sessions s ON s.session_id=e.session_id
+                WHERE s.runtime_session_id=? AND (
+                    e.event_type IN ('artifact.created', 'browser.activity', 'browser.page.closed')
+                    OR (e.event_type='tool.requested'
+                        AND substr(json_extract(e.payload_json, '$.tool_name'), -14)='image_generate')
+                ) ORDER BY e.seq
             """, (runtime_session_id,))
         finally:
             conn.close()

@@ -23,29 +23,46 @@ import 'pdfjs-dist/web/pdf_viewer.css'
 GlobalWorkerOptions.workerSrc = workerUrl
 const props = defineProps({ path: String, active: {type:Boolean,default:true} })
 const pages = ref(0), zoom = ref(1), loading = ref(true), error = ref(''), container = ref(null), document = shallowRef(null), renderWidth = ref(600), initialSize = ref({width:595,height:842})
-let task, observer, generation = 0
-watch(() => props.path, async () => {
+let task, observer, generation = 0, currentPath, teardown = Promise.resolve()
+function releaseDocument() {
+  const previous = task
+  task = null; document.value = null
+  // PDF.js owns both the worker and document buffers. Finish its asynchronous
+  // teardown before reopening, including rapid tab switches on Windows.
+  if (previous) teardown = Promise.all([teardown, Promise.resolve().then(() => previous.destroy())]).then(() => {}, () => {})
+  return teardown
+}
+watch(() => [props.path, props.active], async ([path, active]) => {
   const token = ++generation
-  task?.destroy(); task = null; document.value = null; pages.value = 0; zoom.value = 1; loading.value = true; error.value = ''
-  if (container.value) container.value.scrollTop = 0
+  const released = releaseDocument()
+  if (path !== currentPath) {
+    currentPath = path; pages.value = 0; zoom.value = 1; initialSize.value = {width:595,height:842}
+    if (container.value) container.value.scrollTop = 0
+  }
+  // Keep page placeholders (including measured sizes), zoom and scroll position
+  // when hidden, but retain no PDF worker or parsed document.
+  loading.value = Boolean(active && path); error.value = ''
+  if (!active || !path) return
   try {
-    const media = await window.cs.agentMediaUrl(props.path, null)
+    await released
+    if (token !== generation) return
+    const media = await window.cs.agentMediaUrl(path, null)
     const freshUrl = new URL(media); freshUrl.searchParams.set('_preview', String(Date.now()))
     if (token !== generation) return
     const base = new URL(`${import.meta.env.BASE_URL}pdfjs/`, location.href).href
     const loadingTask = getDocument({url:freshUrl.href,cMapUrl:base+'cmaps/',cMapPacked:true,standardFontDataUrl:base+'standard_fonts/',wasmUrl:base+'wasm/',isEvalSupported:false,disableAutoFetch:true,disableStream:true})
     task = loadingTask
-    loadingTask.onPassword = () => { if (token === generation) { error.value = '加密 PDF 需在系统阅读器输入密码'; loading.value = false; loadingTask.destroy() } }
+    loadingTask.onPassword = () => { if (token === generation) { error.value = '加密 PDF 需在系统阅读器输入密码'; loading.value = false; releaseDocument() } }
     const loaded = await loadingTask.promise
-    if (token !== generation) { loaded.destroy(); return }
+    if (token !== generation) return
     const first = await loaded.getPage(1); if (token !== generation) return
     const view = first.getViewport({scale:1}); initialSize.value = {width:view.width,height:view.height}
     document.value = loaded; pages.value = loaded.numPages
-  } catch(e) { if (token === generation && !error.value) error.value = `PDF 无法打开：${e.message}` }
+  } catch(e) { if (token === generation) { if (!error.value) error.value = `PDF 无法打开：${e.message}`; releaseDocument() } }
   finally { if (token === generation) loading.value = false }
 }, {immediate:true})
 onMounted(() => { observer = new ResizeObserver(() => { const width = container.value?.clientWidth || 0; if (width > 0) renderWidth.value = Math.max(160,width - 26) });observer.observe(container.value) })
-onUnmounted(() => { generation++;task?.destroy();observer?.disconnect() })
+onUnmounted(() => { generation++;releaseDocument();observer?.disconnect() })
 </script>
 <style scoped>
 .pdf-preview{display:flex;flex-direction:column;height:100%;min-height:420px;gap:12px}

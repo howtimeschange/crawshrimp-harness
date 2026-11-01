@@ -12,6 +12,7 @@ function harness({ api = async () => ({}), list = async () => ({ok:true,tabs:[]}
   const ref = value => ({value})
   const props = { sessionId: 'session-a', conversationPhase: 'active' }
   const context = {
+    adaptivePoll: () => () => {},
     defineProps: () => props, defineEmits: () => {}, defineExpose: () => {}, ref,
     computed: fn => ({ get value() { return fn() } }), watch() {}, onMounted() {}, onUnmounted() {},
     nextTick: fn => Promise.resolve().then(fn), setInterval: () => 1, clearInterval() {}, setTimeout, clearTimeout,

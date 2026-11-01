@@ -23,9 +23,10 @@ import { ref, computed, watch } from 'vue'
 import { IconCopy, IconCheck } from '@tabler/icons-vue'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js/lib/common'
-import PdfPreview from './PdfPreview.vue'
+import { lazyView } from '../../../utils/lazyView.js'
 import { readDocumentText } from '../../../utils/documentPreview.js'
 import { resourceLoader, prepareStaticHtml } from '../../../utils/staticPreview.js'
+const PdfPreview = lazyView(() => import('./PdfPreview.vue'))
 const props = defineProps({ active: {type:Boolean,default:true}, path: String, filename: String, kind: String, revision: [String, Number] })
 const loading = ref(false), error = ref(''), text = ref(''), truncated = ref(false), srcdoc = ref(''), warnings = ref([]), copied = ref(false)
 const aliases = { py: 'python', js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript', md: 'markdown', yml: 'yaml', sh: 'bash' }

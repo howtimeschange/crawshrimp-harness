@@ -14,12 +14,21 @@ function imageSources(value) {
     })
 }
 
+let webGLAvailable = false
 function supportsWebGL() {
+  if (webGLAvailable) return true
+  let context
   try {
     const canvas = document.createElement('canvas')
-    return Boolean(canvas.getContext('webgl2') || canvas.getContext('webgl'))
+    context = canvas.getContext('webgl2') || canvas.getContext('webgl')
+    webGLAvailable = Boolean(context)
+    return webGLAvailable
   } catch {
     return false
+  } finally {
+    // The probe is not a renderer. Release its GPU resources immediately, and
+    // retry failed probes later so transient GPU unavailability can recover.
+    try { context?.getExtension('WEBGL_lose_context')?.loseContext() } catch { /* optional extension */ }
   }
 }
 
@@ -110,8 +119,8 @@ export function ImageGenerationReact({ images, mode = 'static', revealKey = '' }
   }, [effectMode, safeRevealKey, shouldReveal, sourceSignature])
 
   if (effectMode === 'static') return fallback
-  if (!supportsWebGL()) return fallback
   if (showStaticPreview) return fallback
+  if (!supportsWebGL()) return fallback
 
   return React.createElement(
     ImageGenerationErrorBoundary,
