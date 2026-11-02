@@ -59,7 +59,7 @@ jobs:
 
   mirror:
     if: vars.COS_RELEASE_ENABLED == 'true' && inputs.verify_access_only != true
-    runs-on: ubuntu-latest
+    runs-on: macos-14
     timeout-minutes: 45
     env:
       GH_TOKEN: ${{ github.token }}
