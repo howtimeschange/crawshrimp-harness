@@ -171,7 +171,9 @@ test('Office ZIP parser rejects malformed ZIP64 and native converter renders a g
   const malformed = malformedZip64(valid)
   assert.throws(() => fflate.unzipSync(malformed), /zip|invalid|extra/i)
   const office = await load('@deepseek-ai/libreoffice-kit')
-  const converter = await office.createConverter({ fontMetadataCacheDirectory: false, fontDirectories: [], fontFallbacks: [], initialFontFamilies: [], timeoutMs: 10000 })
+  // The Linux WASM engine needs imported fonts; native engines can otherwise
+  // mask an empty font import by using fonts managed by the operating system.
+  const converter = await office.createConverter({ fontMetadataCacheDirectory: false, timeoutMs: 10000 })
   t.after(() => converter.dispose())
   const inputPath = join(directory, 'fixture.docx'), outputPath = join(directory, 'fixture.pdf')
   await writeFile(inputPath, valid)

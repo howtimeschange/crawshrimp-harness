@@ -96,6 +96,13 @@ jobs:
       - name: Patch DSH runtime before integration tests
         run: node integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs
 
+      - name: Install fonts for Office conversion tests
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends fonts-dejavu-core
+          test -s /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+
       - name: Run integrations tests
         env:
           CRAWSHRIMP_SECURITY_CLI_ROOT: ${{ github.workspace }}/skills/cli
