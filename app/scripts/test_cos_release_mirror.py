@@ -408,7 +408,7 @@ class CosUploadTests(unittest.TestCase):
         self.client.create_multipart_upload.assert_not_called()
 
     def test_large_asset_preserves_bytes_md5_and_order_without_listing_remote_uploads(self):
-        data = b'A' * (8 * 1024 * 1024) + b'B' * (8 * 1024 * 1024) + b'C' * 17
+        data = b'A' * (1024 * 1024) + b'B' * (1024 * 1024) + b'C' * 17
         item, received = self.item(data), {}
         second_started = threading.Event()
         def upload(**kwargs):
@@ -426,7 +426,7 @@ class CosUploadTests(unittest.TestCase):
         self.client.upload_part.side_effect = upload
         self.store.upload(item)
         self.assertEqual(b''.join(received[n] for n in sorted(received)), data)
-        self.assertEqual([len(received[n]) for n in sorted(received)], [8 * 1024 * 1024, 8 * 1024 * 1024, 17])
+        self.assertEqual([len(received[n]) for n in sorted(received)], [1024 * 1024, 1024 * 1024, 17])
         self.assertEqual(self.client.create_multipart_upload.call_args.kwargs['Metadata'],
                          {'x-cos-meta-sha256': item['sha256']})
         self.assertEqual(self.client.complete_multipart_upload.call_args.kwargs['MultipartUpload'],
@@ -434,7 +434,7 @@ class CosUploadTests(unittest.TestCase):
         self.client.abort_multipart_upload.assert_not_called()
 
     def test_failed_part_aborts_only_the_new_upload_and_never_completes(self):
-        item = self.item(b'A' * (8 * 1024 * 1024 + 1))
+        item = self.item(b'A' * (1024 * 1024 + 1))
         failure = RuntimeError('part upload disconnected')
         self.client.upload_part.side_effect = failure
         with self.assertRaises(RuntimeError) as caught:
@@ -445,7 +445,7 @@ class CosUploadTests(unittest.TestCase):
             Bucket='release-bucket', Key=item['key'], UploadId='new-upload-only')
 
     def test_failed_completion_preserves_error_even_if_abort_also_fails(self):
-        item = self.item(b'A' * (8 * 1024 * 1024 + 1))
+        item = self.item(b'A' * (1024 * 1024 + 1))
         self.client.upload_part.return_value = {'ETag': 'part-etag'}
         failure = RuntimeError('completion response lost')
         self.client.complete_multipart_upload.side_effect = failure
@@ -457,7 +457,7 @@ class CosUploadTests(unittest.TestCase):
             Bucket='release-bucket', Key=item['key'], UploadId='new-upload-only')
 
     def test_failed_initiation_does_not_abort_any_existing_upload(self):
-        item = self.item(b'A' * (8 * 1024 * 1024 + 1))
+        item = self.item(b'A' * (1024 * 1024 + 1))
         self.client.create_multipart_upload.side_effect = RuntimeError('initiate denied')
         with self.assertRaisesRegex(RuntimeError, 'initiate denied'):
             self.store.upload(item)
@@ -466,7 +466,7 @@ class CosUploadTests(unittest.TestCase):
         self.client.abort_multipart_upload.assert_not_called()
 
     def test_truncated_file_cannot_complete_or_publish_partial_bytes(self):
-        item = self.item(b'A' * (8 * 1024 * 1024 + 1))
+        item = self.item(b'A' * (1024 * 1024 + 1))
         self.path.write_bytes(b'A')
         with self.assertRaisesRegex(ValueError, 'changed during multipart upload'):
             self.store.upload(item)

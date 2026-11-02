@@ -242,7 +242,7 @@ class SdkContractTests(LocalCosCase):
         self.assertEqual(self.actions(), ['PutObject', 'HeadObject'])
 
     def test_large_object_real_sdk_fresh_multipart_md5_order_and_readback(self):
-        data = b'A' * (8 * 1024 * 1024) + b'B' * 19
+        data = b'A' * (1024 * 1024) + b'B' * 19
         item = self.item(data)
         self.store.upload(item)
         self.assertEqual(self.server.objects[item['key']][0], data)
@@ -254,7 +254,7 @@ class SdkContractTests(LocalCosCase):
         self.assertEqual(self.server.uploads, {})
 
     def test_part_failure_aborts_then_clean_retry_preserves_bytes(self):
-        item = self.item(b'A' * (8 * 1024 * 1024 + 1))
+        item = self.item(b'A' * (1024 * 1024 + 1))
         self.server.fail_action, self.server.fail_count = 'UploadPart', 1
         with self.assertRaises(CosServiceError):
             self.store.upload(item)
@@ -266,7 +266,7 @@ class SdkContractTests(LocalCosCase):
         self.assertNotIn('DeleteObject', self.actions())
 
     def test_restart_ignores_uncommitted_upload_without_listing_or_aborting_it(self):
-        item = self.item(b'A' * (8 * 1024 * 1024 + 1))
+        item = self.item(b'A' * (1024 * 1024 + 1))
         stale = {'key': item['key'], 'parts': {1: b'interrupted bytes'}, 'metadata': {}}
         self.server.uploads['interrupted-process-upload'] = stale
         self.store.upload(item)
@@ -278,7 +278,7 @@ class SdkContractTests(LocalCosCase):
 
     def test_sdk_transient_part_retry_keeps_md5_and_completes_same_upload(self):
         client = CosS3Client(self.client._conf, retry=1, session=self.session)
-        item = self.item(b'A' * (8 * 1024 * 1024 + 1))
+        item = self.item(b'A' * (1024 * 1024 + 1))
         self.server.fail_action, self.server.fail_count = 'UploadPart', 1
         mirror.CosStore(client, BUCKET).upload(item)
         self.assertEqual(self.server.objects[item['key']][0], Path(item['path']).read_bytes())
@@ -288,7 +288,7 @@ class SdkContractTests(LocalCosCase):
         self.assertNotIn('ListMultipartUploads', self.actions())
 
     def test_lost_completion_response_is_read_back_and_never_overwrites_on_retry(self):
-        item = self.item(b'A' * (8 * 1024 * 1024 + 1))
+        item = self.item(b'A' * (1024 * 1024 + 1))
         self.server.lose_completion_response = True
         with self.assertRaises(CosServiceError):
             self.store.upload(item)

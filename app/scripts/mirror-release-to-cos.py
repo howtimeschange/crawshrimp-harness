@@ -223,7 +223,7 @@ class CosStore:
         headers = {"StorageClass": "STANDARD", "CacheControl": "public, max-age=31536000, immutable",
                    "ContentDisposition": f'attachment; filename="{item["name"]}"',
                    "Metadata": {"x-cos-meta-sha256": item["sha256"]}}
-        path, part_size = Path(item["path"]), 8 * 1024 * 1024
+        path, part_size = Path(item["path"]), 1024 * 1024
         if item["size"] <= part_size and not force_multipart:
             with path.open("rb") as source:
                 self.client.put_object(Bucket=self.bucket, Key=item["key"], Body=source, EnableMD5=True, **headers)
@@ -250,7 +250,7 @@ class CosStore:
             return {"PartNumber": number, "ETag": etag}
 
         try:
-            # Workers read their own slices: at most four 8MB chunks are resident.
+            # Workers read their own slices: at most four 1MB chunks are resident.
             with ThreadPoolExecutor(max_workers=4) as pool:
                 parts = list(pool.map(upload_part, range(1, part_count + 1)))
             self.client.complete_multipart_upload(Bucket=self.bucket, Key=item["key"], UploadId=upload_id,
@@ -338,7 +338,7 @@ def main():
         from qcloud_cos import CosConfig, CosS3Client
         client = CosS3Client(CosConfig(Region=args.region, SecretId=os.environ["TENCENT_SECRET_ID"],
                                       SecretKey=os.environ["TENCENT_SECRET_KEY"],
-                                      Token=os.environ.get("TENCENT_TOKEN"), Scheme="https"))
+                                      Token=os.environ.get("TENCENT_TOKEN"), Scheme="https", Timeout=60))
         store = CosStore(client, args.bucket)
         report = (verify_upload_path(plan, store, verify_public_file) if args.upload_probe_only else
                   publish(plan, store, verify_public_range))
