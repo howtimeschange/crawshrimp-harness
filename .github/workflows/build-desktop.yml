@@ -113,13 +113,6 @@ jobs:
       - name: Run Tmall CLI tests
         run: node scripts/test-collection.mjs run tmall-cli
 
-      - name: Run app tests
-        working-directory: app
-        run: npm test
-
-      - name: Run adapter JavaScript tests
-        run: node scripts/test-collection.mjs run adapters
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -127,6 +120,13 @@ jobs:
 
       - name: Install Python deps
         run: python -m pip install -r core/requirements.txt -r tests/requirements.txt
+
+      - name: Run app tests
+        working-directory: app
+        run: npm test
+
+      - name: Run adapter JavaScript tests
+        run: node scripts/test-collection.mjs run adapters
 
       - name: Run Python tests
         env:

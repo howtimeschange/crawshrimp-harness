@@ -6,6 +6,8 @@ const { execFile } = require('node:child_process')
 const { promisify } = require('node:util')
 const { createManagedAccount } = require('./managedAccount')
 const execFileAsync = promisify(execFile)
+const localPython = path.resolve(__dirname, '../../venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
+const python = process.env.PYTHON || (fs.existsSync(localPython) ? localPython : process.platform === 'win32' ? 'python' : 'python3')
 
 test('candidate queue receipts cross broker and Python into the workbench without any POST', async t => {
   const root = path.resolve(__dirname, '../..'), dir = fs.mkdtempSync(path.join(os.tmpdir(), 'image-queue-receipt-'))
@@ -38,7 +40,7 @@ test('candidate queue receipts cross broker and Python into the workbench withou
   t.after(() => { account.dispose(); fs.rmSync(dir, { recursive: true, force: true }) })
   await account.run('status')
   const py = `import json,sys\nfrom unittest.mock import patch\nfrom core import ai_image_service, data_sink\nfrom core.managed_models import session\ndirectory, count = sys.argv[1], int(sys.argv[2])\nwith patch('core.runtime_paths.data_root', return_value=__import__('pathlib').Path(directory)):\n data_sink.init_db()\n job=data_sink.create_ai_image_job({'model_key':'custom-managed-openai/gpt-image-2'})\n data_sink.update_ai_image_job(job['job_uid'],{'summary':{'runs':[{'run_uid':'run','managed_owner_id':'fixture-owner','managed_request_id':'${id}'}]}})\n print(json.dumps([ai_image_service.trace_managed_image_request(job['job_uid'],'run') for _ in range(count)]))\n`
-  const { stdout } = await execFileAsync(path.join(root, 'venv/bin/python'), ['-c', py, dir, String(cases.length)], { cwd: root, env: { ...process.env, CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH: 'fixture-epoch' } })
+  const { stdout } = await execFileAsync(python, ['-c', py, dir, String(cases.length)], { cwd: root, env: { ...process.env, CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH: 'fixture-epoch' } })
   const traces = JSON.parse(stdout)
   assert.equal(calls.length, cases.length)
   assert.deepEqual(traces.map(v => v.state), cases.map(v => v.state))
@@ -103,7 +105,7 @@ test('client timeout before and after simulated dispatch keeps one original rece
   t.after(() => { account.dispose(); fs.rmSync(dir, { recursive: true, force: true }) })
   await account.run('status')
   const py = `import json,sys,time\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom core import ai_image_service,data_sink,managed_models,image_providers\nfrom core.image_providers import CompatibleImageClient\ndirectory=Path(sys.argv[1])\nwith patch('core.runtime_paths.data_root',return_value=directory):\n data_sink.init_db()\n s=managed_models.session()\n p={'id':'custom-managed-openai','name':'fixture','protocol':'openai','base_url':s['baseURL']+'/v1','models':['gpt-image-2']}\n settings={'ai.image.custom_providers':[p],'ai.image.custom.custom-managed-openai.api_key':s['brokerToken']}\n original=image_providers._compatible_transport\n def short(*args,**kwargs):\n  kwargs['timeout']=0.10\n  return original(*args,**kwargs)\n output=[]\n with patch('core.managed_models.image_providers',return_value=[p]),patch('core.image_providers._compatible_transport',side_effect=short):\n  for prompt in ('before-dispatch','after-dispatch','queue-expired'):\n   job=data_sink.create_ai_image_job({'model_key':'custom-managed-openai/gpt-image-2','prompt':prompt,'params':{'size':'1024x1024'}})\n   result=ai_image_service.run_job_with_one_xm(job['job_uid'],settings=settings)\n   run=data_sink.get_ai_image_job(job['job_uid'])['summary']['runs'][-1]\n   assert not result['ok'] and run['error_code']=='UNKNOWN_SUBMIT_RESULT'\n   first=ai_image_service.trace_managed_image_request(job['job_uid'],run['run_uid'])\n   try: ai_image_service.retry_workbench_run(job['job_uid'],run['run_uid'],settings=settings); raise AssertionError('unexpected retry')\n   except ValueError as e: assert '回执未知' in str(e)\n   time.sleep(.5)\n   second=ai_image_service.trace_managed_image_request(job['job_uid'],run['run_uid'])\n   assert first['request_id']==run['managed_request_id']==second['request_id']\n   assert data_sink.get_ai_image_job(job['job_uid'])['summary']['runs'][-1]['error_code']=='UNKNOWN_SUBMIT_RESULT'\n   output.append([first['queue']['state'],second['queue']['state']])\n print(json.dumps(output))\n`
-  const { stdout } = await execFileAsync(path.join(root, 'venv/bin/python'), ['-c', py, dir], { cwd: root, env: { ...process.env, CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH: 'fixture-epoch' }, timeout: 10000 })
+  const { stdout } = await execFileAsync(python, ['-c', py, dir], { cwd: root, env: { ...process.env, CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH: 'fixture-epoch' }, timeout: 10000 })
   const observed = JSON.parse(stdout)
   assert.ok(['waiting', 'not_dispatched'].includes(observed[0][0]))
   assert.ok(['running', 'unknown'].includes(observed[1][0]))
