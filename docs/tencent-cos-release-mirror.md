@@ -16,7 +16,7 @@ GitHub Release 保存原始正式版与签名包。`Build Desktop App` 完成正
 1. 回查指定版本为非草稿、非预发布的 `vX.Y.Z` 正式版。
 2. 下载全部 10 个原始资产，验证完整文件清单、GitHub SHA256、更新文件 SHA512、平台与版本。
 3. 上传到 `harness/releases/vX.Y.Z/<原始文件名>`。分块上传开启 MD5 校验，回读长度和 SHA256 属性，并通过公开地址核对 Range 下载内容。
-   大于 1MB 的文件使用新的分块上传 ID、1MB 分块及最多 4 个并发，单次请求超时 60 秒；不复用 SDK 的历史断点续传查询，避免额外要求桶级 `ListMultipartUploads` 权限。失败仅取消本次未完成的上传，不删除已存在对象。重跑仍通过 HEAD + 长度/SHA256 复用已经完整验证的对象。
+   大于 1MB 的文件使用新的分块上传 ID、1MB 分块及最多 64 个并发，单次请求超时 60 秒；不复用 SDK 的历史断点续传查询，避免额外要求桶级 `ListMultipartUploads` 权限。失败仅取消本次未完成的上传，不删除已存在对象。重跑仍通过 HEAD + 长度/SHA256 复用已经完整验证的对象。
 4. 所有文件成功后才更新 `harness/latest/latest.yml`、`latest-mac.yml`；两份文件引用固定版本的 COS 绝对 URL，保留 SHA512。
 5. 最后发布 `harness/latest/release.json`，官网据此更新国内下载按钮。GitHub Release 说明追加国内下载链接。
 
@@ -107,3 +107,5 @@ COS 契约测试使用固定版本的真实 SDK 和仅监听 `127.0.0.1` 的内�
 镜像任务使用与正式 macOS 构建相同的 `macos-14` 托管运行器，以更换 Ubuntu 托管运行器到广州 COS 的跨境出口。原运行器的 1MiB 实测耗时不满足整批安装包的 CI 时限；镜像仍先验证真实完整分片，权限、原始资产和保留规则不变。本地 macOS 已通过全部 55 项 COS 契约回归。
 
 `EnableOldDomain=False` 必须同时设置 `EnableInternalDomain=False`，否则 SDK 1.9.44 默认选择外部 CI 无法访问的 `cos-internal` 地址。CLI 契约测试使用真实 `CosConfig` 断言最终 HTTPS 公网对象地址，防止再次把内网地址当成公网传输失败。
+
+macOS 运行器 `41464102669` 的公网完整 1MiB 上传探针为 25.865 秒，4 并发下约 3 分 40 秒仍只推进到第 16 个分片。为验证并行连接能否改善总吞吐，镜像改为 64 个有界上传工作线程及匹配连接池；每个活动分片为 1MiB，发布前仍需完整上传、哈希与公开下载验证。

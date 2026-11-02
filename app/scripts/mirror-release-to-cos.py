@@ -18,6 +18,7 @@ import urllib.request
 STABLE_TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
 REFERENCE = re.compile(r"^(\s*(?:-\s*)?(?:url|path):\s*)(\S+?)(\s*)$")
 PART_SIZE = 1024 * 1024
+UPLOAD_WORKERS = 64
 
 
 def version_tuple(tag):
@@ -290,8 +291,8 @@ class CosStore:
         upload_id = self.client.create_multipart_upload(Bucket=self.bucket, Key=item["key"], **headers)["UploadId"]
 
         try:
-            # Workers read their own slices: at most four 1MB chunks are resident.
-            with ThreadPoolExecutor(max_workers=4) as pool:
+            # Workers read their own slices; active part buffers are bounded by UPLOAD_WORKERS.
+            with ThreadPoolExecutor(max_workers=UPLOAD_WORKERS) as pool:
                 parts = list(pool.map(lambda number: self._upload_part(item, upload_id, number),
                                       range(1, part_count + 1)))
             self.client.complete_multipart_upload(Bucket=self.bucket, Key=item["key"], UploadId=upload_id,
@@ -384,7 +385,8 @@ def main():
         client = CosS3Client(CosConfig(Region=args.region, SecretId=os.environ["TENCENT_SECRET_ID"],
                                       SecretKey=os.environ["TENCENT_SECRET_KEY"],
                                       Token=os.environ.get("TENCENT_TOKEN"), Scheme="https", Timeout=60,
-                                      EnableOldDomain=False, EnableInternalDomain=False))
+                                      EnableOldDomain=False, EnableInternalDomain=False,
+                                      PoolConnections=UPLOAD_WORKERS, PoolMaxSize=UPLOAD_WORKERS))
         store = CosStore(client, args.bucket)
         report = (verify_upload_path(plan, store, verify_public_file) if args.upload_probe_only else
                   publish(plan, store, verify_public_range))
