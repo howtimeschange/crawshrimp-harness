@@ -105,3 +105,5 @@ COS 契约测试使用固定版本的真实 SDK 和仅监听 `127.0.0.1` 的内�
 真实运行 `41460464629` 的完整 1MiB 探针成功，耗时 83.728 秒；完整安装包约 4 分 43 秒只传到第 16 个 1MiB 分片，推算整批文件超出 45 分钟 CI 和一小时凭据时限。SDK 上传端改用官方 `EnableOldDomain=False` 的 `tencentcos.cn` 入口，保留流式分块、校验、权限及公开下载地址，不启用收费上传加速。
 
 镜像任务使用与正式 macOS 构建相同的 `macos-14` 托管运行器，以更换 Ubuntu 托管运行器到广州 COS 的跨境出口。原运行器的 1MiB 实测耗时不满足整批安装包的 CI 时限；镜像仍先验证真实完整分片，权限、原始资产和保留规则不变。本地 macOS 已通过全部 55 项 COS 契约回归。
+
+`EnableOldDomain=False` 必须同时设置 `EnableInternalDomain=False`，否则 SDK 1.9.44 默认选择外部 CI 无法访问的 `cos-internal` 地址。CLI 契约测试使用真实 `CosConfig` 断言最终 HTTPS 公网对象地址，防止再次把内网地址当成公网传输失败。

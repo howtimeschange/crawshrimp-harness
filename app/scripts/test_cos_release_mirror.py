@@ -247,7 +247,8 @@ class MirrorTests(unittest.TestCase):
                 '--bucket', 'release-bucket', '--region', 'ap-guangzhou', '--base-url', BASE,
                 '--skip-cleanup', '--output', str(output)]
         public_bodies = [*plan['metadata'].values(), json.dumps(plan['manifest']).encode()]
-        sdk = SimpleNamespace(CosConfig=mock.Mock(), CosS3Client=mock.Mock())
+        from qcloud_cos import CosConfig
+        sdk = SimpleNamespace(CosConfig=CosConfig, CosS3Client=mock.Mock())
         with mock.patch('sys.argv', argv), mock.patch.dict('sys.modules', {'qcloud_cos': sdk}), \
              mock.patch.dict(mirror.os.environ, {'TENCENT_SECRET_ID': 'fake-id', 'TENCENT_SECRET_KEY': 'fake-key'}), \
              mock.patch.object(mirror.subprocess, 'run'), mock.patch.object(mirror, 'build_plan', return_value=plan), \
@@ -256,6 +257,10 @@ class MirrorTests(unittest.TestCase):
              mock.patch.object(mirror.urllib.request, 'urlopen', side_effect=[io.BytesIO(b) for b in public_bodies]), \
              mock.patch('builtins.print'):
             mirror.main()
+        config = sdk.CosS3Client.call_args.args[0]
+        self.assertEqual(config.uri(bucket='crawshrimp-harness-releases-1252445586',
+                                    path='harness/latest/release.json'),
+                         'https://crawshrimp-harness-releases-1252445586.cos.ap-guangzhou.tencentcos.cn/harness/latest/release.json')
         result = json.loads(output.read_text())
         self.assertTrue(result['promoted'])
         self.assertTrue(result['cleanup_skipped'])
