@@ -581,10 +581,15 @@ function resolveCrawshrimpDataDir() {
 }
 
 let dataDirectoryReady = null
+let desktopOnboarding = null
 function initializeDataDirectory() {
   if (resolvedCrawshrimpDataDir) return Promise.resolve()
   if (!dataDirectoryReady) {
     const primary = resolveCrawshrimpDataDir()
+    desktopOnboarding ||= require('./desktopOnboarding').createDesktopOnboarding({
+      file: path.join(app.getPath('userData'), 'onboarding-v1.json'),
+      existingInstallation: fs.existsSync(getDesktopConfigPath()) || hasLegacyRuntimeData(primary),
+    })
     const candidates = collectCrawshrimpDataDirCandidates({
       primaryDataDir: primary, platform: process.platform,
       legacyDataDir: path.join(app.getPath('home'), '.crawshrimp'),
@@ -2584,7 +2589,16 @@ function desktopAccountAuth() {
   }
   return accountAuth
 }
-secureHandle('account:action', (_, action, input = {}) => desktopAccountAuth().run(action, input))
+secureHandle('account:action', async (_, action, input = {}) => {
+  if (action === 'finish-onboarding') {
+    const state = await desktopAccountAuth().run('status')
+    if (!state.user?.id || !state.models?.some(model => model.kind === 'text')) throw new Error('请先完成账号连接')
+    desktopOnboarding?.complete()
+    return { ...state, onboardingRequired: desktopOnboarding?.required() === true }
+  }
+  const state = await desktopAccountAuth().run(action, input)
+  return { ...state, onboardingRequired: desktopOnboarding?.required() === true }
+})
 const marketplace = require('./marketplace').createMarketplace({
   getClient: () => desktopAccountAuth().getClient(),
   accountState: () => desktopAccountAuth().marketState(),
@@ -2710,7 +2724,12 @@ secureHandle('update:download', async () => {
   return updateService.getStatus()
 })
 secureHandle('update:install', async () => updateCoordinator.requestInstall())
-secureHandle('update:fetch-release-notes', async () => fetchLatestReleaseNotes())
+secureHandle('update:fetch-release-notes', async () => fetchLatestReleaseNotes({
+  updateFeedUrl,
+  preferredSource: updateService.getStatus().downloadSource,
+  version: updateService.getStatus().latestVersion,
+  fetcher: (...args) => require('electron').net.fetch(...args),
+}))
 
 secureHandle('launch-chrome', async (_, customPath) => launchChrome(customPath || ''))
 secureHandle('check-chrome', async () => ({ ok: (await probeChromeCdp()).ok }))

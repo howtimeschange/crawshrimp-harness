@@ -1,6 +1,7 @@
 <template>
   <div
     class="layout"
+    :inert="welcomeVisible"
     :class="{
       'layout-ai-image': currentView === 'ai_image' || currentView === 'ai_video_generation',
       'sidebar-collapsed': effectiveSidebarCollapsed,
@@ -81,6 +82,7 @@
     <main class="content">
       <div class="agent-persist" :aria-hidden="Boolean(activeScript) || currentView === 'settings'" :inert="Boolean(activeScript) || currentView === 'settings'">
         <AgentWebView
+          ref="agentView"
           :active="!activeScript && currentView === 'agent'"
           :theme="effectiveTheme"
           :theme-preference="themePreference"
@@ -96,6 +98,7 @@
           @runtime-session="onRuntimeSession"
           @repair-core="repairCoreService"
           @open-settings="openSettingsPanel"
+          @welcome-visibility="welcomeVisible = $event"
         />
       </div>
       <!-- 覆盖层:其他菜单视图(左偏移让出智能体会话侧边栏) -->
@@ -233,6 +236,8 @@ import {
 } from './utils/theme.mjs'
 
 const authDialogOpen = ref(false)
+const agentView = ref(null)
+const welcomeVisible = ref(false)
 const accountLoginBusy = ref(false)
 const accountLoginError = ref('')
 async function openAccount(authenticated) {
@@ -243,7 +248,7 @@ async function openAccount(authenticated) {
   try {
     const state = await window.cs.accountAction('status')
     if (state.user && !state.user.anonymous) openSettingsPanel('account')
-    else if (state.managed) await window.cs.accountAction(state.pending ? 'reopen' : 'login')
+    else if (state.managed) agentView.value.openLoginWelcome(state)
     else authDialogOpen.value = true
   } catch (error) {
     accountLoginError.value = String(error?.message || '打开登录页失败，请稍后重试。').replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '')

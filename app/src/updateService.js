@@ -298,20 +298,25 @@ const GITHUB_RELEASE_API_MIRROR = String(process.env.CRAWSHRIMP_UPDATE_NOTES_MIR
 const GITHUB_RELEASE_PAGE = 'https://github.com/howtimeschange/crawshrimp-harness/releases/latest'
 
 /** 抓取最新 release 的更新日志(GitHub API → 镜像回退)。 */
-async function fetchLatestReleaseNotes() {
-  const attempts = [
-    GITHUB_RELEASE_API,
-    ...(GITHUB_RELEASE_API_MIRROR ? [GITHUB_RELEASE_API_MIRROR] : []),
-  ]
+async function fetchLatestReleaseNotes({ updateFeedUrl = '', preferredSource = 'github', version = '', fetcher = fetch } = {}) {
+  const target = String(version).replace(/^v/, '')
+  const stableTarget = /^\d+\.\d+\.\d+$/.test(target) ? target : ''
+  const githubUrl = stableTarget ? GITHUB_RELEASE_API.replace('/latest', `/tags/v${stableTarget}`) : GITHUB_RELEASE_API
+  const cosUrl = updateFeedUrl ? new URL('release.json', updateFeedUrl).toString() : ''
+  const attempts = preferredSource === 'cos' && cosUrl ? [cosUrl, githubUrl] : [githubUrl, ...(cosUrl ? [cosUrl] : [])]
+  if (GITHUB_RELEASE_API_MIRROR) attempts.push(GITHUB_RELEASE_API_MIRROR)
   let lastError = ''
   for (const url of attempts) {
     try {
-      const response = await fetch(url, {
+      const response = await fetcher(url, {
         headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'crawshrimp-updater' },
         signal: AbortSignal.timeout(15000),
       })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const release = await response.json()
+      if (release.draft || release.prerelease || (stableTarget && release.tag_name !== `v${stableTarget}`)) {
+        throw new Error('更新说明版本与待下载版本不一致。')
+      }
       const name = String(release?.name || release?.tag_name || '')
       const body = String(release?.body || '')
       return {

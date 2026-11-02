@@ -477,3 +477,27 @@ test('region lookup validates countries and fails closed to default routing', as
   assert.equal(await resolveDownloadCountry(async()=>({ok:true,json:async()=>({country:'evil'})})), '')
   assert.equal(await resolveDownloadCountry(async()=>{ throw new Error('timeout') }), '')
 })
+
+test('release notes follow COS selection and do not require GitHub connectivity', async () => {
+  const { fetchLatestReleaseNotes } = require('./updateService')
+  const urls = []
+  const result = await fetchLatestReleaseNotes({ updateFeedUrl:'https://downloads.example.com/harness/latest/', preferredSource:'cos', version:'2.0.1', fetcher: async url => {
+    urls.push(url)
+    return {ok:true,json:async()=>({tag_name:'v2.0.1',body:'regional update',published_at:'2026-11-02'})}
+  }})
+  assert.equal(result.ok,true)
+  assert.equal(result.body,'regional update')
+  assert.deepEqual(urls,['https://downloads.example.com/harness/latest/release.json'])
+})
+
+test('release note fallback pins the offered version when the COS latest has advanced', async () => {
+  const { fetchLatestReleaseNotes } = require('./updateService')
+  const urls=[]
+  const result=await fetchLatestReleaseNotes({updateFeedUrl:'https://downloads.example.com/harness/latest/',preferredSource:'cos',version:'2.0.1',fetcher:async url=>{
+    urls.push(url)
+    return {ok:true,json:async()=>({tag_name:urls.length===1?'v2.0.2':'v2.0.1',body:'correct version'})}
+  }})
+  assert.equal(result.ok,true)
+  assert.equal(result.body,'correct version')
+  assert.match(urls[1],/\/releases\/tags\/v2\.0\.1$/)
+})

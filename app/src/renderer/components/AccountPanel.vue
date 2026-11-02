@@ -20,7 +20,7 @@
         </template>
         <template v-else>
           <p>登录后使用抓虾提供的文字与图片模型。已有 API Key 可直接在模型设置中配置，无需登录。</p>
-          <button v-if="!state.pending" class="primary" type="button" :disabled="busy" @click="perform('login')">在浏览器中登录</button>
+          <button v-if="!state.pending" class="primary" type="button" :disabled="busy" @click="emit('login')">登录账号</button>
           <template v-else><p role="status">请在系统浏览器中登录并授权此设备。</p><button type="button" @click="perform('cancel')">取消登录</button></template>
           <button type="button" @click="perform('plans')">查看会员套餐</button>
         </template>

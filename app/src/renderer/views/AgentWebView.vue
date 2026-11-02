@@ -137,7 +137,7 @@ const props = defineProps({
   resourceRevision: { type: Number, default: 0 },
 })
 
-const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav', 'runtime-session', 'repair-core', 'open-settings', 'shell-controls-change', 'resource-viewing', 'resource-compact'])
+const emit = defineEmits(['nav-select', 'rail-metrics', 'session-nav', 'runtime-session', 'repair-core', 'open-settings', 'shell-controls-change', 'resource-viewing', 'resource-compact', 'welcome-visibility'])
 
 const resourcesPanel = ref(null)
 const resourcesCompact = ref(false)
@@ -208,17 +208,19 @@ const placeholderStateText = computed(() => (
 ))
 const runtimeNeedsModelKey = ref(false)
 const inlineLlmModalOpen = ref(false)
+const loginWelcomeOpen = ref(false)
 const onboardingDialog = ref(null)
 let onboardingPresented = false
 let accountMenuOpen = false
 let onboardingPreviousFocus
 const onboardingStep = ref('choice')
 watch([inlineLlmModalOpen, onboardingStep], async ([open]) => {
+  emit('welcome-visibility', open)
   if (open) { await nextTick(); focusFirstInDialog(onboardingDialog.value) }
-  else if (props.active) onboardingPreviousFocus?.focus?.()
+  else { await nextTick(); onboardingPreviousFocus?.focus?.() }
 })
 watch(() => props.active, active => {
-  if (!active) { inlineLlmModalOpen.value = false; releaseAccountMenuState() }
+  if (!active) { inlineLlmModalOpen.value = false; loginWelcomeOpen.value = false; releaseAccountMenuState() }
 })
 const onboardingAccount = ref({})
 watch(() => onboardingAccount.value.pending, async () => {
@@ -239,20 +241,26 @@ let onboardingRefreshGeneration = 0
 const completedOnboardingOwners = new Set()
 function onboardingIsComplete(owner) { return completedOnboardingOwners.has(owner) || Boolean(firstRunCompletion(window.localStorage, owner)) }
 function showOnboardingSetup() {
-  if (!props.active) return false
+  if (!props.active && !loginWelcomeOpen.value) return false
   const owner = onboardingAccount.value.user?.id
-  if (!hasManagedTextModel(onboardingAccount.value) || onboardingIsComplete(owner)) return false
+  if (onboardingAccount.value.onboardingRequired !== true || !hasManagedTextModel(onboardingAccount.value) || onboardingIsComplete(owner)) return false
   if (!inlineLlmModalOpen.value) onboardingPreviousFocus = document.activeElement
   if (onboardingStep.value !== 'ready') onboardingStep.value = 'ready'
   inlineLlmModalOpen.value = true
   return true
 }
-function finishOnboarding(mode = 'desktop') {
+async function finishOnboarding(mode = 'desktop') {
   const owner = onboardingAccount.value.user?.id
-  if (!hasManagedTextModel(onboardingAccount.value)) return
-  finishFirstRun(window.localStorage, owner, mode)
-  completedOnboardingOwners.add(owner)
-  inlineLlmModalOpen.value = false
+  if (onboardingBusy.value || !hasManagedTextModel(onboardingAccount.value)) return
+  onboardingBusy.value = true
+  try {
+    onboardingAccount.value = await window.cs.accountAction('finish-onboarding')
+    finishFirstRun(window.localStorage, owner, mode)
+    completedOnboardingOwners.add(owner)
+    inlineLlmModalOpen.value = false
+    loginWelcomeOpen.value = false
+  } catch (err) { onboardingError.value = String(err.message || '保存引导状态失败，请重试') }
+  finally { onboardingBusy.value = false }
 }
 let unsubscribeOnboardingAccount
 async function refreshOnboardingAccount() {
@@ -270,7 +278,7 @@ async function refreshOnboardingAccount() {
     await accountRuntimeSync.setAccount(runtimeIdentity)
     if (refreshGeneration !== onboardingRefreshGeneration) return
     if (hasManagedTextModel(state)) {
-      if (!showOnboardingSetup()) inlineLlmModalOpen.value = false
+      if (!showOnboardingSetup()) { inlineLlmModalOpen.value = false; loginWelcomeOpen.value = false }
       await loadRuntime()
     } else if (!state.pending && state.message) onboardingError.value = state.message
   } catch (err) { if (refreshGeneration === onboardingRefreshGeneration) onboardingError.value = String(err.message || '账号服务暂不可用') }
@@ -291,7 +299,7 @@ function syncRuntimeModelConfiguration(result) {
     onboardingPresented = true
     openInlineLlmModal()
   }
-  if (!needsModelKey && !showOnboardingSetup()) {
+  if (!needsModelKey && !showOnboardingSetup() && !loginWelcomeOpen.value && !onboardingAccount.value.pending) {
     inlineLlmModalOpen.value = false
   }
   if (changed) pushRuntimeModelConfiguration()
@@ -480,6 +488,7 @@ function openInlineLlmModal() {
   if (!props.active || inlineLlmModalOpen.value) return
   // Any entry consumes the one automatic prompt, including iframe-first entry.
   onboardingPresented = true
+  loginWelcomeOpen.value = true
   onboardingPreviousFocus = document.activeElement
   onboardingError.value = ''
   onboardingStep.value = 'choice'
@@ -487,14 +496,32 @@ function openInlineLlmModal() {
   inlineLlmModalOpen.value = true
 }
 
+function openLoginWelcome(state) {
+  if (inlineLlmModalOpen.value) return
+  // The persistent agent owns this full-window welcome even when settings or
+  // another page is visible. Keep that page, session and draft mounted beneath.
+  onboardingRefreshGeneration++
+  onboardingPresented = true
+  loginWelcomeOpen.value = true
+  onboardingPreviousFocus = document.activeElement
+  onboardingAccount.value = state
+  onboardingError.value = ''
+  onboardingStep.value = 'choice'
+  inlineLlmModalOpen.value = true
+}
+defineExpose({ openLoginWelcome })
+
 function closeInlineLlmModal() {
-  if (hasManagedTextModel(onboardingAccount.value)) { finishOnboarding('desktop'); return }
+  if (onboardingBusy.value) return
+  if (onboardingStep.value === 'ready') { void finishOnboarding('desktop'); return }
   if (onboardingAccount.value.pending) void onboardingAction('cancel')
   inlineLlmModalOpen.value = false
+  loginWelcomeOpen.value = false
 }
 
 function openLlmSettings() {
   inlineLlmModalOpen.value = false
+  loginWelcomeOpen.value = false
   emit('open-settings', {
     panelId: 'ai-llm',
   })

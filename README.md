@@ -4,7 +4,7 @@
 
 Crawshrimp Harness 把抓虾桌面应用与 DeepSeek Harness（DSH）组合成一个本地优先的电商运营智能体。DSH Web 会话是唯一主界面；抓虾提供任务、Adapter、文件、浏览器 CDP、媒体、审批和审计能力。
 
-本仓库是独立的 Harness 开发线，不是上游 `crawshrimp` 发布仓的 README 镜像。当前桌面版本为 **0.4.10**，DSH 依赖族精确锁定在 `@deepseek-ai/dsh@0.2.1-rc.2` 与 `@xmanrui/dsh-im@4.11.0`；升级时必须重新验证 Web Profile/RPC、插件和 hash 类名。
+本仓库是独立的 Harness 开发线，不是上游 `crawshrimp` 发布仓的 README 镜像。当前桌面版本为 **0.4.11**，DSH 依赖族精确锁定在 `@deepseek-ai/dsh@0.2.1-rc.2` 与 `@xmanrui/dsh-im@4.11.0`；升级时必须重新验证 Web Profile/RPC、插件和 hash 类名。
 
 ## 合作交流与赞助
 
@@ -40,6 +40,15 @@ Harness 面向个人本地使用，本地功能免登录。个人账号通过 Mo
 - macOS arm64/x64 可构建；Windows unpacked 可在 macOS 验证，NSIS 安装器应在 Windows 构建机生成。
 
 ## 版本记录
+
+### v0.4.11
+
+- 国内 IP 优先腾讯云 COS、海外 IP 优先 GitHub；检查和下载失败自动切换备用源，并校验同一版本的 SHA512。
+- 更新说明跟随下载源读取，固定到待下载版本，支持备用源回退。
+- 未登录时，各入口先进入油画欢迎页，再打开 ModelJetty 授权；登录成功回原页面并保留会话与草稿，老用户不再重复进入首次引导完成页。
+- 正式版自动同步 COS，完整验证成功后清理旧安装包；GitHub 保留历史版本。
+
+完整说明见 [v0.4.11 发布说明](release-notes/v0.4.11.md)。
 
 ### v0.4.10
 
@@ -381,7 +390,7 @@ Office 运行时发布模式见 [Office Runtime On Demand](docs/crawshrimp-harne
 
 独立仓库 `howtimeschange/crawshrimp-harness` 的正式版先发布 GitHub Release，再由 CI 将完整安装包同步到腾讯云 COS。国内下载入口见 [官网下载页](https://harness.crawshrimp.com/download)。安装包保持原始字节、签名与 SHA256/SHA512 校验信息，GitHub Release 保留作为原始来源与回退。
 
-替换发布的 v0.4.10 起，国内 IP 优先腾讯云 COS、海外 IP 优先 GitHub；更新检查或安装包下载失败时切换备用源。已安装旧版 0.4.10 的用户须手动覆盖安装本次包，或通过 GitHub 更新到后续 v0.4.11 才能获得双源能力。所有下载继续验证原始签名与 SHA512。COS 只保留最新正式版，GitHub 保留历史版本。本仓构建不发布到 `https://updates.crawshrimp.com/`，也不刷新主项目 `desktop-latest`。
+替换发布的 v0.4.10 起，国内 IP 优先腾讯云 COS、海外 IP 优先 GitHub；更新检查或安装包下载失败时切换备用源。已安装旧版 0.4.10 的用户须手动覆盖安装本次包，或通过 GitHub 更新到 v0.4.11 才能获得双源能力。所有下载继续验证原始签名与 SHA512。COS 只保留最新正式版，GitHub 保留历史版本。本仓构建不发布到 `https://updates.crawshrimp.com/`，也不刷新主项目 `desktop-latest`。
 
 同步流程、补传当前正式版与权限配置见 [腾讯云 COS 发布镜像](docs/tencent-cos-release-mirror.md)。
 

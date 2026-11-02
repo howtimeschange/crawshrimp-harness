@@ -181,3 +181,9 @@ Rollback evidence:
 - v0.4.10 replacement requested by owner; add dual-source configuration and retain updater race fix.
 - v0.4.11 follows local installation of replaced v0.4.10 to exercise a real signed update.
 - Acceptance evidence is tracked in the task checkpoint until release and local readback complete.
+
+## v0.4.11 Version Decision (2026-11-02)
+
+- Scope: PATCH, explicitly requested by release owner after the replaced v0.4.10 installer is downloaded locally.
+- Rationale: maintain the existing desktop updater; add source-aware version-pinned release notes and verify a real v0.4.10 to v0.4.11 update. No new capability family or architecture change.
+- Formal tag must follow the local v0.4.10 download gate; current release evidence is recorded in the task checkpoint.

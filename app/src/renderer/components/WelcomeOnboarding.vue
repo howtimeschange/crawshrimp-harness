@@ -8,7 +8,7 @@
           <h1 id="inline-llm-modal-title">准备好了，开始吧</h1>
           <p class="welcome-intro">{{ account.user?.name ? `${account.user.name}，欢迎来到抓虾。` : '欢迎来到抓虾。' }}</p>
           <p class="setup-summary">{{ ['plus','pro'].includes(account.plan) || account.paidModelAccess === true ? 'Gemini、GPT 和 DeepSeek 已解锁，使用时从账户额度扣费。' : 'Gemini 可免费使用；订阅 Plus / Pro 或充值永久额度（¥10 起）可解锁 GPT 和 DeepSeek。' }}</p>
-          <button class="welcome-primary" type="button" @click="$emit('finish', 'desktop')">开始使用 <IconArrowRight :size="18" aria-hidden="true" /></button>
+          <button class="welcome-primary" type="button" :disabled="busy" @click="$emit('finish', 'desktop')">开始使用 <IconArrowRight :size="18" aria-hidden="true" /></button>
           <p class="setup-permission">需要使用电脑权限时，会先征得你的同意。</p>
         </div>
         <div v-else-if="step === 'choice'" key="choice" class="welcome-content choice-content">
@@ -56,7 +56,7 @@
         </div>
       </Transition>
       <p v-if="error" class="welcome-error" role="alert">{{ error }}</p>
-      <footer class="welcome-footer"><button type="button" @click="$emit('close')">暂时跳过 <IconArrowRight :size="14" aria-hidden="true" /></button></footer>
+      <footer class="welcome-footer"><button type="button" :disabled="busy" @click="$emit('close')">暂时跳过 <IconArrowRight :size="14" aria-hidden="true" /></button></footer>
     </div>
     <aside class="welcome-art" aria-label="绿色水面与橙色小舟的原创画作">
       <img :src="welcomeArt" alt="阳光落在绿色湖面上，一只橙色小舟停在涟漪之间。" />

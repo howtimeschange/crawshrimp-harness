@@ -168,6 +168,37 @@ jobs:
           PY
           gh release edit "${RELEASE_TAG}" --notes-file release-notes-cos.md
 
+      - name: Remove retired COS links from historical releases
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, re, subprocess
+          result = json.load(open('mirror-result.json'))
+          repository = __import__('os').environ['GITHUB_REPOSITORY']
+          version = lambda tag: tuple(map(int, tag[1:].split('.')))
+          pages = json.loads(subprocess.check_output(['gh', 'api', f'repos/{repository}/releases?per_page=100', '--paginate', '--slurp']))
+          tags = sorted({release['tag_name'] for page in pages for release in page
+                         if re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', release['tag_name'])
+                         and version(release['tag_name']) < version(result['tag'])
+                         and '<!-- cos-downloads:start -->' in (release.get('body') or '')
+                         and not release['draft'] and not release['prerelease']})
+          for tag in tags:
+              if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag):
+                  raise ValueError('Unexpected retired version')
+              route = f'repos/{repository}/releases/tags/{tag}'
+              release = json.loads(subprocess.check_output(['gh', 'api', route]))
+              body = release.get('body') or ''
+              updated = re.sub(r'\n?<!-- cos-downloads:start -->.*?<!-- cos-downloads:end -->\n?', '\n', body, flags=re.S).rstrip() + '\n'
+              if updated.strip() == body.strip():
+                  continue
+              path = pathlib.Path('retired-release-notes.md')
+              path.write_text(updated)
+              subprocess.run(['gh', 'release', 'edit', tag, '--notes-file', str(path)], check=True)
+              readback = json.loads(subprocess.check_output(['gh', 'api', route]))
+              if (readback.get('body') or '').strip() != updated.strip():
+                  raise ValueError('Historical release notes readback mismatch')
+              print(f'Retired COS links removed from {tag}; GitHub assets retained')
+          PY
+
       - name: Save mirror readback
         if: always()
         uses: actions/upload-artifact@v4
