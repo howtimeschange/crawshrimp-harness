@@ -119,15 +119,19 @@ class LocalPublishTests(sdk.LocalCosCase):
         self.assertTrue(probe['multipart_exercised'])
         self.assertFalse(probe['promoted'])
         self.assertEqual(probe['deleted_old_objects'], [])
-        self.assertEqual(self.actions().count('UploadPart'), 1)
+        self.assertEqual(self.actions().count('UploadPart'), 2)
         self.assertIn('CompleteMultipartUpload', self.actions())
+        self.assertEqual(probe['large_part_probe']['part_size'], mirror.PART_SIZE)
+        self.assertTrue(probe['large_part_probe']['aborted'])
+        self.assertEqual(self.server.uploads, {})
         self.assertFalse(any(key.startswith('harness/latest/') for key in self.server.objects))
         self.assertEqual(set(self.server.objects), {OLD_KEY, probe['key']})
         self.server.events.clear()
         retry = self.run_cli(upload_probe_only=True)
         self.assertTrue(retry['reused'])
         self.assertFalse(retry['multipart_exercised'])
-        self.assertNotIn('InitiateMultipartUpload', self.actions())
+        self.assertEqual(self.actions().count('InitiateMultipartUpload'), 1)
+        self.assertEqual(self.server.uploads, {})
         self.server.events.clear()
         published = self.run_cli()
         self.assertEqual(published['reused'], [probe['key']])
@@ -140,6 +144,16 @@ class LocalPublishTests(sdk.LocalCosCase):
         with self.assertRaises(urllib.error.HTTPError):
             self.run_cli(upload_probe_only=True)
         self.assertFalse(any(key.startswith('harness/latest/') for key in self.server.objects))
+        self.assertNotIn('DeleteObject', self.actions())
+
+    def test_full_size_probe_abort_failure_blocks_all_feed_publication(self):
+        self.fixture()
+        self.server.fail_action, self.server.fail_count = 'AbortMultipartUpload', 1
+        with self.assertRaises(CosServiceError):
+            self.run_cli(upload_probe_only=True)
+        self.assertFalse(any(key.startswith('harness/latest/') for key in self.server.objects))
+        self.assertEqual(len(self.server.uploads), 1)
+        self.assertEqual(len(self.server.objects), 2)  # Existing release plus verified blockmap only.
         self.assertNotIn('DeleteObject', self.actions())
 
     def test_minimal_probe_never_overwrites_a_conflicting_immutable_object(self):

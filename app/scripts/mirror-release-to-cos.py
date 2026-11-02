@@ -3,17 +3,21 @@
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import sys
+import time
 import urllib.parse
 import urllib.request
 
 
 STABLE_TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
 REFERENCE = re.compile(r"^(\s*(?:-\s*)?(?:url|path):\s*)(\S+?)(\s*)$")
+PART_SIZE = 1024 * 1024
 
 
 def version_tuple(tag):
@@ -136,6 +140,8 @@ def publish(plan, store, verify_public):
         return {"tag": plan["tag"], "promoted": False, "uploaded": [], "reused": [],
                 "assets": [], "skipped": "Only the latest stable release is retained in COS"}
     for item in plan["objects"]:
+        print(json.dumps({"event": "cos_asset_start", "name": item["name"], "size": item["size"]}),
+              file=sys.stderr, flush=True)
         head = store.head(item["key"])
         if head:
             if not same_object(head, item["size"], item["sha256"]):
@@ -147,6 +153,8 @@ def publish(plan, store, verify_public):
                 raise ValueError(f"COS upload verification failed: {item['key']}")
             uploaded.append(item["key"])
         verify_public(f"{plan['base_url']}/{item['key']}", Path(item["path"]))
+        print(json.dumps({"event": "cos_asset_verified", "name": item["name"], "reused": bool(head)}),
+              file=sys.stderr, flush=True)
     # Feed URLs reference immutable versioned files, so each platform can switch independently.
     if promote:
         for name, body in plan["metadata"].items():
@@ -175,9 +183,13 @@ def verify_upload_path(plan, store, verify_public):
         if not same_object(store.head(item["key"]) or {}, item["size"], item["sha256"]):
             raise ValueError(f"COS upload verification failed: {item['key']}")
     verify_public(f"{plan['base_url']}/{item['key']}", Path(item["path"]))
+    large = next((item for item in plan["objects"] if item["size"] > PART_SIZE), None)
+    large_probe = store.probe_multipart(large) if large else None
+    print(json.dumps({"event": "cos_upload_probe_verified", "large_part_probe": large_probe}),
+          file=sys.stderr, flush=True)
     return {"tag": plan["tag"], "key": item["key"], "size": item["size"], "sha256": item["sha256"],
             "multipart_exercised": not bool(head), "reused": bool(head), "promoted": False,
-            "deleted_old_objects": []}
+            "large_part_probe": large_probe, "deleted_old_objects": []}
 
 
 def prune_old_releases(plan, store):
@@ -219,11 +231,52 @@ class CosStore:
         body = self.client.get_object(Bucket=self.bucket, Key=key)["Body"].get_raw_stream().read()
         return json.loads(body)
 
+    def _upload_part(self, item, upload_id, number):
+        offset = (number - 1) * PART_SIZE
+        expected_size = min(PART_SIZE, item["size"] - offset)
+        with Path(item["path"]).open("rb") as source:
+            source.seek(offset)
+            body = source.read(expected_size)
+        if len(body) != expected_size:
+            raise ValueError("Release asset changed during multipart upload")
+        # A file-like body lets requests send small chunks. Passing one large bytes
+        # object makes one socket sendall consume the entire write-timeout budget.
+        with io.BytesIO(body) as stream:
+            response = self.client.upload_part(Bucket=self.bucket, Key=item["key"], UploadId=upload_id,
+                                               PartNumber=number, Body=stream, EnableMD5=True)
+        etag = {key.lower(): value for key, value in response.items()}["etag"]
+        if number % 8 == 0:
+            print(json.dumps({"event": "cos_part_verified", "name": item["name"], "part": number}),
+                  file=sys.stderr, flush=True)
+        return {"PartNumber": number, "ETag": etag}
+
+    def probe_multipart(self, item):
+        """Exercise a full-size part, then abort this new upload without publishing it."""
+        upload_id = self.client.create_multipart_upload(Bucket=self.bucket, Key=item["key"],
+                                                        StorageClass="STANDARD")["UploadId"]
+        started = time.monotonic()
+        try:
+            part = self._upload_part(item, upload_id, 1)
+            with Path(item["path"]).open("rb") as source:
+                expected = hashlib.md5(source.read(PART_SIZE)).hexdigest()
+            if part["ETag"].strip('"') != expected:
+                raise ValueError("COS full-size upload probe ETag differs from the original part MD5")
+        except Exception:
+            try:
+                self.client.abort_multipart_upload(Bucket=self.bucket, Key=item["key"], UploadId=upload_id)
+            except Exception:
+                pass
+            raise
+        # A failed abort blocks full publication; no complete call is made for the probe.
+        self.client.abort_multipart_upload(Bucket=self.bucket, Key=item["key"], UploadId=upload_id)
+        return {"key": item["key"], "part_size": PART_SIZE, "etag_matches_md5": True,
+                "aborted": True, "elapsed_seconds": round(time.monotonic() - started, 3)}
+
     def upload(self, item, force_multipart=False):
         headers = {"StorageClass": "STANDARD", "CacheControl": "public, max-age=31536000, immutable",
                    "ContentDisposition": f'attachment; filename="{item["name"]}"',
                    "Metadata": {"x-cos-meta-sha256": item["sha256"]}}
-        path, part_size = Path(item["path"]), 1024 * 1024
+        path, part_size = Path(item["path"]), PART_SIZE
         if item["size"] <= part_size and not force_multipart:
             with path.open("rb") as source:
                 self.client.put_object(Bucket=self.bucket, Key=item["key"], Body=source, EnableMD5=True, **headers)
@@ -236,31 +289,23 @@ class CosStore:
             raise ValueError("Release asset exceeds the supported multipart part count")
         upload_id = self.client.create_multipart_upload(Bucket=self.bucket, Key=item["key"], **headers)["UploadId"]
 
-        def upload_part(number):
-            offset = (number - 1) * part_size
-            expected_size = min(part_size, item["size"] - offset)
-            with path.open("rb") as source:
-                source.seek(offset)
-                body = source.read(expected_size)
-            if len(body) != expected_size:
-                raise ValueError("Release asset changed during multipart upload")
-            response = self.client.upload_part(Bucket=self.bucket, Key=item["key"], UploadId=upload_id,
-                                               PartNumber=number, Body=body, EnableMD5=True)
-            etag = {key.lower(): value for key, value in response.items()}["etag"]
-            return {"PartNumber": number, "ETag": etag}
-
         try:
             # Workers read their own slices: at most four 1MB chunks are resident.
             with ThreadPoolExecutor(max_workers=4) as pool:
-                parts = list(pool.map(upload_part, range(1, part_count + 1)))
+                parts = list(pool.map(lambda number: self._upload_part(item, upload_id, number),
+                                      range(1, part_count + 1)))
             self.client.complete_multipart_upload(Bucket=self.bucket, Key=item["key"], UploadId=upload_id,
                                                   MultipartUpload={"Part": parts})
         except Exception:
             # Abort only this new, uncommitted upload; never delete an object.
             try:
                 self.client.abort_multipart_upload(Bucket=self.bucket, Key=item["key"], UploadId=upload_id)
-            except Exception:
-                pass  # Keep the original failure; no permission expansion or retry.
+                print(json.dumps({"event": "cos_upload_aborted", "key": item["key"]}),
+                      file=sys.stderr, flush=True)
+            except Exception as abort_error:
+                print(json.dumps({"event": "cos_abort_failed", "key": item["key"],
+                                  "upload_id": upload_id, "error_type": type(abort_error).__name__}),
+                      file=sys.stderr, flush=True)
             raise
 
     def put_bytes(self, key, body, content_type):
@@ -323,7 +368,7 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--upload-probe-only", action="store_true",
-                      help="Verify only one immutable blockmap using multipart; do not promote or clean up")
+                      help="Verify a blockmap and one full-size part; do not promote or clean up")
     parser.add_argument("--skip-cleanup", action="store_true", help="Keep all existing COS objects")
     parser.add_argument("--output", required=True)
     args = parser.parse_args()

@@ -417,7 +417,8 @@ class CosUploadTests(unittest.TestCase):
                 self.assertTrue(second_started.wait(5))
             elif number == 2:
                 second_started.set()
-            received[number] = kwargs['Body']
+            self.assertTrue(hasattr(kwargs['Body'], 'read'))
+            received[number] = kwargs['Body'].read()
             self.assertTrue(kwargs['EnableMD5'])
             self.assertEqual(kwargs['UploadId'], 'new-upload-only')
             self.assertEqual(kwargs['Bucket'], 'release-bucket')

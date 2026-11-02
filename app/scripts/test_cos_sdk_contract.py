@@ -6,6 +6,7 @@ models the checked-in policy subset; it is not a replacement for Tencent IAM.
 import base64
 import fnmatch
 import hashlib
+import http.client
 import importlib.util
 import json
 import logging
@@ -21,7 +22,7 @@ from unittest import mock
 
 import requests
 from qcloud_cos import CosConfig, CosS3Client
-from qcloud_cos.cos_exception import CosServiceError
+from qcloud_cos.cos_exception import CosClientError, CosServiceError
 
 HERE = Path(__file__).parent
 def script(name):
@@ -97,7 +98,15 @@ class Handler(BaseHTTPRequestHandler):
         elif multipart:
             action = {'PUT': 'UploadPart', 'POST': 'CompleteMultipartUpload',
                       'DELETE': 'AbortMultipartUpload'}[self.command]
-        body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
+        remaining = int(self.headers.get('Content-Length', 0))
+        chunks = []
+        while remaining:
+            chunk = self.rfile.read(min(remaining, 65536))
+            if not chunk:
+                return  # A timed-out client closed an incomplete request.
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        body = b''.join(chunks)
         signed = bool(self.headers.get('Authorization'))
         with self.server.lock:
             self.server.events.append({'action': action, 'key': key, 'raw_prefix': raw_prefix,
@@ -216,6 +225,54 @@ class LocalCosCase(unittest.TestCase):
 
 
 class SdkContractTests(LocalCosCase):
+    def test_bounded_socket_writes_reject_large_buffer_but_finish_streamed_parts(self):
+        item = self.item(b'A' * (mirror.PART_SIZE + 1))
+        upload_id = self.client.create_multipart_upload(Bucket=BUCKET, Key=item['key'])['UploadId']
+        real_send = http.client.HTTPConnection.send
+        def bounded_send(connection, data):
+            if isinstance(data, (bytes, bytearray, memoryview)) and len(data) > 65536:
+                raise TimeoutError('local model: one socket write exceeds its time budget')
+            return real_send(connection, data)
+        # Deterministic transport limit avoids depending on OS socket-buffer sizing.
+        # The real SDK still signs, hashes, sends and retries through requests/HTTP.
+        with mock.patch.object(http.client.HTTPConnection, 'send', bounded_send):
+            with self.assertRaises(CosClientError):
+                self.client.upload_part(Bucket=BUCKET, Key=item['key'], UploadId=upload_id,
+                                        PartNumber=1, Body=b'A' * mirror.PART_SIZE, EnableMD5=True)
+            self.client.abort_multipart_upload(Bucket=BUCKET, Key=item['key'], UploadId=upload_id)
+            self.store.upload(item)
+        self.assertEqual(self.server.objects[item['key']][0], Path(item['path']).read_bytes())
+        self.assertEqual(self.server.uploads, {})
+
+    def test_full_size_probe_aborts_new_upload_without_creating_an_object(self):
+        item = self.item(b'A' * (mirror.PART_SIZE + 1))
+        result = self.store.probe_multipart(item)
+        self.assertEqual(result['part_size'], mirror.PART_SIZE)
+        self.assertTrue(result['etag_matches_md5'])
+        self.assertTrue(result['aborted'])
+        self.assertNotIn(item['key'], self.server.objects)
+        self.assertEqual(self.server.uploads, {})
+        self.assertEqual(self.actions(), ['InitiateMultipartUpload', 'UploadPart', 'AbortMultipartUpload'])
+
+    def test_failed_full_size_probe_aborts_and_preserves_part_failure(self):
+        item = self.item(b'A' * (mirror.PART_SIZE + 1))
+        self.server.fail_action, self.server.fail_count = 'UploadPart', 1
+        with self.assertRaises(CosServiceError):
+            self.store.probe_multipart(item)
+        self.assertEqual(self.server.uploads, {})
+        self.assertNotIn(item['key'], self.server.objects)
+        self.assertNotIn('CompleteMultipartUpload', self.actions())
+
+    def test_full_size_probe_never_changes_existing_complete_object(self):
+        item = self.item(b'A' * (mirror.PART_SIZE + 1))
+        existing = (b'existing immutable object', {'x-cos-meta-sha256': 'unchanged'})
+        self.server.objects[item['key']] = existing
+        self.store.probe_multipart(item)
+        self.assertEqual(self.server.objects[item['key']], existing)
+        self.assertEqual(self.server.uploads, {})
+        self.assertNotIn('CompleteMultipartUpload', self.actions())
+        self.assertNotIn('DeleteObject', self.actions())
+
     def test_real_sdk_reproduces_original_implicit_bucket_query_failure(self):
         item = self.item(b'A' * (8 * 1024 * 1024 + 1))
         with self.assertRaises(CosServiceError) as caught:
