@@ -32,8 +32,8 @@ GitHub Actions 使用 `id-token: write` 申请短期 OIDC 令牌，再通过腾�
 - Client ID / audience：`sts.tencentcloudapi.com`
 - 公钥：GitHub OIDC discovery 的 `jwks_uri`，启用自动轮转。
 - 角色：`harness-release-ci`；ARN：`qcs::cam::uin/793301325:roleName/harness-release-ci`。
-- 信任条件：[角色信任策略](tencent-cos-release-trust.json)，仅该仓库 main / 版本 tag；PR 与其他仓库均不匹配。
-- 权限：[最小对象读写策略](tencent-cos-release-policy.json)，仅此桶 `harness/*`，增加仅 `harness/releases/*` 的 DeleteObject，用于用户要求的旧安装包清理；GetBucket 仅允许 `harness/releases/*` 前缀；不含管理桶、修改权限、其他资源权限。
+- 信任条件：[角色信任策略](tencent-cos-release-trust.json)，仅该仓库 main / 版本 tag，使用 GitHub 不可变主体 `repo:howtimeschange@4083536/crawshrimp-harness@1334537867`；PR、其他仓库及回收同名账号/仓库均不匹配。
+- 权限：[最小对象读写策略](tencent-cos-release-policy.json)，仅此桶 `harness/*`，增加仅 `harness/releases/*` 的 DeleteObject，用于用户要求的旧安装包清理；GetBucket 仅允许固定 `harness/releases/` 前缀（COS 条件键必须 URL 编码为 `harness%2Freleases%2F`）；不含管理桶、修改权限、其他资源权限。
 - 公开下载：[匿名只读对象策略](tencent-cos-public-download-policy.json)，由管理员配置，CI 角色无权修改。
 
 配置仓库 Actions Variables：
@@ -63,3 +63,5 @@ python3 -m unittest discover -s app/scripts -p 'test_cos_release_mirror.py'
 ## 地域与双源回退
 
 官网与客户端使用官网边缘节点看到的请求出口国家（Cloudflare `request.cf.country`）。`CN` 优先 COS，其余国家或判断超时优先 GitHub；不使用界面语言或时区代替 IP。开启海外代理时按照代理出口判断。客户端检查和下载失败均尝试另一个源；切换下载源前重新获取更新元数据，必须保持相同版本并继续校验 SHA512。官网按出口国家选择下载源，源站检查失败自动切换，并提供直接备用下载链接。
+
+实际联调注意事项：GitHub 仓库启用了不可变 OIDC subject（可用仓库 OIDC customization REST API 回读）；CAM 条件不能沿用旧的无 ID 主体。COS GetBucket 使用桶资源 `/*`，并以 URL 编码后的精确 prefix 条件约束列目录，上传和清理权限仍保持对象前缀限制。

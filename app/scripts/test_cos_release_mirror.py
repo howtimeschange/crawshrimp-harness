@@ -274,14 +274,14 @@ class OidcTests(unittest.TestCase):
         self.assertEqual(trust['condition']['string_equal']['oidc:aud'], 'sts.tencentcloudapi.com')
         subjects = trust['condition']['string_like']['oidc:sub']
         self.assertEqual(len(subjects), 2)
-        self.assertTrue(all(subject.startswith('repo:howtimeschange/crawshrimp-harness:ref:refs/') for subject in subjects))
+        self.assertTrue(all(subject.startswith('repo:howtimeschange@4083536/crawshrimp-harness@1334537867:ref:refs/') for subject in subjects))
         policy = json.loads((HERE.parent.parent / 'docs/tencent-cos-release-policy.json').read_text())['statement'][0]
         self.assertEqual(policy['resource'], ['qcs::cos:ap-guangzhou:uid/1252445586:crawshrimp-harness-releases-1252445586/harness/*'])
         self.assertTrue(all('Delete' not in action and 'Bucket' not in action and '*' not in action for action in policy['action']))
         statements = json.loads((HERE.parent.parent / 'docs/tencent-cos-release-policy.json').read_text())['statement']
         self.assertEqual(statements[1]['action'], ['name/cos:DeleteObject'])
         self.assertTrue(statements[1]['resource'][0].endswith('/harness/releases/*'))
-        self.assertEqual(statements[2]['condition'], {'string_like': {'cos:prefix': ['harness/releases/*']}})
+        self.assertEqual(statements[2]['condition'], {'string_equal': {'cos:prefix': 'harness%2Freleases%2F'}})
 
 
 if __name__ == "__main__":

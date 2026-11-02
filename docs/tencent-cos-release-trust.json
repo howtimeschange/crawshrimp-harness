@@ -1,18 +1,26 @@
 {
   "version": "2.0",
-  "statement": [{
-    "effect": "allow",
-    "action": "name/sts:AssumeRoleWithWebIdentity",
-    "principal": {"federated": ["qcs::cam::uin/793301325:oidc-provider/github-harness-releases"]},
-    "condition": {
-      "string_equal": {
-        "oidc:aud": "sts.tencentcloudapi.com",
-        "oidc:iss": "https://token.actions.githubusercontent.com"
+  "statement": [
+    {
+      "effect": "allow",
+      "action": "name/sts:AssumeRoleWithWebIdentity",
+      "principal": {
+        "federated": [
+          "qcs::cam::uin/793301325:oidc-provider/github-harness-releases"
+        ]
       },
-      "string_like": {"oidc:sub": [
-        "repo:howtimeschange/crawshrimp-harness:ref:refs/heads/main",
-        "repo:howtimeschange/crawshrimp-harness:ref:refs/tags/v*"
-      ]}
+      "condition": {
+        "string_equal": {
+          "oidc:aud": "sts.tencentcloudapi.com",
+          "oidc:iss": "https://token.actions.githubusercontent.com"
+        },
+        "string_like": {
+          "oidc:sub": [
+            "repo:howtimeschange@4083536/crawshrimp-harness@1334537867:ref:refs/heads/main",
+            "repo:howtimeschange@4083536/crawshrimp-harness@1334537867:ref:refs/tags/v*"
+          ]
+        }
+      }
     }
-  }]
+  ]
 }

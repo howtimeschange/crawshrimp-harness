@@ -19,14 +19,26 @@
     },
     {
       "effect": "allow",
-      "action": ["name/cos:DeleteObject"],
-      "resource": ["qcs::cos:ap-guangzhou:uid/1252445586:crawshrimp-harness-releases-1252445586/harness/releases/*"]
+      "action": [
+        "name/cos:DeleteObject"
+      ],
+      "resource": [
+        "qcs::cos:ap-guangzhou:uid/1252445586:crawshrimp-harness-releases-1252445586/harness/releases/*"
+      ]
     },
     {
       "effect": "allow",
-      "action": ["name/cos:GetBucket"],
-      "resource": ["qcs::cos:ap-guangzhou:uid/1252445586:crawshrimp-harness-releases-1252445586/"],
-      "condition": {"string_like": {"cos:prefix": ["harness/releases/*"]}}
+      "action": [
+        "name/cos:GetBucket"
+      ],
+      "resource": [
+        "qcs::cos:ap-guangzhou:uid/1252445586:crawshrimp-harness-releases-1252445586/*"
+      ],
+      "condition": {
+        "string_equal": {
+          "cos:prefix": "harness%2Freleases%2F"
+        }
+      }
     }
   ]
 }
