@@ -124,8 +124,12 @@ function createUpdateService({
     autoUpdater?.on?.(eventName, handler)
   }
 
-  async function checkForUpdates() {
+  async function checkForUpdates({ manual = true } = {}) {
     ensureSupported()
+    // A focus check must not replace an offered download or an active install
+    // flow with `checking` while the user confirms the next update action.
+    if (state.downloaded || state.status === 'downloading' || state.status === 'installing' ||
+        (!manual && state.status === 'available')) return null
     publish({ status: 'checking', error: '', progress: null, lastCheckedAt: new Date().toISOString() })
     if (usingGitHubFallback) {
       configureUpdater(autoUpdater, updateFeedUrl, log)

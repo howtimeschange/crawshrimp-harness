@@ -62,6 +62,78 @@ test('available update records the time of the automatic check', async () => {
   assert.match(service.getStatus().lastCheckedAt, /^\d{4}-\d{2}-\d{2}T/)
 })
 
+test('a focus-triggered check preserves an offered update while the user confirms download', async () => {
+  const updater = createUpdater()
+  let finishCheck
+  let checks = 0
+  let downloads = 0
+  updater.checkForUpdates = async () => {
+    checks += 1
+    updater.emit('checking-for-update')
+    await new Promise(resolve => { finishCheck = resolve })
+    updater.emit('update-available', { version: '2.0.1' })
+  }
+  updater.downloadUpdate = async () => { downloads += 1 }
+  const service = createService({ autoUpdater: updater })
+  updater.emit('update-available', { version: '2.0.1' })
+
+  const automaticCheck = service.checkForUpdates({ manual: false })
+  try {
+    await assert.doesNotReject(() => service.downloadUpdate())
+    assert.equal(checks, 0)
+    assert.equal(downloads, 1)
+    assert.equal(service.getStatus().status, 'downloading')
+  } finally {
+    finishCheck?.()
+    await automaticCheck
+    service.dispose()
+  }
+})
+
+test('automatic checks preserve download progress and installation readiness', async () => {
+  const updater = createUpdater()
+  let checks = 0
+  updater.checkForUpdates = async () => { checks += 1 }
+  const service = createService({ autoUpdater: updater })
+  updater.emit('update-available', { version: '2.0.1' })
+  await service.downloadUpdate()
+  updater.emit('download-progress', { percent: 45, transferred: 45, total: 100 })
+  let previous = service.getStatus()
+  await service.checkForUpdates({ manual: false })
+  assert.deepEqual(service.getStatus(), previous)
+
+  updater.emit('update-downloaded', { version: '2.0.1' })
+  const transitions = [
+    () => {},
+    () => service.setInstallReadiness({ ready: false, blockers: [{ kind: 'task', id: 'local-wait' }] }),
+    () => service.setInstallReadiness({ ready: true }),
+    () => service.setInstalling(),
+  ]
+  for (const transition of transitions) {
+    transition()
+    previous = service.getStatus()
+    await service.checkForUpdates({ manual: false })
+    assert.deepEqual(service.getStatus(), previous)
+  }
+  assert.equal(checks, 0)
+  service.dispose()
+})
+
+test('manual checks can refresh an offered version before downloading', async () => {
+  const updater = createUpdater()
+  let checks = 0
+  updater.checkForUpdates = async () => {
+    checks += 1
+    updater.emit('update-available', { version: '2.0.2' })
+  }
+  const service = createService({ autoUpdater: updater })
+  updater.emit('update-available', { version: '2.0.1' })
+  await service.checkForUpdates({ manual: true })
+  assert.equal(checks, 1)
+  assert.equal(service.getStatus().latestVersion, '2.0.2')
+  service.dispose()
+})
+
 test('downloaded update becomes waiting or ready only through readiness input', () => {
   const updater = createUpdater()
   const service = createUpdateService({
