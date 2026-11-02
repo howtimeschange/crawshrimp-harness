@@ -12,6 +12,7 @@ function createUpdateService({
   autoUpdater,
   platformSupport,
   updateFeedUrl = '',
+  resolveCountry,
   getAvailableBytes,
   log = console,
   emit,
@@ -20,7 +21,12 @@ function createUpdateService({
   const subscribers = new Set()
   let disposed = false
   let requiredBytes = 0
-  let usingGitHubFallback = false
+  let source = String(updateFeedUrl || '').trim() ? 'cos' : 'github'
+  let sourceOrder = [source, ...(source === 'cos' ? ['github'] : [])]
+  let checking = null
+  let downloading = null
+  let refreshingForDownload = false
+  let handlingSourceOperation = false
 
   const state = {
     status: support.supported ? 'idle' : 'disabled',
@@ -33,6 +39,8 @@ function createUpdateService({
     lastCheckedAt: '',
     downloaded: false,
     manualDownloadUrl: LATEST_RELEASE_URL,
+    downloadSource: source,
+    country: '',
   }
 
   configureUpdater(autoUpdater, updateFeedUrl, log)
@@ -64,9 +72,12 @@ function createUpdateService({
   }
 
   const handlers = {
-    'checking-for-update': () => publish({ status: 'checking', error: '', progress: null }),
+    'checking-for-update': () => {
+      if (!refreshingForDownload) publish({ status: 'checking', error: '', progress: null })
+    },
     'update-available': info => {
       rememberUpdateInfo(info)
+      if (refreshingForDownload) return
       if (!isConfirmedNewerVersion(state.latestVersion)) {
         publish({
           status: 'up-to-date',
@@ -88,7 +99,7 @@ function createUpdateService({
         downloaded: false,
       })
     },
-    'update-not-available': () => publish({
+    'update-not-available': () => !refreshingForDownload && publish({
       status: 'up-to-date',
       error: '',
       progress: null,
@@ -110,7 +121,7 @@ function createUpdateService({
         downloaded: true,
       })
     },
-    error: error => publish({
+    error: error => !handlingSourceOperation && publish({
       status: isNoPublishedUpdateError(error) && !state.downloaded ? 'up-to-date' : 'error',
       progress: null,
       error: isNoPublishedUpdateError(error) && !state.downloaded ? '' : readableError(error),
@@ -124,57 +135,65 @@ function createUpdateService({
     autoUpdater?.on?.(eventName, handler)
   }
 
-  async function checkForUpdates({ manual = true } = {}) {
+  function useSource(next) {
+    if (next === source) return
+    source = next
+    if (next === 'cos') configureUpdater(autoUpdater, updateFeedUrl, log)
+    else autoUpdater.setFeedURL(GITHUB_FALLBACK_FEED)
+    publish({ downloadSource: next })
+  }
+
+  async function checkForUpdates(options = {}) {
     ensureSupported()
+    if (checking) return checking
+    if (downloading) return null
+    checking = performCheck(options)
+    try { return await checking } finally { checking = null }
+  }
+
+  async function performCheck({ manual = true } = {}) {
     // A focus check must not replace an offered download or an active install
     // flow with `checking` while the user confirms the next update action.
     if (state.downloaded || state.status === 'downloading' || state.status === 'installing' ||
         (!manual && state.status === 'available')) return null
     publish({ status: 'checking', error: '', progress: null, lastCheckedAt: new Date().toISOString() })
-    if (usingGitHubFallback) {
-      configureUpdater(autoUpdater, updateFeedUrl, log)
-      usingGitHubFallback = false
+    if (String(updateFeedUrl || '').trim() && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/)/.test(updateFeedUrl)) {
+      const country = typeof resolveCountry === 'function' ? await Promise.resolve().then(resolveCountry).catch(() => '') : 'CN'
+      publish({ country })
+      sourceOrder = country === 'CN' ? ['cos', 'github'] : ['github', 'cos']
     }
+    handlingSourceOperation = true
     try {
-      return await autoUpdater.checkForUpdates()
-    } catch (primaryError) {
-      if (!String(updateFeedUrl || '').trim()) {
-        if (isNoPublishedUpdateError(primaryError) && !state.downloaded) {
-          publish({
-            status: 'up-to-date',
-            error: '',
-            progress: null,
-            lastCheckedAt: new Date().toISOString(),
-          })
-          return null
+      let lastError
+      for (const next of sourceOrder) {
+        try {
+          if (String(updateFeedUrl || '').trim()) useSource(next)
+          return await autoUpdater.checkForUpdates()
+        } catch (error) {
+          lastError = error
+          log?.warn?.(`Update check through ${next} failed; trying remaining source`, error)
         }
-        publish({ status: 'error', error: readableError(primaryError), progress: null })
-        throw primaryError
       }
-
-      try {
-        autoUpdater.setFeedURL(GITHUB_FALLBACK_FEED)
-        usingGitHubFallback = true
-        log?.warn?.('Cloudflare update feed failed; retrying through GitHub', primaryError)
-        return await autoUpdater.checkForUpdates()
-      } catch (fallbackError) {
-        if (isNoPublishedUpdateError(fallbackError) && !state.downloaded) {
-          publish({
-            status: 'up-to-date',
-            error: '',
-            progress: null,
-            lastCheckedAt: new Date().toISOString(),
-          })
-          return null
-        }
-        const error = new Error(`Cloudflare 更新源不可用，GitHub 回退也失败：${readableError(fallbackError)}`)
-        publish({ status: 'error', error: readableError(error), progress: null })
-        throw error
+      if (isNoPublishedUpdateError(lastError) && !state.downloaded) {
+        publish({ status: 'up-to-date', error: '', progress: null, lastCheckedAt: new Date().toISOString() })
+        return null
       }
+      publish({ status: 'error', error: readableError(lastError), progress: null })
+      throw lastError
+    } finally {
+      handlingSourceOperation = false
     }
   }
 
   async function downloadUpdate() {
+    if (downloading) return downloading
+    if (checking) await checking
+    if (downloading) return downloading
+    downloading = performDownload()
+    try { return await downloading } finally { downloading = null }
+  }
+
+  async function performDownload() {
     if (state.status !== 'available' && !(state.status === 'error' && state.latestVersion)) {
       throw new Error('当前没有可下载的桌面更新。')
     }
@@ -184,10 +203,30 @@ function createUpdateService({
         throw new Error(`磁盘空间不足：更新需要 ${formatBytes(requiredBytes)}，当前可用 ${formatBytes(Number(freeBytes))}。`)
       }
       publish({ status: 'downloading', error: '', progress: normalizeProgress({ percent: 0 }) })
-      return await autoUpdater.downloadUpdate()
+      handlingSourceOperation = true
+      try {
+        return await autoUpdater.downloadUpdate()
+      } catch (primaryError) {
+        const alternate = sourceOrder.find(next => next !== source)
+        if (!alternate || primaryError?.code === 'ERR_UPDATER_CANCELLED') throw primaryError
+        const targetVersion = state.latestVersion
+        log?.warn?.(`Update download through ${source} failed; retrying through ${alternate}`, primaryError)
+        useSource(alternate)
+        refreshingForDownload = true
+        let result
+        try { result = await autoUpdater.checkForUpdates() } finally { refreshingForDownload = false }
+        const alternateVersion = String(result?.updateInfo?.version || state.latestVersion)
+        if (alternateVersion !== targetVersion || !isConfirmedNewerVersion(alternateVersion)) {
+          throw new Error('备用源版本已变化，请重新检查更新后下载。')
+        }
+        publish({ status: 'downloading', error: '', progress: normalizeProgress({ percent: 0 }) })
+        return await autoUpdater.downloadUpdate()
+      }
     } catch (error) {
       publish({ status: 'error', error: readableError(error), progress: null })
       throw error
+    } finally {
+      handlingSourceOperation = false
     }
   }
 

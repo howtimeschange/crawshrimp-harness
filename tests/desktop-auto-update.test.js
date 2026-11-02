@@ -25,7 +25,8 @@ test('desktop updater dependency and state service are restored', () => {
   const preload = readRepoFile('app/src/preload.js')
 
   assert.equal(packageJson.dependencies['electron-updater'], '6.8.9')
-  assert.equal(packageJson.crawshrimpUpdateFeedUrl, '')
+  assert.equal(packageJson.crawshrimpUpdateFeedUrl,
+    'https://crawshrimp-harness-releases-1252445586.cos.ap-guangzhou.myqcloud.com/harness/latest/')
   assert.equal(fs.existsSync(updateServicePath), true)
   assert.match(updateService, /autoDownload = false/)
   assert.match(updateService, /autoInstallOnAppQuit = false/)
@@ -410,6 +411,7 @@ test('README documents desktop update install semantics and footer decisions', (
   assert.match(readme, /只有检测到可用更新时才显示 `更新`/)
   assert.match(readme, /具体脚本视图后，侧边栏保持展开/)
   assert.match(readme, /独立仓库 `howtimeschange\/crawshrimp-harness`/)
-  assert.match(readme, /GitHub Release 元数据用于应用内更新/)
+  assert.match(readme, /腾讯云 COS/)
+  assert.match(readme, /GitHub Release.*回退/)
   assert.doesNotMatch(readme, /应用内自动更新当前保持关闭/)
 })

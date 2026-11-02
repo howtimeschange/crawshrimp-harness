@@ -55,6 +55,7 @@ const {
 const { requestBackendHealth } = require('./backendHealth')
 const { configureSingleInstance } = require('./singleInstance')
 const { createUpdateService, fetchLatestReleaseNotes } = require('./updateService')
+const { resolveDownloadCountry } = require('./updateRegion')
 const { createUpdateInstallCoordinator } = require('./updateInstallCoordinator')
 const { createUpdateCheckScheduler } = require('./updateCheckScheduler')
 const { evaluateUpdatePlatform, resolveUpdateFeedUrl } = require('./updatePlatform')
@@ -2368,6 +2369,7 @@ const updateService = createUpdateService({
   autoUpdater,
   platformSupport: updatePlatformSupport,
   updateFeedUrl,
+  resolveCountry: () => resolveDownloadCountry(require('electron').net.fetch),
   getAvailableBytes: () => {
     const stats = fs.statfsSync(app.getPath('userData'))
     return Number(stats.bavail) * Number(stats.bsize)

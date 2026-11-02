@@ -1,0 +1,163 @@
+name: Mirror Desktop Release to Tencent COS
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      verify_access_only:
+        description: 'Only verify OIDC and scoped COS access; do not upload or publish'
+        type: boolean
+        default: false
+      tag:
+        description: 'Published stable tag, for example v0.4.10; blank selects latest'
+        type: string
+        required: false
+
+permissions:
+  contents: write
+  id-token: write
+
+# Serialize every tag and manual backfill, so an older run cannot race a newer promotion.
+concurrency:
+  group: harness-cos-release-mirror
+  cancel-in-progress: false
+
+jobs:
+  verify-access:
+    if: vars.COS_RELEASE_ENABLED == 'true' && inputs.verify_access_only == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      COS_RELEASE_REGION: ${{ vars.COS_RELEASE_REGION }}
+      COS_RELEASE_BUCKET: ${{ vars.COS_RELEASE_BUCKET }}
+      COS_OIDC_PROVIDER: ${{ vars.COS_OIDC_PROVIDER }}
+      COS_ROLE_ARN: ${{ vars.COS_ROLE_ARN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Exchange one-hour credentials
+        run: python3 app/scripts/tencent-oidc-credentials.py
+      - name: Verify scoped list access without modifying storage
+        run: |
+          python3 -m pip install -r app/scripts/cos-release-requirements.txt
+          python3 - <<'PY'
+          import os
+          from qcloud_cos import CosConfig, CosS3Client
+          client = CosS3Client(CosConfig(Region=os.environ['COS_RELEASE_REGION'], SecretId=os.environ['TENCENT_SECRET_ID'], SecretKey=os.environ['TENCENT_SECRET_KEY'], Token=os.environ['TENCENT_TOKEN'], Scheme='https'))
+          response = client.list_objects(Bucket=os.environ['COS_RELEASE_BUCKET'], Prefix='harness/releases/', MaxKeys=1)
+          print('OIDC and scoped COS list verified; no objects modified')
+          PY
+
+  mirror:
+    if: vars.COS_RELEASE_ENABLED == 'true' && inputs.verify_access_only != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REQUESTED_TAG: ${{ inputs.tag }}
+      COS_RELEASE_BUCKET: ${{ vars.COS_RELEASE_BUCKET }}
+      COS_RELEASE_REGION: ${{ vars.COS_RELEASE_REGION }}
+      COS_RELEASE_BASE_URL: ${{ vars.COS_RELEASE_BASE_URL }}
+      COS_OIDC_PROVIDER: ${{ vars.COS_OIDC_PROVIDER }}
+      COS_ROLE_ARN: ${{ vars.COS_ROLE_ARN }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+
+      - name: Resolve published stable release
+        shell: bash
+        run: |
+          set -euo pipefail
+          for value in COS_RELEASE_BUCKET COS_RELEASE_REGION COS_RELEASE_BASE_URL COS_OIDC_PROVIDER COS_ROLE_ARN; do
+            test -n "${!value}" || { echo "::error::Missing repository variable ${value}"; exit 1; }
+          done
+          gh api "repos/${GITHUB_REPOSITORY}/releases/latest" > upstream-latest.json
+          TAG="${REQUESTED_TAG}"
+          if [ -z "${TAG}" ]; then
+            TAG="$(python3 -c 'import json; print(json.load(open("upstream-latest.json"))["tag_name"])')"
+          fi
+          [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo '::error::Only stable vX.Y.Z tags are accepted'; exit 1; }
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" > release.json
+          python3 -c 'import json; r=json.load(open("release.json")); assert r["draft"] is False and r["prerelease"] is False and r["published_at"], "Release is not published and stable"'
+          echo "RELEASE_TAG=${TAG}" >> "${GITHUB_ENV}"
+
+      - name: Download original signed release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets/macos release-assets/windows
+          gh release download "${RELEASE_TAG}" --pattern '*mac*' --dir release-assets/macos
+          gh release download "${RELEASE_TAG}" --pattern '*win*' --pattern 'latest.yml' --dir release-assets/windows
+
+      - name: Test mirror failure paths
+        run: python3 -m unittest discover -s app/scripts -p 'test_cos_release_mirror.py'
+
+      - name: Validate exact release assets and hashes before cloud access
+        run: |
+          python3 app/scripts/mirror-release-to-cos.py \
+            --release-json release.json --latest-release-json upstream-latest.json \
+            --assets-root release-assets --bucket "${COS_RELEASE_BUCKET}" --region "${COS_RELEASE_REGION}" \
+            --base-url "${COS_RELEASE_BASE_URL}" --dry-run --output mirror-plan.json
+
+      - name: Get narrowly scoped short-lived Tencent credentials
+        run: python3 app/scripts/tencent-oidc-credentials.py
+
+      - name: Install official COS SDK
+        run: python3 -m pip install -r app/scripts/cos-release-requirements.txt
+
+      - name: Upload immutable assets, verify downloads, then promote metadata
+        run: |
+          python3 app/scripts/mirror-release-to-cos.py \
+            --release-json release.json --latest-release-json upstream-latest.json \
+            --assets-root release-assets --bucket "${COS_RELEASE_BUCKET}" --region "${COS_RELEASE_REGION}" \
+            --base-url "${COS_RELEASE_BASE_URL}" --output mirror-result.json
+
+      - name: Add verified domestic download links to release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > current-release.json
+          python3 - <<'PY'
+          import json, pathlib, re
+          release = json.load(open('current-release.json'))
+          result = json.load(open('mirror-result.json'))
+          if not result['promoted']:
+              raise SystemExit('Older release skipped; only latest is mirrored')
+          body = re.sub(r'\n?<!-- cos-downloads:start -->.*?<!-- cos-downloads:end -->\n?', '\n', release['body'] or '', flags=re.S).rstrip()
+          lines = ['<!-- cos-downloads:start -->', '### 国内下载（腾讯云 COS）', '']
+          for asset in result['assets']:
+              if asset['name'].endswith(('.dmg', '.exe')):
+                  lines.append(f"- [{asset['name']}]({asset['browser_download_url']})")
+          lines += ['', '安装包与 GitHub 原始文件完全一致，保留原有签名与校验信息。', '<!-- cos-downloads:end -->']
+          pathlib.Path('release-notes-cos.md').write_text(body + '\n\n' + '\n'.join(lines) + '\n')
+          PY
+          gh release edit "${RELEASE_TAG}" --notes-file release-notes-cos.md
+
+      - name: Save mirror readback
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cos-mirror-${{ github.run_id }}
+          path: |
+            mirror-plan.json
+            mirror-result.json
+          if-no-files-found: ignore
+          retention-days: 7

@@ -174,3 +174,10 @@ Rollback evidence:
 - Target: `v0.2.1`, explicitly requested by the release owner.
 - Classification: maintenance release covering provider compatibility, image-result recovery, legacy workflow removal and desktop performance repairs; retain the explicitly requested PATCH version.
 - CI build, installer publication and update metadata readback: pending.
+
+## v0.4.10 replacement / v0.4.11 update verification (2026-11-02)
+
+- Scope: PATCH, explicitly selected by release owner; regional download routing and existing updater maintenance.
+- v0.4.10 replacement requested by owner; add dual-source configuration and retain updater race fix.
+- v0.4.11 follows local installation of replaced v0.4.10 to exercise a real signed update.
+- Acceptance evidence is tracked in the task checkpoint until release and local readback complete.

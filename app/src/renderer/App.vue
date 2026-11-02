@@ -170,7 +170,7 @@
             @runtime-refresh="refreshRuntimeStatus"
             @check-update="retryUpdateCheck"
             @theme-change="setThemePreference"
-            @login="authDialogOpen = true"
+            @login="openAccount(false)"
           />
         </div>
       </div>
@@ -182,6 +182,9 @@
         @resources-changed="resourceRevision += 1"
       />
     </main>
+    <div v-if="accountLoginError" class="account-login-error" role="alert">
+      <span>{{ accountLoginError }}</span><button type="button" :disabled="accountLoginBusy" @click="openAccount(false)">重试登录</button><button type="button" aria-label="关闭登录提示" @click="accountLoginError = ''">关闭</button>
+    </div>
     <AccountDialog v-if="authDialogOpen" @close="authDialogOpen = false" />
     <!-- 更新日志弹窗:更新前查看版本内容并确认「去更新」 -->
     <UpdateChangelogModal
@@ -230,9 +233,21 @@ import {
 } from './utils/theme.mjs'
 
 const authDialogOpen = ref(false)
-function openAccount(authenticated) {
-  if (authenticated) openSettingsPanel('account')
-  else authDialogOpen.value = true
+const accountLoginBusy = ref(false)
+const accountLoginError = ref('')
+async function openAccount(authenticated) {
+  if (authenticated === true) { openSettingsPanel('account'); return }
+  if (accountLoginBusy.value) return
+  accountLoginBusy.value = true
+  accountLoginError.value = ''
+  try {
+    const state = await window.cs.accountAction('status')
+    if (state.user && !state.user.anonymous) openSettingsPanel('account')
+    else if (state.managed) await window.cs.accountAction(state.pending ? 'reopen' : 'login')
+    else authDialogOpen.value = true
+  } catch (error) {
+    accountLoginError.value = String(error?.message || '打开登录页失败，请稍后重试。').replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '')
+  } finally { accountLoginBusy.value = false }
 }
 const currentView = ref('agent')
 const status = ref({
@@ -769,6 +784,8 @@ input, select, textarea { font-family: inherit; }
 </style>
 
 <style scoped>
+.account-login-error { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 48px); padding: 12px 16px; color: var(--text); background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 4px 24px rgb(0 0 0 / .15); }
+.account-login-error button { white-space: nowrap; color: var(--orange-text); background: transparent; border: 0; cursor: pointer; }
 .layout {
   display: grid;
   grid-template-columns: 1fr;

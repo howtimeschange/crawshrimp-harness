@@ -383,3 +383,97 @@ test('configured feed with missing GitHub fallback metadata is treated as up-to-
   assert.equal(service.getStatus().status, 'up-to-date')
   assert.equal(service.getStatus().error, '')
 })
+
+for (const [country, expected] of [['CN', 'generic'], ['US', 'github'], ['', 'github']]) {
+  test(`IP country ${country || 'unknown'} chooses ${expected} first`, async () => {
+    const updater = createUpdater(), feeds = []
+    updater.setFeedURL = value => feeds.push(value)
+    const service = createService({ autoUpdater: updater, updateFeedUrl: 'https://downloads.example.com/', resolveCountry: async () => country })
+    let checked
+    updater.checkForUpdates = async () => { checked = feeds.at(-1).provider }
+    await service.checkForUpdates()
+    assert.equal(checked, expected)
+    assert.equal(service.getStatus().country, country)
+  })
+}
+
+for (const country of ['CN', 'US']) {
+  test(`${country} retries a failed download through the other source`, async () => {
+    const updater = createUpdater(), feeds = [], downloads = []
+    updater.setFeedURL = value => feeds.push(value)
+    updater.checkForUpdates = async () => {
+      updater.emit('checking-for-update')
+      updater.emit('update-available', { version: '2.0.1' })
+      return { updateInfo: { version: '2.0.1' } }
+    }
+    updater.downloadUpdate = async () => {
+      downloads.push(feeds.at(-1).provider)
+      if (downloads.length === 1) { updater.emit('error', new Error('connection reset')); throw new Error('connection reset') }
+      updater.emit('update-downloaded', { version: '2.0.1' })
+      return ['verified-file']
+    }
+    const service = createService({ autoUpdater: updater, updateFeedUrl: 'https://downloads.example.com/', resolveCountry: async () => country })
+    await service.checkForUpdates()
+    assert.deepEqual(await service.downloadUpdate(), ['verified-file'])
+    assert.deepEqual(downloads, country === 'CN' ? ['generic', 'github'] : ['github', 'generic'])
+    assert.equal(service.getStatus().status, 'downloaded')
+  })
+}
+
+test('fallback refuses a different version and leaves download retryable', async () => {
+  const updater = createUpdater()
+  let checks = 0, downloads = 0
+  updater.checkForUpdates = async () => {
+    const info = { version: ++checks === 1 ? '2.0.1' : '2.0.2' }
+    updater.emit('update-available', info)
+    return { updateInfo: info }
+  }
+  updater.downloadUpdate = async () => { downloads++; throw new Error('offline') }
+  const service = createService({ autoUpdater: updater, updateFeedUrl: 'https://downloads.example.com/' })
+  await service.checkForUpdates()
+  await assert.rejects(service.downloadUpdate(), /备用源版本已变化/)
+  assert.equal(downloads, 1)
+  assert.equal(service.getStatus().status, 'error')
+})
+
+test('concurrent manual checks and download cannot race update metadata', async () => {
+  const updater = createUpdater()
+  let finish, checks = 0, downloads = 0
+  updater.checkForUpdates = async () => {
+    checks++
+    await new Promise(resolve => { finish = resolve })
+    updater.emit('update-available', { version: '2.0.1' })
+  }
+  updater.downloadUpdate = async () => { downloads++ }
+  const service = createService({ autoUpdater: updater })
+  const first = service.checkForUpdates()
+  const second = service.checkForUpdates()
+  const download = service.downloadUpdate()
+  assert.equal(downloads, 0)
+  finish()
+  await Promise.all([first, second, download])
+  assert.equal(checks, 1)
+  assert.equal(downloads, 1)
+})
+
+for (const country of ['CN', 'US']) {
+  test(`${country} retries metadata failure through backup`, async () => {
+    const updater = createUpdater(), checked = [], feeds = []
+    updater.setFeedURL = value => feeds.push(value)
+    updater.checkForUpdates = async () => {
+      checked.push(feeds.at(-1).provider)
+      if (checked.length === 1) throw new Error('503 source unavailable')
+      updater.emit('update-available', {version:'2.0.1'})
+    }
+    const service = createService({autoUpdater:updater,updateFeedUrl:'https://downloads.example.com/',resolveCountry:async()=>country})
+    await service.checkForUpdates()
+    assert.deepEqual(checked, country === 'CN' ? ['generic','github'] : ['github','generic'])
+    assert.equal(service.getStatus().status,'available')
+  })
+}
+test('region lookup validates countries and fails closed to default routing', async () => {
+  const { resolveDownloadCountry } = require('./updateRegion')
+  assert.equal(await resolveDownloadCountry(async()=>({ok:true,json:async()=>({country:'CN'})})), 'CN')
+  assert.equal(await resolveDownloadCountry(async()=>({ok:true,json:async()=>({country:'evil'})})), '')
+  assert.equal(await resolveDownloadCountry(async()=>{ throw new Error('timeout') }), '')
+})

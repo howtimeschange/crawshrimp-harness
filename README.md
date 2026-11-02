@@ -379,9 +379,11 @@ Office 运行时发布模式见 [Office Runtime On Demand](docs/crawshrimp-harne
 
 ## 桌面自动更新
 
-独立仓库 `howtimeschange/crawshrimp-harness` 的正式客户端使用 GitHub Release 元数据用于应用内更新。本仓构建不发布到 `https://updates.crawshrimp.com/`，也不刷新主项目的 `desktop-latest`。
+独立仓库 `howtimeschange/crawshrimp-harness` 的正式版先发布 GitHub Release，再由 CI 将完整安装包同步到腾讯云 COS。国内下载入口见 [官网下载页](https://harness.crawshrimp.com/download)。安装包保持原始字节、签名与 SHA256/SHA512 校验信息，GitHub Release 保留作为原始来源与回退。
 
-v0.4.0 安装包在发布 CI 成功后提供于 [v0.4.0 Release](https://github.com/howtimeschange/crawshrimp-harness/releases/tag/v0.4.0)。
+替换发布的 v0.4.10 起，国内 IP 优先腾讯云 COS、海外 IP 优先 GitHub；更新检查或安装包下载失败时切换备用源。已安装旧版 0.4.10 的用户须手动覆盖安装本次包，或通过 GitHub 更新到后续 v0.4.11 才能获得双源能力。所有下载继续验证原始签名与 SHA512。COS 只保留最新正式版，GitHub 保留历史版本。本仓构建不发布到 `https://updates.crawshrimp.com/`，也不刷新主项目 `desktop-latest`。
+
+同步流程、补传当前正式版与权限配置见 [腾讯云 COS 发布镜像](docs/tencent-cos-release-mirror.md)。
 
 升级不需要卸载旧版：
 
