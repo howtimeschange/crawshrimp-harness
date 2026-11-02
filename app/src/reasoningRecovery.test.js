@@ -3,16 +3,19 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { buildReasoningRecovery, patchReasoningRecoverySource } from '../../integrations/deepseek-harness/scripts/reasoning-recovery.mjs'
-import { BlockAssembler, createAssistantMessage, createUserMessage, LlmError } from '../../integrations/deepseek-harness/node_modules/@deepseek-ai/dsh-llm/lib/index.js'
+import { BlockAssembler, AssistantStreamAccumulator, LlmAttemptId, createAssistantMessage, createUserMessage, LlmError } from '../../integrations/deepseek-harness/node_modules/@deepseek-ai/dsh-llm/lib/index.js'
 import { convertMessages } from '../../integrations/deepseek-harness/node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js'
 
+import { ToolCallRecovery } from '../../integrations/deepseek-harness/node_modules/@deepseek-ai/dsh-session/lib/index.js'
 const original = readFileSync(new URL('../../integrations/deepseek-harness/node_modules/@deepseek-ai/dsh-agent-loop/lib/index.js', import.meta.url), 'utf8')
 const patched = patchReasoningRecoverySource(original)
 const start = patched.indexOf('var ReactLoopAgent = class {')
 const end = patched.indexOf('\n//#endregion', start)
 let toolExecutions = 0
-const Agent = vm.runInNewContext(patched.slice(start, end) + '; ReactLoopAgent', {
-  buildReasoningRecovery, BlockAssembler, createAssistantMessage, createUserMessage, LlmError,
+const Agent = vm.runInNewContext(patched.slice(patched.indexOf('var AssistantStreamAttempt = class'), patched.indexOf('\n//#endregion',patched.indexOf('var AssistantStreamAttempt = class'))) + ';\n' + patched.slice(start, end) + '; ReactLoopAgent', {
+  buildReasoningRecovery, BlockAssembler, AssistantStreamAccumulator, LlmAttemptId, ToolCallRecovery, createAssistantMessage, createUserMessage, LlmError,
+  abortedCancelCause: signal => signal.aborted ? {kind:"user"} : undefined,
+  assembleContextFor: () => ({}), renderContextSections: () => [], joinContextSections: () => "",
   renderPrompt: () => 'system', errorChain: error => error.message, AbortController,
   executeToolCalls: async () => { toolExecutions++; return { concluded: true } },
 })
@@ -28,8 +31,14 @@ function fixture(responses, { abortOnChunk = false, blockRecovery = false } = {}
   const initial = createUserMessage({ content: [{ type: 'text', text: '生成鹈鹕骑车动画' }], source: { kind: 'user' } })
   agent.phase = { kind: 'running', abort: new AbortController(), turn: 0, step: 0 }
   agent.inbox = { nextStep: [], hasPending: false }
-  agent.loopCtx = {}
-  agent.dispatch = { serial: async () => {}, emit: () => {} }
+  agent.ctx = { on: () => () => {} }
+  agent.loopCtx = { systemPrompt: { refreshContext: () => [] } }
+  agent.systemPrompt = { project: () => [] }
+  agent.runtimeContext = { project: () => undefined }
+  agent.toolsChanged = () => false
+  agent.assistantAttemptCounter = 0
+  agent.assistantStreamRevision = 0
+  agent.dispatch = { serial: async () => {}, emit: (type, payload) => { if (abortOnChunk && type === "agent/assistant-stream" && payload.frame.type === "chunk") agent.phase.abort.abort(new Error("User stopped")) } }
   agent.session = {
     surface: { replaceGeneration: 0 },
     append(type, data, metadata) {
@@ -46,13 +55,15 @@ function fixture(responses, { abortOnChunk = false, blockRecovery = false } = {}
   agent.preStep = async () => blockRecovery && requests.length > 0
     ? { kind: 'reject' }
     : { kind: 'enter', messages: events.some(e => e.type === 'user/message') ? [] : [initial], assembly: { tools: [] } }
-  agent.buildRequest = async (_turn, _step, _tools, _system, messages) => {
+  agent.prepareRequest = async () => {
+    const messages = agent.session.deriveMessages()
     const chunks = responses[requests.length]
     assert.ok(chunks, 'no request beyond the configured recovery budget')
     const request = { provider: 'crawshrimp-deepseek-official', model: 'deepseek-v4-flash', messages }
     requests.push(request)
-    return { request, preparedCall: { async *stream() { yield* chunks } } }
+    return { config: request, preparedCall: { async *stream() { yield* chunks } } }
   }
+  agent.buildRequest = config => { config.messages = agent.session.deriveMessages(); return config }
   return { agent, events, requests }
 }
 

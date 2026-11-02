@@ -86,6 +86,10 @@ jobs:
         shell: bash
         run: corepack pnpm install --frozen-lockfile --ignore-scripts --store-dir "$HOME/.cache/harness-pnpm-store"
 
+      - name: Build Bmall CLI for runtime security tests
+        working-directory: skills/cli/bmall-cli
+        run: corepack pnpm run build
+
       - name: Verify test collection
         run: node scripts/test-collection.mjs verify
 
@@ -93,6 +97,8 @@ jobs:
         run: node integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs
 
       - name: Run integrations tests
+        env:
+          CRAWSHRIMP_SECURITY_CLI_ROOT: ${{ github.workspace }}/skills/cli
         run: node scripts/test-collection.mjs run integrations
 
       - name: Run DeepDraw CLI tests
@@ -107,13 +113,6 @@ jobs:
       - name: Run Tmall CLI tests
         run: node scripts/test-collection.mjs run tmall-cli
 
-      - name: Run app tests
-        working-directory: app
-        run: npm test
-
-      - name: Run adapter JavaScript tests
-        run: node scripts/test-collection.mjs run adapters
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -121,6 +120,13 @@ jobs:
 
       - name: Install Python deps
         run: python -m pip install -r core/requirements.txt -r tests/requirements.txt
+
+      - name: Run app tests
+        working-directory: app
+        run: npm test
+
+      - name: Run adapter JavaScript tests
+        run: node scripts/test-collection.mjs run adapters
 
       - name: Run Python tests
         env:
@@ -164,6 +170,12 @@ jobs:
           node-version: 22.19.0
           cache: npm
           cache-dependency-path: app/package-lock.json
+
+      - name: Check managed caller receipt durability on the build platform
+        run: node --test integrations/deepseek-harness/scripts/managed-caller-trace.test.mjs
+
+      - name: Check preview resource lifecycle on the build platform
+        run: node --test app/src/continuousPdfPreview.test.js app/src/resourcePreview.test.js app/src/renderer/components/ImageGenerationLoader.test.js
 
       - name: Enable Corepack for bundled CLI builds
         run: corepack enable

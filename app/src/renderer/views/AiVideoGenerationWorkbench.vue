@@ -3,8 +3,8 @@
     <header class="avg-page-head" :inert="backgroundInert || undefined">
       <div class="avg-head-copy">
         <p class="avg-kicker">AI 生视频</p>
-        <h1>AI 生视频工作台</h1>
-        <p class="avg-subtitle">纯 prompt、参考图与动作素材驱动的视频生成工作台，复用 Seedance 与百炼视频网关能力。</p>
+        <h1>AI 生视频</h1>
+        <p class="avg-subtitle">描述画面与动作，添加参考素材，生成商品视频。</p>
       </div>
       <div class="avg-head-actions">
         <button class="avg-btn ghost" type="button" @click="openHistoryDrawer($event)">历史记录</button>
@@ -288,6 +288,7 @@
                   </div>
                 </div>
 
+                <details v-if="showAudio || !showRatio" class="avg-professional"><summary>高级参数 · 水印</summary>
                 <div v-if="showAudio" class="avg-param-row">
                   <div class="avg-field">
                     <span>水印</span>
@@ -309,13 +310,14 @@
                   </div>
                   <div class="avg-field avg-field-spacer" aria-hidden="true"></div>
                 </div>
+                </details>
               </div>
               <p class="avg-hint">{{ paramHint }}</p>
               <div class="avg-error-text">{{ errors.parameters }}</div>
             </div>
           </section>
 
-          <section class="avg-section">
+          <details class="avg-section avg-output-settings" :open="Boolean(errors.outputDir)"><summary>输出目录</summary>
             <div class="avg-section-head">
               <strong>输出目录</strong>
               <button class="avg-btn small ghost" type="button" @click="chooseOutputDir">选择</button>
@@ -332,7 +334,7 @@
               </button>
               <div class="avg-error-text">{{ errors.outputDir }}</div>
             </div>
-          </section>
+          </details>
 
           <div v-if="configHint" class="avg-config-hint">
             <span>{{ configHint }}</span>
@@ -371,22 +373,23 @@
           </div>
           <div class="avg-filter-tabs" role="tablist" aria-label="任务状态筛选">
             <button
-              v-for="item in statusFilters"
+              v-for="item in commonStatusFilters"
               :key="item.value"
               type="button"
               :class="{ active: statusFilter === item.value }"
+              role="tab" :aria-selected="statusFilter === item.value"
               @click="statusFilter = item.value"
             >
               {{ item.label }}
             </button>
-            <button type="button" @click="openHistoryDrawer($event)">历史</button>
+            <select v-model="statusFilter" aria-label="更多视频状态"><option value="all">更多状态</option><option v-for="item in statusFilters.filter(item => !commonStatusFilters.some(common => common.value === item.value))" :key="item.value" :value="item.value">{{ item.label }}</option></select>
           </div>
         </div>
 
-        <div class="avg-result-body">
+        <div ref="resultBody" class="avg-result-body" @scroll.passive="pauseOffscreenVideo">
           <div class="avg-result-grid-head">
-            <strong>视频任务</strong>
-            <span>所有任务同级平铺 · 点击任意卡片查看详情</span>
+            <strong>视频结果</strong>
+            <span>视频并排浏览 · 点击封面播放</span>
           </div>
 
           <div v-if="!filteredJobs.length" class="avg-empty visible">
@@ -413,6 +416,7 @@
                   :poster="jobCoverSrc(job) || undefined"
                   controls
                   autoplay
+                  muted
                   playsinline
                   preload="metadata"
                   @click.stop
@@ -588,7 +592,7 @@
     </div>
 
     <div v-if="openHistory" class="avg-drawer-mask" @click="closeHistory"></div>
-    <aside class="avg-drawer" :class="{ open: openHistory }" :inert="openHistory ? undefined : true" aria-label="历史记录" :aria-hidden="openHistory ? 'false' : 'true'">
+    <aside ref="historyDrawerRef" class="avg-drawer" :class="{ open: openHistory }" :inert="openHistory ? undefined : true" role="dialog" aria-modal="true" aria-label="历史记录" :aria-hidden="openHistory ? 'false' : 'true'">
       <div class="avg-drawer-head">
         <div>
           <strong>历史记录</strong>
@@ -626,6 +630,7 @@
         aria-modal="true"
         :aria-labelledby="'avg-modal-title'"
         ref="modalRef"
+        :inert="pendingDeleteJob ? true : undefined"
       >
         <div class="avg-modal-head">
           <strong id="avg-modal-title">{{ detailJob.title || '任务' }} · 任务详情</strong>
@@ -723,12 +728,13 @@
     </div>
 
     <div v-if="pendingDeleteJob" class="avg-overlay open avg-delete-confirm-overlay" @click.self="cancelDeleteJob">
-      <section class="avg-delete-confirm" role="dialog" aria-modal="true" aria-labelledby="avg-delete-confirm-title" aria-describedby="avg-delete-confirm-copy">
+      <section ref="deleteDialogRef" class="avg-delete-confirm" role="dialog" aria-modal="true" aria-labelledby="avg-delete-confirm-title" aria-describedby="avg-delete-confirm-copy" tabindex="-1">
         <div class="avg-delete-confirm-icon" aria-hidden="true">!</div>
         <div>
           <strong id="avg-delete-confirm-title">删除任务记录？</strong>
           <p id="avg-delete-confirm-copy">“{{ pendingDeleteJob.title || pendingDeleteJob.prompt || pendingDeleteJob.id }}”会从当前任务列表和历史记录中移除。</p>
           <p class="avg-delete-confirm-note">“删除本地文件”会移除已归档的 MP4 与本地预览封面；两种删除都不会取消已提交的供应商任务。</p>
+          <p v-if="deleteError" class="avg-error-text" role="alert">{{ deleteError }}</p>
         </div>
         <div class="avg-delete-confirm-actions">
           <button class="avg-btn ghost" type="button" :disabled="isDeletingJob" @click="cancelDeleteJob">取消</button>
@@ -845,6 +851,7 @@ const KLING_URL_SLOTS_OMNI = [
   { type: 'base', label: '待编辑视频 URL', placeholder: 'https://.../base.mov 或 oss://...' },
 ]
 
+const commonStatusFilters = [{ value: 'all', label: '全部' }, { value: 'active', label: '进行中' }, { value: 'attention', label: '待处理' }, { value: 'completed', label: '已完成' }]
 const statusFilters = [
   { value: 'all', label: '全部' },
   { value: 'queued', label: '排队' },
@@ -908,6 +915,7 @@ const detailVideoSrc = ref('')
 const detailVideoLoading = ref(false)
 const detailVideoError = ref('')
 const inlinePlayingJobId = ref('')
+const resultBody = ref(null)
 const inlineVideoSrc = reactive({})
 const inlineVideoLoading = reactive({})
 const libraryOpen = ref(false)
@@ -924,6 +932,18 @@ const retryingJobIds = reactive(new Set())
 const archivingRunIds = reactive(new Set())
 const editingDraftJobId = ref('')
 const pendingDeleteJob = ref(null)
+const deleteDialogRef = ref(null), deleteError = ref(''), historyDrawerRef = ref(null)
+let deleteTriggerEl = null
+watch(pendingDeleteJob, async (job, previous) => {
+  if (job && !previous) deleteTriggerEl = document.activeElement
+  await nextTick()
+  if (pendingDeleteJob.value) deleteDialogRef.value?.querySelector('button:not(:disabled)')?.focus()
+  else {
+    const target = deleteTriggerEl?.isConnected && !deleteTriggerEl.closest('[inert]') ? deleteTriggerEl : document.querySelector('.avg-head-actions button')
+    target?.focus({ preventScroll: true })
+    deleteTriggerEl = null
+  }
+})
 const isDeletingJob = ref(false)
 const requiredReusedAssetCount = ref(0)
 const requiredReusedModelId = ref('')
@@ -1132,6 +1152,8 @@ const configHint = computed(() => {
 })
 const filteredJobs = computed(() => {
   if (statusFilter.value === 'all') return jobs.value
+  if (statusFilter.value === 'active') return jobs.value.filter(job => ['queued', 'running', 'downloading'].includes(job.status))
+  if (statusFilter.value === 'attention') return jobs.value.filter(job => ['failed', 'needs_config', 'expired'].includes(job.status) || job.displayStatus === '待归档')
   return jobs.value.filter(job => {
     if (statusFilter.value === 'failed' && job.displayStatus === '待归档') return true
     return job.status === statusFilter.value
@@ -2579,12 +2601,14 @@ async function deleteJob(job, { deleteLocalFile = false } = {}) {
     return true
   } catch (error) {
     formError.value = error?.message || String(error)
+    if (pendingDeleteJob.value?.id === job.id) deleteError.value = formError.value
     return false
   }
 }
 
 function requestDeleteJob(job) {
   if (!job || !canDelete(job)) return
+  deleteError.value = ''
   pendingDeleteJob.value = job
 }
 
@@ -2596,6 +2620,7 @@ function cancelDeleteJob() {
 async function confirmDeleteJob(deleteLocalFile = false) {
   const job = pendingDeleteJob.value
   if (!job || isDeletingJob.value) return
+  deleteError.value = ''
   isDeletingJob.value = true
   try {
     if (await deleteJob(job, { deleteLocalFile })) pendingDeleteJob.value = null
@@ -2655,6 +2680,7 @@ function closeHistory() {
 function openHistoryDrawer(event) {
   historyTriggerEl.value = event?.currentTarget || document.activeElement
   openHistory.value = true
+  nextTick(() => historyDrawerRef.value?.querySelector('button')?.focus())
 }
 
 function openHistoryItem(job, event) {
@@ -2673,10 +2699,14 @@ function onKeydown(event) {
   } else if (event.key === 'Escape' && pendingDeleteJob.value) {
     event.preventDefault()
     cancelDeleteJob()
+  } else if (event.key === 'Tab' && pendingDeleteJob.value) {
+    trapDialogFocus(event, deleteDialogRef.value)
   } else if (event.key === 'Tab' && detailJob.value) {
     trapDialogFocus(event, modalRef.value)
   } else if (event.key === 'Tab' && libraryOpen.value) {
     trapDialogFocus(event, libraryModalRef.value)
+  } else if (event.key === 'Tab' && openHistory.value) {
+    trapDialogFocus(event, historyDrawerRef.value)
   } else if (event.key === 'Escape' && detailJob.value) {
     event.preventDefault()
     closeDetail()
@@ -2720,6 +2750,8 @@ async function activateWorkbench() {
 
 function deactivateWorkbench() {
   workbenchActive = false
+  resultBody.value?.querySelectorAll('video').forEach(video => video.pause())
+  inlinePlayingJobId.value = ''
   activationSequence += 1
   stopPolling()
   disconnectLibraryPreviewObserver()
@@ -2735,6 +2767,16 @@ watch([filteredLibraryItems, libraryOpen], async ([, open]) => {
   observeLibraryTiles()
 })
 
+function pauseOffscreenVideo(event) {
+  const container = event.currentTarget.getBoundingClientRect()
+  event.currentTarget.querySelectorAll('video').forEach(video => {
+    const bounds = video.getBoundingClientRect()
+    if (bounds.bottom <= container.top || bounds.top >= container.bottom) {
+      video.pause()
+      inlinePlayingJobId.value = ''
+    }
+  })
+}
 onMounted(() => {
   updateCompact()
   window.addEventListener('resize', updateCompact)
@@ -4678,9 +4720,12 @@ select:focus-visible {
   .avg-result-pane.mobile-active {
     display: flex;
   }
-  .avg-control-pane.mobile-active {
+  .avg-control-pane.mobile-active,
+  .avg-result-pane.mobile-active {
     flex-direction: column;
   }
+  .avg-result-pane.mobile-active .avg-result-toolbar { flex-shrink: 0; }
+  .avg-result-pane.mobile-active .avg-result-body { flex: 1; min-height: 0; }
   .avg-control-pane { border-right: 0; }
   .avg-result-toolbar {
     align-items: flex-start;
@@ -4688,10 +4733,23 @@ select:focus-visible {
   }
   .avg-filter-tabs { justify-content: flex-start; }
   .avg-task-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .avg-modal-body { grid-template-columns: 1fr; }
+  .avg-modal .avg-modal-body, .avg-modal.avg-modal-portrait .avg-modal-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .avg-modal .avg-modal-preview, .avg-modal .avg-modal-preview.is-portrait {
+    min-height: 200px;
+    height: min(40dvh, 320px);
+    max-height: none;
+  }
+  .avg-modal .avg-modal-loading, .avg-modal .avg-modal-preview-pending { min-height: 0; }
   .avg-modal-side {
     border-left: 0;
     border-top: 1px solid var(--border);
+    min-height: 220px;
+    overflow: visible;
   }
 }
 
@@ -4728,4 +4786,9 @@ select:focus-visible {
     animation-iteration-count: 1 !important;
   }
 }
+</style>
+
+<style scoped>
+.avg-task-grid{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:16px;align-items:start}.avg-task-card{display:flex;flex-direction:column;min-height:0;border:1px solid var(--border);border-radius:10px;background:var(--bg2);overflow:hidden;cursor:default}.avg-task-card:hover{transform:none}.avg-thumb{aspect-ratio:9/16;max-height:62dvh;width:100%;border-radius:0}.avg-thumb video,.avg-thumb-media{object-fit:contain}.avg-task-body{min-width:0;padding:14px}.avg-task-title{align-items:flex-start;gap:8px;flex-wrap:wrap}.avg-task-title>strong{overflow-wrap:anywhere}.avg-task-card p{-webkit-line-clamp:2;line-clamp:2}.avg-filter-tabs select{background:var(--bg2);color:var(--text2);border:1px solid var(--border);border-radius:6px;max-width:115px;padding:6px}.avg-professional{margin-top:12px}.avg-professional>summary,.avg-output-settings>summary{padding:12px;color:var(--text2);font-size:12px;cursor:pointer}.avg-task-actions{position:relative;z-index:2;flex-wrap:wrap}.avg-result-toolbar{flex-wrap:wrap}.avg-summary-strip{flex-wrap:wrap}.avg-kicker{display:none}
+@media(max-width:760px){.avg-task-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px}.avg-task-body{padding:12px}.avg-thumb{max-height:65dvh}}
 </style>

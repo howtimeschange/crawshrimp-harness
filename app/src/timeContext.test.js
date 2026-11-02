@@ -24,7 +24,7 @@ async function harness(events = []) {
     },
     on(name, callback) { assert.equal(name, 'agent/pre-step'); preStep = callback },
   }
-  apply(ctx, {})
+  apply(ctx, { refreshIntervalMs: 0 })
   const history = []
   const append = (type, data, time = Date.now()) => {
     const event = { type, data, time }
@@ -41,7 +41,7 @@ async function harness(events = []) {
     commit(decision) { for (const message of decision.messages) append('user/message', message) },
   }
 }
-const readings = decision => decision.messages.filter(message => message.source.plugin === 'time-context')
+const readings = decision => decision.messages.filter(message => message.source.kind === 'time-context')
 
 test('one input injects once across 162 tool steps; the next turn refreshes immediately', async () => {
   const h = await harness()

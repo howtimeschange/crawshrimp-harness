@@ -1,0 +1,101 @@
+[
+  {
+    "label": "old-native",
+    "runs": 3,
+    "successes": 3,
+    "timesSeconds": [
+      125.171,
+      174.08,
+      223.512
+    ],
+    "medianSeconds": 174.08,
+    "earlyMedianMs": 4334.0,
+    "lateMedianMs": 4450.0,
+    "lateChangeMedianPct": 2.676511305952922,
+    "modelRequests": [
+      80,
+      128,
+      148
+    ],
+    "toolCalls": [
+      44,
+      92,
+      116
+    ],
+    "toolErrors": 0,
+    "failedAttempts": 0,
+    "maxContext": 79324,
+    "tokenTotals": {
+      "inputTokens": 165209,
+      "outputTokens": 76397,
+      "cacheReadTokens": 12203008,
+      "cacheWriteTokens": 0
+    }
+  },
+  {
+    "label": "new-native",
+    "runs": 3,
+    "successes": 3,
+    "timesSeconds": [
+      128.147,
+      125.245,
+      176.765
+    ],
+    "medianSeconds": 128.147,
+    "earlyMedianMs": 2930.5,
+    "lateMedianMs": 2928.0,
+    "lateChangeMedianPct": 1.5815085158150888,
+    "modelRequests": [
+      80,
+      81,
+      118
+    ],
+    "toolCalls": [
+      44,
+      45,
+      82
+    ],
+    "toolErrors": 0,
+    "failedAttempts": 0,
+    "maxContext": 39603,
+    "tokenTotals": {
+      "inputTokens": 70496,
+      "outputTokens": 60819,
+      "cacheReadTokens": 6544128,
+      "cacheWriteTokens": 0
+    }
+  },
+  {
+    "label": "new-ptc",
+    "runs": 3,
+    "successes": 3,
+    "timesSeconds": [
+      116.87,
+      164.146,
+      115.323
+    ],
+    "medianSeconds": 116.87,
+    "earlyMedianMs": 2774.0,
+    "lateMedianMs": 2882.5,
+    "lateChangeMedianPct": -8.460053101617182,
+    "modelRequests": [
+      80,
+      88,
+      80
+    ],
+    "toolCalls": [
+      44,
+      52,
+      44
+    ],
+    "toolErrors": 11,
+    "failedAttempts": 0,
+    "maxContext": 51560,
+    "tokenTotals": {
+      "inputTokens": 52539,
+      "outputTokens": 63713,
+      "cacheReadTokens": 6082176,
+      "cacheWriteTokens": 0
+    }
+  }
+]

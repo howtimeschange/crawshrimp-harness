@@ -1,12 +1,20 @@
 # Sources and attribution
 
-## Shrimp emoji artwork
+## Crawshrimp brand artwork
+
+The native macOS and Windows banners use `assets/crawshrimp-C1.png`, exported
+from the product's approved C1 short-antennae mascot. Its source and export
+provenance are recorded in `app/assets/branding/inline-avatar-source.json`
+at the repository root. The asset is bundled locally and needs no network
+download or system emoji font.
+
+## Retained legacy shrimp emoji artwork
 
 `assets/shrimp-emoji.png` is the unmodified U+1F990 artwork from Twemoji v16.0.1,
 by Twitter, Inc. and other contributors, licensed under CC BY 4.0.
 Source: https://github.com/jdecked/twemoji/blob/v16.0.1/assets/72x72/1f990.png
 License: https://creativecommons.org/licenses/by/4.0/ (full text in `assets/LICENSE-twemoji.txt`).
-The Windows banner scales this bundled artwork at render time; it requires no font or network download.
+This legacy asset is retained for attribution and is no longer used by the banners.
 
 Architecture and implementation references:
 

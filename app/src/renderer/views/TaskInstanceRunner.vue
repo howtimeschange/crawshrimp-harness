@@ -39,6 +39,7 @@
       </div>
     </section>
 
+    <section v-if="instance && ['failed', 'error'].includes(instance.status)" class="tir-previous-error" role="status"><strong>上次运行未完成</strong><p>原参数与已保存的文件仍可查看。重新运行前请核对处理范围。</p><details><summary>失败原因与运行信息</summary><pre>{{ instance.error || instance.last_error || instance.runs?.[0]?.error || instance.runs?.[0]?.error_message || '暂无错误摘要，请查看运行日志。' }}</pre><p>最近运行：{{ instance.updated_at || instance.runs?.[0]?.ended_at || '时间待确认' }}</p></details></section>
     <div v-if="loading" class="tir-state">加载中...</div>
     <div v-else-if="error" class="tir-state error">{{ error }}</div>
     <TaskRunner
@@ -89,7 +90,7 @@ const createSummaryText = computed(() => {
   const failed = Number(summary.failed || 0)
   if (attempted || succeeded || failed) return `成功 ${succeeded} / 失败 ${failed} / 尝试 ${attempted}`
   if (Object.prototype.hasOwnProperty.call(summary, 'records')) return `${Number(summary.records || 0)} 条记录`
-  return '-'
+  return ['failed', 'error'].includes(instance.value?.status) ? '上次运行未完成' : '暂无结果记录'
 })
 const reloadToken = ref(0)
 
@@ -302,4 +303,8 @@ onMounted(loadInstance)
     justify-self: start;
   }
 }
+</style>
+
+<style scoped>
+.tir-previous-error{margin:12px 20px;padding:16px;border:1px solid var(--border);background:var(--bg2);border-radius:8px}.tir-previous-error strong{color:var(--red)}.tir-previous-error p{font-size:12px;color:var(--text2);margin-top:8px;line-height:1.7}.tir-previous-error details{margin-top:12px;font-size:12px}.tir-previous-error summary{cursor:pointer}.tir-previous-error pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:150px;overflow:auto;padding:12px 0}
 </style>

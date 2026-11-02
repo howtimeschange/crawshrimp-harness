@@ -1,0 +1,9 @@
+{
+  "count": 44,
+  "bytes": 42656297,
+  "sha1_mismatches": [],
+  "missing": [],
+  "extra": [],
+  "decoded": 44,
+  "note": "Independent local recomputation against agent-produced cloud manifest; timestamps in that manifest are not used for timing."
+}

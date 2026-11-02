@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from core import data_sink
-from core.atomic_file import atomic_write_text, remove_path_with_retry
+from core.atomic_file import atomic_write_text
 from core.agent import db
 from core.agent import mcp_gateway
 from core.agent.redaction import REDACTED, redact_text as _redact_secret_text, redact_value
@@ -396,10 +396,6 @@ Get-CimInstance Win32_Process |
             pass
 
 
-def _remove_owned_tree(path: Path) -> None:
-    """删除智能体自有目录；符号链接只移除链接本身，绝不跟随到外部目标。"""
-    remove_path_with_retry(path)
-
 # 不写入产品事件表的 Harness 事件(窄 spec §7.1)
 FILTERED_EVENT_TYPES = {"request/header", "request/context"}
 
@@ -659,6 +655,7 @@ def _dsh_llm_pi_ai_settings(
     cfg: dict,
     custom_provider_profiles: list[dict[str, Any]],
     runtime_env: Optional[Mapping[str, str]] = None,
+    *, include_official: bool = False,
 ) -> dict[str, Any]:
     llm = (cfg.get("ai") or {}).get("llm") or {}
     llm = llm if isinstance(llm, dict) else {}
@@ -666,6 +663,10 @@ def _dsh_llm_pi_ai_settings(
     for provider in builtin_llm_providers(cfg):
         provider_id = str(provider.get("id") or "").strip()
         if not provider_id or not provider["models"]:
+            continue
+        # rc.2 owns the official route through the native Messages adapter.
+        # Leaving it in pi-ai would register the same provider twice.
+        if provider_id == "crawshrimp-deepseek-official" and not include_official:
             continue
         models = []
         overrides = {model["id"]: model for model in provider["model_overrides"]}
@@ -728,7 +729,27 @@ def _dsh_llm_pi_ai_settings(
             "baseURL": _compact_text(provider.get("baseURL")),
             "models": [{**model, "input": ["text", "image"]} for model in provider.get("models") or []],
         }
+        if provider_id in {"crawshrimp-managed-openai", "crawshrimp-managed-openai-responses"}:
+            # Paid POSTs have no end-to-end idempotency guarantee. A timeout or
+            # broken stream (even after output) must not replay the model call.
+            providers[provider_id]["retryPolicy"] = {
+                "mode": "normal", "maxRetries": 0,
+            }
     return {"providers": providers}
+
+
+def _dsh_messages_settings(cfg: dict, runtime_env=None) -> dict[str, Any]:
+    # Reuse product catalog editing and token budgets without registering the
+    # official provider a second time in pi-ai.
+    provider = _dsh_llm_pi_ai_settings(cfg, [], runtime_env, include_official=True)["providers"].get("crawshrimp-deepseek-official", {})
+    models = []
+    for item in provider.get("models", []):
+        model = {key: item[key] for key in ("id", "name", "contextWindow", "maxTokens") if key in item}
+        model["inputModalities"] = item["input"]
+        if item["id"] == "deepseek-flash":
+            model.update(systemPromptUpdate="in-history", toolUpdate="addition-only")
+        models.append(model)
+    return {"apiKeyEnv": "CRAWSHRIMP_DEEPSEEK_API_KEY", "baseURL": "https://api.deepseek.com/anthropic", "reasoningEffort": "high", "models": models}
 
 
 def _sync_dsh_default_model_settings(
@@ -772,6 +793,13 @@ def _sync_dsh_default_model_settings(
         custom_provider_profiles if isinstance(custom_provider_profiles, list) else [],
         runtime_env,
     )
+    llm_config = ((cfg or {}).get("ai") or {}).get("llm") or {}
+    from urllib.parse import urlsplit
+    official_base = str(llm_config.get("deepseek_base_url") or (runtime_env or {}).get("CRAWSHRIMP_DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
+    official_url = urlsplit(official_base)
+    if provider_id == "crawshrimp-deepseek-official" and ((official_url.scheme, official_url.netloc) != ("https", "api.deepseek.com") or official_url.path not in ("", "/v1", "/anthropic", "/anthropic/v1") or official_url.query or official_url.fragment):
+        raise AgentModelConfigurationError("官方 DeepSeek Messages 仅支持 api.deepseek.com；第三方地址请使用自定义模型通道。")
+    settings["llm-deepseek"] = _dsh_messages_settings(cfg or {}, runtime_env)
     models = settings["llm-pi-ai"]["providers"].get(provider_id, {}).get("models", [])
     descriptor = next((model for model in models if model["id"] == entry["model"]), {})
     efforts = descriptor.get("reasoningEfforts")
@@ -964,6 +992,7 @@ class AgentService:
         self._web_origin = ""
 
         self.queue: asyncio.Queue[dict] = asyncio.Queue()
+        self._canceled_queued_run_ids: set[str] = set()
         self.active_run: Optional[dict] = None          # run 行
         self.active_run_task: Optional[asyncio.Task] = None
         self.queue_task: Optional[asyncio.Task] = None
@@ -1469,7 +1498,16 @@ class AgentService:
     async def _start_mcp_server(self) -> None:
         import os as _os
         import uvicorn
+        from contextlib import nullcontext
         from core.agent import api as agent_api
+
+        class EmbeddedMcpServer(uvicorn.Server):
+            def capture_signals(self):
+                # The outer API server owns process signals and the lifespan
+                # that stops this service. Capturing SIGTERM here can wait on
+                # MCP subscriptions before that owner can stop their Worker.
+                return nullcontext()
+
         base_port = int(_os.environ.get("CRAWSHRIMP_PORT", "18765"))
         # API 端口有 +1..+100 的回退区间(main.js findAvailableApiPort),
         # MCP 端口取 API 端口 + 200,保证永不落入回退区间且实例间唯一;
@@ -1487,7 +1525,7 @@ class AgentService:
             native_policy_reporter=self.report_native_automation_policy_denied,
         )
         config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-        self._mcp_uvicorn = uvicorn.Server(config)
+        self._mcp_uvicorn = EmbeddedMcpServer(config)
         self._mcp_socket = reserved_socket
         self._mcp_task = asyncio.create_task(self._mcp_uvicorn.serve(sockets=[reserved_socket]))
         print(f"[agent] MCP gateway listening on {self.mcp_url}", flush=True)
@@ -2166,7 +2204,7 @@ class AgentService:
 
         await self.broadcast(session_id, 0, "turn.queued", {
             "turn_id": turn_id, "run_id": run_id, "ordinal": ordinal,
-            "queue_depth": self.queue.qsize(),
+            "queue_depth": max(0, self.queue.qsize() - len(self._canceled_queued_run_ids)),
             "sse_dropped_events": self.sse_dropped_events,
         })
         await self.queue.put({
@@ -2182,7 +2220,7 @@ class AgentService:
             "image_attachments": image_attachments,
         })
         return {"turn_id": turn_id, "run_id": run_id, "queued": True,
-                "queue_depth": self.queue.qsize() + (1 if self.active_run else 0)}
+                "queue_depth": max(0, self.queue.qsize() - len(self._canceled_queued_run_ids)) + (1 if self.active_run else 0)}
 
     async def submit_automation_turn(
         self,
@@ -2481,6 +2519,7 @@ class AgentService:
     async def _queue_loop(self) -> None:
         while True:
             item = await self.queue.get()
+            self._canceled_queued_run_ids.discard(item["run_id"])
             try:
                 if self.active_run is not None:
                     await self.queue.put(item)  # 放回队尾重排(理论上不会发生,单消费者)
@@ -2559,6 +2598,10 @@ class AgentService:
                     raise AgentModelConfigurationError(message)
                 raise RuntimeError(message)
 
+            # Cancellation during generation startup wins this atomic fence.
+            if not db.mark_started_run_running(run_id, session_id):
+                return
+
             budget = BUDGET_PROFILES["browser"] if self._is_browser_run(item) else BUDGET_PROFILES["default"]
             worker_payload = {
                 "runId": run_id,
@@ -2572,6 +2615,7 @@ class AgentService:
                 "provider": item["provider_id"],
                 "model": official_real_model(item["model_id"]),
                 "budget": budget,
+                "browserBudget": BUDGET_PROFILES["browser"],
                 "sessionContinuation": self._automation_permission_mode(item) == "session",
             }
             if isinstance(item.get("automation_policy"), dict):
@@ -3137,7 +3181,7 @@ class AgentService:
             "glm_api_key_configured": glm_key_configured,
             "active_run": ((self.active_run or next(iter(self.active_runs_by_runtime.values()), {}))
                            or {}).get("run_id"),
-            "queue_depth": self.queue.qsize(),
+            "queue_depth": max(0, self.queue.qsize() - len(self._canceled_queued_run_ids)),
             "error": display_error,
             "node_executable": resolve_node_executable(),
             # The launch URL is a loopback-only authentication capability for
@@ -3360,7 +3404,10 @@ class AgentService:
         session_id = run["session_id"]
 
         if event_type == "user/message":
-            text = _extract_text(data)
+            # DSH also emits runtime/time snapshots as user-role messages. They
+            # are model context, not a second human message with the same DB ID.
+            source_kind = str(_as_dict(data.get("source")).get("kind") or "")
+            text = _extract_text(data) if source_kind in {"", "user"} else ""
             if text:
                 db.create_message(f"{run['run_id']}:user", session_id, run.get("turn_id"), run["run_id"],
                                   "user", "text", {"text": text})
@@ -3406,6 +3453,10 @@ class AgentService:
                     "run_id": run["run_id"], "kind": kind, "error_code": error_code,
                 })
             db.update_session(session_id, status="idle")
+            await self.broadcast(session_id, 0, "session.updated", {
+                "session_id": session_id, "status": "idle", "last_run_id": run["run_id"],
+                "last_run_status": "completed" if kind == "completed" else terminal_status,
+            })
             self.shadow_runs.pop(runtime_session_id, None)
             self.unregister_run_context(runtime_session_id, run["run_id"])
             # A long source turn may outlive bounded receipt retry timers. Its
@@ -3477,6 +3528,7 @@ class AgentService:
                                        data.get("name") or "unknown",
                                        safe_arguments)
             await self.broadcast(session_id, _seq(session_id), "tool.requested", {
+                "run_id": run_id,
                 "tool_call_id": call["tool_call_id"],
                 "tool_name": call["tool_name"],
                 "dsh_call_id": data.get("callId") or "",
@@ -3485,24 +3537,45 @@ class AgentService:
             })
             return
 
+        # PTC child calls carry the same tool contract under dispatch events.
+        # Project them individually so task/media delivery survives run_code wrapping.
+        if event_type in ("tool/ptc-dispatch-start", "tool/ptc-dispatch"):
+            child_id = data.get("subCallId")
+            if not child_id:
+                return
+            if event_type == "tool/ptc-dispatch-start" or not db.get_tool_call(run_id, child_id):
+                await self._project_event(session_id, run, {"type": "tool/call", "data": {
+                    "callId": child_id, "name": data.get("name"),
+                    "arguments": data.get("arguments"), "turn": data.get("turn"),
+                }})
+            if event_type == "tool/ptc-dispatch":
+                await self._project_event(session_id, run, {"type": "tool/result", "data": {
+                    "callId": child_id, "error": data.get("error"),
+                    "message": {"content": data.get("content", []), "isError": data.get("isError", False)},
+                }})
+            return
+
         if event_type == "tool/result":
             result_text = _extract_tool_result_text(data)
+            is_error = _tool_result_is_error(data)
+            # DSH recovery emits a synthetic error receipt for a started tool
+            # without a durable result. It is not evidence of tool failure.
+            outcome_unknown = _as_dict(data.get("error")).get("code") == "TOOL_OUTCOME_UNKNOWN"
+            tool_status = "unknown" if outcome_unknown else "failed" if is_error else "succeeded"
             safe_result_text = redact_text(result_text)
             call_id = _extract_tool_call_id(data)
             if call_id:
                 tool_call = db.get_tool_call(run_id, call_id)
                 if tool_call:
                     db.update_tool_call(tool_call["tool_call_id"], result_json={"text": safe_result_text[:4000]},
-                                        status="succeeded", finished_at=_now_iso())
-                if tool_call and result_text.lstrip().startswith("{") and not any(
-                    block.get("isError") for block in _as_dict(data.get("message")).get("content", []) if isinstance(block, dict)
-                ):
+                                        status=tool_status, finished_at=_now_iso())
+                if tool_call and result_text.lstrip().startswith("{") and not is_error:
                     from core.agent.artifact_delivery import collect_tool_deliveries
                     deliveries = await asyncio.to_thread(collect_tool_deliveries, tool_call, result_text, mcp_gateway.ctx.workspace_root)
                     for artifact in deliveries:
                         await self.broadcast(session_id, _seq(session_id), "artifact.created", artifact)
                 await self.broadcast(session_id, _seq(session_id), "tool.completed", {
-                    "run_id": run_id, "dsh_call_id": call_id, "result": safe_result_text[:2000],
+                    "run_id": run_id, "dsh_call_id": call_id, "result": safe_result_text[:2000], "is_error": is_error, "status": tool_status,
                 })
             return
 
@@ -3624,61 +3697,6 @@ class AgentService:
                 print(f"[agent] DSH 原生审批桥不可用({exc}),安全失败", flush=True)
                 return "rejected"
 
-    async def clear_agent_data(self) -> dict:
-        """清除智能体投影及其受控附件、草稿、运行日志和智能体发布适配包。"""
-        async with self._runtime_mutation_lock:
-            return await self._clear_agent_data_unlocked()
-
-    async def _clear_agent_data_unlocked(self) -> dict:
-        if self.active_run is not None or self.active_runs_by_runtime:
-            return {"ok": False, "error": "存在进行中的运行,请先停止后再清除"}
-        await self._stop_worker()
-        try:
-            with db._lock:
-                conn = db._conn()
-                try:
-                    revisions = [dict(row) for row in conn.execute(
-                        "SELECT status, adapter_id, target_adapter_id, test_adapter_id"
-                        " FROM agent_script_revisions"
-                    ).fetchall()]
-                finally:
-                    conn.close()
-            from core import adapter_loader as _adapter_loader
-            from core.agent import api as _agent_api
-            published_ids = {
-                str(revision.get("target_adapter_id") or revision.get("adapter_id") or "")
-                for revision in revisions if revision.get("status") == "published"
-            }
-            for adapter_id in sorted(published_ids - {""}):
-                if not _agent_api._restore_published_adapter_baseline(adapter_id):
-                    _adapter_loader.uninstall(adapter_id)
-            for revision in revisions:
-                candidate_ids = [revision.get("test_adapter_id")]
-                for adapter_id in candidate_ids:
-                    if adapter_id:
-                        _adapter_loader.uninstall(str(adapter_id))
-            agent_root = Path(_data_root()) / "agent"
-            for child_name in ("attachments", "workspace", "harness-sessions", "runtime-workdir",
-                               "publish-backups", "review-backups"):
-                _remove_owned_tree(agent_root / child_name)
-            tmp_root = os.environ.get("CRAWSHRIMP_AGENT_ATTACHMENT_TMP_ROOT", "").strip()
-            if tmp_root:
-                tmp_path = Path(tmp_root).expanduser().resolve()
-                if tmp_path.name == "tmp-agent-attachments" and tmp_path.is_dir():
-                    _remove_owned_tree(tmp_path)
-            db.clear_agent_data()
-            # 基线留到数据库清理成功后再删；此前任一步失败都能重复恢复，
-            # 不会在重试时把刚恢复的用户原适配器误当成智能体包卸载。
-            baseline_root = agent_root / "published-baselines"
-            _remove_owned_tree(baseline_root)
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": f"清除失败: {exc}"}
-        self.shadow_runs.clear()
-        self.approval_waits.clear()
-        mcp_gateway.ctx.plan_params.clear()
-        return {"ok": True, "cleared": True, "removed_runtime_files": True,
-                "removed_agent_adapters": True}
-
     def decide_approval(self, approval_id: str, decision: str) -> dict:
         approval = db.get_approval(approval_id)
         if not approval:
@@ -3687,10 +3705,15 @@ class AgentService:
             if approval["status"] == decision:
                 return {"ok": True, "idempotent": True, "status": approval["status"]}
             return {"ok": False, "error": "CONFLICT", "status": approval["status"]}
-        db.decide_approval(approval_id, decision, "user")
+        persisted = db.decide_approval(approval_id, decision, "user")
+        if not persisted or persisted["status"] != decision:
+            return {"ok": False, "error": "CONFLICT", "status": persisted.get("status") if persisted else None}
         future = self.approval_waits.get(approval_id)
         if future and not future.done():
-            future.set_result(decision)
+            def resolve():
+                if not future.done():
+                    future.set_result(decision)
+            future.get_loop().call_soon_threadsafe(resolve)
         return {"ok": True, "status": decision}
 
     # ---------- 取消 ----------
@@ -3701,11 +3724,18 @@ class AgentService:
             return {"ok": False, "error": "NOT_FOUND"}
         if run["status"] == "queued":
             # 从队列取消(惰性:标记 canceled,出队时跳过)
+            self._canceled_queued_run_ids.add(run_id)
             self._clear_inherited_automation_wait(run_id)
             db.update_run(run_id, status="canceled", finished_at=_now_iso())
             db.update_turn(run.get("turn_id") or "", status="canceled", completed_at=_now_iso())
             await self._cancel_automation_tasks_for_agent_run(run_id)
             await self.broadcast(run["session_id"], 0, "run.canceled", {"run_id": run_id})
+            if not any(item["session_id"] == run["session_id"] for item in db.list_nonterminal_runs()):
+                db.update_session(run["session_id"], status="idle")
+                await self.broadcast(run["session_id"], 0, "session.updated", {
+                    "session_id": run["session_id"], "status": "idle", "last_run_id": run_id,
+                    "last_run_status": "canceled",
+                })
             return {"ok": True, "status": "canceled"}
         if run["status"] in RUN_FINAL_STATUSES:
             return {"ok": True, "status": run["status"], "idempotent": True}
@@ -3751,7 +3781,11 @@ def _extract_text(data: dict) -> str:
                 return str(chunk["block"].get("text") or "")
         if isinstance(data.get("text"), str):
             return data["text"]
-        content = data.get("message", {}).get("content") if isinstance(data.get("message"), dict) else None
+        content = data.get("content")
+        if content is None and isinstance(data.get("message"), dict):
+            content = data["message"].get("content")
+        if isinstance(content, str):
+            return content
         if isinstance(content, list):
             return "".join(str(b.get("text") or "") for b in content if isinstance(b, dict) and b.get("type") == "text")
     return ""
@@ -3783,6 +3817,8 @@ def _extract_tool_call_id(data: dict) -> Optional[str]:
         source = data.get("message", {}).get("source") if isinstance(data.get("message"), dict) else None
         if isinstance(source, dict) and source.get("callId"):
             return str(source["callId"])
+        if _as_dict(data.get("message")).get("toolCallId"):
+            return str(data["message"]["toolCallId"])
         if data.get("callId"):
             return str(data["callId"])
     return None
@@ -3795,6 +3831,9 @@ def _extract_tool_result_text(data: dict) -> str:
         if isinstance(content, list):
             texts = []
             for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    texts.append(str(block.get("text") or ""))
+                    continue
                 if not isinstance(block, dict) or block.get("type") != "tool-result":
                     continue
                 inner = block.get("content")
@@ -3806,6 +3845,22 @@ def _extract_tool_result_text(data: dict) -> str:
                     texts.append(inner)
             return "\n".join(t for t in texts if t)
     return ""
+
+
+def _tool_result_is_error(data: dict) -> bool:
+    message = _as_dict(data.get("message"))
+    content = message.get("content")
+    if data.get("error") or message.get("isError") or (
+        isinstance(content, list) and any(
+            isinstance(block, dict) and block.get("isError") for block in content
+        )
+    ):
+        return True
+    try:
+        envelope = json.loads(_extract_tool_result_text(data))
+    except (ValueError, TypeError):
+        return False
+    return isinstance(envelope, dict) and envelope.get("ok") is False
 
 
 def _parse_args(arguments: Any) -> Any:

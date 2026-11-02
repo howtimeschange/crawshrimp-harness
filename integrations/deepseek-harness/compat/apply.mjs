@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto'
 import { mcpPagination, composerSubmit } from './backports/index.mjs'
 import { fileWorkspace } from './backports/file-workspace.mjs'
 const manifest = JSON.parse(readFileSync(new URL('./manifest.json', import.meta.url)))
-const transforms = { C01: mcpPagination, C02: composerSubmit, C03: fileWorkspace }
+import { quotaClassification, runningBrand, embeddedSidebar, embeddedSessionMenu, welcomeBrand, embeddedSettings, connectionWebServer, embeddedPanels, runningShrimp } from './backports/product-v021.mjs'
+const transforms = { C01: mcpPagination, C02: composerSubmit, C03: fileWorkspace, C04: quotaClassification, C05: runningBrand, C06: embeddedSidebar, C07: embeddedSessionMenu, C08: welcomeBrand, C09: embeddedSettings, C10: connectionWebServer, C11: embeddedPanels, C12: runningShrimp }
 const hash = text => createHash('sha256').update(text).digest('hex')
 // Preflight every new compatibility patch before any runtime writes.
 export function prepareCompatibility(root) {

@@ -14,12 +14,13 @@
 
 import readline from 'node:readline'
 import { compactRequestEvent } from './context-metrics.mjs'
+import { compactUserMessage } from './user-message.mjs'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { DshWebRuntime, activeTurnEvents, assertSessionHeadersExcludeNativeWebTools } from './web-rpc-client.mjs'
 import { createNativeWebFollowManager, createRecoveringRunFollow } from './native-web-follow-manager.mjs'
 import { resolveRunSessionCwd } from './session-workspace.mjs'
 import { desiredSelectionForRun, shouldSelectModelForRun } from './session-model-selection.mjs'
-import { interactionBudgetName } from './session-interaction-budget.mjs'
+import { interactionBudgetName, recordInteractionEvent } from './session-interaction-budget.mjs'
 
 const PROTOCOL_VERSION = 1
 const MODEL_IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
@@ -81,8 +82,9 @@ function extractEventText(data) {
     }
   }
   if (typeof data.text === 'string') return data.text
-  const content = data.message && Array.isArray(data.message.content) ? data.message.content : null
-  if (!content) return ''
+  const content = data.content ?? data.message?.content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
   return content.map((block) => (
     block && typeof block === 'object' && typeof block.text === 'string' ? block.text : ''
   )).join('')
@@ -99,7 +101,7 @@ function compactHarnessEvent(event) {
   event = compactRequestEvent(event)
   if (!event || event.type !== 'user/message') return event
   const text = extractEventText(event.data || {})
-  return { ...event, data: text ? { text } : {} }
+  return compactUserMessage(event, text)
 }
 
 function notifyHarness(runId, event) {
@@ -244,7 +246,6 @@ function attachRunEventHandlers(run) {
       const seq = Number(event.seq || 0)
       if (seq > run.lastSeq) run.lastSeq = seq
       const type = event.type
-      const name = String(event.data?.name || '')
       if (type === 'turn/end') {
         notifyHarness(run.runId, event)
         run.resolveCancellation?.()
@@ -252,12 +253,7 @@ function attachRunEventHandlers(run) {
         settleRun(run)
         return
       }
-      if (type === 'step/start') run.counters.steps += 1
-      if (type === 'tool/call') {
-        run.counters.toolCalls += 1
-        if (name.includes('browser_observe')) run.counters.observe += 1
-        if (name.includes('browser_act')) run.counters.act += 1
-      }
+      recordInteractionEvent(run, event)
       if (type === 'assistant/chunk') {
         const text = extractEventDeltaText(event.data || {})
         if (text) recordAssistantOutput(run, text)
@@ -511,6 +507,7 @@ async function startRun(params) {
     outputBudgetReached: false, outputBudgetMessage: '', outputBudgetSegments: 0, cancelRequested: false, cancelPromise: null,
     outputDeltaTimes: [],
     sessionContinuation: params.sessionContinuation === true,
+    browserBudget: params.browserBudget,
     budget, counters: { steps: 0, toolCalls: 0, observe: 0, act: 0, textDeltas: 0, outputChars: 0 },
     resolve: null,
     timer: setTimeout(() => {
@@ -531,6 +528,7 @@ async function startRun(params) {
   let policyInstalled = false
   let promptSubmitted = false
   let preservePolicy = false
+  let rpcStage = 'session/create'
 
   try {
     const contentBlocks = []
@@ -569,6 +567,7 @@ async function startRun(params) {
       // The bridge snapshots this policy in the authenticated DSH Web Host;
       // inherited Automations therefore never inherit a source Session's
       // temporary danger-full-access selection.
+      rpcStage = 'automation-policy'
       await state.runtime.setAutomationPolicy({ sessionId, runId, policy: automationPolicy })
       policyInstalled = true
     }
@@ -578,23 +577,27 @@ async function startRun(params) {
     if (!provider || !model) throw new Error('runtime model selection is missing provider or model')
     let currentSelection = state.selectedModels.get(sessionId) || null
     try {
+      rpcStage = 'session/current-model'
       currentSelection = await state.runtime.currentModel({ sessionId })
     } catch (error) {
-      console.error(`[worker] session ${sessionId} current model read failed: ${error.message}`)
+      console.error(`[worker] session ${sessionId} current model read failed: ${JSON.stringify(state.runtime?.diagnostics?.(error, 'session/current-model') || { code: 'MODEL_READ_FAILED' })}`)
     }
     if (state.activeRun !== run || run.cancelRequested) return { ok: true, summary: await done }
     if (shouldSelectModelForRun({ provider, model, reasoningEffort: params.reasoningEffort }, currentSelection)) {
       const desired = desiredSelectionForRun({ provider, model, reasoningEffort: params.reasoningEffort }, currentSelection) || { provider, model }
+      rpcStage = 'session/select-model'
       await state.runtime.selectModel({ sessionId, ...desired })
       state.selectedModels.set(sessionId, desired)
     } else if (currentSelection) {
       state.selectedModels.set(sessionId, currentSelection)
     }
     if (state.activeRun !== run || run.cancelRequested) return { ok: true, summary: await done }
+    rpcStage = 'session/follow'
     const follow = attachRunEventHandlers(run)
     await follow.ready
     if (state.activeRun !== run || run.cancelRequested) return { ok: true, summary: await done }
     const requestId = `crawshrimp-run-${runId}`
+    rpcStage = 'session/prompt'
     promptSubmitted = true
     await state.runtime.prompt({
       sessionId,
@@ -607,7 +610,8 @@ async function startRun(params) {
     return { ok: true, summary }
   } catch (error) {
     if (state.activeRun !== run) return { ok: true, summary: await done }
-    console.error(`[worker] run ${runId} prompt 失败: ${error.message}`)
+    const diagnostic = state.runtime?.diagnostics?.(error, rpcStage) || null
+    console.error(`[worker] run ${runId} request failed stage=${rpcStage}: ${diagnostic ? JSON.stringify(diagnostic) : String(error?.code || error?.name || 'Error')}`)
     if (promptSubmitted) {
       // The HTTP response can fail after the Host accepted/queued the prompt.
       // Keep the run, follow, budget and policy until the owned Host is reaped;
@@ -615,7 +619,7 @@ async function startRun(params) {
       if (state.activeRun !== run) return { ok: true, summary: await done }
       preservePolicy = true
       await stopRuntime()
-      const failure = { code: 'PROMPT_RESULT_UNKNOWN', message: 'Prompt receipt was lost; runtime stopped without replaying the request' }
+      const failure = { code: 'PROMPT_RESULT_UNKNOWN', message: 'Prompt receipt was lost; runtime stopped without replaying the request', ...(diagnostic ? { diagnostic } : {}) }
       return { ok: false, error: failure, summary: {
         status: 'failed', reason: { kind: 'error', error: failure }, runId, sessionId,
       } }

@@ -86,7 +86,7 @@ test('desktop services restart when macOS reopens the app after all windows clos
   assert.match(main, /async function ensureDesktopServicesStarted\(\)/)
   assert.match(main, /if \(!startup\.api\.ok\) desktopServicesStartupPromise = null/)
   assert.match(main, /await ensureDesktopServicesStarted\(\)/)
-  assert.match(main, /app\.on\('activate', \(\) => \{\s*if \(BrowserWindow\.getAllWindows\(\)\.length === 0\) createWindow\(\)\s*ensureDesktopServicesStarted\(\)/)
+  assert.match(main, /app\.on\('activate', \(\) => \{\s*if \(lifecycleController\.isShuttingDown\(\)\) return\s*if \(BrowserWindow\.getAllWindows\(\)\.length === 0\) createWindow\(\)\s*ensureDesktopServicesStarted\(\)/)
   assert.match(main, /app\.on\('window-all-closed', \(\) => \{\s*lifecycleController\.handleWindowAllClosed\(\)\s*\}\)/)
   assert.doesNotMatch(main, /app\.on\('window-all-closed', \(\) => \{\s*stopBackend\(\)/)
 })

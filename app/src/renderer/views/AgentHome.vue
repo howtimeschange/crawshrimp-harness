@@ -371,6 +371,7 @@ function handleEvent(event, data) {
       pushMessage({
         kind: 'tool',
         toolName: data?.tool_name || '',
+        dshCallId: data?.dsh_call_id || '',
         argsText: JSON.stringify(data?.arguments || {}, null, 1),
         resultText: '',
         status: 'requested',
@@ -379,10 +380,11 @@ function handleEvent(event, data) {
       break
     }
     case 'tool.completed': {
-      const card = [...messages.value].reverse().find((m) => m.kind === 'tool' && m.status === 'requested')
+      const card = [...messages.value].reverse().find((m) => m.kind === 'tool' && m.status === 'requested'
+        && (!data?.dsh_call_id || m.dshCallId === data.dsh_call_id))
       if (card) {
         card.resultText = data?.result || ''
-        card.status = 'succeeded'
+        card.status = data?.is_error ? 'failed' : 'succeeded'
       }
       scrollToBottom()
       break

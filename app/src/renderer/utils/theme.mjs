@@ -1,5 +1,5 @@
 export const THEME_STORAGE_KEY = 'crawshrimp.ui.theme'
-export const THEME_PREFERENCES = Object.freeze(['system', 'light', 'dark'])
+export const THEME_PREFERENCES = Object.freeze(['system', 'light', 'dark', 'lake'])
 
 export function normalizeThemePreference(value) {
   const normalized = String(value || '').trim().toLowerCase()
@@ -17,6 +17,7 @@ export function readThemePreference(storage) {
 export function resolveTheme(preference, systemPrefersDark = false) {
   const normalized = normalizeThemePreference(preference)
   if (normalized === 'system') return systemPrefersDark ? 'dark' : 'light'
+  if (normalized === 'lake') return 'light'
   return normalized
 }
 

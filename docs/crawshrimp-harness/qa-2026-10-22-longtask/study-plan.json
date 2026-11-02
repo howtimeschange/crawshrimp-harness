@@ -1,0 +1,40 @@
+{
+  "objective": "Compare 36-checkpoint long business tasks",
+  "rounds": 3,
+  "order": [
+    [
+      "old-native",
+      "new-native",
+      "new-ptc"
+    ],
+    [
+      "new-native",
+      "new-ptc",
+      "old-native"
+    ],
+    [
+      "new-ptc",
+      "old-native",
+      "new-native"
+    ]
+  ],
+  "business": "36 batches x24 product records, rule-based listing audit and final aggregation",
+  "acceptance": "864 per-item decisions and shortage values plus all batch totals and final totals match external oracle; dynamic tools actually activated and used",
+  "instrumentation": "turn elapsed, all per-request usage, actual step/start counts, tool invocations/errors, max input context, artifact checks",
+  "early": "batches2-18 excluding7",
+  "late": "batches19-35 excluding25",
+  "excluded_from_slope_only": [
+    1,
+    7,
+    25,
+    36
+  ],
+  "limits": [
+    "36 externally paced business turns, not a single autonomous prompt",
+    "No artificial compaction; history only tens of thousands of tokens",
+    "Reasoning off; single machine, official Flash, no desktop UI execution",
+    "Latin-square order balances but cannot reset server cache",
+    "3 runs per group exploratory, not p95/significance estimate"
+  ],
+  "state": "round1 verified; independent rounds2/3 running"
+}

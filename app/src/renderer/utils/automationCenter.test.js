@@ -85,9 +85,10 @@ test('Automation Center sends ordinary creation to the Agent conversation', () =
   const taskCenter = readFileSync(path.join(srcRoot, 'renderer', 'views', 'TaskCenter.vue'), 'utf8')
   const app = readFileSync(path.join(srcRoot, 'renderer', 'App.vue'), 'utf8')
 
-  assert.match(automationCenter, /从智能体对话创建/)
+  assert.match(automationCenter, /在主会话中创建自动化/)
+  assert.match(automationCenter, /@click="openAgent"/)
   assert.match(automationCenter, /emit\('open-agent'\)/)
-  assert.match(taskCenter, /@open-agent="emit\('open-agent'\)"/)
+  assert.match(taskCenter, /@open-agent="prompt => emit\('open-agent', prompt\)"/)
   assert.match(app, /@open-agent="openAgentFromAutomation"/)
   assert.match(app, /function openAgentFromAutomation\(\)/)
 })

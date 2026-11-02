@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import hashlib
 import re
+import threading
 import uuid
 from statistics import median
 from typing import Callable, Iterable, Mapping, Sequence
@@ -306,9 +307,18 @@ def review_inputs_concurrently(
     if not jobs or not model_ids:
         return results
     workers = max(1, min(int(max_workers or 1), len(jobs) * len(model_ids)))
+    stop = threading.Event()
+    def guarded_review(job, model_id):
+        if stop.is_set():
+            return []
+        try:
+            return reviewer(job, model_id)
+        except llm_gateway.LlmUnknownSubmissionError:
+            stop.set()
+            raise
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(reviewer, job, model_id): (job, model_id)
+            pool.submit(guarded_review, job, model_id): (job, model_id)
             for job in jobs
             for model_id in model_ids
         }
@@ -316,6 +326,11 @@ def review_inputs_concurrently(
             job, model_id = futures[future]
             try:
                 candidates = list(future.result() or [])
+            except llm_gateway.LlmUnknownSubmissionError:
+                stop.set()
+                for pending in futures:
+                    pending.cancel()
+                raise
             except Exception as exc:
                 if log:
                     log(f"[warn] 标签视觉初审失败: {job.job_id} / {model_id}: {exc}")
@@ -419,6 +434,8 @@ def validate_existing_yq(
         job = ReviewJob(f"existing:{path.name}", path, style_code, expected_role, -1)
         try:
             sol_candidates = list(sol_reviewer(job, "gpt-5.6-sol") or [])
+        except llm_gateway.LlmUnknownSubmissionError:
+            raise
         except Exception:
             sol_candidates = []
         sol_valid = [
@@ -652,6 +669,8 @@ def recover_page_reviews_with_sol(
 
     try:
         sol_candidates = list(sol_reviewer(job, "gpt-5.6-sol") or [])
+    except llm_gateway.LlmUnknownSubmissionError:
+        raise
     except Exception as exc:
         if log:
             log(f"[warn] 标签页 Sol 缺口复核失败: {job.job_id}: {exc}")
@@ -1301,6 +1320,15 @@ def process_prepare_upload_package_labels(
     recovery_by_job: dict[str, tuple[int, list[LabelCandidate]]] = {}
     if page_jobs:
         workers = max(1, min(4, len(page_jobs)))
+        stop_recovery = threading.Event()
+        def recover_guarded(*args, **kwargs):
+            if stop_recovery.is_set():
+                return []
+            try:
+                return recover_page_reviews_with_sol(*args, **kwargs)
+            except llm_gateway.LlmUnknownSubmissionError:
+                stop_recovery.set()
+                raise
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {}
             for job in page_jobs:
@@ -1308,7 +1336,7 @@ def process_prepare_upload_package_labels(
                 reviews = page_reviews.get(job.job_id, [])
                 locked_count = len(merge_page_reviews(reviews))
                 future = pool.submit(
-                    recover_page_reviews_with_sol,
+                    recover_guarded,
                     job,
                     reviews,
                     style_code=style_code,
@@ -1320,6 +1348,11 @@ def process_prepare_upload_package_labels(
                 job, locked_count = futures[future]
                 try:
                     merged = list(future.result() or [])
+                except llm_gateway.LlmUnknownSubmissionError:
+                    stop_recovery.set()
+                    for pending in futures:
+                        pending.cancel()
+                    raise
                 except Exception as exc:
                     if log:
                         log(f"[warn] 标签页缺口复核调度失败: {job.job_id}: {exc}")

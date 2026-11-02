@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "baseline": {
     "harness": "205500eead7bf72fa1a9b90df8287c41feed894a",
-    "dsh": "0.1.2-rc.1",
+    "dsh": "0.2.1-rc.2",
     "dshIm": "4.11.0"
   },
   "upstream": {
@@ -13,7 +13,7 @@
     {
       "id": "C01",
       "package": "@deepseek-ai/dsh-mcp-client",
-      "version": "0.1.2-rc.1",
+      "version": "0.2.1-rc.2",
       "file": "lib/index.js",
       "upstreamSource": "packages/mcp/mcp-client/src/tools.ts",
       "behavior": "Reject repeated nextCursor before disposing previous generation",
@@ -27,7 +27,7 @@
     {
       "id": "C02",
       "package": "@deepseek-ai/dsh-client-ui-conversation",
-      "version": "0.1.2-rc.1",
+      "version": "0.2.1-rc.2",
       "file": "lib/client.js",
       "upstreamSource": "packages/client/ui-conversation/src/client/skeleton/InputBar.tsx",
       "behavior": "Resolve button through the existing Enter policy and keyboard command machine",
@@ -41,16 +41,121 @@
     {
       "id": "C03",
       "package": "@deepseek-ai/dsh-client-ui-chat",
-      "version": "0.1.2-rc.1",
+      "version": "0.2.1-rc.2",
       "file": "lib/client.js",
       "upstreamSource": "Product-owned callback at ChatView openFile; interaction reference ui-sidebar-right at 639ed015397290b3745d163aafe02ffee4aa3f84",
-      "behavior": "Route embedded native message file links and produced-file chips into the Vue session workspace; retain standalone and directory system-open behavior",
+      "behavior": "Route embedded native file links to the Vue resource workspace; retain upstream standalone resource routing",
       "precondition": "exact version and unique source anchor",
       "postcondition": "callback present and idempotent; opener fallback retained",
       "order": "after historical product patches",
       "tests": "node --test compat/file-workspace.test.mjs",
       "persistenceImpact": "Vue sessionPanel.v2 extends legacy state with workTabs and activeIds",
       "removeWhen": "native chat supports a product file opener without bundle patching"
+    },
+    {
+      "id": "C04",
+      "package": "@deepseek-ai/dsh-llm-pi-ai",
+      "version": "0.2.1-rc.2",
+      "file": "lib/index.js",
+      "behavior": "Classify explicit exhausted quota before generic HTTP 403 authentication errors",
+      "precondition": "unique upstream anchors",
+      "postcondition": "idempotent replacement",
+      "tests": "node --test compat/product-v021.test.mjs",
+      "persistenceImpact": "none",
+      "removeWhen": "upstream provides equivalent product extension"
+    },
+    {
+      "id": "C05",
+      "package": "@deepseek-ai/dsh-client-ui-chat",
+      "version": "0.2.1-rc.2",
+      "file": "lib/client.js",
+      "behavior": "Brand rc.2 running status and accessible announcement while preserving elapsed time",
+      "precondition": "unique upstream anchors",
+      "postcondition": "idempotent replacement",
+      "tests": "node --test compat/product-v021.test.mjs",
+      "persistenceImpact": "none",
+      "removeWhen": "upstream provides equivalent product extension"
+    },
+    {
+      "id": "C06",
+      "package": "@deepseek-ai/dsh-client-ui-sidebar-right",
+      "version": "0.2.1-rc.2",
+      "file": "lib/client.js",
+      "behavior": "Suppress embedded native sidebar surface and toggle while preserving services and standalone UI",
+      "precondition": "unique component signatures",
+      "postcondition": "idempotent replacement",
+      "tests": "node --test compat/product-v021.test.mjs",
+      "persistenceImpact": "none",
+      "removeWhen": "upstream offers embedded surface configuration"
+    },
+    {
+      "id": "C07",
+      "package": "@deepseek-ai/dsh-session-log-export",
+      "version": "0.2.1-rc.2",
+      "file": "lib/client.js",
+      "behavior": "Hide duplicate embedded session export menu; retain export backend and standalone menu",
+      "precondition": "unique header component signature",
+      "postcondition": "idempotent replacement",
+      "tests": "node --test compat/product-v021.test.mjs",
+      "persistenceImpact": "none",
+      "removeWhen": "upstream offers embedded menu configuration"
+    },
+    {
+      "id": "C08",
+      "package": "@deepseek-ai/dsh-client-ui-conversation",
+      "version": "0.2.1-rc.2",
+      "file": "lib/client.js",
+      "behavior": "Restore Harness accessible welcome headline",
+      "precondition": "unique locale anchors",
+      "postcondition": "idempotent branding",
+      "tests": "node --test compat/product-v021.test.mjs",
+      "persistenceImpact": "none",
+      "removeWhen": "upstream supports hero text customization"
+    },
+    {
+      "id": "C09",
+      "package": "@deepseek-ai/dsh-client-ui-settings-general",
+      "version": "0.2.1-rc.2",
+      "file": "lib/client.js",
+      "behavior": "Open dedicated embedded IM settings by stable section id without depending on account launcher DOM",
+      "precondition": "unique settings actions anchor",
+      "postcondition": "idempotent effect",
+      "tests": "node --test compat/product-v021.test.mjs",
+      "persistenceImpact": "none",
+      "removeWhen": "upstream exposes settings route"
+    },
+    {
+      "id": "C10",
+      "package": "@deepseek-ai/dsh-client-connection",
+      "version": "0.2.1-rc.2",
+      "file": "lib/index.js",
+      "behavior": "Declare webServer in Connection owner scope so generic plugin RPC channels can register under Cordis dependency enforcement",
+      "precondition": "exact version and unique source anchor",
+      "removeWhen": "upstream declares or scopes webServer dependency for generic RPC registration"
+    },
+    {
+      "id": "C11",
+      "package": "@deepseek-ai/dsh-client-ui-sidebar",
+      "version": "0.2.1-rc.2",
+      "file": "lib/client.js",
+      "behavior": "Hide native plugin and schedule sidebar entries; only plugin page embeds in Harness settings",
+      "precondition": "exact unique source anchors",
+      "removeWhen": "native embedded navigation API exists"
+    },
+    {
+      "id": "C12",
+      "package": "@deepseek-ai/dsh-client-ui-chat",
+      "version": "0.2.1-rc.2",
+      "file": "lib/client.js",
+      "behavior": "Remove running status icon; preserve Harness status text and elapsed time",
+      "precondition": "exact unique running icon component",
+      "removeWhen": "upstream supports branded running icon slot"
     }
-  ]
+  ],
+  "migration": {
+    "harnessBase": "d66b4d172",
+    "runtime": "0.2.1-rc.2",
+    "date": "2026-10-21",
+    "note": "upstream 字段保留原选择性回移来源；migration 记录本轮整套升级。"
+  }
 }

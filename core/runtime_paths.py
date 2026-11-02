@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import errno
 import sys
 from pathlib import Path
 from uuid import uuid4
@@ -98,8 +99,10 @@ def _ensure_dir(path: Path) -> Path:
     safe_path = assert_no_reparse_components_windows(path)
     harden_windows_path(safe_path)
     probe = safe_path / f".crawshrimp-write-test-{os.getpid()}-{uuid4().hex}"
-    probe.write_text("ok", encoding="utf-8")
-    probe.unlink()
+    try:
+        probe.write_text("ok", encoding="utf-8")
+    finally:
+        probe.unlink(missing_ok=True)
     return safe_path
 
 
@@ -115,6 +118,7 @@ def _select_root(*, child_name: str | None = None, create_child: bool = True) ->
 
     seen: set[str] = set()
     errors: list[str] = []
+    last_error = None
     for base in candidates:
         key = str(base)
         if key in seen:
@@ -129,6 +133,7 @@ def _select_root(*, child_name: str | None = None, create_child: bool = True) ->
             _runtime_data_key = selection_key
             return base
         except OSError as e:
+            last_error = e
             errors.append(f"{base}: {e}")
             logger.warning("runtime data path unavailable %s: %s", base, e)
             if explicit and not _fallback_allowed_for_explicit_root():
@@ -136,6 +141,8 @@ def _select_root(*, child_name: str | None = None, create_child: bool = True) ->
 
     label = "CRAWSHRIMP_DATA" if explicit else "default crawshrimp data directory"
     detail = "; ".join(errors) or str(candidates[0] if candidates else "")
+    if last_error is not None and last_error.errno == errno.ENOSPC:
+        raise OSError(errno.ENOSPC, f"Unable to prepare {label}: {detail}") from last_error
     raise PermissionError(f"Unable to prepare {label}: {detail}")
 
 
@@ -146,3 +153,16 @@ def data_root() -> Path:
 def child_dir(child_name: str, *, create: bool = True) -> Path:
     root = _select_root(child_name=child_name, create_child=create)
     return root / child_name
+
+
+def configured_data_root() -> Path:
+    """Inspect the selected or preferred root without creating or probing it.
+
+    A cached live selection is authoritative. In a fresh process use the same
+    explicit/platform/legacy preference order, without guessing a writable
+    fallback by modifying the filesystem.
+    """
+    if _runtime_data_key == _selection_key() and _runtime_data_root is not None:
+        return _runtime_data_root
+    candidates, _ = _candidate_data_roots()
+    return candidates[0]

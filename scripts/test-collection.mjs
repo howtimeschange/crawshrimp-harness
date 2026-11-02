@@ -20,7 +20,7 @@ export const suites = {
   // App contract tests patch the same installed DSH files. Keep files serial so
   // one process cannot read another process's partially written overlay.
   app: { cwd: 'app', roots: ['app/src', 'app/scripts'], pattern: /\.test\.(?:js|mjs)$/, node: true, nodeArgs: ['--test-concurrency=1'] },
-  adapters: { cwd: '.', roots: ['tests'], pattern: /\.test\.js$/, node: true },
+  adapters: { cwd: '.', roots: ['tests'], pattern: /\.test\.(?:js|mjs)$/, node: true },
   integrations: { cwd: '.', roots: ['integrations'], pattern: /\.test\.(?:js|mjs)$/, node: true },
   python: { cwd: '.', roots: ['tests'], pattern: /\/(test_[^/]+|[^/]+_test)\.py$/, python: true },
   ...Object.fromEntries(cliNames.map(name => [name, {

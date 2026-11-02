@@ -2,8 +2,10 @@
 
 这个仓库封装了火山方舟 Seedance 2.0 的异步视频生成任务接口：
 
-- 创建任务：`POST https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks`
-- 查询任务：`GET https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/{id}`
+默认通过森马 Seedance 网关调用；可用 `SEEDANCE_BASE_URL` 或 `ARK_BASE_URL` 覆盖地址。
+
+- 创建任务：`POST https://ai-aigw.semir.com/doubao-seedance/api/v3/contents/generations/tasks`
+- 查询任务：`GET https://ai-aigw.semir.com/doubao-seedance/api/v3/contents/generations/tasks/{id}`
 - 成功状态：`status === "succeeded"`，视频地址在 `content.video_url`
 
 也支持兼容网关地址直接配置到 `/api/v3`，例如森马豆包视频网关：

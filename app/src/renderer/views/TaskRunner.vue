@@ -857,14 +857,14 @@
       </div>
     </div>
 
-    <div v-if="pdfCropModal.open" class="pdf-crop-modal" @click.self="closePdfCropModal">
+    <dialog v-if="pdfCropModal.open" ref="pdfDialog" class="pdf-crop-modal harness-modal-shell" aria-label="PDF 截图框模板" @cancel.prevent="closePdfCropModal" @click.self="closePdfCropModal">
       <div class="pdf-crop-dialog">
         <div class="pdf-crop-head">
           <div>
             <div class="pdf-crop-title">{{ pdfCropModal.type === 'wash_label' ? '洗唛截图框模板' : '吊牌截图框模板' }}</div>
             <div class="pdf-crop-subtitle">拖动矩形移动位置，拖动边角或边线调整宽高；保存后同类型 PDF 的每一页都会套用该模板。</div>
           </div>
-          <button type="button" class="pdf-crop-close" @click="closePdfCropModal">×</button>
+          <button type="button" class="pdf-crop-close" aria-label="关闭截图模板" @click="closePdfCropModal">×</button>
         </div>
 
         <div class="pdf-crop-toolbar">
@@ -983,16 +983,16 @@
           </div>
         </div>
       </div>
-    </div>
+    </dialog>
 
-    <div v-if="cloudPromptLibraryDialog.open" class="cloud-prompt-library-modal" @click.self="closeCloudPromptLibraryDialog">
+    <dialog v-if="cloudPromptLibraryDialog.open" ref="promptDialog" class="cloud-prompt-library-modal harness-modal-shell" aria-label="选择 Prompt 库" @cancel.prevent="closeCloudPromptLibraryDialog" @click.self="closeCloudPromptLibraryDialog">
       <section class="cloud-prompt-library-dialog">
         <header class="cloud-prompt-library-head">
           <div>
             <strong>选择 Prompt 库</strong>
             <span>本地 Prompt 库无需登录即可使用；登录云端审批后会同时显示线上库。</span>
           </div>
-          <button type="button" class="pdf-crop-close" @click="closeCloudPromptLibraryDialog">×</button>
+          <button type="button" class="pdf-crop-close" aria-label="关闭 Prompt 库选择" @click="closeCloudPromptLibraryDialog">×</button>
         </header>
 
         <div class="cloud-prompt-library-filters">
@@ -1051,7 +1051,7 @@
           </aside>
         </div>
       </section>
-    </div>
+    </dialog>
 
     <TmallAiApprovalDrawer
       v-if="!isTmallAiImageChainTask"
@@ -1077,6 +1077,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useNativeDialog } from '../composables/useNativeDialog'
 import BalaAiImageReviewDrawer from './BalaAiImageReviewDrawer.vue'
 import BalaAiMaterialSelectionDrawer from './BalaAiMaterialSelectionDrawer.vue'
 import TmallAiApprovalDrawer from './TmallAiApprovalDrawer.vue'
@@ -1199,6 +1200,9 @@ const cloudPromptLibraryDialog = ref({
   previewLibraryId: '',
   previewTemplates: [],
 })
+const pdfDialog = ref(null), promptDialog = ref(null)
+useNativeDialog(computed(() => pdfCropModal.value.open), pdfDialog)
+useNativeDialog(computed(() => cloudPromptLibraryDialog.value.open), promptDialog)
 const AI_CHAIN_PROMPT_LIBRARY_STATE_KEYS = [
   'cloud_prompt_library_name',
   'cloud_prompt_library_source',
@@ -4901,7 +4905,6 @@ onUnmounted(() => {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--bg);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, .42);
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
 }
@@ -5739,7 +5742,8 @@ onUnmounted(() => {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--bg2);
-  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.42);
+  overflow-y: auto;
+  box-sizing: border-box;
 }
 .pdf-crop-head {
   display: flex;
@@ -6005,6 +6009,8 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 .btn-template:hover { background: rgba(255, 106, 41, 0.16); border-color: rgba(255, 106, 41, 0.42); }
+:global(:root[data-theme-preference="lake"] .btn-template) { background: rgba(var(--orange-rgb), 0.08); border-color: rgba(var(--orange-rgb), 0.28); }
+:global(:root[data-theme-preference="lake"] .btn-template:hover) { background: rgba(var(--orange-rgb), 0.14); border-color: rgba(var(--orange-rgb), 0.42); }
 .btn-template:disabled { opacity: 0.45; cursor: not-allowed; }
 .template-list {
   display: flex;

@@ -5,7 +5,6 @@ delete process.env.ELECTRON_RUN_AS_NODE
 
 const { app, BrowserWindow, Menu, ipcMain, shell, dialog, session, powerMonitor, protocol, nativeImage } = require('electron')
 const { Notification, safeStorage, clipboard } = require('electron')
-const { createAccountAuth } = require('./accountAuth')
 const { assertImageInputSize, importImageInput, rememberImageInputDirectory, imageInputDirectory } = require('./aiImageInputFiles')
 const { autoUpdater } = require('electron-updater')
 const path   = require('path')
@@ -116,6 +115,9 @@ const BACKEND_READY_PROBE_TIMEOUT_MS = Number(process.env.CRAWSHRIMP_BACKEND_REA
 const BACKEND_READY_RESTART_UNAVAILABLE_MS = Number(process.env.CRAWSHRIMP_BACKEND_READY_RESTART_UNAVAILABLE_MS || 10 * 60 * 1000)
 const BACKEND_STOP_GRACE_MS = 7000
 const BACKEND_INSTANCE_ID = crypto.randomUUID()
+// Bind the transient account capability to this desktop process, so a file
+// left by an unclean exit cannot authorize account memory on the next launch.
+const ACCOUNT_RUNTIME_EPOCH = crypto.randomUUID()
 const AI_VIDEO_CAPABILITY_SECRET = crypto.randomBytes(32).toString('hex')
 const LEGACY_RUNTIME_MARKERS = [
   'adapters',
@@ -1025,6 +1027,7 @@ function spawnBackendProcess() {
       CRAWSHRIMP_ALLOW_DATA_FALLBACK: '1',
       CRAWSHRIMP_API_TOKEN: apiToken,
       CRAWSHRIMP_BACKEND_INSTANCE_ID: BACKEND_INSTANCE_ID,
+      CRAWSHRIMP_ACCOUNT_RUNTIME_EPOCH: ACCOUNT_RUNTIME_EPOCH,
       CRAWSHRIMP_AI_VIDEO_CAPABILITY_SECRET: AI_VIDEO_CAPABILITY_SECRET,
       CRAWSHRIMP_AGENT_ATTACHMENT_TMP_ROOT: path.join(app.getPath('userData'), 'tmp-agent-attachments'),
       CRAWSHRIMP_APP_ENV: CLOUD_APPROVAL_APP_ENV,
@@ -2080,6 +2083,7 @@ async function prepareBackendEndpoint() {
 }
 
 const backendController = createBackendController({
+  canStart: () => !lifecycleController.isShuttingDown(),
   log,
   sendStatus,
   probeReady: () => getBackendHealth(BACKEND_READY_PROBE_TIMEOUT_MS),
@@ -2095,6 +2099,7 @@ const backendController = createBackendController({
 })
 
 const restartBackend = createSingleFlightRecovery(async () => {
+  if (lifecycleController.isShuttingDown()) throw new Error('应用正在退出，无法重启核心服务。')
   let releaseRecovery = null
   const recoveryBarrier = new Promise(resolve => { releaseRecovery = resolve })
   backendRecoveryBarrier = recoveryBarrier
@@ -2292,7 +2297,9 @@ async function restoreWindowAfterQuitCanceled() {
 }
 
 async function ensureDesktopServicesStarted() {
+  if (lifecycleController.isShuttingDown()) throw new Error('应用正在退出，无法启动核心服务。')
   await initializeDataDirectory()
+  if (lifecycleController.isShuttingDown()) throw new Error('应用正在退出，无法启动核心服务。')
   if (!desktopServicesStartupPromise) {
     desktopServicesStartupPromise = startDesktopServices({
       startBackend,
@@ -2424,8 +2431,9 @@ configureSingleInstance({
       await performanceDiagnostics.measure('startup.data-directory', initializeDataDirectory)
       ensureDefaultLocalMediaRoots()
       app.on('activate', () => {
+        if (lifecycleController.isShuttingDown()) return
         if (BrowserWindow.getAllWindows().length === 0) createWindow()
-        ensureDesktopServicesStarted()
+        ensureDesktopServicesStarted().catch(error => log(`[lifecycle] activation failed: ${error.message}`))
       })
 
       scheduleInitialUpdateCheck()
@@ -2557,20 +2565,18 @@ app.on('child-process-gone', () => productAnalytics?.record('app_error', {featur
 let accountAuth = null
 function desktopAccountAuth() {
   if (!accountAuth) {
-    const defaults = require('./accountConfig.json')
-    accountAuth = createAccountAuth({
-      config: {
-        ...defaults,
-        url: process.env.CRAWSHRIMP_SUPABASE_URL || defaults.url,
-        publishableKey: process.env.CRAWSHRIMP_SUPABASE_PUBLISHABLE_KEY || defaults.publishableKey,
-      },
+    accountAuth = require('./managedAccount').createManagedAccount({
+      runtimeEpoch: ACCOUNT_RUNTIME_EPOCH,
+      issuer: process.env.CRAWSHRIMP_ACCOUNT_ISSUER || 'https://modeljetty.com/oidc',
+      fetcher: require('./managedFetch').createManagedFetch(session.fromPartition('crawshrimp-managed-account')),
+      development: !app.isPackaged,
       directory: path.join(app.getPath('userData'), 'account'),
+      runtimeDirectory: () => getCrawshrimpDataDir(),
       safeStorage,
-      openExternal: url => shell.openExternal(url),
-      createClient: require('@supabase/supabase-js').createClient,
+      openExternal: url => shell.openExternal(url, { activate: true }),
+      copyText: text => clipboard.writeText(text),
       notify: () => {
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('account:changed')
-        setImmediate(() => { try { void desktopAnalytics().sync().catch(() => {}) } catch {} })
       },
     })
   }
@@ -2579,7 +2585,7 @@ function desktopAccountAuth() {
 secureHandle('account:action', (_, action, input = {}) => desktopAccountAuth().run(action, input))
 const marketplace = require('./marketplace').createMarketplace({
   getClient: () => desktopAccountAuth().getClient(),
-  accountState: () => desktopAccountAuth().run('status'),
+  accountState: () => desktopAccountAuth().marketState(),
   version: app.getVersion(),
   installZip: bytes => apiCall('POST', '/adapters/install', {zip_base64:bytes.toString('base64'),install_mode:'copy'}),
   getInstalled: () => apiCall('GET', '/adapters', null, BACKEND_STARTUP_RETRY_OPTIONS),
@@ -2862,6 +2868,7 @@ secureHandle('install-adapter', async (_, payload) => {
   return { ok: false, error: 'No path or file provided' }
 })
 
+secureHandle('get-tasks-live', async () => apiCall('GET', '/tasks/live', null, BACKEND_STARTUP_RETRY_OPTIONS))
 secureHandle('get-tasks', async () => {
   const tasks=await apiCall('GET','/tasks',null,BACKEND_STARTUP_RETRY_OPTIONS)
   let receipts=[]
@@ -2918,6 +2925,14 @@ secureHandle('create-ai-image-job', async (_, payload) =>
   apiCall('POST', '/ai-image/jobs', payload || {}))
 secureHandle('get-ai-image-job', async (_, jobUid) =>
   apiCall('GET', `/ai-image/jobs/${encodeURIComponent(String(jobUid || ''))}`))
+secureHandle('trace-ai-image-managed-request', async (_, jobUid, runUid) =>
+  apiCall('GET', `/ai-image/jobs/${encodeURIComponent(String(jobUid || ''))}/runs/${encodeURIComponent(String(runUid || ''))}/managed-request`, undefined, { timeoutMs: 40000 }))
+secureHandle('list-managed-text-requests', (_, offset = 0) => {
+  const pageOffset = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0
+  return apiCall('GET', `/managed-text/requests?offset=${pageOffset}`)
+})
+secureHandle('trace-managed-text-request', (_, requestId) =>
+  apiCall('GET', `/managed-text/requests/${encodeURIComponent(String(requestId || ''))}`, undefined, { timeoutMs: 40000 }))
 secureHandle('update-ai-image-job', async (_, jobUid, payload) =>
   apiCall('PATCH', `/ai-image/jobs/${encodeURIComponent(String(jobUid || ''))}`, payload || {}))
 secureHandle('set-ai-image-job-pinned', async (_, jobUid, pinned) =>

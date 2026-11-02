@@ -86,7 +86,7 @@ const REQUIRED_DEEPSEEK_HARNESS_FILES = [
   'node_modules/@deepseek-ai/dsh-time-context/package.json',
   'node_modules/@deepseek-ai/dsh-schedule/package.json',
   'node_modules/@deepseek-ai/dsh-acp-app/cordis.patch.yml',
-  'node_modules/@deepseek-ai/dsh-acp-app/node_modules/@deepseek-ai/dsh-acp/package.json',
+  'node_modules/@deepseek-ai/dsh-acp/package.json',
   'node_modules/crawshrimp-slots/lib/client.js',
   'node_modules/crawshrimp-product-bridge/lib/index.js',
   'node_modules/@xmanrui/dsh-im/lib/index.js',

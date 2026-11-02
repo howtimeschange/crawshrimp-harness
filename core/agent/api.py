@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import uuid
 from typing import Any, Optional
@@ -88,6 +89,12 @@ class GrantCreateRequest(BaseModel):
     toolset: list[str]
     url_prefix: Optional[str] = None
     tab_id: Optional[str] = None
+
+
+@router.get("/usage/activity")
+def usage_activity() -> dict:
+    from core.agent.usage import activity_summary
+    return activity_summary()
 
 
 # ---------- Runtime ----------
@@ -370,19 +377,6 @@ async def create_turn(session_id: str, req: TurnCreateRequest) -> dict:
     return JSONResponse(status_code=202, content=result)
 
 
-@router.post("/data/clear")
-async def clear_agent_data() -> dict:
-    """清除智能体数据及受控附件/草稿/运行日志/智能体发布适配包。
-
-    不清任务实例、任务产物与模型配置。
-    """
-    service = get_agent_service()
-    result = await service.clear_agent_data()
-    if not result.get("ok"):
-        raise HTTPException(409, result.get("error", "存在进行中的运行,无法清除"))
-    return result
-
-
 @router.get("/task-instances/{instance_uid}")
 def get_task_instance_status(instance_uid: str) -> dict:
     """任务实例状态(任务卡实时刷新)。"""
@@ -507,6 +501,14 @@ def artifact_zip_entry(path: str, entry: str) -> Response:
         media_type=_guess_media_type(entry_name),
         headers={"Cache-Control": "no-store", "Content-Disposition": "inline"},
     )
+
+
+@router.get("/artifacts/chunk")
+def artifact_chunk_endpoint(session_id: str, artifact_id: str, request: Request, offset: int = 0, length: int = 98304, sha256: str = ""):
+    from core.artifact_chunks import artifact_chunk
+    if set(request.query_params) - {'session_id','artifact_id','offset','length','sha256'}:
+        raise HTTPException(400, "Unsupported query parameter")
+    return artifact_chunk(db.get_session_artifact(session_id, artifact_id), artifact_id, offset, length, sha256)
 
 
 @router.get("/artifacts/file")
@@ -852,7 +854,7 @@ def _discard_adapter_snapshot(adapter_id: str) -> None:
 
 
 def _published_adapter_baseline_dir(adapter_id: str):
-    """智能体首次发布前的长期基线；清除智能体数据时用于恢复用户原包。"""
+    """智能体首次发布前的长期基线，用于保留用户原包。"""
     from core.models import SLUG_PATTERN
     from core.agent.service import _data_root
     value = str(adapter_id or "").strip()
@@ -1245,8 +1247,15 @@ def session_resources(runtime_session_id: str) -> dict:
     for row in db.list_session_resource_events(runtime_session_id):
         data = json.loads(row["payload_json"])
         if row["event_type"] == "artifact.created":
-            key = data.get("path") or data.get("artifact_id")
+            snapshot = data.get("file_snapshot") if isinstance(data.get("file_snapshot"), dict) else {}
+            key = snapshot.get("version_id") or data.get("path") or data.get("artifact_id")
             if key:
+                previous = artifacts.get(key)
+                # A failed retry of this exact token cannot replace a committed
+                # delivery with its mutable source. Other versions stay distinct.
+                if (previous and (previous.get("file_snapshot") or {}).get("status") == "ready"
+                        and snapshot.get("status") != "ready"):
+                    continue
                 previous = artifacts.pop(key, None)
                 created_at = previous["created_at"] if previous else row["created_at"]
                 artifacts[key] = {**data, "created_at": created_at, "updated_at": row["created_at"]}
@@ -1269,19 +1278,55 @@ def session_resources(runtime_session_id: str) -> dict:
                 activity = {**data, "created_at": row["created_at"]}
     # Office render jobs freeze a new copy in a different job directory. Present
     # those revisions as one document, preferring the latest usable preview.
-    documents = {}
+    documents, versions, last_ready, latest = {}, {}, {}, {}
     for item in artifacts.values():
+        item.pop("document_id", None)
         office = item.get("office")
-        path = Path(item.get("path") or "")
+        path = Path(item.get("source_path") or item.get("path") or "")
         managed = office and path.parent.name == "editable" and path.parent.parent.name == office.get("job_id")
-        key = (str(path.parent.parent.parent), item.get("filename")) if managed else item.get("path") or item.get("artifact_id")
+        key = (str(path.parent.parent.parent), item.get("filename")) if managed else item.get("source_path") or item.get("path") or item.get("artifact_id")
+        snapshot = item.get("file_snapshot") if isinstance(item.get("file_snapshot"), dict) else {}
+        # Also sanitize failed events written by older builds: desktop opening
+        # and cloud dispatch must not bypass the fail-closed chunk endpoint.
+        if "file_snapshot" in item and snapshot.get("status") != "ready":
+            item["source_path"] = item.get("source_path") or item.get("path")
+            item["path"] = ""
+        if snapshot.get("status") == "ready":
+            # A snapshot token identifies bytes; this session/source grouping
+            # identifies the document across edits and Office render job copies.
+            # Derive it locally so tool payloads cannot assert another identity.
+            item["document_id"] = "document-" + hashlib.sha256(json.dumps(
+                [runtime_session_id, key], ensure_ascii=False, separators=(",", ":")
+            ).encode()).hexdigest()
+            versions.setdefault(key, []).append({"artifact_id": snapshot["version_id"], "name": item.get("filename") or snapshot.get("name"),
+                                               "size": snapshot["size"], "sha256": snapshot["sha256"],
+                                               "created_at": item["created_at"], "updated_at": item["updated_at"]})
+            item["source_artifact_id"] = item.get("artifact_id")
+            item["artifact_id"] = snapshot["version_id"]
+            last_ready[key] = item
+        latest[key] = item
         previous = documents.get(key)
         if previous and managed:
             rank = lambda value: (2 if (value.get("office", {}).get("delivery") or {}).get("status") == "final" else 1 if value.get("office", {}).get("pages") else 0)
             if rank(previous) > rank(item):
                 continue
         documents[key] = item
-    for item in documents.values():
+    for key, item in documents.items():
+        if versions.get(key):
+            item["versions"] = list(reversed(versions[key]))
+    visible = []
+    for key, item in reversed(list(documents.items())):
+        newest = latest[key]
+        snapshot = newest.get("file_snapshot") if isinstance(newest.get("file_snapshot"), dict) else {}
+        failed_newest = snapshot.get("status") and snapshot.get("status") != "ready"
+        visible.append(newest if failed_newest and key in last_ready else item)
+        if failed_newest and key in last_ready:
+            # Keep the failed newest event and expose the last immutable copy
+            # as its own openable row. Never substitute the mutable source.
+            historical = {**last_ready[key], "historical_after_failure": True,
+                          "versions": list(reversed(versions[key]))}
+            visible.append(historical)
+    for item in visible:
         try:
             path = Path(item.get("path") or "")
             item["exists"] = path.is_file()
@@ -1290,9 +1335,40 @@ def session_resources(runtime_session_id: str) -> dict:
         except OSError:
             item["exists"] = False
     delivered_calls = {item.get("tool_call_id") for item in artifacts.values() if item.get("media_kind") == "image"}
-    return {"artifacts": list(reversed(list(documents.values()))),
+    return {"artifacts": visible,
             "imageGenerations": [value for key, value in image_calls.items() if key in delivered_calls],
             "tabs": list(tabs.values()), "activeTabId": active, "browserActivity": activity}
+
+
+@router.get("/session-resources/current-file")
+def current_artifact_file(runtime_session_id: str, version_id: str) -> dict:
+    """Resolve a failed local snapshot only after an explicit desktop action.
+
+    This is not a versioned delivery: refuse replacement, symlinks and stale
+    identities. The operating system may still observe later changes.
+    """
+    import os
+    import stat
+    from pathlib import Path
+    from core.artifact_version import file_version
+
+    if not runtime_session_id or not version_id:
+        raise HTTPException(400, "缺少会话或文件标识")
+    items = session_resources(runtime_session_id)["artifacts"]
+    item = next((row for row in items if (row.get("file_snapshot") or {}).get("version_id") == version_id), None)
+    if not item or (item.get("file_snapshot") or {}).get("status") not in ("too_large", "quota_exceeded"):
+        raise HTTPException(404, "未找到可打开的本地原文件")
+    path = Path(str(item.get("source_path") or ""))
+    expected = item.get("source_file_version")
+    try:
+        if not path.is_absolute() or not isinstance(expected, dict):
+            raise OSError("invalid source")
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode) or file_version(info) != expected:
+            raise OSError("changed source")
+    except (OSError, ValueError):
+        raise HTTPException(409, "原文件已变化或不可用，请在原目录中重新确认")
+    return {"path": str(path), "versioned": False}
 
 
 class SessionPageRequest(BaseModel):

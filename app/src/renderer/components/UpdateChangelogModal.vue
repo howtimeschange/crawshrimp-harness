@@ -1,9 +1,9 @@
 <template>
-  <div v-if="open" class="changelog-backdrop" @click.self="close">
-    <section class="changelog-modal" role="dialog" aria-modal="true" aria-label="更新日志">
+  <dialog v-if="open" ref="dialog" class="changelog-backdrop" aria-label="更新日志" @cancel.prevent="close" @click.self="close">
+    <section class="changelog-modal">
       <header class="changelog-head">
         <div class="changelog-title-wrap">
-          <span class="changelog-kicker">🦐 抓虾 · 新版本</span>
+          <span class="changelog-kicker"><CrawshrimpBrandMark :size="20" /> 抓虾 · 新版本</span>
           <h3 class="changelog-title">v{{ versionLabel }}</h3>
           <span v-if="publishedLabel" class="changelog-date">{{ publishedLabel }}</span>
         </div>
@@ -26,11 +26,13 @@
         </button>
       </footer>
     </section>
-  </div>
+  </dialog>
 </template>
 
 <script setup>
 import { computed, ref, watch } from 'vue'
+import CrawshrimpBrandMark from './CrawshrimpBrandMark.vue'
+import { useNativeDialog } from '../composables/useNativeDialog'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -38,6 +40,8 @@ const props = defineProps({
   busy: { type: Boolean, default: false },
 })
 const emit = defineEmits(['close', 'update'])
+const dialog = ref(null)
+useNativeDialog(computed(() => props.open), dialog)
 
 const loading = ref(true)
 const fetchError = ref('')
@@ -130,7 +134,7 @@ watch(() => props.open, (openNow) => {
     fetchError.value = ''
     loadNotes()
   }
-})
+}, { immediate: true })
 </script>
 
 <style scoped>
@@ -139,12 +143,21 @@ watch(() => props.open, (openNow) => {
   inset: 0;
   z-index: 2100;
   background: var(--scrim);
-  display: flex;
+  margin: 0;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  box-sizing: border-box;
+  border: 0;
+  color: var(--text);
   align-items: center;
   justify-content: center;
   padding: 24px;
   animation: cs-backdrop-in 140ms cubic-bezier(0.4, 0, 0.2, 1);
 }
+.changelog-backdrop[open] { display: flex; }
+.changelog-backdrop::backdrop { background: transparent; }
 
 .changelog-modal {
   width: min(560px, 100%);
@@ -154,7 +167,6 @@ watch(() => props.open, (openNow) => {
   background: var(--bg2);
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: 0 18px 50px var(--shadow);
   overflow: hidden;
   animation: cs-modal-in 160ms cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -169,7 +181,7 @@ watch(() => props.open, (openNow) => {
 
 .changelog-title-wrap { flex: 1; min-width: 0; }
 
-.changelog-kicker { font-size: 12px; color: var(--orange-text); }
+.changelog-kicker { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--orange-text); }
 
 .changelog-title { margin: 2px 0 0; font-size: 17px; font-weight: 700; color: var(--text); }
 

@@ -55,7 +55,7 @@ test('stale generation errors clear on input changes and task cards surface fail
   assert.match(chooseOutputBody, /clearGenerateError\(\)[\s\S]*form\.output_dir = directory/)
   assert.match(workbench, /function latestTaskFailure/)
   assert.match(workbench, /function compactTaskFailureText/)
-  assert.match(taskResultBody, /collectResultCards\(job\)\.length/)
+  assert.match(taskResultBody, /cards\.filter\(item => \(item\.path \|\| item\.url\) && !item\.failed && !item\.loading\)\.length/)
   assert.match(taskResultBody, /latestTaskFailure\(job\)/)
   assert.match(taskResultBody, /compactTaskFailureText\(failure\)/)
   assert.match(taskPreviewBody, /collectResultCards\(job\)\.slice\(0, 4\)/)

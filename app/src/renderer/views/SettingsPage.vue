@@ -1,58 +1,37 @@
 <template>
-  <div class="view">
-    <header class="view-header">
-      <div>
-        <h2>设置</h2>
-        <p>按配置域分开管理，每个子菜单独立保存。</p>
-      </div>
-    </header>
-
+  <div class="view" :class="{ 'settings-light': props.effectiveTheme === 'light' }">
     <div class="settings-workspace">
-      <aside class="settings-menu" aria-label="设置配置域">
-        <div v-for="group in menuGroups" :key="group.id" class="menu-cluster">
-          <button
-            type="button"
-            :class="['menu-group', { active: activeGroupId === group.id }]"
-            @click="selectGroup(group.id)"
-          >
-            <span class="menu-icon">{{ group.icon }}</span>
-            <span class="menu-copy">
-              <strong>{{ group.label }}</strong>
-              <small>{{ group.desc }}</small>
-            </span>
-          </button>
-          <Transition name="settings-children">
-            <div v-if="activeGroupId === group.id" class="menu-children">
-              <button
-                v-for="child in group.children"
-                :key="child.id"
-                type="button"
-                :class="['menu-child', { active: activePanelId === child.id }]"
-                @click="selectPanel(group.id, child.id)"
-              >
-                <span>{{ child.label }}</span>
-                <span
-                  v-if="child.statusKey || child.statusKeys?.length"
-                  :class="['mini-state', isMenuChildConfigured(child) ? 'on' : 'off']"
-                >
-                  {{ isMenuChildConfigured(child) ? '已配' : '未配' }}
-                </span>
-              </button>
-            </div>
-          </Transition>
-        </div>
+      <a class="settings-skip" href="#settings-main">跳转到设置内容</a>
+      <aside class="settings-menu" aria-label="设置导航">
+        <header class="settings-nav-header">
+          <button type="button" class="settings-back" aria-label="返回上一页" title="返回上一页" @click="emit('back')"><IconArrowLeft :size="18" :stroke="1.7" /></button>
+          <h1>设置</h1>
+        </header>
+        <div class="settings-search"><IconSearch :size="16" :stroke="1.6" aria-hidden="true" /><input v-model="settingsQuery" type="search" placeholder="搜索设置" aria-label="搜索设置" @keydown.esc="settingsQuery = ''" /><button v-if="settingsQuery" type="button" aria-label="清空设置搜索" @click="settingsQuery = ''"><IconX :size="14" /></button></div>
+        <p v-if="settingsQuery" class="settings-search-count" role="status">{{ visibleNavigation.reduce((count, section) => count + section.items.length, 0) }} 项匹配</p>
+        <select class="settings-mobile-select" aria-label="选择设置页面" :value="activePanelId" @change="focusPanel($event.target.value)">
+          <option v-if="!visibleNavigation.some(section => section.items.some(item => item.id === activePanelId))" value="" disabled>选择匹配的设置</option>
+          <optgroup v-for="section in visibleNavigation" :key="section.label" :label="section.label"><option v-for="item in section.items" :key="item.id" :value="item.id">{{ item.label }}</option></optgroup>
+        </select>
+        <nav class="settings-nav-list" aria-label="设置项目">
+          <section v-for="section in visibleNavigation" :key="section.label" class="nav-section">
+            <h2>{{ section.label }}</h2>
+            <button v-for="item in section.items" :key="item.id" type="button" :class="['settings-nav-item', { active: activePanelId === item.id }]" :aria-current="activePanelId === item.id ? 'page' : undefined" @click="selectPanel(item.groupId, item.id)">
+              <component :is="item.icon" :size="17" :stroke="1.6" aria-hidden="true" /><span>{{ item.label }}</span>
+            </button>
+          </section>
+          <div v-if="!visibleNavigation.length" class="nav-empty"><p>没有匹配的设置</p><button type="button" @click="settingsQuery = ''">清空搜索</button></div>
+        </nav>
       </aside>
-
-      <main class="settings-content">
-        <Transition name="settings-panel" mode="out-in">
+      <main id="settings-main" class="settings-content" ref="settingsContent" :data-panel="activePanelId" aria-label="设置内容" tabindex="-1">
         <section v-if="activePanelId === 'appearance-theme'" key="appearance-theme" class="panel">
           <div class="panel-head">
             <div>
               <p class="panel-kicker">外观</p>
-              <h3>主题</h3>
+              <h3>主题</h3><p class="panel-description">{{ activePanelDescription }}</p>
             </div>
             <span class="badge neutral">
-              当前为{{ props.effectiveTheme === 'light' ? '浅色' : '深色' }}
+              当前为{{ props.themePreference === 'lake' ? '湖光' : props.effectiveTheme === 'light' ? '浅色' : '深色' }}
             </span>
           </div>
 
@@ -89,7 +68,7 @@
           </div>
 
           <div class="appearance-note">
-            <span>品牌橙色、状态色和功能布局保持不变，仅调整背景、文字、边框和浮层层级。</span>
+            <span>湖光以白色与湖水绿呈现，状态颜色和功能布局保持不变。</span>
           </div>
         </section>
 
@@ -97,7 +76,7 @@
           <div class="panel-head">
             <div>
               <p class="panel-kicker">连接</p>
-              <h3>服务状态</h3>
+              <h3>服务状态</h3><p class="panel-description">{{ activePanelDescription }}</p>
             </div>
             <span :class="['badge', props.status?.api ? 'on' : 'neutral']">
               {{ props.status?.api ? '核心就绪' : '待检查' }}
@@ -160,7 +139,7 @@
           <div class="panel-head">
             <div>
               <p class="panel-kicker">通知</p>
-              <h3>钉钉机器人</h3>
+              <h3>钉钉机器人</h3><p class="panel-description">{{ activePanelDescription }}</p>
             </div>
             <span :class="['badge', isFieldConfigured('notify.dingtalk_webhook') ? 'on' : 'off']">
               {{ isFieldConfigured('notify.dingtalk_webhook') ? '已配置' : '未配置' }}
@@ -170,24 +149,24 @@
           <div class="panel-layout">
             <div class="form-stack">
               <div class="field">
-                <label>Webhook URL</label>
+                <label for="setting-notify-dingtalk-webhook">Webhook URL</label>
                 <input
-                  v-model="cfg['notify.dingtalk_webhook']"
+                  id="setting-notify-dingtalk-webhook" v-model="cfg['notify.dingtalk_webhook']"
                   placeholder="https://oapi.dingtalk.com/robot/send?access_token=..."
                   class="input"
                 />
               </div>
               <div class="field">
-                <label>加签密钥（可选）</label>
+                <label for="setting-notify-dingtalk-secret">加签密钥（可选）</label>
                 <input
-                  v-model="cfg['notify.dingtalk_secret']"
+                  id="setting-notify-dingtalk-secret" v-model="cfg['notify.dingtalk_secret']"
                   placeholder="SEC..."
                   class="input"
                   type="password"
                   autocomplete="off"
                 />
               </div>
-              <PanelActions panel-id="notify-dingtalk" @save="savePanel('notify-dingtalk')" />
+              <PanelActions panel-id="notify-dingtalk" @save="savePanelFromForm('notify-dingtalk')" />
             </div>
             <div class="side-note">
               <strong>保存范围</strong>
@@ -208,7 +187,7 @@
           <div class="panel-head">
             <div>
               <p class="panel-kicker">应用</p>
-              <h3>桌面更新</h3>
+              <h3>桌面更新</h3><p class="panel-description">{{ activePanelDescription }}</p>
             </div>
             <span :class="['badge', updateBadgeTone]">
               {{ updateBadgeLabel }}
@@ -262,7 +241,7 @@
           <div class="panel-head">
             <div>
               <p class="panel-kicker">通知</p>
-              <h3>飞书机器人</h3>
+              <h3>飞书机器人</h3><p class="panel-description">{{ activePanelDescription }}</p>
             </div>
             <span :class="['badge', isFieldConfigured('notify.feishu_webhook') ? 'on' : 'off']">
               {{ isFieldConfigured('notify.feishu_webhook') ? '已配置' : '未配置' }}
@@ -272,14 +251,14 @@
           <div class="panel-layout">
             <div class="form-stack">
               <div class="field">
-                <label>Webhook URL</label>
+                <label for="setting-notify-feishu-webhook">Webhook URL</label>
                 <input
-                  v-model="cfg['notify.feishu_webhook']"
+                  id="setting-notify-feishu-webhook" v-model="cfg['notify.feishu_webhook']"
                   placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
                   class="input"
                 />
               </div>
-              <PanelActions panel-id="notify-feishu" @save="savePanel('notify-feishu')" />
+              <PanelActions panel-id="notify-feishu" @save="savePanelFromForm('notify-feishu')" />
             </div>
             <div class="side-note">
               <strong>保存范围</strong>
@@ -298,7 +277,7 @@
           <div class="panel-head">
             <div>
               <p class="panel-kicker">通知</p>
-              <h3>自定义 Webhook</h3>
+              <h3>自定义 Webhook</h3><p class="panel-description">{{ activePanelDescription }}</p>
             </div>
             <span :class="['badge', isFieldConfigured('notify.custom_webhook') ? 'on' : 'off']">
               {{ isFieldConfigured('notify.custom_webhook') ? '已配置' : '未配置' }}
@@ -308,14 +287,14 @@
           <div class="panel-layout">
             <div class="form-stack">
               <div class="field">
-                <label>Webhook URL（POST JSON）</label>
+                <label for="setting-notify-custom-webhook">Webhook URL（POST JSON）</label>
                 <input
-                  v-model="cfg['notify.custom_webhook']"
+                  id="setting-notify-custom-webhook" v-model="cfg['notify.custom_webhook']"
                   placeholder="https://your-server/hook"
                   class="input"
                 />
               </div>
-              <PanelActions panel-id="notify-custom" @save="savePanel('notify-custom')" />
+              <PanelActions panel-id="notify-custom" @save="savePanelFromForm('notify-custom')" />
             </div>
             <div class="side-note">
               <strong>保存范围</strong>
@@ -334,7 +313,7 @@
           <div class="panel-head">
             <div>
               <p class="panel-kicker">通知</p>
-              <h3>脚本调用说明</h3>
+              <h3>脚本调用说明</h3><p class="panel-description">{{ activePanelDescription }}</p>
             </div>
             <span class="badge neutral">只读</span>
           </div>
@@ -365,7 +344,7 @@
 
         <section v-else-if="activePanelId === 'storage-archived'" key="storage-archived" class="panel archive-panel">
           <div class="panel-head">
-            <div><p class="panel-kicker">存储</p><h3>已归档会话</h3></div>
+            <div><p class="panel-kicker">存储</p><h3>已归档会话</h3><p class="panel-description">{{ activePanelDescription }}</p></div>
             <button class="btn-ghost" :disabled="archiveLoading || !!archiveRestoring" @click="loadArchivedSessions">{{ archiveLoading ? '加载中…' : '刷新' }}</button>
           </div>
           <p>归档会话的聊天记录会保留。恢复后，会话将重新出现在侧边栏中。</p>
@@ -392,7 +371,7 @@
           <div class="panel-head">
             <div>
               <p class="panel-kicker">存储</p>
-              <h3>数据目录</h3>
+              <h3>数据目录</h3><p class="panel-description">{{ activePanelDescription }}</p>
             </div>
             <span class="badge neutral">本机</span>
           </div>
@@ -400,13 +379,13 @@
           <div class="panel-layout">
             <div class="form-stack">
               <div class="field">
-                <label>数据目录 (CRAWSHRIMP_DATA)</label>
+                <label for="setting-data-dir">数据目录 (CRAWSHRIMP_DATA)</label>
                 <div class="input-row">
-                  <input v-model="cfg['data_dir']" placeholder="默认自动选择可写目录" class="input" />
+                  <input id="setting-data-dir" v-model="cfg['data_dir']" placeholder="默认自动选择可写目录" class="input" />
                   <button class="btn-ghost" @click="browseDir">选择</button>
                 </div>
               </div>
-              <PanelActions panel-id="storage-data" @save="savePanel('storage-data')" />
+              <PanelActions panel-id="storage-data" @save="savePanelFromForm('storage-data')" />
             </div>
             <div class="side-note path-note">
               <strong>当前目录</strong>
@@ -419,7 +398,7 @@
           <div class="panel-head">
             <div>
               <p class="panel-kicker">数据同步</p>
-              <h3>ODPS 写入接口</h3>
+              <h3>ODPS 写入接口</h3><p class="panel-description">{{ activePanelDescription }}</p>
             </div>
             <span :class="['badge', isFieldConfigured('odps.app_code') ? 'on' : 'off']">
               {{ isFieldConfigured('odps.app_code') ? '已配置' : '未配置' }}
@@ -429,16 +408,16 @@
           <div class="panel-layout">
             <div class="form-stack">
               <div class="field">
-                <label>ODPS AppCode</label>
+                <label for="setting-odps-app-code">ODPS AppCode</label>
                 <input
-                  v-model="cfg['odps.app_code']"
+                  id="setting-odps-app-code" v-model="cfg['odps.app_code']"
                   placeholder="用于 Authorization: APPCODE ..."
                   class="input"
                   type="password"
                   autocomplete="off"
                 />
               </div>
-              <PanelActions panel-id="sync-odps" @save="savePanel('sync-odps')" />
+              <PanelActions panel-id="sync-odps" @save="savePanelFromForm('sync-odps')" />
             </div>
             <div class="side-note">
               <strong>同步出口</strong>
@@ -451,10 +430,10 @@
           <div class="panel-head">
             <div>
               <p class="panel-kicker">AI 生图</p>
-              <h3>图片模型供应商</h3>
+              <h3>图片模型</h3><p class="panel-description">{{ activePanelDescription }}</p>
             </div>
-            <span :class="['badge', hasAnyFieldConfigured(aiImageKeyFields) ? 'on' : 'off']">
-              {{ hasAnyFieldConfigured(aiImageKeyFields) ? '已配置' : '未配置' }}
+            <span :class="['badge', isImageServiceConfigured ? 'on' : 'off']">
+              {{ isImageServiceConfigured ? '已配置' : '未配置' }}
             </span>
           </div>
 
@@ -462,79 +441,87 @@
 
         </section>
 
-        <section v-else-if="activePanelId === 'ai-agent'" key="ai-agent" class="panel">
+        <section v-else-if="activePanelId === 'ai-agent'" key="ai-agent" class="panel agent-runtime-panel">
           <div class="panel-head">
             <div>
-              <p class="panel-kicker">AI 能力</p>
               <h3>智能体运行时</h3>
+              <p class="panel-description">查看运行状态，并在需要时恢复服务。</p>
             </div>
-            <span :class="['badge', agentRuntime.state === 'ready' ? 'on' : agentRuntime.state === 'needs_configuration' ? 'neutral' : 'off']">
-              {{ agentRuntimeLabel }}
-            </span>
           </div>
 
-          <div class="panel-layout">
-            <div class="form-stack">
-              <div class="field">
-                <label>运行状态</label>
-                <div class="key-states">
-                  <span :class="['key-pill', agentRuntime.state === 'ready' ? 'on' : 'off']">运行时</span>
-                  <span :class="['key-pill', agentRuntime.api_key_configured ? 'on' : 'off']">API Key</span>
-                  <span class="key-pill neutral">模型 {{ agentRuntime.model || '—' }}</span>
-                </div>
-                <p class="field-hint">状态:{{ agentRuntime.state || '—' }} · 代次 {{ agentRuntime.generation }}<span v-if="agentRuntime.error"> · {{ agentRuntime.error }}</span></p>
-                <p v-if="agentRuntime.web_verified" class="field-hint">嵌入式 Web 会话已认证（启动地址不会显示）。</p>
+          <div class="agent-overview" :class="`is-${agentRuntimeTone}`" aria-live="polite">
+            <div class="agent-overview-main">
+              <span class="agent-status-icon" aria-hidden="true"><IconRobot :size="22" :stroke="1.6" /></span>
+              <div class="agent-overview-copy">
+                <span class="agent-overview-label">运行状态</span>
+                <strong><span class="agent-status-dot" aria-hidden="true"></span>{{ agentRuntimeLabel }}</strong>
+                <p>{{ agentRuntimeDescription }}</p>
               </div>
-              <div class="field">
-                <label>操作</label>
-                <div class="agent-op-row">
-                  <button class="btn-ghost" type="button" :disabled="Boolean(agentBusy)" @click="onAgentRestartRuntime">
-                    {{ agentBusy === 'runtime' ? '重启中…' : '重启智能体运行时' }}
-                  </button>
-                  <button class="btn-ghost" type="button" :disabled="Boolean(agentBusy)" @click="onAgentRepairCore">
-                    {{ agentBusy === 'core' ? '修复中…' : '修复核心服务' }}
-                  </button>
-                  <button class="btn-danger" type="button" :disabled="Boolean(agentBusy)" @click="onAgentClearData">
-                    清除智能体数据
-                  </button>
-                </div>
-                <p class="field-hint">重启运行时保留会话历史;修复核心服务重启本地后端;清除数据会清空会话历史/审批记录/草稿(不影响已执行任务与产物),需确认。</p>
-              </div>
-              <div v-if="agentNotice" class="agent-notice">{{ agentNotice }}</div>
             </div>
-            <div class="side-note">
-              <strong>说明</strong>
-              <p>智能体会话界面带自动恢复:运行中掉线会静默自愈。这里提供手动诊断与重置入口。</p>
-            </div>
+            <span v-if="agentRuntime.generation > 0" class="agent-generation">运行代次 {{ agentRuntime.generation }}</span>
           </div>
+
+          <div v-if="agentRuntime.error" class="agent-runtime-error" role="alert">
+            <IconInfoCircle :size="18" :stroke="1.7" aria-hidden="true" />
+            <div><strong>状态信息</strong><p>{{ agentRuntime.error }}</p></div>
+          </div>
+
+          <section class="agent-details" aria-labelledby="agent-details-title">
+            <div class="agent-section-heading"><h4 id="agent-details-title">当前配置</h4><p>凭据检测覆盖本机配置，不能代表模型请求已验证。</p></div>
+            <dl class="agent-details-list">
+              <div><dt>当前模型</dt><dd class="agent-model">{{ agentRuntime.model || '暂不可用' }}</dd></div>
+              <div><dt>模型服务凭据</dt><dd>{{ agentRuntimeKnown ? (agentRuntime.api_key_configured ? '已检测到' : '未检测到') : '状态未知' }}<button v-if="agentRuntimeKnown && !agentRuntime.api_key_configured" type="button" class="agent-inline-link" @click="selectPanel('ai', 'ai-llm')">配置模型</button></dd></div>
+              <div><dt>会话界面连接</dt><dd>{{ agentRuntime.web_verified ? '已就绪' : agentRuntimeKnown ? '未就绪' : '状态未知' }}</dd></div>
+            </dl>
+          </section>
+
+          <section class="agent-actions" aria-labelledby="agent-actions-title">
+            <div class="agent-section-heading"><h4 id="agent-actions-title">服务恢复</h4><p>遇到连接或运行问题时，可以尝试以下操作。</p></div>
+            <div class="agent-action-list">
+              <div class="agent-action-row">
+                <span class="agent-action-icon" aria-hidden="true"><IconRefresh :size="19" :stroke="1.6" /></span>
+                <div class="agent-action-copy"><strong>重启智能体运行时</strong><p>重新启动智能体服务，保留会话历史。</p></div>
+                <button class="btn-ghost agent-action-button" type="button" :disabled="Boolean(agentBusy)" @click="onAgentRestartRuntime">{{ agentBusy === 'runtime' ? '重启中…' : '重启运行时' }}</button>
+              </div>
+              <div class="agent-action-row">
+                <span class="agent-action-icon" aria-hidden="true"><IconShield :size="19" :stroke="1.6" /></span>
+                <div class="agent-action-copy"><strong>修复核心服务</strong><p>重启本地后端服务，恢复服务连接。</p></div>
+                <button class="btn-ghost agent-action-button" type="button" :disabled="Boolean(agentBusy)" @click="onAgentRepairCore">{{ agentBusy === 'core' ? '修复中…' : '修复服务' }}</button>
+              </div>
+            </div>
+            <p class="agent-recovery-note"><IconInfoCircle :size="16" :stroke="1.6" aria-hidden="true" />连接中断时，会话界面会尝试自动恢复。</p>
+            <div v-if="agentNotice" :class="['agent-notice', { 'is-error': !agentNoticeOk }]" :role="agentNoticeOk ? 'status' : 'alert'">{{ agentNotice }}</div>
+          </section>
         </section>
 
         <section v-else-if="activePanelId === 'ai-llm'" key="ai-llm" class="panel">
           <div class="panel-head">
             <div>
               <p class="panel-kicker">AI 文本与多模态</p>
-              <h3>文本大模型网关</h3>
+              <h3>文本模型</h3><p class="panel-description">{{ activePanelDescription }}</p>
             </div>
-            <span :class="['badge', isLlmConfigured(cfg) ? 'on' : 'off']">
-              {{ isLlmConfigured(cfg) ? '已配置' : '未配置' }}
+            <span :class="['badge', isTextServiceConfigured ? 'on' : 'off']">
+              {{ isTextServiceConfigured ? '已配置' : '未配置' }}
             </span>
           </div>
 
           <div class="form-stack">
-            <div class="llm-list-toolbar">
+            <p class="field-hint">官方模型目录与使用权限随账号实时同步。<button class="btn-ghost compact" type="button" :disabled="refreshingOfficialModels" @click="refreshOfficialModels">{{ refreshingOfficialModels ? '同步中…' : '刷新目录' }}</button><button class="btn-ghost compact" type="button" @click="focusPanel('account')">查看模型权限与会员</button></p>
+            <div class="llm-list-toolbar model-provider-toolbar">
               <p>
-                每个 Provider 独立保存 API Key 与 Base URL；已配置的旧森马共享 Key 会自动作为三条森马网关的默认 Key 兜底。
+                各服务商独立保存连接地址与密钥。已配置的森马共享密钥可继续使用。
               </p>
               <button class="btn-orange compact" type="button" @click="openLlmProviderModal()">
-                添加 Provider
+                添加服务商
               </button>
             </div>
 
-            <div class="llm-provider-list" aria-label="文本大模型 Provider 列表">
-              <article v-for="provider in llmProviders" :key="provider.id" class="llm-provider-row">
-                <div class="llm-provider-content">
+            <p v-if="officialCatalogError" class="inline-msg err" role="alert">{{ officialCatalogError }}</p>
+            <div class="llm-provider-list model-provider-list" aria-label="文本模型服务商列表">
+              <article v-for="provider in llmProviders" :key="provider.id" class="llm-provider-row model-provider-row">
+                <div class="llm-provider-content model-provider-content">
                   <button
-                    :class="['llm-provider-logo', `brand-${provider.brand}`, { 'with-image': provider.logoImage && !failedProviderLogos[provider.id] }]"
+                    :class="['llm-provider-logo', 'model-provider-logo', `brand-${provider.brand}`, { 'with-image': provider.logoImage && !failedProviderLogos[provider.id] }]"
                     :title="provider.name"
                     :aria-label="`编辑 ${provider.name}`"
                     type="button"
@@ -548,24 +535,24 @@
                     />
                     <span v-else>{{ provider.logoText }}</span>
                   </button>
-                  <div class="llm-provider-main">
-                    <div class="llm-row-title">
+                  <div class="llm-provider-main model-provider-main">
+                    <div class="llm-row-title model-provider-heading">
                       <button
-                        class="llm-provider-title-button"
+                        class="llm-provider-title-button model-provider-name"
                         type="button"
                         @click="openLlmProviderModal(provider.id)"
                       >
-                        {{ provider.name }}
+                        {{ provider.id.startsWith('crawshrimp-managed-') ? '抓虾官方模型服务' : provider.name }}
                       </button>
                       <span :class="['key-pill', provider.configured ? 'on' : 'off']">
-                        {{ provider.configured ? '已配 Key' : '未配 Key' }}
+                        {{ provider.id.startsWith('crawshrimp-managed-') ? '账号已连接' : provider.configured ? '已配 Key' : '未配 Key' }}
                       </span>
                       <span class="key-pill neutral">{{ provider.compatibility }}</span>
                       <span v-if="provider.isCustom" class="key-pill neutral">自定义</span>
                       <span v-if="provider.isDefault" class="key-pill on">默认</span>
                     </div>
                     <p>{{ provider.baseUrl || '未填写 Base URL' }}</p>
-                    <div class="llm-model-preview">
+                    <div class="llm-model-preview model-provider-models">
                       <span v-for="model in provider.previewModels" :key="model" class="chip">{{ model }}</span>
                       <span v-if="provider.modelCount > provider.previewModels.length" class="chip muted">
                         +{{ provider.modelCount - provider.previewModels.length }}
@@ -573,7 +560,7 @@
                     </div>
                   </div>
                 </div>
-                <div class="llm-row-actions">
+                <div class="llm-row-actions model-provider-actions">
                   <span class="llm-row-meta">{{ provider.modelCount }} 个模型</span>
                   <button
                     v-if="!provider.isDefault && provider.firstModel"
@@ -598,155 +585,19 @@
               </article>
             </div>
 
-            <PanelActions panel-id="ai-llm" @save="savePanel('ai-llm')" />
+            <PanelActions panel-id="ai-llm" @save="savePanelFromForm('ai-llm')" />
           </div>
         </section>
 
         <section v-else-if="activePanelId === 'ai-video'" key="ai-video" class="panel">
-          <div class="panel-head">
-            <div>
-              <p class="panel-kicker">AI 视频</p>
-              <h3>视频模型 Provider</h3>
-            </div>
-            <span :class="['badge', hasAnyFieldConfigured(aiVideoKeyFields) ? 'on' : 'off']">
-              {{ hasAnyFieldConfigured(aiVideoKeyFields) ? '已配置' : '未配置' }}
-            </span>
-          </div>
-
-          <div class="panel-layout">
-            <div class="form-stack">
-              <div class="split-fields">
-                <div class="field">
-                  <label>Seedance API Key</label>
-                  <input
-                    v-model="cfg['ai.video.seedance_api_key']"
-                    class="input"
-                    type="password"
-                    autocomplete="new-password"
-                    placeholder="sk-..."
-                    @focus="selectInputText"
-                  />
-                </div>
-                <div class="field">
-                  <label>Seedance Base URL</label>
-                  <input
-                    v-model="cfg['ai.video.seedance_base_url']"
-                    class="input"
-                    :placeholder="aiVideoConnectionPlaceholder('ai.video.seedance_base_url')"
-                  />
-                  <p class="field-hint">{{ aiVideoConnectionHint('ai.video.seedance_base_url') }}</p>
-                </div>
-              </div>
-              <div class="split-fields">
-                <div class="field">
-                  <label>百炼 API key（HappyHorse、Kling、PixVerse）</label>
-                  <input
-                    v-model="cfg['ai.video.bailian_api_key']"
-                    class="input"
-                    type="password"
-                    autocomplete="new-password"
-                    placeholder="sk-..."
-                    @focus="selectInputText"
-                  />
-                </div>
-                <div class="field">
-                  <label>百炼 Base URL（可选）</label>
-                  <input
-                    v-model="cfg['ai.video.bailian_base_url']"
-                    class="input"
-                    :placeholder="aiVideoConnectionPlaceholder('ai.video.bailian_base_url')"
-                  />
-                  <p class="field-hint">{{ aiVideoConnectionHint('ai.video.bailian_base_url') }}</p>
-                </div>
-              </div>
-
-              <details class="settings-advanced-panel">
-                <summary>
-                  <span>更多 Provider 配置</span>
-                  <small>业务空间 ID / 区域</small>
-                </summary>
-                <div class="settings-advanced-body split-fields">
-                  <div class="field">
-                    <label>百炼业务空间 ID</label>
-                    <input
-                      v-model="cfg['ai.video.bailian_workspace_id']"
-                      class="input"
-                      placeholder="可选：留空使用区域默认 endpoint"
-                    />
-                    <p class="field-hint">填写后百炼默认 endpoint 会按业务空间 ID + 区域自动生成。</p>
-                  </div>
-                  <div class="field">
-                    <label>百炼区域</label>
-                    <input
-                      v-model="cfg['ai.video.bailian_region']"
-                      class="input"
-                      :placeholder="aiVideoConnectionPlaceholder('ai.video.bailian_region')"
-                    />
-                    <p class="field-hint">{{ aiVideoConnectionHint('ai.video.bailian_region') }}</p>
-                  </div>
-                </div>
-              </details>
-
-              <section class="settings-subsection">
-                <header>
-                  <div>
-                    <strong>OSS 上传配置</strong>
-                    <span>仅用于把本地素材上传为百炼临时 OSS 地址，不参与视频生成网关调用。</span>
-                  </div>
-                  <span :class="['key-pill', isFieldConfigured('ai.video.bailian_upload_api_key') ? 'on' : 'off']">OSS</span>
-                </header>
-                <div class="split-fields">
-                  <div class="field">
-                    <label>百炼 OSS 上传 API Key</label>
-                    <input
-                      v-model="cfg['ai.video.bailian_upload_api_key']"
-                      class="input"
-                      type="password"
-                      autocomplete="new-password"
-                      placeholder="sk-..."
-                      @focus="selectInputText"
-                    />
-                  </div>
-                  <div class="field">
-                    <label>百炼 OSS 上传 Base URL</label>
-                    <input
-                      v-model="cfg['ai.video.bailian_uploads_url']"
-                      class="input"
-                      :placeholder="aiVideoConnectionPlaceholder('ai.video.bailian_uploads_url')"
-                    />
-                    <p class="field-hint">{{ aiVideoConnectionHint('ai.video.bailian_uploads_url') }}</p>
-                  </div>
-                </div>
-              </section>
-              <PanelActions panel-id="ai-video" @save="savePanel('ai-video')" />
-            </div>
-            <div class="side-note">
-              <strong>本机凭据</strong>
-              <div class="key-states">
-                <span :class="['key-pill', isFieldConfigured('ai.video.seedance_api_key') ? 'on' : 'off']">S</span>
-                <span :class="['key-pill', isFieldConfigured('ai.video.bailian_api_key') ? 'on' : 'off']">B</span>
-                <span :class="['key-pill', isFieldConfigured('ai.video.bailian_upload_api_key') ? 'on' : 'off']">OSS</span>
-              </div>
-              <p>密钥只保存在本机抓虾配置中，运行视频任务时注入共享能力进程；工作流页面、任务参数和日志不会展示密钥。</p>
-            </div>
-          </div>
+          <div class="panel-head"><div><h3>视频模型</h3><p class="panel-description">按服务商管理视频生成连接与素材上传配置。</p></div><span :class="['badge', hasAnyFieldConfigured(['ai.video.seedance_api_key', 'ai.video.bailian_api_key']) ? 'on' : 'neutral']">{{ hasAnyFieldConfigured(['ai.video.seedance_api_key', 'ai.video.bailian_api_key']) ? '已配置' : '未配置' }}</span></div>
+          <VideoProviderSettings :config="cfg" :save="saveVideoProviderConfig" />
         </section>
 
-        <AccountPanel v-else-if="activePanelId === 'account'" key="account" @login="emit('login')" />
-        <!--
-          The IM panel stays outside this Transition so its authenticated
-          iframe survives settings navigation.  A concrete, non-rendering
-          branch still has to become the Transition child when IM is active:
-          without it Vue retains the previously visible panel beside the
-          persistent IM panel and shrinks the iframe to a narrow strip.
-        -->
-        <span
-          v-else-if="activePanelId === 'im-bots'"
-          key="im-bots-transition-anchor"
-          class="im-panel-transition-anchor"
-          aria-hidden="true"
-        ></span>
-        </Transition>
+        <NativeRuntimePanel v-else-if="activePanelId === 'plugins'" panel="plugins" :theme="props.effectiveTheme" :theme-preference="props.themePreference" />
+        <AccountPanel v-else-if="activePanelId === 'account'" key="account" @login="emit('login')" @navigate="focusPanel" @catalog-updated="refreshManagedProviders" />
+        <UsagePanel v-if="usagePanelMountedOnce" v-show="activePanelId === 'account-usage'" :active="activePanelId === 'account-usage'" />
+        <!-- Keep the authenticated IM iframe mounted while switching panels. -->
         <section
           v-if="imSettingsPanelMountedOnce"
           v-show="activePanelId === 'im-bots'"
@@ -756,7 +607,7 @@
           <div class="panel-head">
             <div>
               <p class="panel-kicker">IM机器人</p>
-              <h3>机器人接入</h3>
+              <h3>机器人接入</h3><p class="panel-description">{{ activePanelDescription }}</p>
             </div>
             <span :class="['badge', agentRuntime.state === 'ready' ? 'on' : 'neutral']">
               {{ agentRuntime.state === 'ready' ? '服务常驻' : agentRuntimeLabel }}
@@ -799,38 +650,35 @@
     </div>
 
     <Teleport to="body">
-      <div v-if="llmProviderModal.open" class="settings-modal-backdrop" @click.self="closeLlmProviderModal">
-        <section class="settings-modal llm-provider-modal" role="dialog" aria-modal="true" aria-labelledby="llm-provider-modal-title">
-          <header class="settings-modal-head">
-            <div>
-              <p class="panel-kicker">{{ llmProviderModal.isNew ? '新增 Provider' : '编辑 Provider' }}</p>
-              <h3 id="llm-provider-modal-title">{{ llmProviderDraft.name || '自定义 Provider' }}</h3>
-            </div>
-            <button class="btn-ghost compact" type="button" @click="closeLlmProviderModal">关闭</button>
+      <dialog v-if="llmProviderModal.open" ref="llmProviderDialog" class="settings-modal llm-provider-modal model-config-dialog" :class="{ 'editing-models': llmProviderModal.tab === 'models' }" @cancel.prevent="closeLlmProviderModal" @click.self="closeLlmProviderModal" @keydown.tab="trapLlmProviderFocus" aria-labelledby="llm-provider-modal-title">
+          <header class="settings-modal-head model-config-header">
+            <div class="llm-editor-heading"><span class="llm-editor-mark" aria-hidden="true"><IconPlug :size="23" /></span><div><h3 id="llm-provider-modal-title">{{ llmProviderModal.isNew ? '添加文本模型服务' : llmProviderDraft.name }}</h3><p>配置服务连接，管理可用模型。</p></div></div>
+            <button class="btn-ghost compact" type="button" aria-label="关闭文本模型配置" @click="closeLlmProviderModal"><IconX :size="18" /></button>
           </header>
 
-          <nav class="llm-provider-tabs" role="tablist" aria-label="Provider 配置">
+          <nav class="llm-provider-tabs" role="tablist" aria-label="文本模型服务商配置">
             <button id="llm-connection-tab" type="button" role="tab" :aria-selected="llmProviderModal.tab === 'connection'" aria-controls="llm-connection-panel" :tabindex="llmProviderModal.tab === 'connection' ? 0 : -1"
-              @click="llmProviderModal.tab = 'connection'" @keydown.right.prevent="switchLlmProviderTab('models')">连接配置</button>
+              @click="llmProviderModal.tab = 'connection'" @keydown.right.prevent="switchLlmProviderTab('models')"><IconPlug :size="16" />连接配置</button>
             <button id="llm-models-tab" type="button" role="tab" :aria-selected="llmProviderModal.tab === 'models'" aria-controls="llm-models-panel" :tabindex="llmProviderModal.tab === 'models' ? 0 : -1"
-              @click="llmProviderModal.tab = 'models'" @keydown.left.prevent="switchLlmProviderTab('connection')">模型管理 <span>{{ llmProviderDraft.models.length }}</span></button>
+              @click="llmProviderModal.tab = 'models'" @keydown.left.prevent="switchLlmProviderTab('connection')"><IconRobot :size="16" />模型管理 <span>{{ llmProviderDraft.models.length }}</span></button>
           </nav>
 
-          <div class="settings-modal-body">
+          <div class="settings-modal-body model-config-body">
             <section v-show="llmProviderModal.tab === 'connection'" id="llm-connection-panel" class="llm-connection-panel" role="tabpanel" aria-labelledby="llm-connection-tab">
+            <div class="llm-section-intro"><h4>服务信息</h4><p>选择服务商使用的接口协议。</p></div>
             <div class="split-fields">
               <div class="field">
-                <label>Provider 名称</label>
+                <label for="llm-provider-name">服务商名称</label>
                 <input
-                  v-model="llmProviderDraft.name"
+                  id="llm-provider-name" v-model="llmProviderDraft.name"
                   class="input"
                   :readonly="llmProviderModal.isBuiltin"
-                  placeholder="例如：OpenRouter / 内部 Claude 网关"
+                  placeholder="例如：OpenRouter、团队模型服务"
                 />
               </div>
               <div class="field">
-                <label>兼容协议</label>
-                <select v-model="llmProviderDraft.protocol" class="select" :disabled="llmProviderModal.isBuiltin">
+                <label for="llm-provider-protocol">兼容协议</label>
+                <select id="llm-provider-protocol" v-model="llmProviderDraft.protocol" class="select" :disabled="llmProviderModal.isBuiltin">
                   <option value="openai">OpenAI Chat Completions</option>
                   <option value="openai-responses">OpenAI Responses（ModelJetty GPT）</option>
                   <option value="anthropic">Anthropic 兼容</option>
@@ -838,22 +686,24 @@
               </div>
             </div>
 
+            <div class="llm-section-intro llm-section-divider"><h4>连接凭据</h4><p>填写服务商提供的地址与 API Key。</p></div>
             <div class="field">
-              <label>Base URL</label>
-              <input v-model="llmProviderDraft.baseUrl" class="input" placeholder="https://api.example.com/v1" />
+              <label for="llm-provider-baseurl">服务地址 <span class="llm-field-alias">Base URL</span></label>
+              <input id="llm-provider-baseurl" v-model="llmProviderDraft.baseUrl" class="input" placeholder="https://api.example.com/v1" />
+              <p class="field-hint">使用服务商提供的完整 Base URL。</p>
             </div>
 
             <div class="field">
-              <label>API Key</label>
+              <label for="llm-provider-apikey">API Key</label>
               <input
-                v-model="llmProviderDraft.apiKey"
+                id="llm-provider-apikey" v-model="llmProviderDraft.apiKey"
                 class="input"
                 type="password"
                 autocomplete="new-password"
                 placeholder="留空保持当前 Key；输入新值会覆盖"
                 @focus="selectInputText"
               />
-              <p class="field-hint">保存后立即落盘，页面只显示“已配 Key”，不会把真实密钥读回设置页。</p>
+              <p class="field-hint">{{ llmProviderDraft.configured ? '已保存密钥。留空保留，填写新值可替换。' : '密钥仅保存在此设备，保存后不再显示明文。' }}</p>
             </div>
 
             <section
@@ -871,7 +721,7 @@
               <ol>
                 <li>在 DeepSeek 官方平台创建新的 API Key。</li>
                 <li>回到这里，把新 Key 粘贴到“API Key”。</li>
-                <li>点击“保存 Provider”；旧 Key 会被覆盖，保存后只显示“已配 Key”。</li>
+                <li>点击“保存服务商”；旧 Key 会被覆盖，保存后只显示“已配 Key”。</li>
               </ol>
             </section>
             </section>
@@ -880,7 +730,7 @@
               <div class="llm-model-toolbar">
                 <div>
                   <h4>模型管理</h4>
-                  <p class="field-hint">选择左侧模型，编辑右侧参数。所有模型共用此 Provider 的连接配置。</p>
+                  <p class="field-hint">选择左侧模型，编辑右侧参数。所有模型共用此服务商的连接配置。</p>
                 </div>
                 <div class="llm-model-toolbar-actions">
                   <button v-if="canDiscoverLlmModels" class="btn-ghost compact" type="button" :disabled="llmProviderModal.discovering || llmProviderModal.saving" @click="discoverLlmModels">{{ llmProviderModal.discovering ? '获取中…' : '获取最新模型' }}</button>
@@ -949,33 +799,37 @@
               <details class="llm-batch-models"><summary>批量编辑模型 ID</summary><textarea v-model="llmProviderDraft.modelsText" class="textarea" rows="4" aria-label="批量模型 ID" placeholder="每行一个模型 ID"></textarea><p class="field-hint">每行一个模型 ID；移除一行即可删除。清空列表会停用此 Provider 的全部模型。</p></details>
             </section>
 
-            <p v-if="llmProviderModal.error" class="inline-msg err">{{ llmProviderModal.error }}</p>
+            <p v-if="llmProviderModal.error" class="inline-msg err" role="alert">{{ llmProviderModal.error }}</p>
           </div>
 
-          <footer class="settings-modal-actions">
+          <footer class="settings-modal-actions model-config-footer">
             <button class="btn-ghost" type="button" :disabled="llmProviderModal.saving" @click="closeLlmProviderModal">取消</button>
             <button class="btn-orange" type="button" :disabled="llmProviderModal.saving" @click="applyLlmProviderDraft">
-              {{ llmProviderModal.saving ? '保存中...' : '保存 Provider' }}
+              {{ llmProviderModal.saving ? '保存中...' : '保存服务商' }}
             </button>
           </footer>
-        </section>
-      </div>
+      </dialog>
     </Teleport>
   </div>
 </template>
 
 <script setup>
+import NativeRuntimePanel from '../components/NativeRuntimePanel.vue'
 import modeljettyLogoUrl from '../assets/modeljetty-mark.svg'
+import crawshrimpLogoUrl from '../../../assets/branding/crawshrimp-avatar-C1.png'
+import { useNativeDialog } from '../composables/useNativeDialog'
 import { MODELJETTY_LLM_PRESETS } from '../utils/modeljettyPresets.mjs'
 import { requestArchivedSessions } from '../utils/archivedSessions.mjs'
+import { IconArrowLeft, IconSearch, IconUser, IconGauge, IconPalette, IconBell, IconPlug, IconDatabase, IconArchive, IconRefresh, IconRobot, IconMessage, IconPhoto, IconVideo, IconShield, IconCode, IconCloud, IconInfoCircle, IconX, IconPuzzle } from '@tabler/icons-vue'
 import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import UsagePanel from '../components/UsagePanel.vue'
 import AccountPanel from '../components/AccountPanel.vue'
 import AutomationPermissionsPanel from '../components/AutomationPermissionsPanel.vue'
 import { IconExternalLink } from '@tabler/icons-vue'
 import ImageProviderSettings from '../components/ImageProviderSettings.vue'
+import VideoProviderSettings from '../components/VideoProviderSettings.vue'
 import { configureAiImageProviders, CUSTOM_IMAGE_PROVIDERS_FIELD } from '../utils/aiImageModels.js'
 import {
-  AI_VIDEO_CONNECTION_DEFAULTS,
   AI_VIDEO_CREDENTIAL_FIELDS,
   AI_VIDEO_MASKED_CREDENTIAL_VALUE,
   AI_VIDEO_WRITE_ONLY_FIELDS,
@@ -1022,20 +876,42 @@ const props = defineProps([
   'themePreference',
   'effectiveTheme',
 ])
-const emit = defineEmits(['runtime-refresh', 'check-update', 'theme-change', 'login'])
+const emit = defineEmits(['back', 'runtime-refresh', 'check-update', 'theme-change', 'login'])
 
 const agentRuntime = ref({ state: 'unknown', generation: 0, model: '', web_origin: '', web_verified: false, api_key_configured: false, error: '' })
 const agentBusy = ref('')
 const agentNotice = ref('')
+const agentNoticeOk = ref(true)
 const imSettingsFrame = ref(null)
 const imSettingsReady = ref(false)
 const agentRuntimeLabel = computed(() => {
   const state = String(agentRuntime.value?.state || '')
-  if (state === 'ready') return '就绪'
+  if (state === 'ready') return '运行正常'
   if (state === 'needs_configuration') return '待配置'
-  if (state === 'crashed') return '异常'
+  if (state === 'crashed') return '运行异常'
+  if (state === 'disabled_until_manual_restart') return '需要手动重启'
   if (state === 'stopped') return '已停止'
-  return '启动中'
+  if (state === 'offline') return '服务不可用'
+  if (state === 'starting') return '正在启动'
+  return '状态未知'
+})
+const agentRuntimeKnown = computed(() => ['ready', 'needs_configuration', 'crashed', 'disabled_until_manual_restart', 'stopped', 'starting'].includes(String(agentRuntime.value?.state || '')))
+const agentRuntimeTone = computed(() => {
+  const state = agentRuntime.value?.state
+  if (state === 'ready') return 'ready'
+  if (['crashed', 'offline'].includes(state)) return 'error'
+  if (['needs_configuration', 'disabled_until_manual_restart', 'stopped'].includes(state)) return 'attention'
+  return 'neutral'
+})
+const agentRuntimeDescription = computed(() => {
+  const state = agentRuntime.value?.state
+  if (state === 'ready') return '本机智能体服务已就绪。'
+  if (state === 'needs_configuration') return '请先完成模型服务配置，再使用智能体。'
+  if (state === 'crashed' || state === 'disabled_until_manual_restart') return '可以尝试重启运行时，或检查下方状态信息。'
+  if (state === 'stopped') return '运行时当前未启动，可以在下方手动重启。'
+  if (state === 'offline') return '无法连接本地服务，请尝试修复核心服务。'
+  if (state === 'starting') return '服务正在启动，请稍候。'
+  return '正在等待运行状态，请稍后查看。'
 })
 const imSettingsUrl = computed(() => {
   // AgentWebView is persistent and consumes the one-time launch URL.  This
@@ -1060,7 +936,7 @@ function onImSettingsFrameLoad(event) {
   const frameWindow = event?.target?.contentWindow || imSettingsFrame.value?.contentWindow
   if (!frameWindow || !imSettingsUrl.value) return
   try {
-    frameWindow.postMessage({ __crawshrimp: 'theme', theme: props.effectiveTheme }, new URL(imSettingsUrl.value).origin)
+    frameWindow.postMessage({ __crawshrimp: 'theme', theme: props.effectiveTheme, skin: props.themePreference === 'lake' ? 'lake' : 'default' }, new URL(imSettingsUrl.value).origin)
   } catch {
     // Runtime may have restarted between iframe load and message delivery.
   }
@@ -1074,7 +950,8 @@ function onImSettingsMessage(event) {
   } catch {
     return
   }
-  if (event.data?.__crawshrimp === 'im-settings-ready') imSettingsReady.value = true
+  if (event.data?.__crawshrimp === 'im-settings-ready') { imSettingsReady.value = true; onImSettingsFrameLoad() }
+  if (event.data?.__crawshrimp === 'workspace-ready') onImSettingsFrameLoad()
 }
 
 async function refreshAgentRuntime() {
@@ -1088,11 +965,14 @@ async function refreshAgentRuntime() {
 async function onAgentRestartRuntime() {
   agentBusy.value = 'runtime'
   agentNotice.value = ''
+  agentNoticeOk.value = true
   try {
     const result = await window.cs.agentApi('POST', '/agent/runtime/restart')
-    agentNotice.value = result?.ok ? '智能体运行时已重启。' : `重启失败:${result?.error || ''}`
+    agentNoticeOk.value = result?.ok === true
+    agentNotice.value = agentNoticeOk.value ? '智能体运行时已重启。' : `重启失败：${result?.message || result?.error || '请稍后重试'}`
   } catch (error) {
-    agentNotice.value = `重启失败:${error?.message || error}`
+    agentNoticeOk.value = false
+    agentNotice.value = `重启失败：${error?.message || error}`
   } finally {
     agentBusy.value = ''
     await refreshAgentRuntime()
@@ -1102,28 +982,17 @@ async function onAgentRestartRuntime() {
 async function onAgentRepairCore() {
   agentBusy.value = 'core'
   agentNotice.value = ''
+  agentNoticeOk.value = true
   try {
-    await window.cs.restartBackend()
+    const result = await window.cs.restartBackend()
+    if (result?.ok === false || result?.error) throw new Error(result.error || '请稍后重试')
     agentNotice.value = '核心服务已重启。'
   } catch (error) {
-    agentNotice.value = `修复失败:${error?.message || error}`
+    agentNoticeOk.value = false
+    agentNotice.value = `修复失败：${error?.message || error}`
   } finally {
     agentBusy.value = ''
     await refreshAgentRuntime()
-  }
-}
-
-async function onAgentClearData() {
-  if (!window.confirm('确定清除智能体数据?将清空会话历史、审批记录与草稿,已执行的任务与产物不受影响。')) return
-  agentBusy.value = 'clear'
-  agentNotice.value = ''
-  try {
-    await window.cs.agentApi('POST', '/agent/data/clear')
-    agentNotice.value = '智能体数据已清除。'
-  } catch (error) {
-    agentNotice.value = `清除失败:${error?.message || error}`
-  } finally {
-    agentBusy.value = ''
   }
 }
 
@@ -1151,12 +1020,9 @@ const aiVideoKeyFields = [
   'ai.video.bailian_upload_api_key',
 ]
 const llmKeyFields = LLM_BUILTIN_PROVIDERS.map(provider => provider.apiKeyField)
-const aiVideoConnectionHints = {
-  'ai.video.seedance_base_url': `默认：${AI_VIDEO_CONNECTION_DEFAULTS['ai.video.seedance_base_url']}；森马网关可填 https://ai-aigw.semir.com/doubao-seedance/api/v3。`,
-  'ai.video.bailian_region': `默认：${AI_VIDEO_CONNECTION_DEFAULTS['ai.video.bailian_region']}；输入新值才会覆盖。`,
-  'ai.video.bailian_base_url': `默认：${AI_VIDEO_CONNECTION_DEFAULTS['ai.video.bailian_base_url']}；有业务空间 ID 时会按空间和区域自动生成 endpoint。`,
-  'ai.video.bailian_uploads_url': `默认：${AI_VIDEO_CONNECTION_DEFAULTS['ai.video.bailian_uploads_url']}；仅用于本地素材临时 OSS 上传。`,
-}
+
+
+const llmProviderDialog = ref(null)
 
 const llmProviderModal = reactive({
   open: false,
@@ -1188,6 +1054,7 @@ const llmProviderDraft = reactive({
   modelIds: [],
   configured: false,
 })
+useNativeDialog(computed(() => llmProviderModal.open), llmProviderDialog)
 const selectedLlmDraftModel = computed(() => llmProviderDraft.models.find(model => model.id === llmProviderModal.selectedModelId) || llmProviderDraft.models[0] || null)
 
 watch(() => llmProviderDraft.modelsText, (text) => {
@@ -1200,6 +1067,7 @@ const themeOptions = [
   { value: 'system', label: '系统', description: '跟随 macOS / Windows' },
   { value: 'light', label: '浅色', description: '明亮、清晰' },
   { value: 'dark', label: '深色', description: '低光、专注' },
+  { value: 'lake', label: '湖光', description: '白底 · 湖水绿' },
 ]
 
 const isMacOS = window.cs?.platform === 'darwin'
@@ -1207,21 +1075,18 @@ const isMacOS = window.cs?.platform === 'darwin'
 const menuGroups = [
   {
     id: 'appearance',
-    icon: '●',
     label: '外观',
     desc: '主题 / 显示',
     children: [{ id: 'appearance-theme', label: '主题' }],
   },
   {
     id: 'connection',
-    icon: '●',
     label: '连接',
     desc: '核心服务 / Chrome',
     children: [{ id: 'connection-overview', label: '服务状态' }],
   },
   {
     id: 'notify',
-    icon: '●',
     label: '通知',
     desc: '机器人 / Webhook',
     children: [
@@ -1233,7 +1098,6 @@ const menuGroups = [
   },
   {
     id: 'application',
-    icon: '●',
     label: '应用',
     desc: '版本 / 桌面更新',
     children: [
@@ -1243,45 +1107,91 @@ const menuGroups = [
   },
   {
     id: 'storage',
-    icon: '●',
     label: '存储',
     desc: '数据目录 / 已归档会话',
     children: [{ id: 'storage-data', label: '数据目录' }, { id: 'storage-archived', label: '已归档会话' }],
   },
   {
     id: 'sync',
-    icon: '●',
     label: '数据同步',
     desc: 'ODPS 接口',
     children: [{ id: 'sync-odps', label: 'ODPS AppCode', statusKey: 'odps.app_code' }],
   },
   {
     id: 'ai',
-    icon: '●',
     label: 'AI 能力',
     desc: '图片 / 文本 / 视频 / 智能体',
     children: [
-      { id: 'ai-1xm', label: '图片模型供应商', statusKeys: aiImageKeyFields },
-      { id: 'ai-llm', label: '文本大模型', statusKeys: llmKeyFields },
+      { id: 'ai-1xm', label: '图片模型', statusKeys: aiImageKeyFields },
+      { id: 'ai-llm', label: '文本模型', statusKeys: llmKeyFields },
       { id: 'ai-video', label: '视频模型', statusKeys: aiVideoKeyFields },
       { id: 'ai-agent', label: '智能体', statusKeys: [] },
     ],
   },
   {
     id: 'im',
-    icon: '●',
     label: 'IM机器人',
     desc: '微信 / 飞书 / 钉钉 / 更多',
-    children: [{ id: 'im-bots', label: '机器人接入' }],
+    children: [{ id: 'im-bots', label: '机器人接入' }, { id: 'plugins', label: '插件' }],
   },
   {
     id: 'account',
-    icon: '●',
     label: '账号',
     desc: '个人资料 / 账号管理',
-    children: [{ id: 'account', label: '个人账号' }],
+    children: [{ id: 'account', label: '个人账号' }, { id: 'account-usage', label: '套餐与用量' }],
   },
 ]
+
+const settingsQuery = ref('')
+const settingsContent = ref(null)
+const navigationSections = [
+  { label: '个人', ids: ['account', 'account-usage', 'appearance-theme'] },
+  { label: '模型服务', ids: ['ai-llm', 'ai-1xm', 'ai-video', 'ai-agent'] },
+  { label: '连接与集成', ids: ['im-bots', 'plugins', 'sync-odps'] },
+  { label: '通知', ids: ['notify-dingtalk', 'notify-feishu', 'notify-custom', 'notify-guide'] },
+  { label: '此设备', ids: ['connection-overview', 'storage-data', 'storage-archived', 'application-update', 'application-automation'] },
+]
+const navigationIcons = {
+  account: IconUser, 'account-usage': IconGauge, 'appearance-theme': IconPalette,
+  'ai-llm': IconMessage, 'ai-1xm': IconPhoto, 'ai-video': IconVideo, 'ai-agent': IconRobot,
+  'im-bots': IconPlug, plugins: IconPuzzle, 'sync-odps': IconCloud, 'notify-dingtalk': IconBell,
+  'notify-feishu': IconBell, 'notify-custom': IconCode, 'notify-guide': IconInfoCircle,
+  'connection-overview': IconPlug, 'storage-data': IconDatabase, 'storage-archived': IconArchive,
+  'application-update': IconRefresh, 'application-automation': IconShield,
+}
+const panelDescriptions = {
+  account: '管理账号、此设备的使用记录与隐私偏好。',
+  'account-usage': '查看订阅额度、永久充值余额与到期时间。',
+  'appearance-theme': '选择适合当前环境的界面外观，立即应用。',
+  'ai-llm': '连接官方服务或自己的 API Key，管理可用的文字模型。',
+  'ai-1xm': '管理图片模型服务、连接凭据和可用模型。',
+  'ai-video': '配置视频生成服务与本地素材上传，密钥仅保存在本机。',
+  'ai-agent': '查看智能体运行状态，按需重启或修复服务。',
+  'im-bots': '连接聊天平台，在常用的消息应用中与抓虾对话。',
+  plugins: '查看已安装插件，管理智能体的扩展能力。',
+  'sync-odps': '配置任务结果与数据文件的 ODPS 同步凭据。',
+  'notify-dingtalk': '通过钉钉群机器人接收任务结果与提醒。',
+  'notify-feishu': '通过飞书群机器人接收任务结果与提醒。',
+  'notify-custom': '将任务通知发送到你指定的 Webhook 地址。',
+  'notify-guide': '在脚本中声明通知渠道与消息内容。',
+  'connection-overview': '检查本地核心服务与浏览器的连接状态。',
+  'storage-data': '选择抓虾保存会话、配置与任务文件的位置。',
+  'storage-archived': '查找与恢复已归档的会话，聊天记录仍会保留。',
+  'application-update': '查看桌面版本与更新状态。',
+  'application-automation': '查看并管理抓虾控制本机应用的系统授权。',
+}
+const activePanelDescription = computed(() => panelDescriptions[activePanelId.value] || '')
+const panelSearchAliases = {
+  'ai-llm': '大模型 DeepSeek GPT Gemini API Key 服务商',
+  'ai-1xm': '生图 GPT Image Nano Banana API Key 供应商 服务商',
+  'ai-video': 'Seedance 百炼 HappyHorse Kling PixVerse OSS API Key',
+  'account-usage': '充值 余额 月订阅 永久额度 到期 账期',
+}
+const navigationItems = menuGroups.flatMap(group => group.children.map(child => ({ ...child, groupId: group.id, icon: navigationIcons[child.id], search: `${child.label} ${panelDescriptions[child.id] || ''} ${panelSearchAliases[child.id] || ''} ${navigationSections.find(section => section.ids.includes(child.id))?.label || group.label}` })))
+const visibleNavigation = computed(() => {
+  const query = settingsQuery.value.trim().toLocaleLowerCase()
+  return navigationSections.map(section => ({ label: section.label, items: section.ids.map(id => navigationItems.find(item => item.id === id)).filter(item => item && (!query || item.search.toLocaleLowerCase().includes(query))) })).filter(section => section.items.length)
+})
 
 function resolvePanelSelection(panelId) {
   const requested = String(panelId || '').trim()
@@ -1296,6 +1206,7 @@ function resolvePanelSelection(panelId) {
 const initialPanelSelection = resolvePanelSelection(props.focusPanelId)
 const activeGroupId = ref(initialPanelSelection.groupId)
 const activePanelId = ref(initialPanelSelection.panelId)
+const usagePanelMountedOnce = ref(initialPanelSelection.panelId === 'account-usage')
 const imSettingsPanelMountedOnce = ref(initialPanelSelection.panelId === 'im-bots')
 
 const panelFields = {
@@ -1315,7 +1226,6 @@ const notifyPanelByChannel = {
   webhook: 'notify-custom',
 }
 
-const activeGroup = computed(() => menuGroups.find(group => group.id === activeGroupId.value) || menuGroups[0])
 const updateStatus = computed(() => props.updateStatus || {})
 const updateActionBusy = computed(() => Boolean(props.updateActionBusy))
 const updateBadgeLabel = computed(() => {
@@ -1351,6 +1261,26 @@ const showManualDownload = computed(() => {
 })
 const customLlmProviders = computed(() => normalizeCustomLlmProviders(cfg.value[LLM_CUSTOM_PROVIDERS_FIELD]))
 const failedProviderLogos = ref({})
+const refreshingOfficialModels = ref(false), officialCatalogError = ref('')
+let managedProvidersReadSeq = 0
+async function refreshManagedProviders() {
+  const seq = ++managedProvidersReadSeq
+  try {
+    const fresh = await window.cs.getSettings()
+    if (seq !== managedProvidersReadSeq) return
+    for (const key of ['managed_text_providers', 'managed_image_providers']) cfg.value[key] = fresh[key] || []
+    configureAiImageProviders(cfg.value)
+    officialCatalogError.value = ''
+  } catch { if (seq === managedProvidersReadSeq) officialCatalogError.value = '模型列表更新失败，暂时显示上次读取的目录。请重新刷新。' }
+}
+async function refreshOfficialModels() {
+  if (refreshingOfficialModels.value) return
+  refreshingOfficialModels.value = true; officialCatalogError.value = ''
+  try { await window.cs.accountAction('refresh-models'); await refreshManagedProviders() }
+  catch { officialCatalogError.value = '官方模型目录暂时无法同步，请稍后重试。' }
+  finally { refreshingOfficialModels.value = false }
+}
+
 const llmProviders = computed(() => {
   const defaultModel = String(cfg.value['ai.llm.default_model'] || '').trim()
   const builtinRows = LLM_BUILTIN_PROVIDERS.map((provider) => {
@@ -1393,7 +1323,8 @@ const llmProviders = computed(() => {
       isDefault: modelIds.includes(defaultModel) && (!cfg.value['ai.llm.default_provider'] || cfg.value['ai.llm.default_provider'] === provider.id),
     }
   })
-  return [builtinRows[0], ...customRows.filter(item => item.brand === 'modeljetty'), ...builtinRows.slice(1), ...customRows.filter(item => item.brand !== 'modeljetty')]
+  const managedRows = (cfg.value.managed_text_providers || []).map(provider => ({ id: provider.id, name: '抓虾官方模型服务', brand: 'crawshrimp', logoImage: crawshrimpLogoUrl, logoText: '抓虾', isCustom: false, compatibility: '账号额度 · ' + provider.protocol, configured: true, baseUrl: '网页登录后使用，无需 API Key', modelCount: provider.models.length, previewModels: provider.models.map(m => m.name || m.id), firstModel: provider.models[0]?.id, isDefault: provider.models.some(m => m.id === defaultModel) }))
+  return [...managedRows, builtinRows[0], ...customRows.filter(item => item.brand === 'modeljetty'), ...builtinRows.slice(1), ...customRows.filter(item => item.brand !== 'modeljetty')]
 })
 
 function llmProviderLogoText(provider = {}) {
@@ -1467,6 +1398,7 @@ function openModelJettyPreset(preset) {
 }
 
 function openLlmProviderModal(providerId = '') {
+  if (providerId.startsWith('crawshrimp-managed-')) { selectPanel('account', 'account'); return }
   const preset = MODELJETTY_LLM_PRESETS.find(item => item.id === providerId)
   if (preset && !customLlmProviders.value.some(item => item.id === providerId)) return openModelJettyPreset(preset)
   llmDiscoveryRequestId += 1
@@ -1609,6 +1541,13 @@ function addDiscoveredLlmModels() {
   llmProviderModal.selectedDiscoveredIds = []
 }
 
+function trapLlmProviderFocus(event) {
+  const elements = [...(llmProviderDialog.value?.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)') || [])].filter(element => element.getClientRects().length)
+  const first = elements[0], last = elements.at(-1)
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === llmProviderDialog.value)) { event.preventDefault(); last?.focus() }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+}
+
 function closeLlmProviderModal(options = {}) {
   if (llmProviderModal.saving && !options.force) return
   llmProviderModal.open = false
@@ -1625,7 +1564,7 @@ async function applyLlmProviderDraft() {
   const apiKey = String(llmProviderDraft.apiKey || '').trim()
   if (!name) {
     llmProviderModal.tab = 'connection'
-    llmProviderModal.error = '请填写 Provider 名称。'
+    llmProviderModal.error = '请填写 服务商名称。'
     return
   }
   if (!baseUrl) {
@@ -1695,7 +1634,7 @@ async function applyLlmProviderDraft() {
 async function saveLlmProviderDraft(previousCfg) {
   llmProviderModal.saving = true
   try {
-    await persistLlmPanelChange(previousCfg, 'Provider 已保存')
+    await persistLlmPanelChange(previousCfg, '服务商已保存')
     closeLlmProviderModal({ force: true })
   } catch (error) {
     llmProviderModal.error = error?.message || 'Provider 保存失败'
@@ -1738,7 +1677,7 @@ function llmRuntimeSaveMessage(result, fallback = '已保存') {
 async function removeCustomLlmProvider(providerId) {
   const provider = customLlmProviders.value.find(item => item.id === providerId)
   if (!provider) return
-  if (!window.confirm(`确定删除 Provider「${provider.name}」吗？`)) return
+  if (!window.confirm(`确定删除 服务商「${provider.name}」吗？`)) return
   const previousCfg = clonePlain(cfg.value)
   const removedModelIds = new Set(llmProviderModelIds(provider))
   cfg.value[LLM_CUSTOM_PROVIDERS_FIELD] = customLlmProviders.value.filter(item => item.id !== providerId)
@@ -1746,7 +1685,7 @@ async function removeCustomLlmProvider(providerId) {
     cfg.value['ai.llm.default_model'] = firstAvailableLlmModel()
   }
   try {
-    await persistLlmPanelChange(previousCfg, 'Provider 已删除')
+    await persistLlmPanelChange(previousCfg, '服务商已删除')
   } catch {
     // Error state is shown next to the LLM save action.
   }
@@ -1789,6 +1728,7 @@ const PanelActions = defineComponent({
       panelMsg(componentProps.panelId)
         ? h('span', {
           class: ['msg', panelErr(componentProps.panelId) ? 'err' : 'ok'],
+          role: panelErr(componentProps.panelId) ? 'alert' : 'status',
         }, panelMsg(componentProps.panelId))
         : null,
     ])
@@ -1857,12 +1797,6 @@ async function load() {
   savedCfg.value = { ...flat }
 }
 
-function selectGroup(groupId) {
-  const group = menuGroups.find(item => item.id === groupId) || menuGroups[0]
-  activeGroupId.value = group.id
-  activePanelId.value = group.children[0]?.id || group.id
-}
-
 function selectPanel(groupId, panelId) {
   activeGroupId.value = groupId
   activePanelId.value = panelId
@@ -1893,21 +1827,17 @@ function isFieldConfigured(key) {
   return String(cfg.value[key] || '').trim().length > 0
 }
 
-function aiVideoConnectionPlaceholder(key) {
-  const value = AI_VIDEO_CONNECTION_DEFAULTS[key]
-  return value ? `默认：${value}` : '留空保持后端当前配置'
-}
-
-function aiVideoConnectionHint(key) {
-  return aiVideoConnectionHints[key] || '留空使用默认或后端已有配置，输入新值才会覆盖。'
-}
 
 function hasAnyFieldConfigured(keys) {
   return keys.some(key => isFieldConfigured(key))
 }
 
+const isImageServiceConfigured = computed(() => (cfg.value.managed_image_providers || []).some(provider => provider.models?.length) || hasAnyFieldConfigured(aiImageKeyFields))
+const isTextServiceConfigured = computed(() => (cfg.value.managed_text_providers || []).some(provider => provider.models?.length) || isLlmConfigured(cfg.value))
+
 function isMenuChildConfigured(child) {
-  if (child?.id === 'ai-llm') return isLlmConfigured(cfg.value)
+  if (child?.id === 'ai-1xm') return isImageServiceConfigured.value
+  if (child?.id === 'ai-llm') return isTextServiceConfigured.value
   if (Array.isArray(child?.statusKeys)) return hasAnyFieldConfigured(child.statusKeys)
   return isFieldConfigured(child?.statusKey)
 }
@@ -1927,6 +1857,18 @@ function buildPatch(panelId) {
   }, {})
 }
 
+async function saveVideoProviderConfig(values) {
+  const patch = clonePlain(buildWriteOnlyAiVideoPatch(values))
+  const result = typeof window.cs.patchSettings === 'function'
+    ? await window.cs.patchSettings(patch)
+    : await window.cs.saveSettings(clonePlain({ ...savedCfg.value, ...patch }))
+  Object.assign(cfg.value, patch)
+  Object.assign(savedCfg.value, patch)
+  clearWrittenAiVideoFields(cfg.value, patch)
+  clearWrittenAiVideoFields(savedCfg.value, patch)
+  return result
+}
+
 async function saveImageProviderConfig(patch) {
   // Existing provider entries come from Vue reactive state; IPC accepts plain data.
   const plainPatch = clonePlain(patch)
@@ -1940,6 +1882,12 @@ async function saveImageProviderConfig(patch) {
   }
   configureAiImageProviders(readback)
   return result
+}
+
+function savePanelFromForm(panelId) {
+  // savePanel records the actionable error in this panel's live status.
+  // Form events consume the rejection; programmatic callers can still await it.
+  void savePanel(panelId).catch(() => {})
 }
 
 async function savePanel(panelId, options = {}) {
@@ -2119,7 +2067,9 @@ async function restoreArchivedSession(id) {
   finally { archiveRestoring.value = '' }
 }
 
+let stopAccountUpdates
 onMounted(async () => {
+  stopAccountUpdates = window.cs.onAccountChanged?.(refreshManagedProviders)
   window.addEventListener('message', onImSettingsMessage)
   await load()
   if (activePanelId.value === 'storage-archived') await loadArchivedSessions()
@@ -2127,6 +2077,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  managedProvidersReadSeq += 1
+  stopAccountUpdates?.()
   window.removeEventListener('message', onImSettingsMessage)
 })
 
@@ -2135,6 +2087,8 @@ watch(() => [props.focusPanelId, props.focusRequestId], ([panelId]) => {
 })
 
 watch(activePanelId, panelId => {
+  if (panelId === 'account-usage') usagePanelMountedOnce.value = true
+  if (settingsContent.value) settingsContent.value.scrollTop = 0
   if (panelId === 'storage-archived') loadArchivedSessions()
   if (panelId === 'im-bots') {
     imSettingsPanelMountedOnce.value = true
@@ -2144,7 +2098,27 @@ watch(activePanelId, panelId => {
   if (panelId === 'ai-agent') refreshAgentRuntime()
 })
 
-watch(() => props.effectiveTheme, () => {
+// A repaired backend may report `starting` before its agent is ready. Keep
+// the open panel current for a bounded period without polling other settings.
+let agentStartupTimer = null
+let agentStartupWatch = 0
+watch([activePanelId, () => agentRuntime.value?.state], ([panel, state], _old, onCleanup) => {
+  const revision = ++agentStartupWatch
+  if (agentStartupTimer) clearTimeout(agentStartupTimer)
+  agentStartupTimer = null
+  if (panel !== 'ai-agent' || state !== 'starting') return
+  let attempts = 0
+  const poll = async () => {
+    if (revision !== agentStartupWatch) return
+    await refreshAgentRuntime()
+    if (revision !== agentStartupWatch || agentRuntime.value?.state !== 'starting' || ++attempts >= 30) return
+    agentStartupTimer = setTimeout(poll, 2000)
+  }
+  agentStartupTimer = setTimeout(poll, 2000)
+  onCleanup(() => { agentStartupWatch++; if (agentStartupTimer) clearTimeout(agentStartupTimer); agentStartupTimer = null })
+})
+
+watch(() => [props.effectiveTheme, props.themePreference], () => {
   if (activePanelId.value === 'im-bots') onImSettingsFrameLoad()
 })
 
@@ -2157,14 +2131,15 @@ watch(imSettingsUrl, () => {
 <style scoped>
 .llm-model-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .llm-model-editor-head strong { overflow-wrap: anywhere; min-width: 0; }
-.llm-provider-modal { width: min(960px, calc(100vw - 36px)); height: min(760px, calc(100vh - 56px)); }
-.llm-provider-modal .settings-modal-body { flex: 1; padding: 22px; }
+.llm-provider-modal { --model-dialog-width: 740px; width: min(740px, calc(100vw - 48px)); height: auto; max-height: calc(100dvh - 48px); margin: auto; }
+.llm-provider-modal.editing-models { --model-dialog-width: 940px; width: min(940px, calc(100vw - 48px)); }
+.llm-provider-modal .settings-modal-body { flex: 0 1 auto; padding: 24px; overflow-y: auto; min-height: 0; }
 .llm-provider-tabs { display: flex; gap: 24px; padding: 0 22px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .llm-provider-tabs button { display: inline-flex; align-items: center; gap: 8px; padding: 14px 0 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--text3); font: inherit; font-weight: 650; cursor: pointer; }
 .llm-provider-tabs button[aria-selected="true"] { color: var(--orange-text); border-bottom-color: var(--orange); }
 .llm-provider-tabs button span { padding: 2px 6px; border-radius: 4px; background: var(--bg3); color: var(--text2); font-size: 11px; font-variant-numeric: tabular-nums; }
 .llm-provider-tabs button:focus-visible, .llm-model-list-item:focus-visible, .llm-batch-models summary:focus-visible { outline: 2px solid var(--orange); outline-offset: 3px; }
-.llm-connection-panel { display: flex; flex-direction: column; gap: 20px; width: min(100%, 680px); }
+.llm-connection-panel { display: flex; flex-direction: column; gap: 18px; width: 100%; }
 .llm-models-panel { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 .llm-model-toolbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .llm-model-toolbar h4, .llm-model-detail h4 { margin: 0; font-size: 15px; color: var(--text); }
@@ -2215,249 +2190,91 @@ watch(imSettingsUrl, () => {
   .llm-model-details-grid, .llm-model-capabilities, .llm-discovered-models { grid-template-columns: 1fr; }
 }
 
-.view {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
+.view { height: 100%; min-height: 0; color: var(--text); background: var(--bg); }
+/* Fixed navigation + fluid content; no layout-changing entrance animations. */
+.settings-workspace { height: 100%; display: grid; grid-template-columns: 228px minmax(0, 1fr); overflow: hidden; }
+.settings-menu { min-height: 0; display: flex; flex-direction: column; padding: 20px 12px 12px; border-right: 1px solid var(--border); background: var(--bg); }
+.settings-nav-header { display: flex; align-items: center; gap: 10px; padding: 0 6px 20px; }
+.settings-nav-header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+.settings-back { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text2); cursor: pointer; }
+.settings-back:hover { background: var(--bg3); color: var(--text); }
+.settings-search { display: flex; gap: 8px; align-items: center; min-height: 34px; padding: 0 10px; background: var(--bg2); border: 1px solid var(--border); border-radius: 7px; color: var(--text3); }
+.settings-search input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--text); background: transparent; font: inherit; font-size: 12px; padding: 8px 0; }
+.settings-search input::placeholder { color: var(--text3); }
+.settings-search:focus-within { outline: 2px solid var(--text3); outline-offset: 2px; }
+.settings-mobile-select { display: none; }
+.settings-nav-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 2px 0 16px; margin-top: 10px; scrollbar-width: thin; }
+.nav-section { margin-top: 18px; }
+.nav-section:first-child { margin-top: 8px; }
+.nav-section h2 { font-size: 11px; font-weight: 500; color: var(--text3); margin: 0 10px 7px; }
+.settings-nav-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 34px; padding: 7px 10px; border: 0; border-radius: 6px; color: var(--text2); background: transparent; text-align: left; font: inherit; font-size: 12px; line-height: 20px; cursor: pointer; }
+.settings-nav-item svg { flex-shrink: 0; color: var(--text3); }
+.settings-nav-item:hover { background: var(--bg2); color: var(--text); }
+.settings-nav-item.active { background: var(--bg3); color: var(--text); font-weight: 550; }
+.settings-nav-item.active svg { color: var(--text); }
+.settings-nav-item:focus-visible, .settings-back:focus-visible { outline: 2px solid var(--text3); outline-offset: -2px; }
+.nav-empty { color: var(--text3); font-size: 12px; padding: 16px 10px; }
+.settings-content { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 44px clamp(24px, 5vw, 76px) 48px; scrollbar-gutter: stable; }
+.settings-content > * { margin-left: auto; margin-right: auto; }
+.settings-content > .panel { max-width: 1000px; padding: 0; border: 0; background: transparent; }
+.settings-content :deep(.panel-head h3) { font-size: 22px; font-weight: 600; }
+.settings-content :deep(.panel-kicker) { color: var(--text3); font-weight: 400; }
+
+/* Runtime settings: one clear status surface, followed by readable data and actions. */
+.agent-runtime-panel { --agent-status: var(--text2); }
+.agent-overview { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 22px 24px; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; }
+.agent-overview.is-ready { --agent-status: var(--green); }
+.agent-overview.is-attention { --agent-status: var(--yellow); }
+.agent-overview.is-error { --agent-status: var(--red); }
+.agent-overview-main { min-width: 0; display: flex; align-items: flex-start; gap: 15px; }
+.agent-status-icon, .agent-action-icon { display: grid; place-items: center; flex: none; color: var(--text2); background: var(--bg3); border-radius: 8px; }
+.agent-status-icon { width: 42px; height: 42px; color: var(--orange-text); background: var(--orange-bg); }
+.agent-overview-copy { min-width: 0; }
+.agent-overview-label { display: block; color: var(--text2); font-size: 12px; line-height: 1.4; }
+.agent-overview-copy strong { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 17px; line-height: 1.4; font-weight: 600; }
+.agent-status-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--agent-status); }
+.agent-overview-copy p, .agent-section-heading p, .agent-action-copy p { margin: 5px 0 0; color: var(--text2); font-size: 13px; line-height: 1.6; }
+.agent-generation { flex: none; color: var(--text2); font-size: 12px; font-variant-numeric: tabular-nums; line-height: 1.5; }
+.agent-runtime-error { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: 8px; color: var(--red); background: color-mix(in srgb, var(--red) 8%, var(--bg2)); font-size: 13px; }
+.agent-runtime-error svg { flex: none; margin-top: 1px; }
+.agent-runtime-error p { margin: 4px 0 0; color: var(--text); overflow-wrap: anywhere; line-height: 1.5; }
+.agent-section-heading { margin-bottom: 14px; }
+.agent-section-heading h4 { margin: 0; font-size: 15px; font-weight: 600; }
+.agent-details-list { margin: 0; padding: 0 20px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg2); }
+.agent-details-list > div { display: flex; justify-content: space-between; align-items: baseline; gap: 24px; padding: 14px 0; }
+.agent-details-list > div + div { border-top: 1px solid var(--border); }
+.agent-details-list dt, .agent-details-list dd { margin: 0; font-size: 13px; line-height: 1.5; }
+.agent-details-list dt { color: var(--text2); }
+.agent-details-list dd { text-align: right; color: var(--text); font-weight: 550; overflow-wrap: anywhere; }
+.agent-model { font-variant-numeric: tabular-nums; }
+.agent-inline-link { margin-left: 12px; padding: 2px 0; border: 0; background: transparent; color: var(--orange-text); font: inherit; cursor: pointer; }
+.agent-inline-link:hover { text-decoration: underline; }
+.agent-action-list { border-top: 1px solid var(--border); }
+.agent-action-row { display: flex; align-items: center; gap: 14px; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.agent-action-icon { width: 38px; height: 38px; }
+.agent-action-copy { min-width: 0; flex: 1; }
+.agent-action-copy strong { font-size: 13px; font-weight: 600; }
+.agent-action-copy p { margin-top: 3px; }
+.agent-action-button { white-space: nowrap; flex: none; }
+.agent-recovery-note { display: flex; align-items: flex-start; gap: 8px; margin: 16px 0 0; color: var(--text2); font-size: 12px; line-height: 1.6; }
+.agent-recovery-note svg { flex: none; margin-top: 2px; }
+.agent-notice { margin-top: 14px; font-size: 13px; color: var(--green); padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--green) 8%, var(--bg2)); overflow-wrap: anywhere; }
+.agent-notice.is-error { color: var(--red); background: color-mix(in srgb, var(--red) 8%, var(--bg2)); }
+@container (max-width: 480px) {
+  .agent-overview { padding: 18px; flex-wrap: wrap; }
+  .agent-generation { padding-left: 57px; }
+  .agent-action-row { flex-wrap: wrap; }
+  .agent-action-copy { flex-basis: calc(100% - 52px); }
+  .agent-action-button { margin-left: 52px; }
+  .agent-details-list > div { gap: 12px; }
 }
-
-.view-header {
-  display: flex;
-  align-items: center;
-  padding: 20px 28px 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.view-header h2 {
-  font-size: 19px;
-  font-weight: 750;
-  margin: 0;
-}
-
-.view-header p {
-  margin: 6px 0 0;
-  color: var(--text3);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.settings-workspace {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: 236px minmax(0, 1fr);
-  gap: 18px;
-  padding: 18px 24px 22px 28px;
-  overflow: hidden;
-}
-
-.settings-menu,
-.settings-content {
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.settings-menu {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-right: 2px;
-  scrollbar-gutter: stable;
-}
-
-.menu-cluster {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.menu-group,
-.menu-child {
-  width: 100%;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text2);
-  text-align: left;
-  transition:
-    background 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
-    border-color 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
-    color 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
-    box-shadow 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
-    transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.menu-group {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border-radius: 9px;
-  padding: 10px 11px;
-  transform-origin: left center;
-}
-
-.menu-group:hover,
-.menu-child:hover {
-  background: var(--bg2);
-  color: var(--text);
-}
-
-.menu-group:active,
-.menu-child:active,
-.btn-orange:active,
-.btn-ghost:active {
-  transform: translateY(1px);
-}
-
-.menu-group.active {
-  background: rgba(var(--orange-rgb), 0.11);
-  border-color: rgba(var(--orange-rgb), 0.2);
-  color: var(--orange-text);
-  box-shadow: inset 0 0 0 1px rgba(var(--orange-rgb), 0.06), 0 10px 28px rgba(var(--orange-rgb), 0.06);
-}
-
-.menu-icon {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: currentColor;
-  color: inherit;
-  font-size: 0;
-  flex: 0 0 auto;
-  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.22s ease;
-}
-
-.menu-group.active .menu-icon {
-  transform: scale(1.28);
-  box-shadow: 0 0 0 4px rgba(var(--orange-rgb), 0.08);
-}
-
-.menu-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.menu-copy strong {
-  font-size: 13px;
-  font-weight: 700;
-  color: inherit;
-}
-
-.menu-copy small {
-  font-size: 11px;
-  color: var(--text3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.menu-children {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 0 0 2px 23px;
-  overflow: hidden;
-  transform-origin: top left;
-}
-
-.menu-child {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 30px;
-  border-radius: 7px;
-  padding: 7px 9px;
-  font-size: 12px;
-  transform-origin: left center;
-}
-
-.menu-child.active {
-  color: var(--text);
-  background: var(--bg3);
-  border-color: var(--border);
-  transform: translateX(4px);
-}
-
-.mini-state {
-  flex: 0 0 auto;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 999px;
-}
-
-.mini-state.on {
-  color: var(--green);
-  background: rgba(74, 222, 128, 0.1);
-}
-
-.mini-state.off {
-  color: var(--red);
-  background: rgba(248, 113, 113, 0.1);
-}
-
-.settings-children-enter-active,
-.settings-children-leave-active {
-  max-height: 190px;
-  transition:
-    max-height 0.26s cubic-bezier(0.2, 0.8, 0.2, 1),
-    opacity 0.2s ease,
-    transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.settings-children-enter-from,
-.settings-children-leave-to {
-  max-height: 0;
-  opacity: 0;
-  transform: translateY(-6px) scaleY(0.98);
-}
-
-.settings-children-enter-to,
-.settings-children-leave-from {
-  max-height: 190px;
-  opacity: 1;
-  transform: translateY(0) scaleY(1);
-}
-
-.settings-children-enter-active .menu-child {
-  animation: menu-child-in 0.26s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-.settings-children-enter-active .menu-child:nth-child(2) { animation-delay: 0.025s; }
-.settings-children-enter-active .menu-child:nth-child(3) { animation-delay: 0.05s; }
-.settings-children-enter-active .menu-child:nth-child(4) { animation-delay: 0.075s; }
-
-.settings-content {
-  display: flex;
-  align-items: flex-start;
-  padding-right: 4px;
-}
-
-
-
-
-.im-panel-transition-anchor {
-  display: block;
-  flex: 0 0 0;
-  width: 0;
-  height: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.agent-op-row { display: flex; flex-wrap: wrap; gap: 10px; }
-.agent-notice { font-size: 12.5px; color: var(--green); padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); }
 .btn-danger { border: 1px solid var(--red); color: var(--red); background: transparent; font-size: 13px; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
 .btn-danger:hover { background: rgba(248, 113, 113, 0.12); }
 .btn-danger:disabled { opacity: 0.6; cursor: default; }
 
 .im-panel {
-  min-height: min(860px, calc(100vh - 132px));
+  height: calc(100dvh - 132px);
+  min-height: 0;
 }
 
 .im-safety-strip {
@@ -2489,7 +2306,7 @@ watch(imSettingsUrl, () => {
 .im-settings-shell {
   position: relative;
   flex: 1;
-  min-height: 640px;
+  min-height: 0;
   overflow: hidden;
   border: 0;
   border-radius: 0;
@@ -2500,7 +2317,7 @@ watch(imSettingsUrl, () => {
   display: block;
   width: 100%;
   height: 100%;
-  min-height: 640px;
+  min-height: 0;
   border: 0;
   background: var(--bg);
   opacity: 0;
@@ -2616,7 +2433,7 @@ watch(imSettingsUrl, () => {
 
 .theme-options {
   display: grid;
-  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 14px;
 }
 
@@ -2733,6 +2550,13 @@ watch(imSettingsUrl, () => {
   background: #222229;
   border-color: #393943;
 }
+
+.theme-preview-lake { border-color: #dfe4df; background: #ffffff; }
+.theme-preview-lake .theme-preview-titlebar { background: #ffffff; border-color: #dfe4df; }
+.theme-preview-lake .theme-preview-sidebar { background: #f5f6f5; border-color: #dfe4df; }
+.theme-preview-lake .theme-preview-canvas { background: #ffffff; }
+.theme-preview-lake .theme-preview-canvas i { background: #dfe4df; }
+.theme-preview-lake .theme-preview-canvas i:nth-child(3) { background: #315c43; border-color: #315c43; }
 
 .theme-preview-system {
   background: linear-gradient(90deg, #f4f4f5 0 50%, #1a1a1f 50%);
@@ -2939,9 +2763,9 @@ watch(imSettingsUrl, () => {
 }
 
 .llm-provider-logo {
-  width: 100px;
-  height: 44px;
-  flex: 0 0 100px;
+  width: 76px;
+  height: 36px;
+  flex: 0 0 76px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2970,7 +2794,8 @@ watch(imSettingsUrl, () => {
   display: block;
   width: auto;
   max-width: 100%;
-  height: 34px;
+  height: 28px;
+  max-width: 68px;
   max-height: 100%;
   object-fit: contain;
 }
@@ -3589,102 +3414,6 @@ watch(imSettingsUrl, () => {
   color: var(--red);
 }
 
-.settings-panel-enter-active {
-  transition:
-    opacity 0.24s ease,
-    transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
-    filter 0.24s ease;
-}
-
-.settings-panel-leave-active {
-  transition:
-    opacity 0.14s ease,
-    transform 0.16s cubic-bezier(0.4, 0, 1, 1),
-    filter 0.14s ease;
-}
-
-.settings-panel-enter-from {
-  opacity: 0;
-  transform: translateY(10px) scale(0.992);
-  filter: blur(2px);
-}
-
-.settings-panel-leave-to {
-  opacity: 0;
-  transform: translateY(-5px) scale(0.996);
-  filter: blur(1px);
-}
-
-.settings-panel-enter-to,
-.settings-panel-leave-from {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-  filter: blur(0);
-}
-
-.settings-panel-enter-active .panel-head,
-.settings-panel-enter-active .status-card,
-.settings-panel-enter-active .field,
-.settings-panel-enter-active .side-note,
-.settings-panel-enter-active .guide-block,
-.settings-panel-enter-active .llm-provider-row,
-.settings-panel-enter-active :deep(.panel-actions) {
-  animation: panel-item-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-.settings-panel-enter-active .status-card:nth-child(2),
-.settings-panel-enter-active .field:nth-child(2),
-.settings-panel-enter-active .guide-block:nth-child(2) {
-  animation-delay: 0.035s;
-}
-
-.settings-panel-enter-active .side-note,
-.settings-panel-enter-active :deep(.panel-actions) {
-  animation-delay: 0.06s;
-}
-
-@keyframes menu-child-in {
-  from {
-    opacity: 0;
-    transform: translateX(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes panel-item-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .menu-group,
-  .menu-child,
-  .menu-icon,
-  .settings-children-enter-active,
-  .settings-children-leave-active,
-  .settings-panel-enter-active,
-  .settings-panel-leave-active,
-  .settings-panel-enter-active .panel-head,
-  .settings-panel-enter-active .status-card,
-  .settings-panel-enter-active .field,
-  .settings-panel-enter-active .side-note,
-  .settings-panel-enter-active .guide-block,
-  .settings-panel-enter-active .llm-provider-row,
-  .settings-panel-enter-active :deep(.panel-actions) {
-    animation: none;
-    transition: none;
-  }
-}
-
 @media (max-width: 980px) {
   .theme-options {
     grid-template-columns: 1fr;
@@ -3695,17 +3424,12 @@ watch(imSettingsUrl, () => {
   }
 
   .settings-workspace {
-    grid-template-columns: 1fr;
-    overflow-y: auto;
+    grid-template-columns: 200px minmax(0, 1fr);
   }
 
-  .settings-menu {
-    overflow: visible;
-  }
+  .settings-menu { padding: 16px 10px; }
 
-  .settings-content {
-    overflow: visible;
-  }
+  .settings-content { padding: 28px 24px; }
 
   .panel-layout,
   .guide-grid,
@@ -3759,5 +3483,35 @@ watch(imSettingsUrl, () => {
 
 <style scoped>
 .llm-provider-logo.brand-modeljetty { background: #fff; border: 1px solid #ddd; }
-.llm-provider-logo.brand-modeljetty img { width: 44px; height: 44px; object-fit: contain; }
+.llm-provider-logo.brand-modeljetty img { width: 28px; height: 28px; object-fit: contain; }
+.llm-provider-logo.brand-crawshrimp img { width: 28px; height: 28px; border-radius: 0; object-fit: contain; }
+</style>
+
+<style scoped src="./settingsWorkspace.css"></style>
+
+<style scoped src="../styles/modelProviders.css"></style>
+
+<style scoped>
+.llm-provider-modal .settings-modal-body { flex: 0 1 auto; }
+.llm-provider-modal .field label { flex-direction: row; }
+.llm-provider-modal .llm-editor-heading { display: flex; align-items: center; gap: 13px; min-width: 0; }
+.llm-editor-mark { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 10px; color: var(--orange-text); background: var(--orange-bg); flex-shrink: 0; }
+.llm-provider-modal .llm-editor-heading h3 { font-size: 19px; }
+.llm-provider-modal .llm-editor-heading p { font-size: 12px; margin: 4px 0 0; color: var(--text2); }
+.llm-provider-modal .llm-provider-tabs { gap: 4px; margin: 18px 24px 0; padding: 4px; border: 1px solid var(--border); background: var(--bg); border-radius: 9px; }
+.llm-provider-modal .llm-provider-tabs button { flex: 1; justify-content: center; min-height: 36px; padding: 7px 12px; border: 0; border-radius: 6px; font-size: 13px; color: var(--text2); background: transparent; }
+.llm-provider-modal .llm-provider-tabs button[aria-selected=true] { color: var(--text); background: var(--bg3); }
+.llm-provider-modal .llm-provider-tabs button[aria-selected=true] svg { color: var(--orange-text); }
+.llm-provider-modal .llm-provider-tabs button span { padding: 1px 6px; background: var(--bg4); }
+.llm-section-intro h4 { margin: 0 0 5px; color: var(--text); font-size: 13px; font-weight: 650; }
+.llm-section-intro p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text2); }
+.llm-section-divider { border-top: 1px solid var(--border); padding-top: 20px; margin-top: 2px; }
+.llm-provider-modal .field { margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.llm-provider-modal .field label { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.llm-field-alias { font-weight: 400; color: var(--text2); font-size: 11px; }
+.llm-provider-modal .field-hint { margin: 0; font-size: 12px; line-height: 1.6; }
+.llm-provider-modal .split-fields { gap: 16px; }
+.llm-provider-modal .model-config-body :is(input,select) { min-height: 40px; padding: 9px 11px; font-size: 13px; }
+.llm-provider-modal .llm-model-workspace { min-height: 280px; }
+@media (max-width: 640px) { .llm-provider-modal .llm-provider-tabs { margin: 16px 18px 0; } .llm-provider-modal .split-fields { grid-template-columns: 1fr; } }
 </style>

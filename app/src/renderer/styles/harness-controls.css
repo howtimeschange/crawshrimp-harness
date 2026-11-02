@@ -1,0 +1,23 @@
+/* Outer workbenches only. Do not style the DSH iframe or its conversation controls. */
+:root { --workbench-action-bg: #ff6b2b; --workbench-action-fg: #17131a; }
+:root[data-theme="light"] { --workbench-action-bg: #bd3c00; --workbench-action-fg: #fff; }
+:root[data-theme-preference="lake"] { --workbench-action-bg: #315c43; --workbench-action-fg: #fff; }
+:is(.task-center,.automation-center,.local-prompt-library,.aiw-workbench,.avg-workbench,.df-root,.settings-content)
+  :is(.tc-primary,.ac-primary,.lpl-primary,.aiw-primary-action,.aiw-top-primary,.avg-btn.primary,.btn-orange-sm,.btn-orange) {
+  background: var(--workbench-action-bg) !important;
+  border-color: var(--workbench-action-bg) !important;
+  color: var(--workbench-action-fg) !important;
+}
+:is(.task-center,.automation-center,.local-prompt-library,.aiw-workbench,.avg-workbench,.df-root,.settings-content)
+  :is(button,a,summary,input,select,textarea):focus-visible { outline: 2px solid var(--orange); outline-offset: 3px; }
+:is(.task-center,.automation-center,.local-prompt-library,.aiw-workbench,.avg-workbench,.df-root) button:disabled { cursor: not-allowed; }
+:is(.task-center,.automation-center,.local-prompt-library,.aiw-workbench,.avg-workbench,.df-root) :is(input,textarea)::placeholder { color: var(--text2); opacity: 1; }
+dialog.tc-modal-backdrop,dialog.df-modal-overlay { margin:0; padding:24px; width:100vw; height:100dvh; max-width:none; max-height:none; border:0; color:var(--text); }
+dialog.tc-modal-backdrop::backdrop,dialog.df-modal-overlay::backdrop { background:var(--scrim); }
+dialog.harness-modal-shell { margin:0; width:100vw; height:100dvh; max-width:none; max-height:none; border:0; box-sizing:border-box; color:var(--text); }
+dialog.harness-modal-shell::backdrop { background:transparent; }
+@media(prefers-reduced-motion:reduce) {
+  :is(.task-center,.automation-center,.local-prompt-library,.aiw-workbench,.avg-workbench,.df-root,.settings-content) *,
+  :is(.task-center,.automation-center,.local-prompt-library,.aiw-workbench,.avg-workbench,.df-root,.settings-content) *::before,
+  :is(.task-center,.automation-center,.local-prompt-library,.aiw-workbench,.avg-workbench,.df-root,.settings-content) *::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }
+}

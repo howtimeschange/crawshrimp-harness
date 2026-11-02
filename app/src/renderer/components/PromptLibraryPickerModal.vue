@@ -1,6 +1,6 @@
 <template>
-  <div v-if="open" class="prompt-library-picker-modal" @click.self="close">
-    <section ref="dialogPanel" class="prompt-library-picker-panel" role="dialog" aria-modal="true" aria-label="从 Prompt 库选择" tabindex="-1">
+  <dialog v-if="open" ref="nativeDialog" class="prompt-library-picker-modal harness-modal-shell" aria-label="从 Prompt 库选择" @cancel.prevent="close" @click.self="close">
+    <section ref="dialogPanel" class="prompt-library-picker-panel" tabindex="-1">
       <header class="prompt-library-picker-head">
         <div>
           <strong>{{ title }}</strong>
@@ -46,10 +46,11 @@
         <div v-if="!filteredTemplates.length" class="prompt-library-picker-empty">没有匹配的 Prompt</div>
       </div>
     </section>
-  </div>
+  </dialog>
 </template>
 
 <script setup>
+import { useNativeDialog } from '../composables/useNativeDialog'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   buildPromptLibraryPickerLibraries,
@@ -76,6 +77,8 @@ const loading = ref(false)
 const templatesLoading = ref(false)
 const error = ref('')
 const operatorError = computed(() => promptLibraryFailureMessage(error.value))
+const nativeDialog = ref(null)
+useNativeDialog(computed(() => props.open), nativeDialog)
 const dialogPanel = ref(null)
 let dialogReturnFocus = null
 const promptLibraryRequestGuard = createPromptLibraryRequestGuard()

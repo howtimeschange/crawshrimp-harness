@@ -18,7 +18,7 @@ Environment:
   DOUBAO_SEEDANCE_API_KEY   Alias for SEEDANCE_API_KEY
   DOUBAO_SEEDANCE_BASE_URL  Alias for SEEDANCE_BASE_URL
   ARK_API_KEY               Volcengine Ark API key
-  ARK_BASE_URL              Optional, defaults to https://ark.cn-beijing.volces.com
+  ARK_BASE_URL              Optional, defaults to https://ai-aigw.semir.com/doubao-seedance/api/v3
 `;
 
 async function main() {

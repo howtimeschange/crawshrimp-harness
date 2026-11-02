@@ -25,7 +25,7 @@ export const CUSTOM_IMAGE_PROVIDERS_FIELD = 'ai.image.custom_providers'
 
 export function customImageProviders(settings = {}) {
   const value = settings[CUSTOM_IMAGE_PROVIDERS_FIELD] ?? settings.ai?.image?.custom_providers
-  return Array.isArray(value) ? value : []
+  return [...(Array.isArray(value) ? value : []), ...(Array.isArray(settings.managed_image_providers) ? settings.managed_image_providers : [])]
 }
 
 export function configureAiImageProviders(settings = {}) {
@@ -217,7 +217,7 @@ export function normalizeSettings(settings = {}) {
   const ai = direct.ai && typeof direct.ai === 'object' ? direct.ai : {}
   const providerKeys = {}
   for (const custom of customImageProviders(direct)) {
-    providerKeys[`ai.image.custom.${custom.id}.api_key`] = custom.api_key || ''
+    providerKeys[`ai.image.custom.${custom.id}.api_key`] = custom.api_key || (custom.id?.startsWith('custom-managed-') && custom.configured ? 'managed-session' : '')
   }
   for (const model of AI_IMAGE_MODELS.filter(item => item.provider && !item.custom)) {
     const [, provider, field] = model.configId.split('.')

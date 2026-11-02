@@ -65,6 +65,16 @@ export function patchArchiveSource(source, kind) {
 }
 
 export function patchSessionArchive(root) {
+  const version = JSON.parse(readFileSync(join(root, 'node_modules/@deepseek-ai/dsh/package.json'))).version
+  if (version === '0.2.1-rc.2') {
+    // Upstream owns durable restore, active-work refusal and stop confirmation.
+    for (const [path, anchor] of [
+      ['dsh-workspace/lib/index.js', 'unarchiveSession(sessionId)'],
+      ['dsh-api-workspace-controller/lib/client.js', 'async unarchiveSession(sessionId)'],
+      ['dsh-client-ui-workspace/lib/client.js', 'SessionArchiveConfirmDialog'],
+    ]) if (!readFileSync(join(root, 'node_modules/@deepseek-ai', path), 'utf8').includes(anchor)) throw new Error('Upstream archive contract missing: ' + path)
+    return { upstream: true }
+  }
   const files = [
     ['dsh-workspace/lib/index.js', 'registry'],
     ['dsh-api-workspace-controller/lib/index.js', 'controller'],

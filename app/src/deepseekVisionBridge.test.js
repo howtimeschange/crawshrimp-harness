@@ -109,7 +109,9 @@ async function collect(iterator) {
 
 async function makeAdapter({ includeOfficialFlash = true, includeCustomFlash = false, serializePayloads = false } = {}) {
   const { PiAiAdapter } = await import(pathToFileURL(resolve(runtime, 'node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js')).href)
-  const { stream: openAiStream } = await import(pathToFileURL(resolve(runtime, 'node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js')).href)
+  const { stream: rawOpenAiStream } = await import(pathToFileURL(resolve(runtime, 'node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js')).href)
+  const { normalizeContext } = await import(pathToFileURL(resolve(runtime, 'node_modules/@earendil-works/pi-ai/dist/utils/transcript.js')).href)
+  const openAiStream = (model, context, options) => rawOpenAiStream(model, normalizeContext(context), options)
   const captures = { vision: [], final: [], preflights: [], visionPayloads: [], finalPayloads: [] }
   const officialPro = model(OFFICIAL_PROVIDER, 'deepseek-v4-pro', ['text'])
   const officialFlash = model(OFFICIAL_PROVIDER, 'deepseek-flash', ['text', 'image'])
@@ -125,6 +127,7 @@ async function makeAdapter({ includeOfficialFlash = true, includeCustomFlash = f
     [OFFICIAL_PROVIDER, profile(OFFICIAL_PROVIDER)],
     [CUSTOM_PROVIDER, profile(CUSTOM_PROVIDER)],
   ])
+  for (const profile of profiles.values()) profile.modelErrors = new Map()
   const adapter = new PiAiAdapter({
     profiles: () => profiles,
     resolveApiKey: async () => 'unit-test-placeholder',
@@ -203,19 +206,15 @@ test('official DeepSeek V4 Pro user images use paired Flash vision, then Pro rec
   assert.deepEqual(captures.finalPayloads[0].tools.map(tool => tool.function.name), ['lookup'])
 })
 
-test('official DeepSeek V4 Pro bridges nested read_image tool-result images', async () => {
+test('official DeepSeek V4 Pro bridges read_image tool-role images', async () => {
   const { adapter, captures } = await makeAdapter()
   await collect(adapter.stream({
     provider: OFFICIAL_PROVIDER,
     model: 'deepseek-v4-pro',
     messages: [{
-      role: 'user',
-      source: { kind: 'tool', callId: 'read-1' },
-      content: [{
-        type: 'tool-result',
-        toolCallId: 'read-1',
-        content: [text('result.png'), image('attachment-tool')],
-      }],
+      role: 'tool',
+      toolCallId: 'read-1',
+      content: [text('result.png'), image('attachment-tool')],
     }],
   }))
 

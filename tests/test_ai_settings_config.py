@@ -7,7 +7,7 @@ from core.config import DEFAULT_CONFIG, load_config, patch_config, save_config
 
 
 class AiSettingsConfigTests(unittest.TestCase):
-    def test_retired_provider_removed_from_defaults_load_and_save(self):
+    def test_retired_provider_preserved_on_disk_for_rollback(self):
         import tempfile
         from pathlib import Path
         self.assertNotIn("1xm", DEFAULT_CONFIG["ai"])
@@ -16,11 +16,27 @@ class AiSettingsConfigTests(unittest.TestCase):
             config_path.return_value = path
             path.write_text(json.dumps({"ai": {"1xm": {"gpt_image_2k_key": "retired"}, "woka": {"api_key": "active"}}}))
             loaded = load_config()
-            self.assertNotIn("1xm", loaded["ai"])
+            self.assertEqual(loaded["ai"]["1xm"]["gpt_image_2k_key"], "retired")
             self.assertEqual(loaded["ai"]["woka"]["api_key"], "active")
             result = patch_config({"ai.1xm.base_url": "https://old.test/v1"})
-            self.assertNotIn("1xm", result["ai"])
-            self.assertNotIn("1xm", json.loads(path.read_text())["ai"])
+            self.assertEqual(result["ai"]["1xm"]["gpt_image_2k_key"], "retired")
+            self.assertEqual(json.loads(path.read_text())["ai"]["1xm"]["gpt_image_2k_key"], "retired")
+
+    def test_legacy_seedance_route_is_preserved_and_new_keys_require_route(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmpdir, patch("core.config._config_path") as config_path:
+            path = Path(tmpdir) / "config.json"
+            config_path.return_value = path
+            path.write_text(json.dumps({"ai": {"video": {"seedance_api_key": "legacy"}}}))
+            self.assertEqual(load_config()["ai"]["video"]["seedance_base_url"], "https://ark.cn-beijing.volces.com")
+            patch_config({"theme": "dark"})
+            self.assertEqual(json.loads(path.read_text())["ai"]["video"]["seedance_base_url"], "https://ark.cn-beijing.volces.com")
+            path.write_text('{}')
+            with self.assertRaisesRegex(ValueError, "服务地址"):
+                patch_config({"ai.video.seedance_api_key": "new"})
+            patch_config({"ai.video.seedance_api_key": "new", "ai.video.seedance_base_url": "https://example.test/v3"})
+            self.assertEqual(load_config()["ai"]["video"]["seedance_base_url"], "https://example.test/v3")
 
     def test_default_config_exposes_video_provider_fields_without_secret_values(self):
         video = DEFAULT_CONFIG["ai"]["video"]

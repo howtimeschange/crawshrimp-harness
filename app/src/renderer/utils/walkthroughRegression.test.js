@@ -5,6 +5,12 @@ import { readFileSync } from 'node:fs'
 import { mergeTaskLiveStatus } from './taskRunnerState.js'
 const imageSource = readFileSync(new URL('../views/AiImageWorkbench.vue', import.meta.url), 'utf8')
 function imageFunction(name, next, context) {
+  context.submissionUnconfirmed ??= { value: false }
+  context.unknownRetryKey ??= () => "test-key"
+  context.beginUnknownRetry ??= () => { context.unknownRetryDialogOpen.value = true }
+  context.activeJobUid ??= { value: "qa-job" }
+  context.pendingActiveJobUid ??= { value: "" }
+  context.taskSelectionGeneration ??= 0
   vm.runInNewContext(imageSource.slice(imageSource.indexOf(`async function ${name}(`), imageSource.indexOf(`\n${next}`, imageSource.indexOf(`async function ${name}(`))), context)
   return context[name]
 }
@@ -15,6 +21,19 @@ for (const prompt of ['', '   \n  ']) test(`blank prompt rejected before creatin
   assert.equal(submissions, 0)
   assert.equal(context.generating.value, false)
   assert.match(context.errorMessage.value, /请输入.*提示词/)
+})
+test('unconfirmed image submission asks before starting another run', async () => {
+  const context = { submissionUnconfirmed: { value: true }, unknownRetryDialogOpen: { value: false } }
+  await imageFunction('generate', 'function normalizeGenerateError', context)()
+  assert.equal(context.unknownRetryDialogOpen.value, true)
+})
+test('confirmed new generation submits once and consumes confirmation', async () => {
+  let submissions = 0
+  const draft = {job_uid:'qa-job',status:'failed',summary:{runs:[{run_uid:'old',error_code:'UNKNOWN_SUBMIT_RESULT'}]}}
+  const context = { submissionUnconfirmed:{value:true}, generationConfigMessage:{value:''}, inputImportBusy:{value:false}, connectionNotice:{value:''}, structuredClonePlain: value=>structuredClone(value), retainSubmittedTaskInputs(){}, form:{prompt:'test'}, errorMessage:{value:''}, assertAdvancedJsonValid(){}, generating:{value:false}, compactPane:{}, selectedResults:new Set(), logs:{value:[]}, ensureCurrentTask:async()=>draft, clearResultRevealTracking(){}, generatingJobUid:{}, generatingSnapshot:{}, normalizeGenerateError:e=>e.message, beginResultRevealTracking(){}, currentJob:{value:draft}, activeJobUid:{value:'qa-job'}, buildJobPayload:()=>({prompt:'test'}), formSnapshot:()=>({prompt:'test'}), upsertJob(){}, clearSubmittedTaskInputs(){}, window:{cs:{runAiImageJob:async()=>{submissions++; throw new Error('fixture')},getAiImageJob:async()=>draft}}, hasActiveRuns:()=>false }
+  await imageFunction('generate','function normalizeGenerateError',context)('test-key')
+  assert.equal(submissions, 1)
+  assert.equal(context.currentJob.value.summary.runs[0].run_uid, 'old')
 })
 test('new run does not inherit old target or 100 percent progress', () => {
   const task = { live: { status:'done', run_id:14, current_target:'000000000000', progress_percent:100 } }
@@ -97,4 +116,122 @@ test('reactivating the same image job ignores its stale poll and keeps one timer
   assert.deepEqual(updates, ['running'])
   assert.equal(timers.size, 1)
   assert.equal(context.jobPollingUid, 'same-job')
+})
+
+
+test('recheck ignores stale job and trace responses, including A-B-A switching', async () => {
+  const requests = [], traces = [], updates = []
+  const context = {
+    activeJobUid: { value: 'A' }, pendingActiveJobUid: { value: '' }, taskSelectionGeneration: 0,
+    resultRecheckGeneration: 0, currentJob: { value: { job_uid: 'A' } }, errorMessage: { value: '' },
+    resultOwnerJobUid: item => item.jobUid, upsertJob: job => updates.push(job.job_uid),
+    window: { cs: {
+      getAiImageJob: () => new Promise(resolve => requests.push(resolve)),
+      traceAiImageManagedRequest: () => new Promise(resolve => traces.push(resolve)),
+    } },
+  }
+  const recheck = imageFunction('recheckResultRecord', 'async function retryFailedRun', context)
+  const first = recheck({ jobUid: 'A', runUid: 'r' })
+  context.pendingActiveJobUid.value = 'B'; context.taskSelectionGeneration++
+  context.activeJobUid.value = 'B'; context.pendingActiveJobUid.value = ''
+  context.activeJobUid.value = 'A'; context.taskSelectionGeneration++
+  requests.shift()({ job_uid: 'A', summary: {} }); await first
+  assert.deepEqual(updates, [])
+  assert.equal(context.errorMessage.value, '')
+  const second = recheck({ jobUid: 'A', runUid: 'r' })
+  requests.shift()({ job_uid: 'A', summary: { runs: [{ run_uid: 'r', managed_request_id: 'id' }] } })
+  await new Promise(resolve => setImmediate(resolve))
+  context.activeJobUid.value = 'B'; context.taskSelectionGeneration++
+  traces.shift()({ status: 'found', request_id: 'id', state: 'completed' }); await second
+  assert.equal(context.currentJob.value.job_uid, 'A')
+  assert.equal(context.errorMessage.value, '')
+})
+
+test('batch unknown result requires confirmation bound to task and contents', async () => {
+  let submissions = 0
+  const draft = { job_uid: 'A', title: 'A', prompt: 'old', summary: {} }
+  const context = {
+    submissionUnconfirmed: { value: true }, activeJobUid: { value: 'A' }, pendingActiveJobUid: { value: '' },
+    taskSelectionGeneration: 0, batchDialogOwner: { jobUid: 'A', selectionGeneration: 0 }, unknownRetryIntent: null, unknownRetryDialogOpen: { value: false },
+    batchGenerationDialog: { open: true, submitting: false, error: '', titlePrefix: 'A', prompts: [{ prompt: 'new' }], referenceImagePaths: [] },
+    batchPromptCards: { value: [{ title: 'one', prompt: 'new', count: 1 }] }, batchPromptStats: { value: { promptCount: 1, totalImages: 1 } },
+    batchConfigMessage: { value: '' }, batchNanoBanana: { value: false }, inputImportBusy: { value: false },
+    connectionNotice: { value: '' }, generating: { value: false }, selectedResults: new Set(),
+    form: { title: 'A' }, formSnapshot: () => ({ title: 'A', prompt: 'old' }),
+    assertAdvancedJsonValid() {}, nextTaskTitle: () => 'next', inputStateFromParams: () => ({}), serializeInputs: () => ({}),
+    structuredClonePlain: value => structuredClone(value), ensureCurrentTask: async () => draft,
+    beginResultRevealTracking() {}, generatingJobUid: {}, generatingSnapshot: {}, buildBatchJobPayload: () => ({}),
+    currentJob: { value: draft }, upsertJob() {}, logs: { value: [] }, normalizeBatchPromptCount: () => 1,
+    window: { cs: { updateAiImageJob: async () => draft, batchRunAiImageJob: async () => { submissions++; return { accepted: true, job: draft } } } },
+    captureNewResultReveals() {}, compactPane: {}, retainSubmittedTaskInputs() {}, closeBatchPromptLibraryPicker() {},
+    hasActiveRuns: () => false, clearResultRevealTracking() {}, normalizeGenerateError: e => e.message,
+    errorMessage: { value: '' }, persistWorkbenchState() {}, globalThis,
+  }
+  imageFunction('submitBatchGeneration', 'async function generate', context)
+  vm.runInNewContext(imageSource.slice(imageSource.indexOf('function unknownRetryKey('), imageSource.indexOf('function restoreFailedRunInputs(')), context)
+  await context.submitBatchGeneration()
+  assert.equal(submissions, 0)
+  assert.equal(context.unknownRetryDialogOpen.value, true)
+  context.batchGenerationDialog.prompts[0].prompt = 'changed'
+  context.confirmUnknownRetry()
+  assert.equal(submissions, 0)
+  assert.match(context.errorMessage.value, /已变化/)
+  await context.submitBatchGeneration()
+  context.taskSelectionGeneration++
+  context.confirmUnknownRetry()
+  assert.equal(submissions, 0)
+  context.batchDialogOwner.selectionGeneration = context.taskSelectionGeneration
+  await context.submitBatchGeneration()
+  context.confirmUnknownRetry()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(submissions, 1)
+  assert.equal(context.unknownRetryDialogOpen.value, false)
+})
+
+
+test('batch confirmation cannot dispatch if selection changes during task preparation', async () => {
+  let resolveTask, submissions = 0
+  const draft = { job_uid: 'A', summary: {} }
+  const context = {
+    submissionUnconfirmed: { value: true }, activeJobUid: { value: 'A' }, pendingActiveJobUid: { value: '' },
+    taskSelectionGeneration: 0, batchDialogOwner: { jobUid: 'A', selectionGeneration: 0 },
+    unknownRetryIntent: null, unknownRetryDialogOpen: { value: false },
+    batchGenerationDialog: { open: true, submitting: false, error: '', titlePrefix: 'A', prompts: [{ prompt: 'new' }], referenceImagePaths: [] },
+    batchPromptCards: { value: [{ title: 'one', prompt: 'new', count: 1 }] }, batchPromptStats: { value: { promptCount: 1, totalImages: 1 } },
+    batchConfigMessage: { value: '' }, batchNanoBanana: { value: false }, inputImportBusy: { value: false },
+    connectionNotice: { value: '' }, generating: { value: false }, selectedResults: new Set(),
+    form: {}, formSnapshot: () => ({ prompt: 'old' }), assertAdvancedJsonValid() {}, nextTaskTitle: () => 'next',
+    inputStateFromParams: () => ({}), serializeInputs: () => ({}), structuredClonePlain: value => structuredClone(value),
+    ensureCurrentTask: () => new Promise(resolve => { resolveTask = resolve }),
+    generatingJobUid: {}, generatingSnapshot: {}, logs: { value: [] }, clearResultRevealTracking() {},
+    normalizeGenerateError: e => e.message, errorMessage: { value: '' }, persistWorkbenchState() {},
+    window: { cs: { batchRunAiImageJob: () => { submissions++ } } },
+  }
+  imageFunction('submitBatchGeneration', 'async function generate', context)
+  vm.runInNewContext(imageSource.slice(imageSource.indexOf('function unknownRetryKey('), imageSource.indexOf('function restoreFailedRunInputs(')), context)
+  await context.submitBatchGeneration()
+  context.confirmUnknownRetry()
+  context.pendingActiveJobUid.value = 'B'; context.taskSelectionGeneration++
+  resolveTask(draft)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(submissions, 0)
+  assert.equal(context.generating.value, false)
+})
+
+test('confirmed task preparation stops before reading or creating a different task', async () => {
+  let releaseSave, reads = 0, creates = 0
+  const context = {
+    activeJobUid: { value: 'A' }, currentJob: { value: { job_uid: 'A' } },
+    pendingActiveJobUid: { value: '' }, taskSelectionGeneration: 0,
+    autosaveCurrentTask: () => new Promise(resolve => { releaseSave = resolve }),
+    window: { cs: { getAiImageJob: async () => { reads++; return null } } },
+    createTaskFromCurrentForm: async () => { creates++; return { job_uid: 'new' } },
+  }
+  const ensure = imageFunction('ensureCurrentTask', 'async function createTaskFromCurrentForm', context)
+  const pending = ensure({ confirmedJobUid: 'A', selectionGeneration: 0 })
+  context.activeJobUid.value = 'B'; context.currentJob.value = { job_uid: 'B' }; context.taskSelectionGeneration++
+  releaseSave(null)
+  await assert.rejects(pending, /任务已切换/)
+  assert.equal(reads, 0)
+  assert.equal(creates, 0)
 })

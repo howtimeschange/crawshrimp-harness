@@ -13,6 +13,7 @@ function loadSlotsClient({ logs = [], search = '' } = {}) {
   let declaration
   const shellMessages = []
   const listeners = new Map()
+  const documentListeners = new Map()
   const parent = {
     postMessage(message, origin) {
       shellMessages.push({ message, origin })
@@ -20,7 +21,10 @@ function loadSlotsClient({ logs = [], search = '' } = {}) {
   }
   const sandbox = {
     MutationObserver: class { observe() {} disconnect() {} },
-    document: { body: {} },
+    document: { body: {},
+      addEventListener(type, listener) { documentListeners.set(type, listener) },
+      removeEventListener(type, listener) { if (documentListeners.get(type) === listener) documentListeners.delete(type) },
+    },
     clearTimeout,
     console: {
       error: (...args) => logs.push(['error', ...args]),
@@ -101,9 +105,9 @@ test('Crawshrimp fixes its one agent preset without a picker display layer', () 
   assert.doesNotMatch(source, /normalizeAgentPresetPickerCopy/)
   assert.match(source, /\.cubgiG_seat \{ display: none !important; \}/)
   assert.match(upstreamPresetUi, /"seat": "cubgiG_seat"/)
-  assert.match(profile, /id: agent-presets[\s\S]*?default: crawshrimp-standard/)
-  assert.match(profile, /id: agent-presets[\s\S]*?includeShippedRoot: false/)
-  assert.match(profile, /id: agent-presets[\s\S]*?includeUserRoot: false/)
+  assert.match(profile, /id: agent-preset-registry[\s\S]*?default: crawshrimp-standard/)
+  assert.match(profile, /id: preset-standard\s+disabled: true/)
+  assert.match(profile, /id: preset-minimal\s+disabled: true/)
   assert.match(profile, /id: ui-agent-preset\s+disabled: true/)
 })
 
@@ -356,7 +360,7 @@ test('a Shell-provided no-model state survives the rc.1 redirect and composer ac
   const event = {
     target: {
       closest(selector) {
-        return selector === '.wSkVaW_composerSeat' ? {} : null
+        return selector.includes('data-composer-seat') || selector === '.wSkVaW_composerSeat' ? {} : null
       },
     },
     preventDefault() { this.prevented = true },
@@ -408,7 +412,7 @@ test('text-only composer paste remains available to DSH instead of being consume
   const event = {
     target: {
       closest(selector) {
-        return selector === '.wSkVaW_composerSeat' ? {} : null
+        return selector.includes('data-composer-seat') || selector === '.wSkVaW_composerSeat' ? {} : null
       },
     },
     clipboardData: {

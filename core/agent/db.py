@@ -410,6 +410,33 @@ def update_run(run_id: str, **fields: Any) -> None:
             conn.close()
 
 
+
+def mark_started_run_running(run_id: str, session_id: str) -> bool:
+    """CAS only this admitted classic run after its generation is ready.
+
+    A cancellation or another terminal transition while generation awaited
+    must win; observing a queued run never grants it execution authority.
+    """
+    conn = _conn()
+    try:
+        cursor = conn.execute(
+            "UPDATE agent_runs SET status='running' "
+            "WHERE run_id=? AND session_id=? AND status='starting' "
+            "AND COALESCE(started_at,'')<>''",
+            (run_id, session_id),
+        )
+        conn.commit()
+        if cursor.rowcount != 1:
+            return False
+        from core.product_analytics import run_transition
+        snapshot = _row(conn.execute("SELECT * FROM agent_runs WHERE run_id=?", (run_id,)).fetchone())
+        if snapshot:
+            run_transition(snapshot, "running")
+        return True
+    finally:
+        conn.close()
+
+
 def cancel_queued_run(run_id: str, *, error_code: str = "", error_message: str = "") -> bool:
     """Atomically cancel one queued Agent Run without racing its queue consumer.
 
@@ -538,6 +565,8 @@ def list_messages(session_id: str) -> list[dict]:
 # ---------- 事件投影 ----------
 
 def append_event(session_id: str, run_id: Optional[str], event_type: str, payload: Any) -> int:
+    from core.artifact_version import pin_artifact_event
+    payload = pin_artifact_event(event_type, payload, session_id=session_id, snapshot_root=_db_path().parent / 'agent' / 'artifact_versions')
     with _lock:
         conn = _conn()
         try:
@@ -559,6 +588,8 @@ def append_event(session_id: str, run_id: Optional[str], event_type: str, payloa
 
 def append_session_event(session_id: str, event_type: str, payload: Any) -> tuple[int, Any]:
     """Resolve session identity and append atomically with one connection."""
+    from core.artifact_version import pin_artifact_event
+    payload = pin_artifact_event(event_type, payload, session_id=session_id, snapshot_root=_db_path().parent / 'agent' / 'artifact_versions')
     conn = _conn()
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -610,31 +641,6 @@ def latest_event_seq() -> int:
         try:
             row = conn.execute("SELECT COALESCE(MAX(seq), 0) AS seq FROM agent_events").fetchone()
             return int((row or {"seq": 0})["seq"] or 0)
-        finally:
-            conn.close()
-
-
-# ---------- 智能体数据清除(设置页) ----------
-
-AGENT_PROJECTION_TABLES = (
-    "agent_messages", "agent_events", "agent_tool_calls", "agent_approvals",
-    "agent_execution_plans", "agent_turns", "agent_runs", "agent_sessions",
-    "agent_capability_grants", "agent_script_revisions", "agent_workspace_files",
-    "agent_attachments",
-)
-
-
-def clear_agent_data() -> None:
-    """清空智能体投影表(会话/运行/消息/审批/草稿/附件)。
-
-    保留:任务实例与产物(产品数据)、模型/能力配置。
-    """
-    with _lock:
-        conn = _conn()
-        try:
-            for table in AGENT_PROJECTION_TABLES:
-                conn.execute(f"DELETE FROM {table}")
-            conn.commit()
         finally:
             conn.close()
 
@@ -1043,32 +1049,43 @@ def list_attachments(session_id: str, turn_id: Optional[str] = None) -> list[dic
             conn.close()
 
 
-# ---------- 清理 ----------
-
-def delete_all_agent_data() -> None:
-    with _lock:
-        conn = _conn()
-        try:
-            conn.executescript(
-                "DELETE FROM agent_events; DELETE FROM agent_tool_calls; DELETE FROM agent_approvals;"
-                " DELETE FROM agent_execution_plans; DELETE FROM agent_capability_grants;"
-                " DELETE FROM agent_workspace_files; DELETE FROM agent_script_revisions;"
-                " DELETE FROM agent_messages; DELETE FROM agent_runs; DELETE FROM agent_turns; DELETE FROM agent_sessions;"
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-
 def list_session_resource_events(runtime_session_id: str) -> list[dict]:
-    """Read durable resource metadata for one runtime session, in event order."""
+    """Read resource metadata, without materializing unrelated tool arguments."""
     with _lock:
         conn = _conn()
         try:
             return _fetch(conn, """
-                SELECT e.* FROM agent_events e JOIN agent_sessions s ON s.session_id=e.session_id
-                WHERE s.runtime_session_id=? AND e.event_type IN
-                ('artifact.created', 'browser.activity', 'browser.page.closed', 'tool.requested') ORDER BY e.seq
+                SELECT e.seq, e.session_id, e.run_id, e.event_type, e.created_at,
+                    CASE WHEN e.event_type='tool.requested' THEN json_object(
+                        'tool_name', json_extract(e.payload_json, '$.tool_name'),
+                        'tool_call_id', json_extract(e.payload_json, '$.tool_call_id'),
+                        'dsh_call_id', json_extract(e.payload_json, '$.dsh_call_id'),
+                        'turn', json_extract(e.payload_json, '$.turn')
+                    ) ELSE e.payload_json END AS payload_json
+                FROM agent_events e JOIN agent_sessions s ON s.session_id=e.session_id
+                WHERE s.runtime_session_id=? AND (
+                    e.event_type IN ('artifact.created', 'browser.activity', 'browser.page.closed')
+                    OR (e.event_type='tool.requested'
+                        AND substr(json_extract(e.payload_json, '$.tool_name'), -14)='image_generate')
+                ) ORDER BY e.seq
             """, (runtime_session_id,))
+        finally:
+            conn.close()
+
+
+def get_session_artifact(session_id: str, artifact_id: str) -> Optional[dict]:
+    """Resolve only a durable artifact event owned by the requested product session."""
+    with _lock:
+        conn = _conn()
+        try:
+            row = conn.execute("""SELECT payload_json FROM agent_events
+                WHERE session_id=? AND event_type='artifact.created'
+                AND (json_extract(payload_json, '$.artifact_id')=?
+                     OR json_extract(payload_json, '$.file_snapshot.version_id')=?)
+                ORDER BY CASE WHEN json_extract(payload_json, '$.file_snapshot.version_id')=?
+                                   AND json_extract(payload_json, '$.file_snapshot.status')='ready'
+                              THEN 1 ELSE 0 END DESC, seq DESC LIMIT 1""",
+                (session_id, artifact_id, artifact_id, artifact_id)).fetchone()
+            return json.loads(row[0]) if row else None
         finally:
             conn.close()

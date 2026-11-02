@@ -331,7 +331,7 @@
         </main>
       </div>
 
-      <div v-if="manualGenerate.open" class="manual-modal-backdrop" @click.self="closeManualGenerate">
+      <dialog v-if="manualGenerate.open" ref="manualDialog" class="manual-modal-backdrop harness-modal-shell" aria-label="新增生图" @cancel.prevent="closeManualGenerate" @click.self="closeManualGenerate">
         <section class="manual-modal">
           <header class="manual-modal-head">
             <div>
@@ -392,9 +392,9 @@
             </button>
           </footer>
         </section>
-      </div>
+      </dialog>
 
-      <div v-if="promptReferencePicker.open" class="prompt-reference-picker-modal" @click.self="closePromptReferencePicker">
+      <dialog v-if="promptReferencePicker.open" ref="referenceDialog" class="prompt-reference-picker-modal harness-modal-shell" aria-label="选择参考图" @cancel.prevent="closePromptReferencePicker" @click.self="closePromptReferencePicker">
         <section class="prompt-reference-picker-panel">
           <header class="manual-modal-head">
             <div>
@@ -430,7 +430,7 @@
             <button type="button" class="primary-btn" @click="closePromptReferencePicker">完成</button>
           </footer>
         </section>
-      </div>
+      </dialog>
 
       <PromptLibraryPickerModal
         :open="promptLibraryPicker.open"
@@ -440,7 +440,7 @@
         @select="selectPromptLibraryTemplate"
       />
 
-      <div v-if="imagePreview.open" class="image-preview-modal" @click.self="closeImagePreview">
+      <dialog v-if="imagePreview.open" ref="previewDialog" class="image-preview-modal harness-modal-shell" aria-label="图片预览" @cancel.prevent="closeImagePreview" @click.self="closeImagePreview">
         <section class="image-preview-panel">
           <header class="manual-modal-head">
             <div>
@@ -453,7 +453,7 @@
             <img :src="imagePreview.src" :alt="imagePreview.title" />
           </div>
         </section>
-      </div>
+      </dialog>
 
       <TmallFaceSwapDialog :open="faceSwap.open" :busy="faceSwap.busy" :error="faceSwap.error"
         :title="`${faceSwap.item?.style_code || ''} · ${faceSwap.asset?.label || 'AI 图'}`"
@@ -467,6 +467,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useNativeDialog } from '../composables/useNativeDialog'
 import PromptLibraryPickerModal from '../components/PromptLibraryPickerModal.vue'
 import TmallFaceSwapDialog from '../components/TmallFaceSwapDialog.vue'
 import { approvalDecisionSnapshot, changedApprovalDecisions, applyApprovalDecisions } from '../utils/tmallApprovalDecisions.mjs'
@@ -531,6 +532,11 @@ const manualGenerate = ref({
   mainImagePath: '',
   referencePaths: [],
 })
+
+const manualDialog = ref(null), referenceDialog = ref(null), previewDialog = ref(null)
+useNativeDialog(computed(() => manualGenerate.value.open), manualDialog)
+useNativeDialog(computed(() => promptReferencePicker.value.open), referenceDialog)
+useNativeDialog(computed(() => imagePreview.value.open), previewDialog)
 
 const approvalRef = computed(() => parseApprovalUrl(props.boardUrl))
 const isGenerationConfirmation = computed(() =>

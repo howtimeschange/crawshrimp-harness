@@ -1,4 +1,5 @@
 import asyncio
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -100,3 +101,28 @@ def test_image_delivery_restores_only_owned_completed_image_calls_without_argume
     }]
     assert api.session_resources('runtime-b')['imageGenerations'] == []
     assert api.session_resources('missing')['imageGenerations'] == []
+
+
+def test_resource_query_projects_image_ownership_without_loading_tool_arguments(resource_db):
+    names = ['browser_evaluate', 'image_generate_extra', 'IMAGE_GENERATE', None,
+             'image_generate', 'mcp__crawshrimp__image_generate']
+    for index, name in enumerate(names):
+        db.append_event('a', None, 'tool.requested', {
+            'tool_name': name, 'tool_call_id': f'call-{index}', 'dsh_call_id': str(index),
+            'turn': index, 'arguments': {'script': 'x' * 131072},
+        })
+    db.append_event('b', None, 'tool.requested', {'tool_name': 'image_generate', 'tool_call_id': 'private'})
+    db.append_event('a', None, 'browser.activity', {'tabs': [{'id': 'one'}]})
+    db.append_event('a', None, 'browser.page.closed', {'tab_id': 'one'})
+    rows = db.list_session_resource_events('runtime-a')
+    assert [r['seq'] for r in rows] == sorted(r['seq'] for r in rows)
+    assert [r['event_type'] for r in rows] == ['tool.requested', 'tool.requested', 'browser.activity', 'browser.page.closed']
+    assert [json.loads(r['payload_json']) for r in rows[:2]] == [
+        {'tool_name': names[i], 'tool_call_id': f'call-{i}', 'dsh_call_id': str(i), 'turn': i}
+        for i in (4, 5)
+    ]
+    assert sum(len(r['payload_json']) for r in rows) < 1024
+    # This is a read projection: the durable audit and replay data are unchanged.
+    durable = db.list_events_after('a', 0)
+    assert len(durable) == 8
+    assert len(json.loads(durable[0]['payload_json'])['arguments']['script']) == 131072

@@ -65,7 +65,7 @@ function extractOfficeMcpGate() {
 function extractSessionAdmissionCheck() {
   const text = source(paths.session)
   const start = text.indexOf('const crawshrimpGlmVisionBridgeAllowsImageAdmission =')
-  const end = text.indexOf('\n\t\t\t\t}', start)
+  const end = text.indexOf('\n', text.indexOf('throw new RemoteError(', start))
   assert.notEqual(start, -1)
   assert.notEqual(end, -1)
   const body = text.slice(start, end)

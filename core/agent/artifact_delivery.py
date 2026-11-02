@@ -5,6 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from core.artifact_version import file_version
+
 
 def verified_artifact(raw, *, source: str, run_id: str = '', tool_call_id: str = '', workspace=None):
     item = raw if isinstance(raw, dict) else {'path': raw}
@@ -25,12 +27,14 @@ def verified_artifact(raw, *, source: str, run_id: str = '', tool_call_id: str =
         return None
     from core.agent.service import _classify_artifact_media
     media, images = _classify_artifact_media(target.name, str(target))
+    version = file_version(stat)
     return {'task_instance_uid': item.get('task_instance_uid') or '', 'artifact_id': item.get('artifact_id') or item.get('id') or
-            'file-' + hashlib.sha256(f'{target}\0{stat.st_mtime_ns}\0{stat.st_size}'.encode()).hexdigest()[:24],
+            'file-' + hashlib.sha256(f'{target}\0{json.dumps(version, sort_keys=True)}'.encode()).hexdigest()[:24],
             'filename': target.name, 'path': str(target), 'kind': 'file', 'size': stat.st_size,
             'media_kind': media, 'zip_images': images, 'source': source,
             'run_id': run_id, 'tool_call_id': tool_call_id, 'verified': True,
-            'verification': {'status': 'exists', 'mtime_ns': stat.st_mtime_ns}}
+            'file_version': version,
+            'verification': {'status': 'exists', 'scope': 'file_exists', 'mtime_ns': stat.st_mtime_ns}}
 
 
 def _successful_manifest(data):

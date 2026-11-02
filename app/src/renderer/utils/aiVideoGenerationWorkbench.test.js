@@ -256,6 +256,21 @@ test('KeepAlive activation refreshes state and deactivation stops background pol
   assert.match(source, /onDeactivated\(deactivateWorkbench\)/)
 })
 
+test('offscreen and deactivated videos pause and restore the play action', async () => {
+  const workbench = await setupWorkbench()
+  let pauses = 0
+  const video = { getBoundingClientRect: () => ({ top: -160, bottom: -20 }), pause() { pauses++ } }
+  workbench.inlinePlayingJobId.value = 'completed-video'
+  workbench.pauseOffscreenVideo({ currentTarget: { getBoundingClientRect: () => ({ top: 0, bottom: 500 }), querySelectorAll: () => [video] } })
+  assert.equal(pauses, 1)
+  assert.equal(workbench.isInlinePlaying({ id: 'completed-video' }), false)
+  workbench.inlinePlayingJobId.value = 'completed-video'
+  workbench.resultBody.value = { querySelectorAll: () => [video] }
+  workbench.deactivateWorkbench()
+  assert.equal(pauses, 2)
+  assert.equal(workbench.isInlinePlaying({ id: 'completed-video' }), false)
+})
+
 test('deactivation during an in-flight refresh cannot restart background polling', async () => {
   const configRequest = deferred()
   let startedIntervals = 0
@@ -605,7 +620,7 @@ test('provider-specific media sections keep advanced URL inputs collapsed by def
   assert.match(source, /<details class="avg-advanced-panel">/)
   assert.match(source, /Kling 素材 URL/)
   assert.match(source, /URL \/ oss URL 输入/)
-  assert.doesNotMatch(source, /<details[^>]*open/)
+  assert.doesNotMatch(source, /<details(?=[^>]*class="avg-advanced-panel")[^>]*open/)
 })
 
 test('Semir Bailian gateway hides local cost estimate', async () => {

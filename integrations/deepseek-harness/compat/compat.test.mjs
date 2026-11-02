@@ -10,15 +10,16 @@ test('backports are idempotent and reject unknown source', () => {
   assert.equal(mcpPagination(mcp), mcp); assert.equal(composerSubmit(ui), ui)
   assert.throws(() => mcpPagination('changed'), /anchor/)
   assert.throws(() => composerSubmit('changed'), /anchor/)
-  assert.throws(() => mcpPagination(mcp.replace('seenCursors.add(cursor);', '')), /incomplete/)
-  assert.throws(() => composerSubmit(ui.replace('keyboard.submit(primarySubmitMode);', '')), /incomplete/)
+  assert.throws(() => mcpPagination(mcp.replace('seen.add(cursor);', '')), /incomplete/)
+  assert.throws(() => composerSubmit(ui.replace('keyboard.submit(primarySubmitMode, "click");', '')), /incomplete/)
 })
 function sync(pages) {
   let calls = 0, disposed = 0, registered = 0
   const context = { Map, Set, Error, listToolsUncached: async () => { if (calls >= 10) throw new Error('unbounded'); const page = pages[calls++]; if (page instanceof Error) throw page; return { tools: [], ...page } } }
-  const body = mcp.slice(mcp.indexOf('async function syncTools('), mcp.indexOf('/** Keep a supported advertised schema'))
+  const helper = mcp.slice(mcp.indexOf('async function crawshrimpListToolsStrict'), mcp.indexOf('import z'))
+  const body = helper + mcp.slice(mcp.indexOf('async function syncTools('), mcp.indexOf('/** Keep a supported advertised schema'))
   vm.runInNewContext(body + '\nglobalThis.sync = syncTools;', context)
-  return { run: () => context.sync({}, { tools: { register: () => registered++ } }, { serverName: 'fixture' }, new Map([['old', () => disposed++]])), state: () => ({ calls, disposed, registered }) }
+  return { run: () => context.sync({ getServerCapabilities: () => ({ tools: {} }), request: context.listToolsUncached }, { tools: { register: () => registered++ } }, { serverName: 'fixture' }, new Map([['old', () => disposed++]])), state: () => ({ calls, disposed, registered }) }
 }
 test('normal pagination swaps only after all pages', async () => {
   const h = sync([{ nextCursor: 'A' }, { nextCursor: 'B' }, {}]); await h.run()
@@ -33,10 +34,10 @@ test('transport cancellation retains old generation', async () => {
   const h = sync([{ nextCursor: 'A' }, new Error('cancelled')]); await assert.rejects(h.run, /cancelled/); assert.equal(h.state().disposed, 0)
 })
 for (const mode of ['queue', 'steer']) for (const running of [false, true]) test(`button uses Enter policy ${mode}/${running}`, () => {
-  const calls = [], context = { running, subagent: null, empty: false, blocked: undefined, continuable: true, disabled: false, machineBusy: false, input: { phase: 'plain' }, draft: 'hello', resolveSubmitMode: (...args) => { calls.push(args); return mode }, t: x => x, keyboard: { submit: x => calls.push(x) }, stop: () => calls.push('stop') }
-  const body = ui.slice(ui.indexOf('const primaryStops ='), ui.indexOf('const accessSelect =', ui.indexOf('const primaryStops =')))
+  const calls = [], context = { busyEnter: mode, steeringAvailable: true, uploadsPending: false, running, subagent: null, empty: false, blocked: undefined, continuable: true, disabled: false, machineBusy: false, input: { phase: 'plain' }, draft: 'hello', resolveSubmitMode: (...args) => { calls.push(args); return mode }, t: x => x, keyboard: { submit: x => calls.push(x) }, stop: () => calls.push('stop') }
+  const body = ui.slice(ui.indexOf('const primaryStops ='), ui.indexOf('const claimActive =', ui.indexOf('const primaryStops =')))
   vm.runInNewContext(body + '\nonPrimary()', context)
-  assert.deepEqual(calls, [[running, 'enter', true], mode])
+  assert.deepEqual(calls, [[mode, running, 'enter', true], mode])
   context.empty = true; calls.length = 0; vm.runInNewContext(body + '\nonPrimary()', { ...context })
   assert.equal(calls.at(-1), running ? 'stop' : calls[0])
 })

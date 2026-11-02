@@ -18,3 +18,70 @@ test('late PDF page resolution cannot repaint a hidden or canceled page',async()
  const painting=h.render();h.visible.value=false;h.clear();resolve(page);await painting
  assert.equal(h.canvas.value.width,0);assert.equal(h.rendered.value,false)
 })
+
+
+function documentHarness({ active = true, file = '/fixtures/report.pdf', getDocument } = {}) {
+ const source=fs.readFileSync(path.join(__dirname,'renderer/components/agent/resources/PdfPreview.vue'),'utf8').split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm,'').replaceAll('import.meta.env.BASE_URL',JSON.stringify('./'))
+ const props={active,path:file}, tasks=[], requested=[]
+ let callback, unmount, initial
+ const context={defineProps:()=>props,ref:value=>({value}),shallowRef:value=>({value}),
+  watch(_source,fn){callback=fn;initial=fn([props.path,props.active])},onMounted(){},onUnmounted(fn){unmount=fn},
+  GlobalWorkerOptions:{},workerUrl:'worker.mjs',URL,location:{href:'file:///app/index.html'},
+  window:{cs:{async agentMediaUrl(file){requested.push(file);return 'http://localhost/media/file'}}},
+  getDocument(options){
+   const task=getDocument?.(options)||{promise:Promise.resolve({numPages:24,async getPage(){return page}}),destroyed:0,async destroy(){this.destroyed++}}
+   tasks.push(task);return task
+  }}
+ vm.runInNewContext(source+'\nglobalThis.h={pages,zoom,loading,error,container,document,initialSize}',context)
+ return {...context.h,props,tasks,requested,initial,unmount:()=>unmount(),update:()=>callback([props.path,props.active])}
+}
+for(const file of ['/Users/test/报告.pdf','C:\\Users\\test\\报告.pdf']) {
+ test(`PDF worker is demand loaded and released without losing reading state (${file})`,async()=>{
+  const h=documentHarness({active:false,file});await h.initial
+  assert.equal(h.tasks.length,0);assert.equal(h.requested.length,0)
+  h.props.active=true;await h.update();assert.equal(h.pages.value,24);assert.equal(h.requested[0],file)
+  h.zoom.value=1.75;h.container.value={scrollTop:4321}
+  h.props.active=false;await h.update()
+  assert.equal(h.tasks[0].destroyed,1);assert.equal(h.document.value,null)
+  assert.equal(h.pages.value,24);assert.equal(h.zoom.value,1.75);assert.equal(h.container.value.scrollTop,4321)
+  h.props.active=true;await h.update();assert.equal(h.tasks.length,2);assert.ok(h.document.value)
+  assert.equal(h.zoom.value,1.75);assert.equal(h.container.value.scrollTop,4321)
+  h.props.path=file+'.new.pdf';await h.update();assert.equal(h.tasks[1].destroyed,1)
+  assert.equal(h.zoom.value,1);assert.equal(h.container.value.scrollTop,0)
+  h.unmount();await Promise.resolve();assert.equal(h.tasks[2].destroyed,1)
+ })
+}
+test('rapid PDF reactivation waits for worker teardown and ignores the old load',async()=>{
+ let finishLoad,finishDestroy
+ const h=documentHarness({getDocument:()=>({promise:new Promise(r=>{finishLoad=r}),destroy:()=>new Promise(r=>{finishDestroy=r})})})
+ await new Promise(setImmediate);assert.equal(h.tasks.length,1)
+ h.props.active=false;await h.update();h.props.active=true;const reopening=h.update()
+ await new Promise(setImmediate);assert.equal(h.tasks.length,1)
+ finishLoad({numPages:99,async getPage(){throw Error('stale document must not be read')}})
+ await h.initial;assert.equal(h.pages.value,0);assert.equal(h.error.value,'')
+ finishDestroy();await new Promise(setImmediate);assert.equal(h.tasks.length,2)
+ finishLoad({numPages:3,async getPage(){return page}});await reopening
+ assert.equal(h.pages.value,3);assert.equal(h.error.value,'')
+ h.unmount();await Promise.resolve();finishDestroy()
+})
+test('PDF failure and encrypted-document cancellation also release workers',async()=>{
+ const h=documentHarness({getDocument:()=>({promise:Promise.reject(Error('bad PDF')),destroyed:0,async destroy(){this.destroyed++}})})
+ await h.initial;await Promise.resolve();assert.equal(h.tasks[0].destroyed,1);assert.match(h.error.value,/bad PDF/)
+ let reject
+ const encrypted=documentHarness({getDocument:()=>({promise:new Promise((_,r)=>reject=r),destroyed:0,async destroy(){this.destroyed++;reject(Error('cancelled'))}})})
+ await new Promise(setImmediate);encrypted.tasks[0].onPassword();await encrypted.initial
+ assert.equal(encrypted.tasks[0].destroyed,1);assert.match(encrypted.error.value,/加密 PDF/)
+})
+test('unmount during URL resolution never creates a PDF worker',async()=>{
+ const h=documentHarness();h.unmount();await h.initial
+ assert.equal(h.tasks.length,0);assert.equal(h.document.value,null)
+})
+
+test('hiding a PDF during first-page loading cannot restore its document or dimensions',async()=>{
+ let finishPage
+ const h=documentHarness({getDocument:()=>({promise:Promise.resolve({numPages:99,getPage:()=>new Promise(r=>finishPage=r)}),destroyed:0,async destroy(){this.destroyed++}})})
+ await new Promise(setImmediate);h.props.active=false;await h.update()
+ finishPage(page);await h.initial
+ assert.equal(h.document.value,null);assert.equal(h.pages.value,0);assert.equal(h.tasks[0].destroyed,1)
+ assert.equal(h.loading.value,false);assert.equal(h.error.value,'')
+})

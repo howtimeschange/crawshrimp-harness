@@ -4,14 +4,14 @@
     :class="{
       'layout-ai-image': currentView === 'ai_image' || currentView === 'ai_video_generation',
       'sidebar-collapsed': effectiveSidebarCollapsed,
-      'has-script-sidebar': activeScript,
+      'has-script-sidebar': activeScript && currentView !== 'settings',
       'titlebar-macos': isMacTitlebar,
     }"
   >
     <!-- macOS keeps a native traffic-light/drag strip; Windows uses its OS titlebar. -->
     <div v-if="isMacTitlebar" class="titlebar" aria-hidden="true"></div>
     <DesktopStatusFooter
-      v-if="agentShellControlsVisible || currentView !== 'agent' || activeScript"
+      v-if="currentView !== 'settings' && (agentShellControlsVisible || currentView !== 'agent' || activeScript)"
       class="shell-status-footer"
       :style="{ width: `${activeScript ? 168 : railWidth}px` }"
       :status="status"
@@ -20,6 +20,7 @@
       :busy="updateActionBusy"
       :context-key="`${currentView}:${activeScript?.adapter_id || ''}`"
       @account="openAccount"
+      @usage="openSettingsPanel('account-usage')"
       @update-details="openSettingsPanel('application-update')"
       @settings="openSettingsPanel('appearance-theme')"
       @services="openSettingsPanel('connection-overview')"
@@ -27,7 +28,7 @@
     />
 
     <!-- 侧边栏:仅脚本详情显示二级菜单(主菜单在智能体会话侧边栏内) -->
-    <aside v-if="activeScript" class="sidebar">
+    <aside v-if="activeScript && currentView !== 'settings'" class="sidebar">
       <div class="sub-nav">
         <button class="back-btn" @click="exitScript">
           ← 我的脚本
@@ -78,9 +79,11 @@
 
     <!-- 主内容区:智能体会话常驻全幅;脚本详情为独立二级页面(隐藏会话界面) -->
     <main class="content">
-      <div v-show="!activeScript" class="agent-persist">
+      <div class="agent-persist" :aria-hidden="Boolean(activeScript) || currentView === 'settings'" :inert="Boolean(activeScript) || currentView === 'settings'">
         <AgentWebView
+          :active="!activeScript && currentView === 'agent'"
           :theme="effectiveTheme"
+          :theme-preference="themePreference"
           :nav-items="filteredNavItems"
           :active-nav="currentView"
           :app-version="agentAppVersionLabel"
@@ -101,6 +104,7 @@
         v-show="currentView !== 'agent'"
         class="embed-overlay"
         :style="{ left: `${embedLeft}px` }"
+        :class="{ 'settings-overlay': currentView === 'settings' }"
       >
         <div class="embed-overlay-body">
           <!-- 我的脚本：脚本列表 -->
@@ -113,7 +117,7 @@
           <!-- 脚本任务执行页 -->
           <TaskRunner
             :key="`${activeScript?.adapter_id || ''}:${activeTaskId || ''}:${taskRunnerHandoffKey}`"
-            v-else-if="activeScript && activeTaskId"
+            v-else-if="activeScript && activeTaskId && currentView !== 'settings'"
             :adapter-id="activeScript.adapter_id"
             :task="activeScript.tasks.find(t => t.task_id === activeTaskId)"
             :initial-params="taskRunnerHandoffParams"
@@ -146,9 +150,9 @@
             />
           </KeepAlive>
           <!-- 提示词库 -->
-          <LocalPromptLibrary
-            v-if="currentView === 'local_prompt_library'"
-          />
+          <KeepAlive>
+            <LocalPromptLibrary v-if="currentView === 'local_prompt_library'" />
+          </KeepAlive>
           <!-- 数据文件 -->
           <DataFiles v-if="currentView === 'files'" />
           <!-- 设置 -->
@@ -162,6 +166,7 @@
             :update-action-busy="updateActionBusy"
             :theme-preference="themePreference"
             :effective-theme="effectiveTheme"
+            @back="closeSettingsPanel"
             @runtime-refresh="refreshRuntimeStatus"
             @check-update="retryUpdateCheck"
             @theme-change="setThemePreference"
@@ -190,6 +195,7 @@
 </template>
 
 <script setup>
+import './styles/harness-controls.css'
 import { lazyView } from './utils/lazyView'
 import { adaptivePoll } from './utils/adaptivePoll'
 import { computed, onMounted, onUnmounted, provide, ref } from 'vue'
@@ -304,6 +310,7 @@ const navItems = [
 const filteredNavItems = computed(() => navItems)
 
 function selectNav(item) {
+  if (item.id === 'settings') { openSettingsPanel(''); return }
   if (shouldClearActiveScriptForNav(item)) {
     activeScript.value = null
     activeTaskId.value = null
@@ -360,14 +367,20 @@ function onRuntimeSession(runtimeSessionId) {
   activeRuntimeSessionId.value = String(runtimeSessionId || '')
 }
 // 脚本详情:独立二级页面(隐藏会话界面,内容区从 0 开始)
-const embedLeft = computed(() => (activeScript.value ? 0 : railWidth.value))
+const embedLeft = computed(() => (currentView.value === 'settings' || activeScript.value ? 0 : railWidth.value))
 
 function openTaskInstanceFromAgent(instanceUid) {
   activeInstanceUid.value = instanceUid || ''
   currentView.value = 'task_center'
 }
 
+let settingsReturnView = 'agent'
+function closeSettingsPanel() {
+  currentView.value = settingsReturnView
+}
+
 function openSettingsPanel(target) {
+  if (currentView.value !== 'settings') settingsReturnView = currentView.value
   const panelId = target && typeof target === 'object'
     ? target.panelId || target.id || ''
     : target
@@ -375,9 +388,6 @@ function openSettingsPanel(target) {
   focusSettingsPanelId.value = panelId
   focusSettingsRequestId.value += 1
   currentView.value = 'settings'
-  activeScript.value = null
-  activeTaskId.value = null
-  activeInstanceUid.value = ''
 }
 
 async function loadScriptGroups(options = {}) {
@@ -603,7 +613,6 @@ onMounted(async () => {
     overviewPollInFlight = true
     try {
       await refreshRuntimeStatus()
-      await loadScriptGroups({ preserveOnShrink: true })
     } catch (error) {
       console.error('Failed to poll runtime status', error)
     } finally {
@@ -695,6 +704,41 @@ provide('repairCoreService', repairCoreService)
   --shadow-soft: 0 12px 30px rgba(34, 35, 43, 0.11);
   --scrim: rgba(28, 29, 35, 0.5);
 }
+
+/* Lake is a light appearance, so native controls and existing light-only
+   components keep their light semantics while the palette changes. */
+:root[data-theme-preference="lake"] {
+  --orange-rgb: 49, 92, 67;
+  --orange: #315c43;
+  --orange-text: #315c43;
+  --orange-dim: #365f48;
+  --orange-bg: rgba(var(--orange-rgb), .10);
+  --orange-hover: #3c7051;
+  --orange-strong: #294d37;
+  --on-orange: #ffffff;
+  --accent: #315c43;
+  --bg: #ffffff;
+  --bg2: #ffffff;
+  --bg3: #f5f6f5;
+  --bg4: #eceeec;
+  --dock-bg: #f7f8f7;
+  --border: #dfe4df;
+  --border-strong: #a8b9a6;
+  --agent-header-divider: #253b2d24;
+  --text: #202b23;
+  --text2: #505b52;
+  --text3: #606b62;
+  --soft-fill: rgba(30, 40, 32, .035);
+  --soft-fill-hover: rgba(30, 40, 32, .065);
+  --subtle-border: rgba(30, 40, 32, .12);
+  --input-focus: #ffffff;
+  --tooltip-bg: #283d30;
+  --shadow: rgba(31, 53, 38, .15);
+  --shadow-soft: 0 12px 30px rgba(31, 53, 38, .11);
+  --scrim: rgba(23, 42, 29, .5);
+}
+:root[data-theme-preference="lake"] :is(.task-btn-progress-fill, .card-progress-fill, .progress-strip-bar-fill, .ai-chain-submit-progress-bar span, .submit-progress-bar span) { background: #4c805b; }
+:root[data-theme-preference="lake"] :is(.favorite-btn:hover:not(:disabled), .favorite-btn:focus-visible:not(:disabled), .more-btn:hover) { color: var(--orange-text); }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html,
 body {
@@ -775,6 +819,8 @@ input, select, textarea { font-family: inherit; }
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+.settings-overlay { border-left: 0; }
 
 .embed-overlay-body {
   height: 100%;

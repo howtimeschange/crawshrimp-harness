@@ -1,0 +1,11 @@
+{
+  "batches": 36,
+  "items": 864,
+  "counts": {
+    "ready": 332,
+    "hold": 297,
+    "review": 235
+  },
+  "shortageTotal": 3905,
+  "orderValueCents": 18050788
+}

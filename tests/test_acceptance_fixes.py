@@ -267,3 +267,18 @@ def test_artifact_list_uses_persisted_label_and_unknown_size(monkeypatch):
     artifact = mcp_gateway.tool_artifacts_list("qa")["data"]["artifacts"][0]
     assert artifact["filename"] == "订单.xlsx"
     assert artifact["size"] is None
+
+
+def test_shadow_runtime_context_is_not_a_second_human_message(product_db):
+    async def scenario():
+        service = AgentService()
+        await service._project_shadow_event('context-fixture', {'type':'turn/start','seq':1,'data':{'turn':1}})
+        run = service.shadow_runs['context-fixture']
+        for seq, kind, text in [(2,'user','帮我打开森马云盘'),(3,'runtime-context','Current runtime context'),(4,'time-context','Time sampled while preparing turn')]:
+            await service._project_shadow_event('context-fixture', {'type':'user/message','seq':seq,'data':{
+                'text':text,'source':{'kind':kind}}})
+        messages=db.list_messages(run['session_id'])
+        assert [json.loads(m['content_json'])['text'] for m in messages if m['role']=='user']==['帮我打开森马云盘']
+        await service._project_shadow_event('context-fixture', {'type':'turn/end','seq':5,'data':{'reason':{'kind':'completed'}}})
+        assert db.get_run(run['run_id'])['status']=='completed'
+    asyncio.run(scenario())

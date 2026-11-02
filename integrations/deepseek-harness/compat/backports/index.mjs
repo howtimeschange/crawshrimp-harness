@@ -3,6 +3,27 @@ function replaceOnce(source, before, after, id) {
   return source.replace(before, after)
 }
 export function mcpPagination(source) {
+  if (source.includes('await client.listTools(void 0, { cacheMode: "refresh" })')) {
+    const helper = `async function crawshrimpListToolsStrict(client) {
+      const tools = [], seen = new Set(); let cursor;
+      do {
+        const page = await client.request({ method: "tools/list", params: cursor ? { cursor } : {} });
+        tools.push(...page.tools); cursor = page.nextCursor;
+        if (cursor) {
+          if (seen.has(cursor)) throw new Error("MCP server repeated a tools/list continuation cursor");
+          seen.add(cursor);
+          if (seen.size >= 64) throw new Error("MCP tools/list exceeded 64 pages");
+        }
+      } while (cursor);
+      return { tools };
+    }
+`;
+    return '// crawshrimp-compat:C01-v021\n' + helper + source.replace('await client.listTools(void 0, { cacheMode: "refresh" })', 'await crawshrimpListToolsStrict(client)')
+  }
+  if (source.includes('// crawshrimp-compat:C01-v021')) {
+    if (!source.includes('seen.add(cursor);') || !source.includes('if (seen.has(cursor))') || !source.includes('await crawshrimpListToolsStrict(client)')) throw new Error('C01: incomplete patch')
+    return source
+  }
   const marker = '// crawshrimp-compat:C01'
   const guard = 'if (seenCursors.has(cursor)) throw new Error(`mcp-client(${opts.serverName}): server repeated a tools/list continuation cursor — invalid tool list`);'
   if (source.includes(marker)) {
@@ -13,6 +34,10 @@ export function mcpPagination(source) {
   return replaceOnce(source, '\t\tcursor = response.nextCursor;\n\t} while (cursor);', `\t\tcursor = response.nextCursor;\n\t\tif (cursor) {\n\t\t\t${guard}\n\t\t\tseenCursors.add(cursor);\n\t\t}\n\t} while (cursor);`, 'C01')
 }
 export function composerSubmit(source) {
+  if (source.includes('resolveSubmitMode(busyEnter, running, "enter", steeringAvailable)')) {
+    if (!source.includes('keyboard.submit(primarySubmitMode, "click")')) throw new Error('C02: incomplete upstream submit contract')
+    return source
+  }
   const marker = '// crawshrimp-compat:C02'
   const submit = 'if (!empty && !disabled && !machineBusy) keyboard.submit(primarySubmitMode);'
   if (source.includes(marker)) {

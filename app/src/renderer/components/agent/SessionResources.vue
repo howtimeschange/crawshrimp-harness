@@ -50,8 +50,9 @@
         <section><div class="section-heading"><button :aria-expanded="filesExpanded || !!query" @click="filesExpanded = !filesExpanded"><span class="section-chevron" :class="{ expanded: filesExpanded || query }" aria-hidden="true">›</span> 产物 <small>{{ query ? `${filteredArtifacts.length} / ${artifacts.length}` : artifacts.length }}</small></button></div>
           <div v-if="filesExpanded || query" class="section-items file-items" aria-label="产物列表" tabindex="0"><p v-if="!filteredArtifacts.length" class="empty">{{ loading ? '正在加载资源…' : query ? '没有匹配的产物' : '生成的文件会显示在这里' }}</p>
             <div v-for="item in filteredArtifacts" :key="item.path || item.artifact_id" class="resource-row">
-              <button class="resource-main" :title="`${item.filename}\n${size(item.size)} · ${item.path}`" @click="openArtifact(item)"><ResourceIcon :item="item" /><span class="resource-name">{{ item.filename }}</span><small v-if="item.exists === false">已缺失</small><small v-if="item.source">{{ ({ shell: '命令', office: 'Office', adapter: '适配器' })[item.source] || item.source }}</small><small v-if="item.office?.delivery?.status === 'final'" title="文件哈希与数据、视觉验收记录一致">已验收交付</small><small v-else-if="item.office" title="尚未登记为最终交付">待交付</small><small v-if="artifactAge(item)" class="artifact-age">{{ artifactAge(item) }}</small></button>
-              <ResourceMenu label="文件操作"><button @click="fileAction('openFile', item)">{{ extension(item.filename).toLowerCase() === 'zip' ? '显示文件' : '系统打开' }}</button><button @click="fileAction('revealFile', item)">在文件夹中定位</button><button @click="copy(item.path)">复制路径</button></ResourceMenu>
+              <button class="resource-main" :title="`${item.filename}\n${size(item.size)} · ${item.path}`" @click="openArtifact(item)"><ResourceIcon :item="item" /><span class="resource-name">{{ item.filename }}</span><small v-if="item.historical_after_failure">上次可用历史版本</small><small v-if="currentFileAvailable(item)">{{ item.file_snapshot.status === 'too_large' ? '文件过大，未保存历史版本' : '快照空间已满，未保存历史版本' }}</small><small v-else-if="item.exists === false">已缺失</small><small v-if="item.source">{{ ({ shell: '命令', office: 'Office', adapter: '适配器' })[item.source] || item.source }}</small><small v-if="item.office?.delivery?.status === 'final'" title="文件哈希与数据、视觉验收记录一致">已验收交付</small><small v-else-if="item.office" title="尚未登记为最终交付">待交付</small><small v-if="artifactAge(item)" class="artifact-age">{{ artifactAge(item) }}</small></button>
+              <button v-if="currentFileAvailable(item)" title="未保存历史版本，打开原文件时内容可能变化" @click="openCurrentArtifact(item)">打开当前原文件</button>
+              <ResourceMenu v-else label="文件操作"><button @click="fileAction('openFile', item)">{{ extension(item.filename).toLowerCase() === 'zip' ? '显示文件' : '系统打开' }}</button><button @click="fileAction('revealFile', item)">在文件夹中定位</button><button @click="copy(item.path)">复制路径</button></ResourceMenu>
             </div>
           </div>
         </section>
@@ -71,6 +72,7 @@
 import { liveSessionBrowserPages, isClosedBrowserPageError } from '../../utils/sessionBrowserPages.js'
 import { resourceId, restoreWorkspace } from '../../utils/resourceWorkspace.js'
 import ResourcePreview from './resources/ResourcePreview.vue'
+import { adaptivePoll } from '../../utils/adaptivePoll.js'
 import ResourceMenu from './ResourceMenu.vue'
 import { formatArtifactAge, sortArtifactsByUpdated } from '../../utils/artifactTime.js'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -188,7 +190,19 @@ function openResource(item, { focus = true } = {}) {
   activateResource(tab); error.value = ''
   nextTick(() => { const button = document.getElementById(tabDomId(tab)); button?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }); if (focus) button?.focus() })
 }
-function openArtifact(item) { window.cs?.analyticsFeature?.('file_preview')?.catch(() => {}); openResource(item) }
+function currentFileAvailable(item) { return ['too_large', 'quota_exceeded'].includes(item?.file_snapshot?.status) && !!item.file_snapshot.version_id }
+async function openCurrentArtifact(item) {
+  error.value = ''
+  try {
+    const sessionId = props.sessionId
+    const params = new URLSearchParams({ runtime_session_id: sessionId, version_id: item.file_snapshot.version_id })
+    const result = await window.cs.agentApi('GET', `/agent/session-resources/current-file?${params}`)
+    if (sessionId !== props.sessionId) return
+    const opened = await window.cs.openFile(result.path)
+    if (opened?.ok === false || typeof opened === 'string' && opened) throw new Error(opened.error || opened)
+  } catch (e) { error.value = `无法打开原文件：${e.message}` }
+}
+function openArtifact(item) { if (currentFileAvailable(item)) { error.value = '文件未保存历史版本；可选择“打开当前原文件”，其内容可能变化。'; return } window.cs?.analyticsFeature?.('file_preview')?.catch(() => {}); openResource(item) }
 function closeResource(item) {
   const pane = item.pane, old = paneTabs(pane), index = old.findIndex(t => t.key === item.key)
   workTabs.value = workTabs.value.filter(t => t.key !== item.key)
@@ -371,8 +385,8 @@ watch([() => props.sessionId, () => props.conversationPhase], syncSessionPanel, 
 watch([opened, selection, width, maximized, workTabs, activeIds, split, splitRatio, focusedPane], () => saveState(props.sessionId), { deep: true })
 watch(() => props.revision, () => { clearTimeout(timer); timer = setTimeout(refresh, 150) })
 const ageTimer = setInterval(() => { now.value = Date.now() }, 30000)
-const polling = setInterval(refresh, 5000)
-onUnmounted(() => { emit('viewing-change', false); window.removeEventListener('resize', onViewportResize); generation++; clearInterval(polling); clearInterval(ageTimer); clearTimeout(timer); stopResize?.(); stopSplitResize?.() })
+const stopPolling = adaptivePoll(refresh)
+onUnmounted(() => { emit('viewing-change', false); window.removeEventListener('resize', onViewportResize); generation++; stopPolling(); clearInterval(ageTimer); clearTimeout(timer); stopResize?.(); stopSplitResize?.() })
 </script>
 
 <style scoped>

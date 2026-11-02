@@ -299,6 +299,20 @@ def test_agent_catalog_and_api_list_custom_models_without_keys(monkeypatch):
         assert secret not in json.dumps(models)
 
 
+def test_agent_image_catalog_counts_models_across_managed_provider_groups(monkeypatch):
+    from core.agent import mcp_gateway
+    from core import api_server
+    monkeypatch.setattr(api_server, 'image_models', lambda: {'models': [
+        {'id': 'custom-managed-openai/flare', 'configured': True},
+        {'id': 'custom-managed-openai/sunburst', 'configured': True},
+        {'id': 'custom-managed-gemini/banana', 'configured': True},
+        {'id': 'woka/example', 'configured': False},
+    ]})
+    result = mcp_gateway.tool_image_models()
+    assert result['configured_count'] == 3
+    assert result['configured_model_ids'] == ['custom-managed-openai/flare', 'custom-managed-openai/sunburst', 'custom-managed-gemini/banana']
+
+
 def test_agent_real_service_routes_custom_model_and_delivers(tmp_path, monkeypatch):
     from core.agent import mcp_gateway
     from core import api_server

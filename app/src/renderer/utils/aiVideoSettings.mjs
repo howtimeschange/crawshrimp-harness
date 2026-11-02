@@ -16,7 +16,6 @@ export const AI_VIDEO_WRITE_ONLY_FIELDS = Object.freeze([
 ])
 
 export const AI_VIDEO_CONNECTION_DEFAULTS = Object.freeze({
-  'ai.video.seedance_base_url': 'https://ark.cn-beijing.volces.com',
   'ai.video.bailian_region': 'cn-beijing',
   'ai.video.bailian_base_url': 'https://ai-aigw.semir.com/bailian-vedio/api/v1',
   'ai.video.bailian_uploads_url': 'https://dashscope.aliyuncs.com/api/v1/uploads',

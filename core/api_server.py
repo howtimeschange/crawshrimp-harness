@@ -8481,9 +8481,11 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
             if mode != 'current':
                 wait_for_ready = getattr(runner, 'wait_for_document_ready', None)
                 if callable(wait_for_ready):
-                    # Only this explicitly local adapter intentionally runs on about:blank.
-                    readiness_options = ({"allow_blank": True} if (adapter_id, task_id) ==
-                        ("amazon-ops-assistant", "amazon_label_batch_process") else {})
+                    # These explicitly local tasks intentionally run on about:blank.
+                    readiness_options = ({"allow_blank": True} if (adapter_id, task_id) in {
+                        ("amazon-ops-assistant", "amazon_label_batch_process"),
+                        ("shenhui-new-arrival", "pdf_batch_screenshot"),
+                    } else {})
                     ready = await wait_for_ready(timeout_seconds=8.0, **readiness_options)
                     if ready.get('ready'):
                         log(f"新页面已就绪：{str(ready.get('href') or '')[:120]}")
@@ -11503,6 +11505,28 @@ def get_ai_image_job(job_uid: str):
     return job
 
 
+@app.get("/ai-image/jobs/{job_uid}/runs/{run_uid}/managed-request")
+def trace_ai_image_managed_request(job_uid: str, run_uid: str):
+    try:
+        return ai_image_service.trace_managed_image_request(job_uid, run_uid)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.get("/managed-text/requests")
+def list_managed_text_requests(offset: int = 0):
+    from core import managed_text_receipts
+    offset = max(0, offset)
+    rows = managed_text_receipts.list_current(offset=offset, limit=101)
+    return {"requests": rows[:100], "next_offset": offset + 100 if len(rows) > 100 else None}
+
+
+@app.get("/managed-text/requests/{request_id}")
+def trace_managed_text_request(request_id: str):
+    from core import managed_text_receipts
+    return managed_text_receipts.trace(request_id)
+
+
 @app.patch("/ai-image/jobs/{job_uid}")
 def update_ai_image_job(job_uid: str, req: AiImageJobPatchRequest):
     payload = _model_payload(req, exclude_unset=True, exclude_none=True)
@@ -12582,6 +12606,19 @@ def list_tasks():
                 "live": _run_status.get(jid),
             })
     return result
+
+
+@app.get("/tasks/live")
+def live_task_summaries():
+    """Refresh task state against the loaded catalog without rescanning manifests."""
+    manifests = [adapter_loader.get_adapter(item['id']) for item in adapter_loader.list_all()]
+    keys = [(manifest.id, task.id) for manifest in manifests if manifest
+            for task in manifest.tasks if not getattr(task, 'hidden', False)]
+    latest = data_sink.get_latest_runs(keys)
+    return [{'adapter_id': adapter_id, 'task_id': task_id,
+             'last_run': latest.get((adapter_id, task_id)),
+             'live': _run_status.get(f'{adapter_id}::{task_id}')}
+            for adapter_id, task_id in keys]
 
 
 class RuntimeDrainReleaseRequest(BaseModel):
@@ -14552,6 +14589,7 @@ def _public_settings() -> dict:
     public = json.loads(json.dumps(saved, ensure_ascii=False))
     public.pop("cloud_approval", None)  # Retired credentials never reach the renderer.
     ai = public.get("ai") if isinstance(public.get("ai"), dict) else {}
+    ai.pop("1xm", None)  # Retain legacy credentials on disk for rollback, never expose them.
     source_ai = saved.get("ai") if isinstance(saved.get("ai"), dict) else {}
     source_video = source_ai.get("video") if isinstance(source_ai.get("video"), dict) else {}
     source_llm = source_ai.get("llm") if isinstance(source_ai.get("llm"), dict) else {}
@@ -14585,6 +14623,9 @@ def _public_settings() -> dict:
     public_llm["glm_configured"] = _llm_key_configured(source_llm, "glm_api_key")
     ai["llm"] = public_llm
     public["ai"] = ai
+    from core.managed_models import image_providers, text_providers
+    public["managed_image_providers"] = [{k: v for k, v in item.items() if k not in {"api_key", "base_url"}} | {"configured": True} for item in image_providers()]
+    public["managed_text_providers"] = [{k: v for k, v in item.items() if k not in {"api_key", "base_url"}} | {"configured": True} for item in text_providers()]
     return public
 
 
@@ -14639,6 +14680,8 @@ def _safe_settings_write_patch(cfg: dict) -> dict:
     for key in list(patch):
         if key == "cloud_approval" or key.startswith("cloud_approval."):
             patch.pop(key)
+    patch.pop("managed_image_providers", None)
+    patch.pop("managed_text_providers", None)
     source_llm = (((load_config().get("ai") or {}).get("llm") or {}))
     for field in _AI_VIDEO_PRIVATE_SETTING_FIELDS:
         dotted = f"ai.video.{field}"

@@ -10,6 +10,7 @@ export const CRAWSHRIMP_GLM_VISION_AUDIT_MARKER = 'crawshrimp-glm-vision-audit-v
 export const CRAWSHRIMP_GLM_LIST_MODELS_MARKER = 'crawshrimp-glm-list-models-image-v1'
 
 function replaceRequired(source, expected, replacement, label) {
+  if (!source.includes(expected) && expected.includes('model.contextWindow, options.signal)') && source.includes(expected.replace('model.contextWindow, options.signal)', 'model.contextWindow, options.signal, model.id)'))) expected = expected.replace('model.contextWindow, options.signal)', 'model.contextWindow, options.signal, model.id)')
   if (!source.includes(expected)) throw new Error(`GLM vision patch anchor changed: ${label}`)
   return source.replace(expected, replacement)
 }

@@ -106,11 +106,14 @@ def test_all_builtin_providers_support_full_model_lists_and_restore(provider):
     assert deleted_id not in effective["models"]
     assert deleted_id not in agent_capable_model_ids(cfg)
     assert model_capabilities(models[0]["id"], cfg, provider_id)["context_window"] == 2000000
-    runtime = service._dsh_llm_pi_ai_settings(cfg, [])["providers"][provider_id]
+    runtime = (service._dsh_messages_settings(cfg) if provider_id == "crawshrimp-deepseek-official"
+               else service._dsh_llm_pi_ai_settings(cfg, [])["providers"][provider_id])
     assert llm_gateway.official_real_model(deleted_id) not in [model["id"] for model in runtime["models"]]
     assert next(model for model in runtime["models"] if model["id"] == llm_gateway.official_real_model(models[0]["id"]))["name"] == "Edited model"
     cfg["ai"]["llm"]["builtin_provider_models"][provider_id] = []
     assert provider_id not in service._dsh_llm_pi_ai_settings(cfg, [])["providers"]
+    if provider_id == "crawshrimp-deepseek-official":
+        assert service._dsh_messages_settings(cfg)["models"] == []
     cfg["ai"]["llm"]["builtin_provider_models"][provider_id] = default_models
     assert next(item for item in llm_gateway.builtin_llm_providers(cfg) if item["id"] == provider_id)["models"] == provider["models"]
 
@@ -119,11 +122,14 @@ def test_editing_deepseek_preserves_reasoning_unless_explicitly_changed():
     provider_id = "crawshrimp-deepseek-official"
     models = llm_gateway.builtin_provider_default_models()[provider_id]
     cfg = {"ai": {"llm": {"builtin_provider_models": {provider_id: models}}}}
-    model = service._dsh_llm_pi_ai_settings(cfg, [])["providers"][provider_id]["models"][0]
+    model = service._dsh_llm_pi_ai_settings(cfg, [], include_official=True)["providers"][provider_id]["models"][0]
+    # Shared catalog descriptor still preserves editing semantics; official
+    # runtime registration now belongs solely to the Messages adapter.
+    assert provider_id not in service._dsh_llm_pi_ai_settings(cfg, [])["providers"]
     assert model["compat"]["thinkingFormat"] == "deepseek"
     models[0]["reasoning_protocol"] = "default"
     models[0]["reasoning_efforts"] = []
-    model = service._dsh_llm_pi_ai_settings(cfg, [])["providers"][provider_id]["models"][0]
+    model = service._dsh_llm_pi_ai_settings(cfg, [], include_official=True)["providers"][provider_id]["models"][0]
     assert model["reasoningEfforts"] is False
     assert "compat" not in model
 

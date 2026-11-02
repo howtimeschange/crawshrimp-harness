@@ -114,6 +114,7 @@ function createLifecycleController(options = {}) {
   }
 
   return {
+    isShuttingDown: () => shutdownInProgress || confirmedQuit,
     handleBeforeQuit,
     handleWindowAllClosed,
     prepareForUpdateInstall,

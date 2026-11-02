@@ -1,6 +1,17 @@
 export const FILE_WORKSPACE_MARKER = 'crawshrimp-file-workspace-v1'
 export const FILE_WORKSPACE_ANCHOR = 'const result = await ctx.remote.session.openWorkspacePath({ path: resolveWorkspacePath(cwd, path) });'
 export function fileWorkspace(source) {
+  const modern = 'const url = fileAddressFor(sessionId, cwd, path);'
+  if (source.includes('crawshrimp-file-workspace-v021')) return source
+  if (source.includes(modern)) {
+    if (source.split(modern).length !== 2) throw new Error('C03: modern file opener is not unique')
+    return source.replace(modern, `/* crawshrimp-file-workspace-v021 */
+      if (path !== "." && typeof window.__crawshrimpOpenResource === "function") {
+        window.__crawshrimpOpenResource(resolveWorkspacePath(cwd, path), sessionId);
+        return;
+      }
+      ${modern}`)
+  }
   if (source.includes(FILE_WORKSPACE_MARKER)) {
     if (!source.includes('window.__crawshrimpOpenResource(resolveWorkspacePath(cwd, path), sessionId);') || !source.includes(FILE_WORKSPACE_ANCHOR)) throw new Error('C03: incomplete file workspace patch')
     return source

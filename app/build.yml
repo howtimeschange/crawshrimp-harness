@@ -1,7 +1,7 @@
 appId: com.crawshrimp.harness
 productName: 抓虾 Harness
 copyright: "Copyright © 2025"
-electronVersion: "43.1.0"
+electronVersion: "44.7.0"
 
 directories:
   output: dist

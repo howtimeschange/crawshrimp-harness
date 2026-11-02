@@ -5,6 +5,9 @@ export const CONFIGURED_MODEL_CATALOG_MARKER = 'crawshrimp-configured-model-cata
 
 export function patchConfiguredModelCatalogSource(source) {
   if (source.includes(CONFIGURED_MODEL_CATALOG_MARKER)) return source
+  if (source.includes('await this.config.resolveApiKey(provider, profile);') && source.includes('if (error instanceof LlmError && error.code === "MISSING_CREDENTIAL") return [];')) {
+    return source.replace('await this.config.resolveApiKey(provider, profile);', `// ${CONFIGURED_MODEL_CATALOG_MARKER}\n const key = await this.config.resolveApiKey(provider, profile);\n if (typeof key !== "string" || !key.trim()) return [];`).replace('if (error instanceof LlmError && error.code === "MISSING_CREDENTIAL") return [];', 'if (error?.code === "MISSING_CREDENTIAL" || error?.code === "INVALID_CREDENTIAL") return [];')
+  }
   const before = '\tlistModels(provider) {\n\t\treturn Promise.resolve().then(() => {\n\t\t\tconst snapshot = this.current();\n\t\t\tthis.profileOf(snapshot, provider);'
   const after = `\tlistModels(provider) {
 \t\treturn Promise.resolve().then(async () => {

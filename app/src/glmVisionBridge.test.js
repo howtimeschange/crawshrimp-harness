@@ -167,7 +167,9 @@ async function makeAdapter({
   streamPlan,
 } = {}) {
   const { PiAiAdapter } = await import(pathToFileURL(resolve(runtime, 'node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js')).href)
-  const { stream: openAiStream } = await import(pathToFileURL(resolve(runtime, 'node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js')).href)
+  const { stream: rawOpenAiStream } = await import(pathToFileURL(resolve(runtime, 'node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js')).href)
+  const { normalizeContext } = await import(pathToFileURL(resolve(runtime, 'node_modules/@earendil-works/pi-ai/dist/utils/transcript.js')).href)
+  const openAiStream = (model, context, options) => rawOpenAiStream(model, normalizeContext(context), options)
   const captures = { vision: [], final: [], preflights: [], visionPayloads: [], finalPayloads: [] }
   const models = new Map()
   for (const id of TEXT_MODELS) models.set(`${PROVIDER}:${id}`, model(PROVIDER, id, ['text']))
@@ -181,6 +183,7 @@ async function makeAdapter({
     [OTHER_PROVIDER, profile(OTHER_PROVIDER)],
   ])
   let finalCallIndex = 0
+  for (const profile of profiles.values()) profile.modelErrors = new Map()
   const adapter = new PiAiAdapter({
     profiles: () => profiles,
     resolveApiKey: async () => 'unit-test-placeholder',
@@ -290,19 +293,15 @@ test('official GLM uses FlashX as the paired vision fallback when Flash is not c
   assert.equal(contextsContainImage(captures.final[0].context), false)
 })
 
-test('official GLM bridge handles nested read_image tool-result pictures', async () => {
+test('official GLM bridge handles read_image tool-role pictures', async () => {
   const { adapter, captures } = await makeAdapter()
   await collect(adapter.stream({
     provider: PROVIDER,
     model: 'glm-5.3',
     messages: [{
-      role: 'user',
-      source: { kind: 'tool', callId: 'read-1' },
-      content: [{
-        type: 'tool-result',
-        toolCallId: 'read-1',
-        content: [text('result.png'), image('attachment-tool')],
-      }],
+      role: 'tool',
+      toolCallId: 'read-1',
+      content: [text('result.png'), image('attachment-tool')],
     }],
   }))
 

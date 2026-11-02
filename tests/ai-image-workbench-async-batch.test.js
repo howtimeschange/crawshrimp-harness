@@ -23,7 +23,7 @@ test('batch dialog caps Prompt cards at 20', () => {
 
 test('batch submission reuses current job and calls the async endpoint once', () => {
   const body = functionBody('submitBatchGeneration', 'generate')
-  assert.match(body, /ensureCurrentTask\(\)/)
+  assert.match(body, /ensureCurrentTask\(typeof confirmationKey === 'string'\s*\? \{ confirmedJobUid, selectionGeneration: confirmedSelectionGeneration \} : \{\}\)/)
   assert.match(body, /window\.cs\.updateAiImageJob\(jobUid,/)
   assert.match(body, /window\.cs\.batchRunAiImageJob\(jobUid,/)
   assert.match(body, /request_uid:/)

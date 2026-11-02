@@ -1,0 +1,552 @@
+[
+  {
+    "round": 1,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "startup",
+    "elapsedMs": 1518
+  },
+  {
+    "round": 1,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "text",
+    "elapsedMs": 918,
+    "success": true,
+    "metrics": {
+      "inputTokens": 6387,
+      "outputTokens": 5,
+      "cacheReadTokens": null,
+      "cacheWriteTokens": null
+    },
+    "tools": [],
+    "text": "READY-7319"
+  },
+  {
+    "round": 1,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "tools",
+    "elapsedMs": 2466,
+    "success": true,
+    "metrics": {
+      "inputTokens": 601,
+      "outputTokens": 113,
+      "cacheReadTokens": 19200,
+      "cacheWriteTokens": null
+    },
+    "tools": [
+      "bash",
+      "read"
+    ],
+    "text": "7319"
+  },
+  {
+    "round": 1,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "screenshot",
+    "elapsedMs": 2434,
+    "success": true,
+    "metrics": {
+      "inputTokens": 1409,
+      "outputTokens": 131,
+      "cacheReadTokens": 13440,
+      "cacheWriteTokens": null
+    },
+    "tools": [
+      "read_image"
+    ],
+    "text": "表格中两项 P0 建议：\n\n1. **流式请求超时与退出清理** — 实际价值：减少模型停止输出后，任务一直挂着的问题；迁移方式：可优先独立移植。\n2. **DeepSeek 原生 Messages 适配器** — 实际价值：更完整地处理思考、工具续接、图片和历史重放；迁移方式：随运行时升级，先限官方直连。"
+  },
+  {
+    "round": 1,
+    "label": "old",
+    "category": "compact",
+    "elapsedMs": 4717,
+    "result": {
+      "commandId": "cmd-6c100568-1",
+      "result": {
+        "kind": "error",
+        "text": "Compaction could not produce a useful summary. The conversation is unchanged; the attempt is recorded in the session log."
+      }
+    }
+  },
+  {
+    "round": 1,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "resume",
+    "elapsedMs": 1515,
+    "success": true,
+    "metrics": {
+      "inputTokens": 334,
+      "outputTokens": 56,
+      "cacheReadTokens": 16256,
+      "cacheWriteTokens": null
+    },
+    "tools": [
+      "read"
+    ],
+    "text": "数字：7319；一致（与最初验证数字 7319 相同）。"
+  },
+  {
+    "round": 1,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "startup",
+    "elapsedMs": 2507
+  },
+  {
+    "round": 1,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "text",
+    "elapsedMs": 736,
+    "success": true,
+    "metrics": {
+      "inputTokens": 553,
+      "outputTokens": 5,
+      "cacheReadTokens": 5120,
+      "cacheWriteTokens": 0
+    },
+    "tools": [],
+    "text": "READY-7319"
+  },
+  {
+    "round": 1,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "tools",
+    "elapsedMs": 2056,
+    "success": true,
+    "metrics": {
+      "inputTokens": 437,
+      "outputTokens": 116,
+      "cacheReadTokens": 17280,
+      "cacheWriteTokens": 0
+    },
+    "tools": [
+      "bash",
+      "read"
+    ],
+    "text": "7319"
+  },
+  {
+    "round": 1,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "screenshot",
+    "elapsedMs": 2283,
+    "success": true,
+    "metrics": {
+      "inputTokens": 1439,
+      "outputTokens": 127,
+      "cacheReadTokens": 12032,
+      "cacheWriteTokens": 0
+    },
+    "tools": [
+      "read_image"
+    ],
+    "text": "P0 建议共两项：\n\n1. **流式请求超时与退出清理** — 价值：减少模型停止输出后任务一直挂着的问题；迁移方式：可优先独立移植。\n2. **DeepSeek 原生 Messages 适配器** — 价值：更完整地处理思考、工具续接、图片和历史重放；迁移方式：随运行时升级，先限官方直连。"
+  },
+  {
+    "round": 1,
+    "label": "new",
+    "category": "compact",
+    "elapsedMs": 4073,
+    "result": {
+      "commandId": "cmd-c0b395c4-1",
+      "result": {
+        "kind": "success",
+        "text": "Compacted 15 history items (~835 tokens).",
+        "sourceEventSeq": 65
+      }
+    }
+  },
+  {
+    "round": 1,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "resume",
+    "elapsedMs": 1641,
+    "success": true,
+    "metrics": {
+      "inputTokens": 1732,
+      "outputTokens": 55,
+      "cacheReadTokens": 11904,
+      "cacheWriteTokens": 0
+    },
+    "tools": [
+      "read"
+    ],
+    "text": "最初的验证数字：7319\n\n读回结果：7319；一致。"
+  },
+  {
+    "round": 2,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "startup",
+    "elapsedMs": 2135
+  },
+  {
+    "round": 2,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "text",
+    "elapsedMs": 960,
+    "success": true,
+    "metrics": {
+      "inputTokens": 297,
+      "outputTokens": 5,
+      "cacheReadTokens": 5376,
+      "cacheWriteTokens": 0
+    },
+    "tools": [],
+    "text": "READY-7319"
+  },
+  {
+    "round": 2,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "tools",
+    "elapsedMs": 2879,
+    "success": true,
+    "metrics": {
+      "inputTokens": 441,
+      "outputTokens": 123,
+      "cacheReadTokens": 17280,
+      "cacheWriteTokens": 0
+    },
+    "tools": [
+      "bash",
+      "read"
+    ],
+    "text": "读回的数字是：7319"
+  },
+  {
+    "round": 2,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "screenshot",
+    "elapsedMs": 2020,
+    "success": true,
+    "metrics": {
+      "inputTokens": 1453,
+      "outputTokens": 121,
+      "cacheReadTokens": 12032,
+      "cacheWriteTokens": 0
+    },
+    "tools": [
+      "read_image"
+    ],
+    "text": "表格中两项 P0 建议：\n\n1. **流式请求超时与退出清理**：用于减少模型停止输出后，任务一直挂起的问题（可优先独立移植）。\n2. **DeepSeek 原生 Messages 适配器**：用于更完整地处理思考、工具续接、图片和历史重放（可随着运行时升级，优先支持官方直连）。"
+  },
+  {
+    "round": 2,
+    "label": "new",
+    "category": "compact",
+    "elapsedMs": 4301,
+    "result": {
+      "commandId": "cmd-a30b5e57-1",
+      "result": {
+        "kind": "success",
+        "text": "Compacted 15 history items (~840 tokens).",
+        "sourceEventSeq": 65
+      }
+    }
+  },
+  {
+    "round": 2,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "resume",
+    "elapsedMs": 1870,
+    "success": true,
+    "metrics": {
+      "inputTokens": 1492,
+      "outputTokens": 61,
+      "cacheReadTokens": 11776,
+      "cacheWriteTokens": 0
+    },
+    "tools": [
+      "read"
+    ],
+    "text": "最初的验证数字：7319\n\n读取 bench-check.txt 后得到的数字：7319\n\n两者一致。"
+  },
+  {
+    "round": 2,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "startup",
+    "elapsedMs": 1339
+  },
+  {
+    "round": 2,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "text",
+    "elapsedMs": 736,
+    "success": true,
+    "metrics": {
+      "inputTokens": 6387,
+      "outputTokens": 5,
+      "cacheReadTokens": null,
+      "cacheWriteTokens": null
+    },
+    "tools": [],
+    "text": "READY-7319"
+  },
+  {
+    "round": 2,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "tools",
+    "elapsedMs": 2958,
+    "success": true,
+    "metrics": {
+      "inputTokens": 601,
+      "outputTokens": 113,
+      "cacheReadTokens": 19200,
+      "cacheWriteTokens": null
+    },
+    "tools": [
+      "bash",
+      "read"
+    ],
+    "text": "7319"
+  },
+  {
+    "round": 2,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "screenshot",
+    "elapsedMs": 1595,
+    "success": true,
+    "metrics": {
+      "inputTokens": 1409,
+      "outputTokens": 130,
+      "cacheReadTokens": 13440,
+      "cacheWriteTokens": null
+    },
+    "tools": [
+      "read_image"
+    ],
+    "text": "表格中共有两项 P0 建议：\n\n1. **流式请求超时与退出清理** —— 价值：减少模型停止输出后任务一直挂起的问题；迁移方式：可优先独立移植。\n2. **DeepSeek 原生 Messages 适配器** —— 价值：更完整地处理思考、工具续接、图片和历史重放；迁移方式：随运行时升级，先服官方直连。"
+  },
+  {
+    "round": 2,
+    "label": "old",
+    "category": "compact",
+    "elapsedMs": 4281,
+    "result": {
+      "commandId": "cmd-b7d2ba06-1",
+      "result": {
+        "kind": "error",
+        "text": "Compaction could not produce a useful summary. The conversation is unchanged; the attempt is recorded in the session log."
+      }
+    }
+  },
+  {
+    "round": 2,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "resume",
+    "elapsedMs": 1449,
+    "success": true,
+    "metrics": {
+      "inputTokens": 332,
+      "outputTokens": 53,
+      "cacheReadTokens": 16256,
+      "cacheWriteTokens": null
+    },
+    "tools": [
+      "read"
+    ],
+    "text": "7319；文件读回仍为 7319，一致。"
+  },
+  {
+    "round": 3,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "startup",
+    "elapsedMs": 1209
+  },
+  {
+    "round": 3,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "text",
+    "elapsedMs": 1075,
+    "success": true,
+    "metrics": {
+      "inputTokens": 6387,
+      "outputTokens": 5,
+      "cacheReadTokens": null,
+      "cacheWriteTokens": null
+    },
+    "tools": [],
+    "text": "READY-7319"
+  },
+  {
+    "round": 3,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "tools",
+    "elapsedMs": 2706,
+    "success": true,
+    "metrics": {
+      "inputTokens": 663,
+      "outputTokens": 118,
+      "cacheReadTokens": 19200,
+      "cacheWriteTokens": null
+    },
+    "tools": [
+      "bash",
+      "read"
+    ],
+    "text": "7319"
+  },
+  {
+    "round": 3,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "screenshot",
+    "elapsedMs": 1974,
+    "success": true,
+    "metrics": {
+      "inputTokens": 1471,
+      "outputTokens": 131,
+      "cacheReadTokens": 13440,
+      "cacheWriteTokens": null
+    },
+    "tools": [
+      "read_image"
+    ],
+    "text": "表格中的两项 P0 建议：\n\n1. **流式请求超时与退出清理** — 实际价值：减少模型停止输出后，任务一直挂着的问题；迁移方式：可优先独立移植。\n2. **DeepSeek 原生 Messages 适配器** — 实际价值：更完整地处理思考、工具续接、图片和历史重放；迁移方式：随运行时升级，先限官方直连。"
+  },
+  {
+    "round": 3,
+    "label": "old",
+    "category": "compact",
+    "elapsedMs": 4266,
+    "result": {
+      "commandId": "cmd-442834c9-1",
+      "result": {
+        "kind": "success",
+        "text": "Compacted 15 history items (~755 tokens).",
+        "sourceEventSeq": 244
+      }
+    }
+  },
+  {
+    "round": 3,
+    "label": "old",
+    "version": "0.1.2-rc.1",
+    "category": "resume",
+    "elapsedMs": 1919,
+    "success": true,
+    "metrics": {
+      "inputTokens": 1552,
+      "outputTokens": 100,
+      "cacheReadTokens": 13312,
+      "cacheWriteTokens": null
+    },
+    "tools": [
+      "read"
+    ],
+    "text": "最初验证数字：7319（读回 7319，一致）。"
+  },
+  {
+    "round": 3,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "startup",
+    "elapsedMs": 2342
+  },
+  {
+    "round": 3,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "text",
+    "elapsedMs": 968,
+    "success": true,
+    "metrics": {
+      "inputTokens": 297,
+      "outputTokens": 5,
+      "cacheReadTokens": 5376,
+      "cacheWriteTokens": 0
+    },
+    "tools": [],
+    "text": "READY-7319"
+  },
+  {
+    "round": 3,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "tools",
+    "elapsedMs": 2841,
+    "success": true,
+    "metrics": {
+      "inputTokens": 439,
+      "outputTokens": 117,
+      "cacheReadTokens": 17280,
+      "cacheWriteTokens": 0
+    },
+    "tools": [
+      "bash",
+      "read"
+    ],
+    "text": "7319"
+  },
+  {
+    "round": 3,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "screenshot",
+    "elapsedMs": 2360,
+    "success": true,
+    "metrics": {
+      "inputTokens": 1441,
+      "outputTokens": 128,
+      "cacheReadTokens": 12032,
+      "cacheWriteTokens": 0
+    },
+    "tools": [
+      "read_image"
+    ],
+    "text": "表格中两项 P0 建议：\n\n1. **流式请求超时与退出清理** — 价值：减少模型停止输出后任务一直挂着的问题；迁移方式：可优先独立移植。\n2. **DeepSeek 原生 Messages 适配器** — 价值：更完整地处理思考、工具续接、图片和历史重放；迁移方式：随运行时升级，先跟官方直连。"
+  },
+  {
+    "round": 3,
+    "label": "new",
+    "category": "compact",
+    "elapsedMs": 3492,
+    "result": {
+      "commandId": "cmd-664cdb12-1",
+      "result": {
+        "kind": "success",
+        "text": "Compacted 15 history items (~835 tokens).",
+        "sourceEventSeq": 65
+      }
+    }
+  },
+  {
+    "round": 3,
+    "label": "new",
+    "version": "0.2.1-rc.2",
+    "category": "resume",
+    "elapsedMs": 1933,
+    "success": true,
+    "metrics": {
+      "inputTokens": 1634,
+      "outputTokens": 56,
+      "cacheReadTokens": 11776,
+      "cacheWriteTokens": 0
+    },
+    "tools": [
+      "read"
+    ],
+    "text": "最初验证数字：7319\n读回值：7319 — 一致。"
+  }
+]

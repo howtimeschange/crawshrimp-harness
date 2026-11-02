@@ -1,0 +1,212 @@
+[
+  {
+    "mode": "native",
+    "case": "image",
+    "elapsedMs": 5724,
+    "queueMs": 14,
+    "approvalMs": 0,
+    "activeMinusApprovalMs": 5710,
+    "modelRequests": 3,
+    "tokens": {
+      "inputTokens": 10858,
+      "outputTokens": 644,
+      "cacheReadTokens": 18176,
+      "cacheWriteTokens": 0,
+      "totalTokens": 29678
+    },
+    "toolErrors": 0,
+    "artifactEvents": 0,
+    "outerCalls": 4,
+    "ptcChildCalls": 0,
+    "sessionId": "cs-0cb94e61bae0"
+  },
+  {
+    "mode": "ptc",
+    "case": "image",
+    "elapsedMs": 7270,
+    "queueMs": 14,
+    "approvalMs": 0,
+    "activeMinusApprovalMs": 7256,
+    "modelRequests": 3,
+    "tokens": {
+      "inputTokens": 19588,
+      "outputTokens": 1036,
+      "cacheReadTokens": 39168,
+      "cacheWriteTokens": 0,
+      "totalTokens": 59792
+    },
+    "toolErrors": 0,
+    "artifactEvents": 0,
+    "outerCalls": 2,
+    "ptcChildCalls": 4,
+    "sessionId": "cs-408ea205dfba"
+  },
+  {
+    "mode": "native",
+    "case": "browser4",
+    "elapsedMs": 15409,
+    "queueMs": 1369,
+    "approvalMs": 78,
+    "activeMinusApprovalMs": 13962,
+    "modelRequests": 9,
+    "tokens": {
+      "inputTokens": 14186,
+      "outputTokens": 1579,
+      "cacheReadTokens": 103424,
+      "cacheWriteTokens": 0,
+      "totalTokens": 119189
+    },
+    "toolErrors": 0,
+    "artifactEvents": 0,
+    "outerCalls": 9,
+    "ptcChildCalls": 0,
+    "sessionId": "cs-1d365176aa3f"
+  },
+  {
+    "mode": "ptc",
+    "case": "browser4",
+    "elapsedMs": 14126,
+    "queueMs": 1238,
+    "approvalMs": 543,
+    "activeMinusApprovalMs": 12345,
+    "modelRequests": 7,
+    "tokens": {
+      "inputTokens": 20975,
+      "outputTokens": 1671,
+      "cacheReadTokens": 127872,
+      "cacheWriteTokens": 0,
+      "totalTokens": 150518
+    },
+    "toolErrors": 0,
+    "artifactEvents": 0,
+    "outerCalls": 6,
+    "ptcChildCalls": 8,
+    "sessionId": "cs-a5625fe2c13a"
+  },
+  {
+    "mode": "native",
+    "case": "script4",
+    "elapsedMs": 22575,
+    "queueMs": 1823,
+    "approvalMs": 503,
+    "activeMinusApprovalMs": 20249,
+    "modelRequests": 14,
+    "tokens": {
+      "inputTokens": 9407,
+      "outputTokens": 2460,
+      "cacheReadTokens": 182272,
+      "cacheWriteTokens": 0,
+      "totalTokens": 194139
+    },
+    "toolErrors": 0,
+    "artifactEvents": 2,
+    "outerCalls": 13,
+    "ptcChildCalls": 0,
+    "sessionId": "cs-9846d6e099d2"
+  },
+  {
+    "mode": "ptc",
+    "case": "script4",
+    "elapsedMs": 24869,
+    "queueMs": 1200,
+    "approvalMs": 509,
+    "activeMinusApprovalMs": 23160,
+    "modelRequests": 12,
+    "tokens": {
+      "inputTokens": 7687,
+      "outputTokens": 3506,
+      "cacheReadTokens": 267008,
+      "cacheWriteTokens": 0,
+      "totalTokens": 278201
+    },
+    "toolErrors": 0,
+    "artifactEvents": 2,
+    "outerCalls": 11,
+    "ptcChildCalls": 13,
+    "sessionId": "cs-d6bde2e413aa"
+  },
+  {
+    "mode": "native",
+    "case": "browser-x-cache",
+    "elapsedMs": 72842,
+    "queueMs": 1141,
+    "approvalMs": 231,
+    "activeMinusApprovalMs": 71470,
+    "modelRequests": 27,
+    "tokens": {
+      "inputTokens": 18833,
+      "outputTokens": 8826,
+      "cacheReadTokens": 571520,
+      "cacheWriteTokens": 0,
+      "totalTokens": 599179
+    },
+    "toolErrors": 0,
+    "artifactEvents": 0,
+    "outerCalls": 26,
+    "ptcChildCalls": 0,
+    "sessionId": "cs-c068c6591b28"
+  },
+  {
+    "mode": "ptc",
+    "case": "browser-x-cache",
+    "elapsedMs": 73600,
+    "queueMs": 1423,
+    "approvalMs": 0,
+    "activeMinusApprovalMs": 72177,
+    "modelRequests": 17,
+    "tokens": {
+      "inputTokens": 18670,
+      "outputTokens": 9450,
+      "cacheReadTokens": 504960,
+      "cacheWriteTokens": 0,
+      "totalTokens": 533080
+    },
+    "toolErrors": 1,
+    "artifactEvents": 0,
+    "outerCalls": 16,
+    "ptcChildCalls": 26,
+    "sessionId": "cs-a8c0789bb47a"
+  },
+  {
+    "mode": "native",
+    "case": "browser-x-final",
+    "elapsedMs": 68589,
+    "queueMs": 1219,
+    "approvalMs": 239,
+    "activeMinusApprovalMs": 67131,
+    "modelRequests": 27,
+    "tokens": {
+      "inputTokens": 17183,
+      "outputTokens": 6848,
+      "cacheReadTokens": 550656,
+      "cacheWriteTokens": 0,
+      "totalTokens": 574687
+    },
+    "toolErrors": 0,
+    "artifactEvents": 0,
+    "outerCalls": 27,
+    "ptcChildCalls": 0,
+    "sessionId": "cs-9fac038ec8ad"
+  },
+  {
+    "mode": "ptc",
+    "case": "browser-x-final",
+    "elapsedMs": 63976,
+    "queueMs": 1082,
+    "approvalMs": 0,
+    "activeMinusApprovalMs": 62894,
+    "modelRequests": 14,
+    "tokens": {
+      "inputTokens": 14391,
+      "outputTokens": 7191,
+      "cacheReadTokens": 363520,
+      "cacheWriteTokens": 0,
+      "totalTokens": 385102
+    },
+    "toolErrors": 0,
+    "artifactEvents": 0,
+    "outerCalls": 13,
+    "ptcChildCalls": 25,
+    "sessionId": "cs-d692d1a6e5cc"
+  }
+]

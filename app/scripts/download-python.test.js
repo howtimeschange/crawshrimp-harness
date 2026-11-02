@@ -809,18 +809,19 @@ if [ "$1" = "-V" ]; then
   echo "Python 3.12.13"
   exit 0
 fi
-if [ "$1" = "-c" ]; then
+if [ "$1" = "-I" ] && [ "$2" = "-" ]; then
   if [ "$PWD" != "\${FAKE_REPO_ROOT}" ]; then
     echo "backend import probe must run from repo root: $PWD" >&2
     exit 3
   fi
-  case "$2" in
+  probe="$(cat)"
+  case "$probe" in
     *"import ntsecuritycon, pywintypes, win32api, win32con, win32security"*"from mcp.server.mcpserver import MCPServer"*"import core.api_server"*)
       echo verified > "\${FAKE_IMPORT_MARKER}"
       exit 0
       ;;
   esac
-  echo "unexpected import probe: $2" >&2
+  echo "unexpected import probe: $probe" >&2
   exit 2
 fi
 if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then

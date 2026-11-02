@@ -12,9 +12,10 @@ const {
   writeThemePreference,
 } = theme
 
-test('theme preference accepts system, light and dark only', () => {
+test('theme preference accepts system, light, dark and lake', () => {
   assert.equal(normalizeThemePreference('LIGHT'), 'light')
   assert.equal(normalizeThemePreference('dark'), 'dark')
+  assert.equal(normalizeThemePreference('lake'), 'lake')
   assert.equal(normalizeThemePreference('unknown'), 'system')
   assert.equal(normalizeThemePreference(''), 'system')
 })
@@ -24,6 +25,7 @@ test('system theme follows the operating system while explicit themes do not', (
   assert.equal(resolveTheme('system', true), 'dark')
   assert.equal(resolveTheme('light', true), 'light')
   assert.equal(resolveTheme('dark', false), 'dark')
+  assert.equal(resolveTheme('lake', true), 'light')
 })
 
 test('theme preference persists with a safe system fallback', () => {
@@ -37,6 +39,9 @@ test('theme preference persists with a safe system fallback', () => {
   assert.equal(writeThemePreference(storage, 'light'), 'light')
   assert.equal(values.get(THEME_STORAGE_KEY), 'light')
   assert.equal(readThemePreference(storage), 'light')
+
+  assert.equal(writeThemePreference(storage, 'lake'), 'lake')
+  assert.equal(readThemePreference(storage), 'lake')
 
   values.set(THEME_STORAGE_KEY, 'sepia')
   assert.equal(readThemePreference(storage), 'system')
@@ -56,6 +61,10 @@ test('applyTheme updates the root dataset and native color scheme', () => {
     theme: 'dark',
   })
   assert.equal(documentRef.documentElement.style.colorScheme, 'dark')
+  assert.equal(applyTheme('lake', { documentRef, systemPrefersDark: true }), 'light')
+  assert.equal(documentRef.documentElement.dataset.themePreference, 'lake')
+  assert.equal(documentRef.documentElement.dataset.theme, 'light')
+  assert.equal(documentRef.documentElement.style.colorScheme, 'light')
 })
 
 test('system theme observation supports modern Chromium media query events', () => {

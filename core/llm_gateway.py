@@ -7,6 +7,7 @@ import mimetypes
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -14,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, build_opener, ProxyHandler, HTTPRedirectHandler
 
 from core.config import load_config
 
@@ -38,7 +39,7 @@ def reasoning_runtime_fields(protocol: str, efforts: list) -> dict:
         "compat": {"supportsReasoningEffort": True},
     }
     if protocol == "deepseek":
-        fields["compat"].update(thinkingFormat="deepseek", requiresReasoningContentOnAssistantMessages=True)
+        fields["compat"].update(thinkingFormat="deepseek", requiresReasoningContentOnAssistantMessages=True, supportsDeveloperRole=False)
     else:
         fields["compat"]["thinkingFormat"] = "openai"
     return fields
@@ -271,8 +272,17 @@ class LlmConfigurationError(LlmGatewayError):
     """Raised when the local LLM settings are incomplete."""
 
 
+class LlmUnknownSubmissionError(LlmGatewayError):
+    """An official request may have been accepted; never retry or switch routes."""
+
+
 class LlmResponseError(LlmGatewayError):
     """Raised when a model response cannot satisfy the output contract."""
+
+
+class _NoManagedRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 @dataclass(frozen=True)
@@ -408,7 +418,8 @@ def _normalize_custom_models(value: Any, *, preserve_default_reasoning: bool = F
 
 def custom_llm_providers(config: dict | None = None, *, include_secrets: bool = True) -> list[dict[str, Any]]:
     llm = _llm_settings(config)
-    raw = llm.get("custom_providers")
+    from core.managed_models import text_providers
+    raw = list(llm.get("custom_providers") or []) + text_providers()
     providers: list[dict[str, Any]] = []
     if not isinstance(raw, list):
         return providers
@@ -512,13 +523,17 @@ def custom_providers_runtime_payload(config: dict | None = None) -> tuple[list[d
             "models": [
                 {
                     "id": model["id"],
+                    "name": model.get("label") or model.get("name") or model["id"],
                     "contextWindow": int(model.get("context_window") or 256000),
                     "maxTokens": int(model.get("max_output_tokens") or 32768),
                     "input": list(model.get("input_modalities") or ["text"]),
-                    **reasoning_runtime_fields(
-                        model.get("reasoning_protocol", "default") if provider["protocol"] == "openai" else "default",
-                        model.get("reasoning_efforts") or [],
-                    ),
+                    "name": model.get("label") or model["id"],
+                    **({"reasoningEfforts": {level: level for level in model.get("reasoning_efforts", [])}}
+                       if provider["id"] == "crawshrimp-managed-openai-responses" and model.get("reasoning_efforts") else
+                       reasoning_runtime_fields(
+                           model.get("reasoning_protocol", "default") if provider["protocol"] == "openai" else "default",
+                           model.get("reasoning_efforts") or [],
+                       )),
                 }
                 for model in provider.get("models") or []
                 if model.get("id")
@@ -566,6 +581,16 @@ def select_default_model(config: dict | None = None) -> str:
     cfg = config if isinstance(config, dict) else load_config()
     llm = _llm_settings(cfg)
     configured = normalize_deepseek_model_id(_compact(llm.get("default_model"))) or DEFAULT_MODEL
+    # A selected account model is an explicit billing and privacy choice.
+    # Its ephemeral catalog can disappear on logout or while offline.
+    if configured.startswith("managed-") or str(llm.get("default_provider") or "").startswith("crawshrimp-managed-"):
+        provider_id = str(llm.get("default_provider") or "")
+        if not any(p['id'].startswith('crawshrimp-managed-') and
+                   (not provider_id or p['id'] == provider_id) and p.get('api_key') and p.get('base_url') and
+                   any(m['id'] == configured for m in p.get('models', []))
+                   for p in custom_llm_providers(cfg)):
+            raise LlmConfigurationError("抓虾官方默认模型当前不可用，请检查账号后重新选择模型")
+        return configured
     supported = all_supported_model_ids(cfg)
     if configured not in supported:
         configured = DEFAULT_MODEL
@@ -590,6 +615,14 @@ def route_for_model(model_id: str, config: dict | None = None) -> LlmRoute:
         raise LlmConfigurationError(f"不支持的文本模型：{selected}")
 
     provider = _provider_for_builtin_model(selected, cfg)
+    if selected.startswith('managed-'):
+        managed = next((item for item in custom_llm_providers(cfg)
+                        if item['id'].startswith('crawshrimp-managed-') and item.get('api_key') and item.get('base_url')
+                        and any(model['id'] == selected for model in item['models'])
+                        and (selected != llm.get('default_model') or not str(llm.get('default_provider') or '').startswith('crawshrimp-managed-') or item['id'] == llm.get('default_provider'))), None)
+        if not managed:
+            raise LlmConfigurationError('抓虾官方模型当前不可用，请检查账号后重新选择模型')
+        return LlmRoute(model_id=selected, protocol=str(managed['protocol']), base_url=managed['base_url'], api_key=managed['api_key'])
     custom = next((item for item in custom_llm_providers(cfg)
                    if selected == llm.get("default_model") and item["id"] == llm.get("default_provider")
                    and item.get("api_key") and any(model["id"] == selected for model in item["models"])), None)
@@ -660,12 +693,42 @@ def _post_json(url, payload, headers, timeout=120, total_timeout=None):
     event_key = 'gateway:' + str(uuid.uuid4())
     if owner:
         emit('model_call', key=event_key, expected_user=owner, model=payload.get('model'))
+    request_id = None
+    managed = str(payload.get('model') or '').startswith('managed-')
+    if managed:
+        from core import managed_models, managed_text_receipts
+        current = managed_models.session()
+        if (not current or not current.get('accountId') or not current.get('accountServiceOrigin') or
+                not url.startswith(current['baseURL'] + '/v1/') or
+                headers.get('Authorization') != 'Bearer ' + current['brokerToken']):
+            raise LlmConfigurationError('官方模型账号会话已变化，请重新选择模型')
+        try:
+            request_id = managed_text_receipts.create(current['accountId'], current['accountServiceOrigin'], str(payload['model']))
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            raise LlmConfigurationError('无法保存官方请求编号，请检查本地数据目录；请求未发送') from exc
+        after = managed_models.session()
+        if not after or any(after.get(k) != current.get(k) for k in ('accountId', 'accountServiceOrigin', 'brokerToken', 'baseURL', 'desktopRuntimeEpoch', 'accountSessionEpoch')):
+            raise LlmConfigurationError(f'官方模型账号会话已变化，请求未发送。请求编号：{request_id}')
+        headers = {**headers, 'X-Request-Id': request_id}
     try:
-        result = _post_json_request(url, payload, headers, timeout, total_timeout)
-    except Exception:
+        result = (_post_json_request(url, payload, headers, timeout, total_timeout, direct=True)
+                  if managed else _post_json_request(url, payload, headers, timeout, total_timeout))
+    except Exception as exc:
         if owner:
             emit('app_error', expected_user=owner, feature='app', error_code='model_request_failed')
+        if request_id:
+            raise LlmUnknownSubmissionError(f'官方请求结果未知，请先核对请求与账单，不要直接重复生成。请求编号：{request_id}') from exc
         raise
+    if request_id:
+        after = managed_models.session()
+        if not after or any(after.get(k) != current.get(k) for k in ('accountId', 'accountServiceOrigin', 'brokerToken', 'baseURL', 'desktopRuntimeEpoch', 'accountSessionEpoch')):
+            raise LlmUnknownSubmissionError(f'账号会话已变化，未交付本次结果；请先核对请求与账单，不要重复生成。请求编号：{request_id}')
+        try:
+            managed_text_receipts.complete(request_id)
+        except (OSError, sqlite3.Error):
+            # A successful response is usable even if the conservative receipt
+            # remains unknown; never resend to repair bookkeeping.
+            pass
     if owner:
         usage = result.get('usage') or {}
         emit('model_call', key=event_key, expected_user=owner, model=payload.get('model'),
@@ -680,6 +743,7 @@ def _post_json_request(
     headers: dict[str, str],
     timeout: float = 120,
     total_timeout: float | None = None,
+    *, direct: bool = False,
 ) -> dict:
     secret_values = [
         value
@@ -702,7 +766,8 @@ def _post_json_request(
             method="POST",
         )
         try:
-            with urlopen(request, timeout=timeout) as response:
+            opener = build_opener(ProxyHandler({}), _NoManagedRedirect()) if direct else None
+            with (opener.open(request, timeout=timeout) if opener else urlopen(request, timeout=timeout)) as response:
                 raw = response.read().decode("utf-8", errors="replace")
         except HTTPError as exc:
             raw = exc.read().decode("utf-8", errors="replace")
@@ -739,6 +804,7 @@ def _post_json_request(
                 completed = subprocess.run(
                     [
                         curl,
+                        *(['--disable', '--noproxy', '*', '--max-redirs', '0'] if direct else []),
                         "--silent",
                         "--show-error",
                         "--request",
@@ -776,7 +842,7 @@ def _post_json_request(
                 status_code = int(completed.stdout.strip() or "0")
             except ValueError:
                 status_code = 0
-            if status_code >= 400:
+            if status_code >= 400 or (direct and 300 <= status_code < 400):
                 raise LlmGatewayError(f"文本模型接口返回 HTTP {status_code}：{safe(raw)[:300]}")
         finally:
             for path in (payload_path, header_path, response_path):
@@ -1056,7 +1122,7 @@ def _parse_json_text(value: str) -> Any:
 
 
 def _is_retryable_llm_error(exc: LlmGatewayError) -> bool:
-    if isinstance(exc, LlmConfigurationError):
+    if isinstance(exc, (LlmConfigurationError, LlmUnknownSubmissionError)):
         return False
     text = str(exc or "").lower()
     return (
@@ -1159,9 +1225,9 @@ def generate_video_copies(
     route = route_for_model(model_id, config=config)
     correction = ""
     validation_attempt = 0
-    max_validation_attempts = 2
+    max_validation_attempts = 1 if route.model_id.startswith("managed-") else 2
     transport_attempt = 0
-    max_transport_attempts = 3
+    max_transport_attempts = 1 if route.model_id.startswith("managed-") else 3
     while validation_attempt < max_validation_attempts and transport_attempt < max_transport_attempts:
         try:
             response = (
@@ -1247,6 +1313,8 @@ def generate_multimodal_json(
         if len(model_ids) > 1 or not retry_same_model
         else [model_ids[0], model_ids[0]]
     )
+    if str(model_id).startswith("managed-"):
+        attempts = [model_id]  # Never silently retry or switch billing source.
     last_error: LlmGatewayError | None = None
     for attempt_index, current_model_id in enumerate(attempts):
         route = route_for_model(current_model_id, config=config)
@@ -1274,7 +1342,7 @@ def generate_multimodal_json(
         except LlmGatewayError as exc:
             last_error = exc
             retryable = _is_retryable_llm_error(exc)
-            if attempt_index == len(attempts) - 1 or not retryable:
+            if route.model_id.startswith("managed-") or attempt_index == len(attempts) - 1 or not retryable:
                 raise
     raise last_error or LlmGatewayError("文本模型接口调用失败")
 
@@ -1318,6 +1386,8 @@ def generate_multimodal_text(
         if len(model_ids) > 1 or not retry_same_model
         else [model_ids[0], model_ids[0]]
     )
+    if str(model_id).startswith("managed-"):
+        attempts = [model_id]  # Never silently retry or switch billing source.
     last_error: LlmGatewayError | None = None
     for attempt_index, current_model_id in enumerate(attempts):
         route = route_for_model(current_model_id, config=config)
@@ -1345,7 +1415,7 @@ def generate_multimodal_text(
         except LlmGatewayError as exc:
             last_error = exc
             retryable = _is_retryable_llm_error(exc)
-            if attempt_index == len(attempts) - 1 or not retryable:
+            if route.model_id.startswith("managed-") or attempt_index == len(attempts) - 1 or not retryable:
                 raise
     raise last_error or LlmGatewayError("文本模型接口调用失败")
 

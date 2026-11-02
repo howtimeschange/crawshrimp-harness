@@ -1944,7 +1944,9 @@ def _agent_image_job(settings: dict, params: dict) -> dict:
 def tool_image_models() -> dict:
     """List configured image models without exposing credentials."""
     from core.api_server import image_models
-    return image_models()
+    result = image_models()
+    configured = [model["id"] for model in result.get("models", []) if model.get("configured") is True]
+    return {**result, "configured_count": len(configured), "configured_model_ids": configured}
 
 
 def tool_image_generate(

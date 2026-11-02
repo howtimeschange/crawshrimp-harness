@@ -4,7 +4,7 @@
     <header class="df-header">
       <h2>数据文件</h2>
       <div class="df-header-actions">
-        <button class="btn-ghost-sm" @click="showDirSetting = !showDirSetting">📁 保存目录</button>
+        <button class="btn-ghost-sm" @click="showDirSetting = !showDirSetting"><IconFolder :size="15" :stroke="1.6" /> 保存目录</button>
         <button class="btn-ghost-sm" :disabled="loading" @click="load">{{ loading ? '刷新中…' : '刷新' }}</button>
       </div>
     </header>
@@ -37,7 +37,7 @@
         </label>
         <span class="df-toolbar-count">已选 {{ selectedCount }} 个文件</span>
       </div>
-      <div class="df-toolbar-actions">
+      <div v-if="selectedCount" class="df-toolbar-actions">
         <button
           class="btn-sync-sm"
           :disabled="!syncableSelectedCount || deleting || syncing"
@@ -53,10 +53,15 @@
     <div v-if="noticeMsg" class="df-notice" :class="noticeType">
       {{ noticeMsg }}
     </div>
+    <div v-if="loadError" class="df-load-error" role="alert">
+      <div><strong>{{ groups.length ? '文件列表未完整更新' : '暂时无法读取文件列表' }}</strong><p>{{ loadError }}<template v-if="groups.length"> 部分文件保留上次读取的记录。</template></p></div>
+      <button class="btn-ghost-sm" :disabled="loading" @click="load">{{ loading ? '读取中…' : '重新读取' }}</button>
+    </div>
 
     <!-- 滚动内容区 -->
     <div class="df-body">
-      <div v-if="!groups.length" class="df-placeholder">还没有输出文件。执行一个抓取任务后文件会出现在这里。</div>
+      <div v-if="!groups.length && loading" class="df-placeholder" role="status">正在读取文件列表…</div>
+      <div v-else-if="!groups.length && !loadError" class="df-placeholder">还没有输出文件。执行一个抓取任务后文件会出现在这里。</div>
       <div v-for="g in groups" :key="g.key" class="df-group">
         <div class="df-group-header">
           <span class="df-group-name">{{ g.adapter }} / {{ g.task }}</span>
@@ -68,19 +73,20 @@
               <input
                 type="checkbox"
                 :checked="isSelected(f.path)"
+                :aria-label="`选择文件 ${f.name}`"
                 :disabled="deleting"
                 @change="toggleSelection(f, $event.target.checked)"
               />
             </label>
-            <span class="df-file-icon">{{ f.path.endsWith('.xlsx') || f.path.endsWith('.xls') ? '📊' : f.path.endsWith('.json') ? '📋' : '📄' }}</span>
-            <div class="df-file-info" @click="openFile(f.path)">
+            <span class="df-file-icon"><ResourceIcon :item="{ filename: f.name, path: f.path }" /></span>
+            <button type="button" class="df-file-info" :aria-label="`打开 ${f.name}`" @click="openFile(f.path)">
               <span class="df-file-name">{{ f.name }}</span>
               <span class="df-file-meta">
                 <span v-if="f.size" class="df-file-size">{{ f.size }}</span>
                 <span v-if="f.ctime" class="df-file-time">{{ f.ctime }}</span>
               </span>
-            </div>
-            <div class="df-file-actions">
+            </button>
+            <div class="df-file-actions"><button class="df-btn" @click="openFile(f.path)">打开</button>
               <button
                 v-if="isSyncableFile(f)"
                 class="df-btn df-btn-sync"
@@ -99,10 +105,10 @@
     </div>
 
     <!-- 删除确认 -->
-    <div v-if="showDeleteConfirm" class="df-modal-overlay" @click.self="closeDeleteConfirm">
+    <dialog v-if="showDeleteConfirm" ref="deleteDialog" class="df-modal-overlay" aria-labelledby="df-delete-title" aria-describedby="df-delete-description" @cancel.prevent="closeDeleteConfirm" @click.self="closeDeleteConfirm">
       <div class="df-modal df-modal-danger">
-        <p class="df-modal-title">确认删除 {{ deleteTargets.length }} 个文件</p>
-        <p class="df-modal-body">将从磁盘永久删除这些表格文件，并同步从运行记录中移除。此操作无法撤销。</p>
+        <p id="df-delete-title" class="df-modal-title">确认删除 {{ deleteTargets.length }} 个文件</p>
+        <p id="df-delete-description" class="df-modal-body">将从磁盘永久删除这些表格文件，并同步从运行记录中移除。此操作无法撤销。</p>
         <div class="df-delete-preview">
           <div v-for="file in deleteTargets.slice(0, 5)" :key="file.path" class="df-delete-item">
             <span class="df-delete-item-name">{{ file.name }}</span>
@@ -112,18 +118,22 @@
             还有 {{ deleteTargets.length - 5 }} 个文件未显示
           </div>
         </div>
+        <p v-if="deleteError" class="df-delete-error" role="alert">{{ deleteError }}</p>
         <div class="df-modal-actions">
           <button class="btn-ghost-sm" :disabled="deleting" @click="closeDeleteConfirm">取消</button>
           <button class="btn-danger-sm" :disabled="deleting || !deleteTargets.length" @click="doDelete">
-            {{ deleting ? '删除中…' : '确认删除' }}
+            {{ deleting ? '删除中…' : deleteError ? '重试删除' : '确认删除' }}
           </button>
         </div>
       </div>
-    </div>
+    </dialog>
   </div>
 </template>
 
 <script setup>
+import { IconFolder } from '@tabler/icons-vue'
+import ResourceIcon from '../components/agent/resources/ResourceIcon.vue'
+import { useNativeDialog } from '../composables/useNativeDialog'
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { formatTaskForDisplay } from '../utils/taskDisplay'
 import { groupOdpsSyncableFiles, isOdpsSyncableFile } from '../utils/odpsSyncTasks'
@@ -137,8 +147,12 @@ const dirOk          = ref(true)
 const deleting       = ref(false)
 const syncing        = ref(false)
 const loading        = ref(false)
+const loadError      = ref('')
 const showDeleteConfirm = ref(false)
+const deleteDialog = ref(null)
+useNativeDialog(showDeleteConfirm, deleteDialog)
 const deleteTargets   = ref([])
+const deleteError = ref('')
 const selectedPaths   = ref([])
 const noticeMsg       = ref('')
 const noticeType      = ref('ok')
@@ -224,11 +238,12 @@ async function load() {
 
     const uniquePaths = [...new Set(pendingFiles.map(file => file.path))]
     const stats = new Map()
+    const failedPaths = new Set()
     await mapLimit(uniquePaths, 4, async path => {
       try {
         const stat = await window.cs.statFile(path)
         if (stat?.isFile) stats.set(path, stat)
-      } catch (_) {}
+      } catch (_) { failedPaths.add(path) }
     })
     if (seq !== loadSeq) return
 
@@ -250,13 +265,24 @@ async function load() {
       })
     }
 
+    const failedResults = dataResults.filter(item => item.error)
+    const failedKeys = new Set(failedResults.map(item => item.adapter.id + item.task.task_id))
+    for (const previous of groups.value) {
+      const retained = failedKeys.has(previous.key) ? previous.files : previous.files.filter(file => failedPaths.has(file.path))
+      if (!retained.length) continue
+      if (!grouped.has(previous.key)) grouped.set(previous.key, { ...previous, files: [] })
+      const group = grouped.get(previous.key)
+      const knownPaths = new Set(group.files.map(file => file.path))
+      group.files.push(...retained.filter(file => !knownPaths.has(file.path)))
+    }
     groups.value = [...grouped.values()]
     syncSelection()
-
-    const failedCount = dataResults.filter(item => item.error).length
-    if (failedCount) setNotice(`部分数据加载失败：${failedCount} 个任务暂不可用`, 'warn', 3600)
+    loadError.value = [
+      failedResults.length ? `${failedResults.length} 个任务的文件记录读取失败。` : '',
+      failedPaths.size ? `${failedPaths.size} 个文件的状态暂时无法确认。` : '',
+    ].filter(Boolean).join(' ')
   } catch (error) {
-    if (seq === loadSeq) setNotice('数据文件加载失败：' + (error?.message || error), 'err', 4200)
+    if (seq === loadSeq) loadError.value = '请检查本地服务连接后重新读取。'
   } finally {
     if (seq === loadSeq) loading.value = false
   }
@@ -275,9 +301,16 @@ function formatDate(iso) {
   } catch { return iso }
 }
 
-function openFile(path)   { window.cs.openFile(path) }
-function revealFile(path) { window.cs.revealFile(path) }
-async function saveAs(srcPath) { await window.cs.saveAsFile(srcPath) }
+async function performFileAction(method, path, label) {
+  setNotice('', 'ok', 0)
+  try {
+    const result = await window.cs[method](path)
+    if (result?.ok === false) throw new Error(result.error || `${label}失败`)
+  } catch (error) { setNotice(`${label}失败：${error.message || error}`, 'err', 0) }
+}
+function openFile(path) { return performFileAction('openFile', path, '打开文件') }
+function revealFile(path) { return performFileAction('revealFile', path, '显示文件位置') }
+function saveAs(path) { return performFileAction('saveAsFile', path, '另存为') }
 
 function isExcelFile(path) {
   return /\.(xlsx|xlsm)$/i.test(String(path || ''))
@@ -377,6 +410,7 @@ function setNotice(message, type = 'ok', ttlMs = 2600) {
 }
 
 function openDeleteConfirm(files) {
+  deleteError.value = ''
   deleteTargets.value = [...(files || [])]
   showDeleteConfirm.value = true
 }
@@ -388,38 +422,38 @@ function openBatchDeleteConfirm() {
 function closeDeleteConfirm() {
   if (deleting.value) return
   showDeleteConfirm.value = false
+  deleteError.value = ''
   deleteTargets.value = []
 }
 
 async function doDelete() {
   const targets = [...deleteTargets.value]
-  if (!targets.length) return
+  if (!targets.length || deleting.value) return
   deleting.value = true
+  deleteError.value = ''
   try {
-    const paths = targets.map(f => f.path).filter(Boolean)
-    const r = await window.cs.deleteFiles(paths)
-    const deletedCount = Number(r?.deleted_count || 0)
-    const missingCount = Number(r?.missing_count || 0)
-    const failedCount = Number(r?.failed_count || (Array.isArray(r?.failed) ? r.failed.length : 0) || 0)
-    if (!r?.ok && !deletedCount && !missingCount) {
-      throw new Error(r?.error || '删除失败')
-    }
-
+    const paths = targets.map(file => file.path).filter(Boolean)
+    const result = await window.cs.deleteFiles(paths)
+    const deleted = Number(result?.deleted_count || 0)
+    const missing = Number(result?.missing_count || 0)
+    const failures = Array.isArray(result?.failed) ? result.failed : []
+    const failed = Number(result?.failed_count || failures.length || 0)
+    if (!result?.ok && !deleted && !missing) throw new Error(result?.error || failures[0]?.error || '删除失败')
+    const removed = new Set([...(result.deleted_paths || []), ...(result.missing_paths || [])])
+    selectedPaths.value = selectedPaths.value.filter(path => !removed.has(path))
     await load()
-    const deletedSet = new Set(paths)
-    selectedPaths.value = selectedPaths.value.filter(path => !deletedSet.has(path))
+    if (failed) {
+      const failedPaths = new Set(failures.map(file => file.path))
+      deleteTargets.value = targets.filter(file => failedPaths.size ? failedPaths.has(file.path) : !removed.has(file.path))
+      deleteError.value = `已删除 ${deleted} 个，${missing} 个已不存在，${failed} 个失败。${failures[0]?.error || '请检查文件是否被占用后重试。'}`
+      return
+    }
     showDeleteConfirm.value = false
     deleteTargets.value = []
-
-    const parts = []
-    if (deletedCount > 0) parts.push(`已删除 ${deletedCount} 个文件`)
-    if (missingCount > 0) parts.push(`${missingCount} 个文件已不存在`)
-    if (failedCount > 0) parts.push(`${failedCount} 个文件删除失败`)
-    setNotice(parts.join('，') || '删除完成', failedCount > 0 ? 'warn' : 'ok')
-  } catch (e) {
-    setNotice('删除失败：' + (e.message || e), 'err', 3600)
-  }
-  deleting.value = false
+    setNotice(`已删除 ${deleted} 个文件${missing ? `，${missing} 个文件已不存在` : ''}`, 'ok')
+  } catch (error) {
+    deleteError.value = `删除失败：${error.message || error}`
+  } finally { deleting.value = false }
 }
 
 async function browseDir() {
@@ -448,8 +482,15 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.df-load-error { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 24px 16px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); font-size: 13px; }
+.df-load-error strong { font-weight: 600; }
+.df-load-error p { margin: 5px 0 0; color: var(--text2); line-height: 1.6; }
+.df-load-error button { flex-shrink: 0; }
 /* === 根容器:跟随内容区容器(统一导航下数据文件嵌入右侧内容区) === */
 .df-root {
+  --df-danger-bg: #b91c1c;
+  --df-sync-bg: #15803d;
+  --df-action-ink: #fff;
   position: relative;
   top: 0;
   left: 0;
@@ -647,11 +688,23 @@ onUnmounted(() => {
 .btn-ghost-sm:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-orange-sm { padding: 6px 14px; border-radius: 8px; border: none; background: var(--orange); color: white; font-size: 12px; font-weight: 600; cursor: pointer; }
 .btn-orange-sm:disabled { opacity: 0.4; cursor: not-allowed; }
-.btn-sync-sm { padding: 6px 14px; border-radius: 7px; border: none; background: #16a34a; color: white; font-size: 12px; font-weight: 600; cursor: pointer; }
+.btn-sync-sm { padding: 6px 14px; border-radius: 7px; border: none; background: var(--df-sync-bg); color: var(--df-action-ink); font-size: 12px; font-weight: 600; cursor: pointer; }
 .btn-sync-sm:disabled { opacity: 0.4; cursor: not-allowed; }
-.btn-danger-sm { padding: 6px 14px; border-radius: 7px; border: none; background: #ef4444; color: white; font-size: 12px; font-weight: 600; cursor: pointer; }
+.btn-danger-sm { padding: 6px 14px; border-radius: 7px; border: none; background: var(--df-danger-bg); color: var(--df-action-ink); font-size: 12px; font-weight: 600; cursor: pointer; }
 .btn-danger-sm:disabled { opacity: 0.4; cursor: not-allowed; }
 .df-btn-sync { color: var(--green); border-color: rgba(74,222,128,0.3); }
 .df-btn-sync:hover:not(:disabled) { background: rgba(74,222,128,0.1); color: var(--green); }
 .df-btn-sync:disabled { opacity: 0.4; cursor: not-allowed; }
+</style>
+
+<style scoped>
+button.df-file-info{border:0;background:transparent;display:block;text-align:left;color:var(--text);padding:0;font:inherit;min-width:0}.df-more{font-size:12px}.df-more summary{cursor:pointer;color:var(--text2);padding:6px}.df-more>div{display:flex;flex-wrap:wrap;gap:6px;padding:8px 0}.df-file-actions{align-items:center;flex-wrap:wrap}.df-toolbar-actions{flex-wrap:wrap}.df-header-actions{flex-wrap:wrap}
+</style>
+
+<style scoped>
+.df-file-icon{display:flex;align-items:center;justify-content:center;width:28px}.df-file-icon :deep(.resource-file-icon){width:24px;height:28px}
+</style>
+
+<style scoped>
+.df-delete-error{margin:12px 0;color:var(--red);font-size:13px;line-height:1.7;overflow-wrap:anywhere}
 </style>

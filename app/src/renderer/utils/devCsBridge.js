@@ -417,6 +417,7 @@ export function createDevCsBridge() {
     unfavoriteScript: (id) => apiCall('DELETE', `/script-favorites/${encodePathPart(id)}`),
 
     getTasks: () => apiCall('GET', '/tasks'),
+    getTasksLive: () => apiCall('GET', '/tasks/live'),
     listTaskInstances: (query = {}) => apiCall('GET', `/task-instances?${queryString(query)}`),
     createTaskInstance: (payload) => apiCall('POST', '/task-instances', payload || {}),
     getTaskInstance: (uid) => apiCall('GET', `/task-instances/${encodePathPart(uid)}`),
@@ -448,6 +449,9 @@ export function createDevCsBridge() {
     listAiImageJobs: () => apiCall('GET', '/ai-image/jobs'),
     createAiImageJob: (payload) => apiCall('POST', '/ai-image/jobs', payload || {}),
     getAiImageJob: (uid) => apiCall('GET', `/ai-image/jobs/${encodePathPart(uid)}`),
+    traceAiImageManagedRequest: (uid, runUid) => apiCall('GET', `/ai-image/jobs/${encodePathPart(uid)}/runs/${encodePathPart(runUid)}/managed-request`),
+    listManagedTextRequests: (offset = 0) => apiCall('GET', `/managed-text/requests?offset=${Number.isSafeInteger(offset) && offset >= 0 ? offset : 0}`),
+    traceManagedTextRequest: (requestId) => apiCall('GET', `/managed-text/requests/${encodePathPart(requestId)}`),
     updateAiImageJob: (uid, payload) => apiCall('PATCH', `/ai-image/jobs/${encodePathPart(uid)}`, payload || {}),
     setAiImageJobPinned: (uid, pinned) => apiCall('PATCH', `/ai-image/jobs/${encodePathPart(uid)}/pin`, { pinned: Boolean(pinned) }),
     deleteAiImageJob: (uid) => apiCall('DELETE', `/ai-image/jobs/${encodePathPart(uid)}`),

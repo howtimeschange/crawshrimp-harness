@@ -1,0 +1,504 @@
+{
+  "note": "单次 smoke；success 为初筛，生命周期用例另核对 toolEvents；benchmark 耗时和 token 不含 compact-command 本身。lifecycle-v2 的并发通知干扰模型切换用例，已用独立 model-switch 和 pro-vision 实测替代。",
+  "cases": [
+    {
+      "label": "rc2-messages",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-flash",
+      "category": "text",
+      "elapsedMs": 2608,
+      "success": true,
+      "end": {
+        "turn": 1,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 1426,
+        "outputTokens": 170,
+        "cacheReadTokens": 16384
+      },
+      "tools": [
+        "memory_search",
+        "memory_save"
+      ]
+    },
+    {
+      "label": "rc2-messages",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-flash",
+      "category": "tools",
+      "elapsedMs": 3695,
+      "success": true,
+      "end": {
+        "turn": 2,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 1006,
+        "outputTokens": 245,
+        "cacheReadTokens": 19968
+      },
+      "tools": [
+        "bash",
+        "read"
+      ]
+    },
+    {
+      "label": "rc2-messages",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-flash",
+      "category": "screenshot",
+      "elapsedMs": 6902,
+      "success": true,
+      "end": {
+        "turn": 3,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 1752,
+        "outputTokens": 211,
+        "cacheReadTokens": 22528
+      },
+      "tools": [
+        "glob",
+        "read_image"
+      ]
+    },
+    {
+      "label": "rc2-messages",
+      "category": "compact-command"
+    },
+    {
+      "label": "rc2-messages",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-flash",
+      "category": "compact-resume",
+      "elapsedMs": 2457,
+      "success": true,
+      "end": {
+        "turn": 4,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 2171,
+        "outputTokens": 174,
+        "cacheReadTokens": 11776
+      },
+      "tools": [
+        "read"
+      ]
+    },
+    {
+      "label": "rc2-domestic",
+      "provider": "crawshrimp-domestic-openai",
+      "model": "deepseek-v4-flash",
+      "category": "text",
+      "elapsedMs": 499,
+      "success": false,
+      "end": {
+        "turn": 1,
+        "reason": {
+          "kind": "error",
+          "error": {
+            "message": "404: {\"message\":\"Model not exist.\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"model_not_found\"}",
+            "code": "INVALID_REQUEST"
+          }
+        }
+      },
+      "metrics": {
+        "inputTokens": null,
+        "outputTokens": null,
+        "cacheReadTokens": null
+      },
+      "tools": []
+    },
+    {
+      "label": "rc2-overseas",
+      "provider": "crawshrimp-overseas-openai",
+      "model": "gpt-6-luna",
+      "category": "text",
+      "elapsedMs": 60032,
+      "success": false,
+      "error": "turn deadline"
+    },
+    {
+      "label": "baseline-pi",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-flash",
+      "category": "text",
+      "elapsedMs": 2916,
+      "success": true,
+      "end": {
+        "turn": 1,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 6868,
+        "outputTokens": 158,
+        "cacheReadTokens": null
+      },
+      "tools": [
+        "memory_save"
+      ]
+    },
+    {
+      "label": "baseline-pi",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-flash",
+      "category": "tools",
+      "elapsedMs": 2999,
+      "success": true,
+      "end": {
+        "turn": 2,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 780,
+        "outputTokens": 198,
+        "cacheReadTokens": 21632
+      },
+      "tools": [
+        "bash",
+        "read"
+      ]
+    },
+    {
+      "label": "baseline-pi",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-flash",
+      "category": "screenshot",
+      "elapsedMs": 2679,
+      "success": true,
+      "end": {
+        "turn": 3,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 1596,
+        "outputTokens": 159,
+        "cacheReadTokens": 15488
+      },
+      "tools": [
+        "read_image"
+      ]
+    },
+    {
+      "label": "baseline-pi",
+      "error": "DSH Web RPC commands/execute failed: typert gateway: commands/execute: args fields do not match the descriptor: missing \"images\"; unexpected \"submittedAttachments\""
+    },
+    {
+      "label": "rc2-domestic-qwen",
+      "provider": "crawshrimp-domestic-openai",
+      "model": "qwen3.7-plus",
+      "category": "text",
+      "elapsedMs": 7973,
+      "success": true,
+      "end": {
+        "turn": 1,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 6585,
+        "outputTokens": 332,
+        "cacheReadTokens": null
+      },
+      "tools": [
+        "memory_save"
+      ]
+    },
+    {
+      "label": "rc2-domestic-qwen",
+      "provider": "crawshrimp-domestic-openai",
+      "model": "qwen3.7-plus",
+      "category": "tools",
+      "elapsedMs": 6648,
+      "success": true,
+      "end": {
+        "turn": 2,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 2535,
+        "outputTokens": 262,
+        "cacheReadTokens": 16000
+      },
+      "tools": [
+        "bash",
+        "read"
+      ]
+    },
+    {
+      "label": "rc2-domestic-qwen",
+      "provider": "crawshrimp-domestic-openai",
+      "model": "qwen3.7-plus",
+      "category": "screenshot",
+      "elapsedMs": 6245,
+      "success": true,
+      "end": {
+        "turn": 3,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 8844,
+        "outputTokens": 263,
+        "cacheReadTokens": null
+      },
+      "tools": [
+        "read_image"
+      ]
+    },
+    {
+      "label": "rc2-domestic-qwen",
+      "category": "compact-command"
+    },
+    {
+      "label": "rc2-domestic-qwen",
+      "provider": "crawshrimp-domestic-openai",
+      "model": "qwen3.7-plus",
+      "category": "compact-resume",
+      "elapsedMs": 4749,
+      "success": true,
+      "end": {
+        "turn": 4,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 2913,
+        "outputTokens": 192,
+        "cacheReadTokens": 10240
+      },
+      "tools": [
+        "read"
+      ]
+    },
+    {
+      "label": "baseline-pi",
+      "category": "compact-command"
+    },
+    {
+      "label": "baseline-pi",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-flash",
+      "category": "compact-resume",
+      "elapsedMs": 1950,
+      "success": true,
+      "end": {
+        "turn": 4,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 7885,
+        "outputTokens": 139,
+        "cacheReadTokens": null
+      },
+      "tools": [
+        "read"
+      ]
+    },
+    {
+      "label": "rc2-messages",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-v4-pro",
+      "category": "switch-pro",
+      "elapsedMs": 4002,
+      "success": true,
+      "end": {
+        "turn": 7,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 1974,
+        "outputTokens": 158,
+        "cacheReadTokens": 17664
+      },
+      "tools": [
+        "read"
+      ]
+    },
+    {
+      "label": "rc2-messages",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-flash",
+      "category": "switch-back-flash",
+      "elapsedMs": 1862,
+      "success": true,
+      "end": {
+        "turn": 8,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 1947,
+        "outputTokens": 151,
+        "cacheReadTokens": 19200
+      },
+      "tools": [
+        "read"
+      ]
+    },
+    {
+      "label": "pro-vision",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-v4-pro",
+      "category": "screenshot",
+      "elapsedMs": 7023,
+      "success": true,
+      "end": {
+        "turn": 1,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 7553,
+        "outputTokens": 657,
+        "cacheReadTokens": 5632
+      },
+      "tools": [
+        "read_image"
+      ]
+    },
+    {
+      "label": "ptc-live",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-flash",
+      "category": "ptc-set",
+      "elapsedMs": 2057,
+      "success": true,
+      "end": {
+        "turn": 1,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 9673,
+        "outputTokens": 83,
+        "cacheReadTokens": 9856
+      },
+      "tools": [
+        "run_code"
+      ]
+    },
+    {
+      "label": "ptc-live",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-flash",
+      "category": "ptc-reuse",
+      "elapsedMs": 2776,
+      "success": true,
+      "end": {
+        "turn": 2,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 347,
+        "outputTokens": 77,
+        "cacheReadTokens": 19584
+      },
+      "tools": [
+        "run_code"
+      ]
+    },
+    {
+      "label": "lifecycle",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-flash",
+      "category": "background-cancel",
+      "elapsedMs": 8715,
+      "success": true,
+      "end": {
+        "turn": 1,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 4475,
+        "outputTokens": 744,
+        "cacheReadTokens": 55424
+      },
+      "tools": [
+        "enable_tools",
+        "workflow",
+        "job_kill",
+        "job_output",
+        "job_list",
+        "job_output"
+      ]
+    },
+    {
+      "label": "lifecycle",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-flash",
+      "category": "background-start",
+      "elapsedMs": 5153,
+      "success": true,
+      "end": {
+        "turn": 1,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 3816,
+        "outputTokens": 427,
+        "cacheReadTokens": 28288
+      },
+      "tools": [
+        "enable_tools",
+        "workflow",
+        "workflow"
+      ]
+    },
+    {
+      "label": "lifecycle",
+      "provider": "crawshrimp-deepseek-official",
+      "model": "deepseek-flash",
+      "category": "background-read",
+      "elapsedMs": 610,
+      "success": true,
+      "end": {
+        "turn": 2,
+        "reason": {
+          "kind": "completed"
+        }
+      },
+      "metrics": {
+        "inputTokens": 138,
+        "outputTokens": 110,
+        "cacheReadTokens": 9216
+      },
+      "tools": []
+    }
+  ]
+}

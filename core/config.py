@@ -40,7 +40,7 @@ DEFAULT_CONFIG = {
         },
         "video": {
             "seedance_api_key": "",
-            "seedance_base_url": "https://ark.cn-beijing.volces.com",
+            "seedance_base_url": "",
             "bailian_api_key": "",
             "bailian_workspace_id": "",
             "bailian_region": "cn-beijing",
@@ -125,13 +125,14 @@ def _config_path() -> Path:
 
 
 def _apply_config_migrations(cfg: dict) -> dict:
+    cfg.pop("managed_image_providers", None)
+    cfg.pop("managed_text_providers", None)
     ai = cfg.get("ai")
-    # The retired provider must not reappear when older settings are loaded/saved.
     if isinstance(ai, dict):
-        ai.pop("1xm", None)
-    for key in list(cfg):
-        if key.startswith("ai.1xm."):
-            cfg.pop(key)
+        for kind, prefix in (("image", "custom-managed-"), ("llm", "crawshrimp-managed-")):
+            section = ai.get(kind)
+            if isinstance(section, dict) and isinstance(section.get("custom_providers"), list):
+                section["custom_providers"] = [p for p in section["custom_providers"] if not isinstance(p, dict) or not str(p.get("id", "")).startswith(prefix)]
     return cfg
 
 
@@ -151,7 +152,13 @@ def load_config() -> dict:
         replace_with_retry(path, quarantine)
         save_config(DEFAULT_CONFIG)
         return deepcopy(DEFAULT_CONFIG)
-    return _apply_config_migrations(_deep_merge(DEFAULT_CONFIG, _expand_dotted_keys(data)))
+    expanded = _expand_dotted_keys(data)
+    video = (expanded.get("ai") or {}).get("video") or {}
+    # Preserve the old implicit endpoint before merging new defaults.  Only
+    # configurations that already had a key and lacked an address need this.
+    if video.get("seedance_api_key") and not video.get("seedance_base_url"):
+        video["seedance_base_url"] = "https://ark.cn-beijing.volces.com"
+    return _apply_config_migrations(_deep_merge(DEFAULT_CONFIG, expanded))
 
 
 def save_config(cfg: dict) -> None:
@@ -184,7 +191,11 @@ def patch_config(patch: dict) -> dict:
     for field in ("seedance_base_url", "bailian_base_url", "bailian_uploads_url"):
         if field in video:
             video[field] = validate_video_base_url(video[field])
-    cfg = _apply_config_migrations(_deep_merge(load_config(), expanded))
+    previous = load_config()
+    old_video = (previous.get("ai") or {}).get("video") or {}
+    if video.get("seedance_api_key") and not (video.get("seedance_base_url") or old_video.get("seedance_base_url")):
+        raise ValueError("请先选择或填写 Seedance 服务地址，再保存密钥。")
+    cfg = _apply_config_migrations(_deep_merge(previous, expanded))
     save_config(cfg)
     return cfg
 

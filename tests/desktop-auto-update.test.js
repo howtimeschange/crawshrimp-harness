@@ -66,10 +66,10 @@ test('desktop schedules resilient automatic update checks and visible availabili
   )
 })
 
-test('desktop packages the supported Electron 43.1.0 runtime', () => {
+test('desktop packages the supported Electron 44.7.0 runtime', () => {
   const packageJson = JSON.parse(readRepoFile('app/package.json'))
 
-  assert.equal(packageJson.devDependencies.electron, '43.1.0')
+  assert.equal(packageJson.devDependencies.electron, '44.7.0')
 })
 
 test('desktop builder packages the Electron version declared by the app', () => {
@@ -163,7 +163,7 @@ test('renderer shell keeps update controls in the shared desktop status footer',
   assert.match(app, /updateActionRunner\.run\(\(\) => window\.cs\.installUpdate\(\)\)/)
   assert.doesNotMatch(app, /\.sidebar-update-footer\s*\{[^}]*display:\s*none/)
   assert.match(app, /function onDesktopUpdateAction\(/)
-  assert.match(app, /<aside v-if="activeScript" class="sidebar">/)
+  assert.match(app, /<aside v-if="activeScript && currentView !== \'settings\'" class="sidebar">/)
   assert.match(app, /function shouldClearActiveScriptForNav\(item\)/)
   assert.match(app, /return Boolean\(activeScript\.value\) && item\.id !== currentView\.value/)
   assert.match(app, /if \(shouldClearActiveScriptForNav\(item\)\) \{[\s\S]*?activeScript\.value = null[\s\S]*?activeTaskId\.value = null[\s\S]*?\}/)
@@ -172,7 +172,7 @@ test('renderer shell keeps update controls in the shared desktop status footer',
   assert.match(app, /function toggleSidebar\(\) \{\s*if \(activeScript\.value\) return[\s\S]*?writeSidebarCollapsed\(window\.localStorage,\s*sidebarCollapsed\.value\)/)
 
   const footerIndex = app.indexOf('<DesktopStatusFooter')
-  const sidebarStart = app.indexOf('<aside v-if="activeScript" class="sidebar">')
+  const sidebarStart = app.indexOf('<aside v-if="activeScript && currentView !== \'settings\'" class="sidebar">')
   assert.ok(footerIndex >= 0 && footerIndex < sidebarStart)
 
   const contentStart = app.indexOf('<main class="content">')
@@ -200,7 +200,7 @@ test('primary navigation is injected into DSH while script details retain a dedi
   const app = readRepoFile('app/src/renderer/App.vue')
 
   assert.match(app, /<AgentWebView[\s\S]*:nav-items="filteredNavItems"/)
-  assert.match(app, /<aside v-if="activeScript" class="sidebar">/)
+  assert.match(app, /<aside v-if="activeScript && currentView !== \'settings\'" class="sidebar">/)
   assert.match(app, /class="sub-nav"/)
   assert.doesNotMatch(app, /class="nav-btn"/)
 })

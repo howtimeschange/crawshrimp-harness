@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import shutil
+import threading
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -556,16 +557,33 @@ def _run_pose_model_wave(
     if not ordered_models:
         return []
     results: list[Any] = [None] * len(ordered_models)
+    stop = threading.Event()
+
+    def invoke_guarded(model_id):
+        if stop.is_set():
+            return None
+        try:
+            return invoke(model_id)
+        except llm_gateway.LlmUnknownSubmissionError:
+            stop.set()
+            raise
+
     with ThreadPoolExecutor(
         max_workers=min(max(1, int(max_workers)), len(ordered_models)),
         thread_name_prefix="shoe-pose-model",
     ) as executor:
         future_to_index = {
-            executor.submit(invoke, model_id): index
+            executor.submit(invoke_guarded, model_id): index
             for index, model_id in enumerate(ordered_models)
         }
         for future in as_completed(future_to_index):
-            results[future_to_index[future]] = future.result()
+            try:
+                results[future_to_index[future]] = future.result()
+            except llm_gateway.LlmUnknownSubmissionError:
+                stop.set()
+                for pending in future_to_index:
+                    pending.cancel()
+                raise
     return results
 
 
@@ -5953,6 +5971,8 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
                         "鞋品姿势识别结果缺少必需的 candidates 结构化候选事实"
                     )
                 _validate_pose_payload_references(payload, batch_candidate_ids)
+            except llm_gateway.LlmUnknownSubmissionError:
+                raise
             except llm_gateway.LlmGatewayError as exc:
                 last_error = _text(exc)
                 log(
@@ -7446,6 +7466,8 @@ def _default_analyze_color_label(**kwargs) -> dict[str, Any]:
                 timeout_seconds=SHOE_LABEL_OCR_TIMEOUT_SECONDS,
                 retry_same_model=False,
             )
+        except llm_gateway.LlmUnknownSubmissionError:
+            raise
         except llm_gateway.LlmGatewayError as exc:
             raise llm_gateway.LlmResponseError(
                 f"鞋盒标签定向颜色 OCR 失败：{_text(exc)}"
@@ -7562,6 +7584,8 @@ def _default_analyze_color_label(**kwargs) -> dict[str, Any]:
                     payload,
                     current_model_id=current_model_id,
                 )
+            except llm_gateway.LlmUnknownSubmissionError:
+                raise
             except llm_gateway.LlmGatewayError as exc:
                 last_error = _text(exc)
                 log(
@@ -8845,6 +8869,8 @@ def prepare_shoe_packages(
                         )
                         if label_warning:
                             raise llm_gateway.LlmResponseError(label_warning)
+                    except llm_gateway.LlmUnknownSubmissionError:
+                        raise
                     except (ShoeSelectionError, llm_gateway.LlmGatewayError) as exc:
                         label_candidate_errors.append(
                             f"{candidate_name}: {_text(exc)}"

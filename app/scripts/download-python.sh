@@ -186,22 +186,28 @@ verify_target_imports() {
   local dest="$2"
   local py_bin
 
-  if [ "$key" != "win-x64" ]; then
-    return 0
-  fi
-
   py_bin="$(target_python "$key" "$dest")" || return 1
   if ! "$py_bin" -V >/dev/null 2>&1; then
+    echo "[skip] Cannot execute $key Python on this host; backend imports not verified"
     return 0
   fi
 
-  echo "[verify] Importing Windows backend dependencies in $key ..."
+  echo "[verify] Importing isolated backend dependencies in $key ..."
   (
     cd "$ROOT_DIR"
-    PYTHONNOUSERSITE=1 "$py_bin" -c \
-      'import os, tempfile; os.environ["CRAWSHRIMP_DATA"] = tempfile.mkdtemp(prefix="crawshrimp-build-import-"); import ntsecuritycon, pywintypes, win32api, win32con, win32security; from mcp.server.mcpserver import MCPServer; import core.api_server'
-    PYTHONNOUSERSITE=1 "$py_bin" -m pip check
-  )
+    "$py_bin" -I - "$ROOT_DIR" <<'PY' || exit 1
+import os, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+with tempfile.TemporaryDirectory(prefix="crawshrimp-build-import-") as state:
+    os.environ["CRAWSHRIMP_DATA"] = state
+    if sys.platform == "win32":
+        import ntsecuritycon, pywintypes, win32api, win32con, win32security
+    from mcp.server.mcpserver import MCPServer
+    import httpx2
+    import core.api_server
+PY
+    PYTHONNOUSERSITE=1 "$py_bin" -m pip check || exit 1
+  ) || return 1
   echo "[ok] $key backend imports verified"
 }
 

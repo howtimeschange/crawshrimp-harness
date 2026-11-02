@@ -6,6 +6,7 @@ import {
   generationFailureMessage,
   promptLibraryFailureMessage,
   retrySummaryText,
+  isUnknownImageSubmission,
 } from './aiImageOperatorMessages.mjs'
 
 test('AI image run statuses use operator-facing Chinese labels', () => {
@@ -40,4 +41,11 @@ test('unknown synchronous receipts never suggest resubmission', () => {
   assert.match(generationFailureMessage('HTTP 504', 'UNKNOWN_SUBMIT_RESULT'), /已停止自动提交/)
   assert.match(generationFailureMessage('提交回执未知，HTTP 502'), /先核实供应商记录/)
   assert.equal(retrySummaryText({ submission_retry_history: [{ attempt: 1 }, { attempt: 2 }] }), '已自动重试 2 次')
+})
+
+test('unknown receipts block new submissions with either stored error-code shape', () => {
+  assert.equal(isUnknownImageSubmission({ error_code: 'UNKNOWN_SUBMIT_RESULT' }), true)
+  assert.equal(isUnknownImageSubmission({ errorCode: 'UNKNOWN_SUBMIT_RESULT' }), true)
+  assert.equal(isUnknownImageSubmission({ error: '提交回执未知，HTTP 502' }), true)
+  assert.equal(isUnknownImageSubmission({ error: 'HTTP 504', error_code: 'FAILED' }), false)
 })
