@@ -1,13 +1,20 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const test = require('node:test')
+const { createRequire } = require('node:module')
+const { parse } = createRequire(require.resolve('../app/package.json'))('@vue/compiler-sfc')
 
 const app = fs.readFileSync('app/src/renderer/App.vue', 'utf8')
 const workbench = fs.readFileSync('app/src/renderer/views/AiImageWorkbench.vue', 'utf8')
 
 test('AI image app shell keeps DSH navigation mounted behind a bounded overlay', () => {
-  const rootClassBinding = app.match(/<div\s+class="layout"\s+:class="(\{[\s\S]*?\})"\s*>/)?.[1]
+  const template = parse(app).descriptor.template.ast
+  const rootLayout = template.children.find(node => node.type === 1 && node.tag === 'div'
+    && node.props.some(prop => prop.type === 6 && prop.name === 'class' && prop.value?.content === 'layout'))
+  const rootClassBinding = rootLayout?.props.find(prop => prop.type === 7 && prop.name === 'bind'
+    && prop.arg?.content === 'class')?.exp?.content
   assert.ok(rootClassBinding, 'root layout should bind a class object')
+  assert.match(rootClassBinding, /^\s*\{[\s\S]*\}\s*$/)
   assert.match(rootClassBinding, /'layout-ai-image'\s*:\s*currentView\s*===\s*'ai_image'/)
   assert.match(rootClassBinding, /'sidebar-collapsed'\s*:\s*effectiveSidebarCollapsed/)
   assert.match(app, /<AgentWebView[\s\S]*:nav-items="filteredNavItems"/)
