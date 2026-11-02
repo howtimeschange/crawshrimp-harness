@@ -383,7 +383,8 @@ def main():
         from qcloud_cos import CosConfig, CosS3Client
         client = CosS3Client(CosConfig(Region=args.region, SecretId=os.environ["TENCENT_SECRET_ID"],
                                       SecretKey=os.environ["TENCENT_SECRET_KEY"],
-                                      Token=os.environ.get("TENCENT_TOKEN"), Scheme="https", Timeout=60))
+                                      Token=os.environ.get("TENCENT_TOKEN"), Scheme="https", Timeout=60,
+                                      EnableOldDomain=False))
         store = CosStore(client, args.bucket)
         report = (verify_upload_path(plan, store, verify_public_file) if args.upload_probe_only else
                   publish(plan, store, verify_public_range))
