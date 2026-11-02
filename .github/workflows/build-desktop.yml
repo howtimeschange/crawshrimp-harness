@@ -129,7 +129,9 @@ jobs:
         run: python -m pip install -r core/requirements.txt -r tests/requirements.txt
 
       - name: Test COS release publication and OIDC failure paths
-        run: python3 -m unittest discover -s app/scripts -p 'test_cos_release_mirror.py'
+        run: |
+          python3 -m pip install -r app/scripts/cos-release-requirements.txt
+          python3 -m unittest discover -s app/scripts -p 'test_cos_*.py'
 
       - name: Run app tests
         working-directory: app

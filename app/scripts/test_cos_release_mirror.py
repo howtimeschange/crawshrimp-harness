@@ -6,6 +6,7 @@ import json
 import io
 from pathlib import Path
 import tempfile
+import threading
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -374,6 +375,103 @@ class CosAccessTests(unittest.TestCase):
                 with self.assertRaises(type(error)) as caught:
                     access.verify_access(client, 'release-bucket')
                 self.assertIs(caught.exception, error)
+
+
+class CosUploadTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / 'asset.zip'
+        self.client = mock.Mock(spec=['put_object', 'create_multipart_upload', 'upload_part',
+                                      'complete_multipart_upload', 'abort_multipart_upload'])
+        self.client.create_multipart_upload.return_value = {'UploadId': 'new-upload-only'}
+        self.store = mirror.CosStore(self.client, 'release-bucket')
+
+    def item(self, data):
+        self.path.write_bytes(data)
+        return {'name': self.path.name, 'path': str(self.path), 'key': 'harness/releases/v0.4.10/asset.zip',
+                'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+
+    def test_small_asset_uses_md5_checked_object_upload_with_immutable_metadata(self):
+        item = self.item(b'signed original bytes')
+        received = []
+        self.client.put_object.side_effect = lambda **kwargs: received.append(kwargs['Body'].read())
+        self.store.upload(item)
+        self.assertEqual(received, [b'signed original bytes'])
+        call = self.client.put_object.call_args.kwargs
+        self.assertTrue(call['EnableMD5'])
+        self.assertEqual(call['Bucket'], 'release-bucket')
+        self.assertEqual(call['Key'], item['key'])
+        self.assertEqual(call['Metadata'], {'x-cos-meta-sha256': item['sha256']})
+        self.assertIn('immutable', call['CacheControl'])
+        self.assertEqual(call['StorageClass'], 'STANDARD')
+        self.client.create_multipart_upload.assert_not_called()
+
+    def test_large_asset_preserves_bytes_md5_and_order_without_listing_remote_uploads(self):
+        data = b'A' * (8 * 1024 * 1024) + b'B' * (8 * 1024 * 1024) + b'C' * 17
+        item, received = self.item(data), {}
+        second_started = threading.Event()
+        def upload(**kwargs):
+            number = kwargs['PartNumber']
+            if number == 1:
+                self.assertTrue(second_started.wait(5))
+            elif number == 2:
+                second_started.set()
+            received[number] = kwargs['Body']
+            self.assertTrue(kwargs['EnableMD5'])
+            self.assertEqual(kwargs['UploadId'], 'new-upload-only')
+            self.assertEqual(kwargs['Bucket'], 'release-bucket')
+            self.assertEqual(kwargs['Key'], item['key'])
+            return {'eTaG': f'"part-{number}"'}
+        self.client.upload_part.side_effect = upload
+        self.store.upload(item)
+        self.assertEqual(b''.join(received[n] for n in sorted(received)), data)
+        self.assertEqual([len(received[n]) for n in sorted(received)], [8 * 1024 * 1024, 8 * 1024 * 1024, 17])
+        self.assertEqual(self.client.create_multipart_upload.call_args.kwargs['Metadata'],
+                         {'x-cos-meta-sha256': item['sha256']})
+        self.assertEqual(self.client.complete_multipart_upload.call_args.kwargs['MultipartUpload'],
+                         {'Part': [{'PartNumber': n, 'ETag': f'"part-{n}"'} for n in range(1, 4)]})
+        self.client.abort_multipart_upload.assert_not_called()
+
+    def test_failed_part_aborts_only_the_new_upload_and_never_completes(self):
+        item = self.item(b'A' * (8 * 1024 * 1024 + 1))
+        failure = RuntimeError('part upload disconnected')
+        self.client.upload_part.side_effect = failure
+        with self.assertRaises(RuntimeError) as caught:
+            self.store.upload(item)
+        self.assertIs(caught.exception, failure)
+        self.client.complete_multipart_upload.assert_not_called()
+        self.client.abort_multipart_upload.assert_called_once_with(
+            Bucket='release-bucket', Key=item['key'], UploadId='new-upload-only')
+
+    def test_failed_completion_preserves_error_even_if_abort_also_fails(self):
+        item = self.item(b'A' * (8 * 1024 * 1024 + 1))
+        self.client.upload_part.return_value = {'ETag': 'part-etag'}
+        failure = RuntimeError('completion response lost')
+        self.client.complete_multipart_upload.side_effect = failure
+        self.client.abort_multipart_upload.side_effect = RuntimeError('abort failed')
+        with self.assertRaises(RuntimeError) as caught:
+            self.store.upload(item)
+        self.assertIs(caught.exception, failure)
+        self.client.abort_multipart_upload.assert_called_once_with(
+            Bucket='release-bucket', Key=item['key'], UploadId='new-upload-only')
+
+    def test_failed_initiation_does_not_abort_any_existing_upload(self):
+        item = self.item(b'A' * (8 * 1024 * 1024 + 1))
+        self.client.create_multipart_upload.side_effect = RuntimeError('initiate denied')
+        with self.assertRaisesRegex(RuntimeError, 'initiate denied'):
+            self.store.upload(item)
+        self.client.upload_part.assert_not_called()
+        self.client.complete_multipart_upload.assert_not_called()
+        self.client.abort_multipart_upload.assert_not_called()
+
+    def test_truncated_file_cannot_complete_or_publish_partial_bytes(self):
+        item = self.item(b'A' * (8 * 1024 * 1024 + 1))
+        self.path.write_bytes(b'A')
+        with self.assertRaisesRegex(ValueError, 'changed during multipart upload'):
+            self.store.upload(item)
+        self.client.complete_multipart_upload.assert_not_called()
+        self.client.abort_multipart_upload.assert_called_once()
 
 
 if __name__ == "__main__":

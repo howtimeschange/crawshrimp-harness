@@ -16,6 +16,7 @@ GitHub Release 保存原始正式版与签名包。`Build Desktop App` 完成正
 1. 回查指定版本为非草稿、非预发布的 `vX.Y.Z` 正式版。
 2. 下载全部 10 个原始资产，验证完整文件清单、GitHub SHA256、更新文件 SHA512、平台与版本。
 3. 上传到 `harness/releases/vX.Y.Z/<原始文件名>`。分块上传开启 MD5 校验，回读长度和 SHA256 属性，并通过公开地址核对 Range 下载内容。
+   大于 8MB 的文件使用新的分块上传 ID、8MB 分块及最多 4 个并发；不复用 SDK 的历史断点续传查询，避免额外要求桶级 `ListMultipartUploads` 权限。失败仅取消本次未完成的上传，不删除已存在对象。重跑仍通过 HEAD + 长度/SHA256 复用已经完整验证的对象。
 4. 所有文件成功后才更新 `harness/latest/latest.yml`、`latest-mac.yml`；两份文件引用固定版本的 COS 绝对 URL，保留 SHA512。
 5. 最后发布 `harness/latest/release.json`，官网据此更新国内下载按钮。GitHub Release 说明追加国内下载链接。
 
@@ -63,10 +64,25 @@ gh workflow run mirror-release-to-cos.yml --ref main -f verify_access_only=true
 
 ```bash
 gh workflow run mirror-release-to-cos.yml --ref main -f tag=v0.4.10 -f skip_cleanup=true
-python3 -m unittest discover -s app/scripts -p 'test_cos_release_mirror.py'
 ```
 
 检查原运行的 `mirror-result.json`、COS 更新元数据和下载清单；实际下载至少一个安装包并重算 SHA256。官网按钮必须读回相同版本与对应 COS 地址。首次接入不会改变旧客户端包内配置；下一次正常正式版构建才带国内更新源，旧客户端先通过原 GitHub 更新到该版本。
+
+### 先在本地验证
+
+```bash
+python3 -m pip install -r app/scripts/cos-release-requirements.txt
+python3 -m unittest discover -s app/scripts -p 'test_cos_*.py'
+node --test app/scripts/validate-update-artifacts.test.js app/src/updateService.test.js tests/desktop-auto-update.test.js
+```
+
+COS 契约测试使用固定版本的真实 SDK 和仅监听 `127.0.0.1` 的内存 HTTP 服务，凭据为无效测试值。它复现 `upload_file` 的隐式 `ListMultipartUploads` 拒绝，检查实际 prefix 编码、对象权限范围、MD5/分片顺序、故障重试及重跑复用；完整 CLI 测试同时执行真实 Node 产物验证器，覆盖更新元数据、完整文件哈希、不删除旧包和默认清理的兼容性。main CI 与镜像工作流都运行全部测试；镜像中的测试和正式资产 dry-run 均在获取腾讯临时凭据之前执行。
+
+本地权限模型只解释仓库策略中的相关语句，不能证明腾讯云实际 IAM 求值、网络和服务端行为。硬中断进程后，未完成分片可能保留；重跑新建上传 ID，不枚举或清理之前的未完成上传，也不修改已经完成的同版本对象。正常可捕获的上传失败会尝试取消本次上传，取消失败时保留原始错误，不扩大权限。
+
+因此正式镜像在本地门禁、正式资产校验和只读权限边界检查通过后，先以 `--upload-probe-only` 用最小的正式 `.blockmap` 文件执行一次单分片上传及公开下载校验。它只写入本来就要镜像的固定版本对象，不写 `latest`、不清理旧包；成功后完整发布复用该文件。若对象已存在，只验证完全匹配并复用，结果会标明未重新行使分片权限。首次 v0.4.10 对象为 454106 字节的 Windows blockmap；无额外测试目录或云端权限。
+
+2026-11-02 的重建运行 `41441738831` 已完成 GitHub 正式发布，但其旧上传实现因 SDK 1.9.44 `upload_file` 在上传前调用桶级 `ListMultipartUploads` 而失败。修复改用对象级 InitiateMultipartUpload → UploadPart → CompleteMultipartUpload；无需添加桶级分片列举权限。本地测试通过并不等于真实 COS 镜像验收完成。
 
 ### 排查 OIDC 成功但列目录 AccessDenied
 

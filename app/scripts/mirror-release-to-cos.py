@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Mirror a verified stable GitHub release; promote update feeds only after assets exist."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -157,6 +158,28 @@ def publish(plan, store, verify_public):
             "update_feed": f"{plan['base_url']}/{plan['prefix']}/latest/", "assets": plan["manifest"]["assets"]}
 
 
+def verify_upload_path(plan, store, verify_public):
+    """Verify one approved immutable blockmap; never promote feeds or prune objects."""
+    current = store.read_json(f"{plan['prefix']}/latest/release.json")
+    if not plan["promote"] or (current and version_tuple(current["tag_name"]) > version_tuple(plan["tag"])):
+        raise ValueError("Upload probe requires the latest stable release")
+    item = min((item for item in plan["objects"] if item["name"].endswith(".blockmap")),
+               key=lambda item: item["size"])
+    head = store.head(item["key"])
+    if head:
+        if not same_object(head, item["size"], item["sha256"]):
+            raise ValueError(f"Immutable COS object conflicts with this release: {item['key']}")
+    else:
+        # One final part may be smaller than 1MB. Use a real release object, no canary namespace.
+        store.upload(item, force_multipart=True)
+        if not same_object(store.head(item["key"]) or {}, item["size"], item["sha256"]):
+            raise ValueError(f"COS upload verification failed: {item['key']}")
+    verify_public(f"{plan['base_url']}/{item['key']}", Path(item["path"]))
+    return {"tag": plan["tag"], "key": item["key"], "size": item["size"], "sha256": item["sha256"],
+            "multipart_exercised": not bool(head), "reused": bool(head), "promoted": False,
+            "deleted_old_objects": []}
+
+
 def prune_old_releases(plan, store):
     # Called only after all public asset and metadata probes have succeeded.
     current = store.read_json(f"{plan['prefix']}/latest/release.json")
@@ -196,12 +219,49 @@ class CosStore:
         body = self.client.get_object(Bucket=self.bucket, Key=key)["Body"].get_raw_stream().read()
         return json.loads(body)
 
-    def upload(self, item):
-        self.client.upload_file(Bucket=self.bucket, Key=item["key"], LocalFilePath=item["path"],
-                                PartSize=8, MAXThread=4, EnableMD5=True,
-                                StorageClass="STANDARD", CacheControl="public, max-age=31536000, immutable",
-                                ContentDisposition=f'attachment; filename="{item["name"]}"',
-                                Metadata={"x-cos-meta-sha256": item["sha256"]})
+    def upload(self, item, force_multipart=False):
+        headers = {"StorageClass": "STANDARD", "CacheControl": "public, max-age=31536000, immutable",
+                   "ContentDisposition": f'attachment; filename="{item["name"]}"',
+                   "Metadata": {"x-cos-meta-sha256": item["sha256"]}}
+        path, part_size = Path(item["path"]), 8 * 1024 * 1024
+        if item["size"] <= part_size and not force_multipart:
+            with path.open("rb") as source:
+                self.client.put_object(Bucket=self.bucket, Key=item["key"], Body=source, EnableMD5=True, **headers)
+            return
+
+        # SDK 1.9.44 upload_file always lists historic uploads before starting.
+        # Start our own upload ID so existing object-scoped permissions suffice.
+        part_count = (item["size"] + part_size - 1) // part_size
+        if part_count > 10000:
+            raise ValueError("Release asset exceeds the supported multipart part count")
+        upload_id = self.client.create_multipart_upload(Bucket=self.bucket, Key=item["key"], **headers)["UploadId"]
+
+        def upload_part(number):
+            offset = (number - 1) * part_size
+            expected_size = min(part_size, item["size"] - offset)
+            with path.open("rb") as source:
+                source.seek(offset)
+                body = source.read(expected_size)
+            if len(body) != expected_size:
+                raise ValueError("Release asset changed during multipart upload")
+            response = self.client.upload_part(Bucket=self.bucket, Key=item["key"], UploadId=upload_id,
+                                               PartNumber=number, Body=body, EnableMD5=True)
+            etag = {key.lower(): value for key, value in response.items()}["etag"]
+            return {"PartNumber": number, "ETag": etag}
+
+        try:
+            # Workers read their own slices: at most four 8MB chunks are resident.
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                parts = list(pool.map(upload_part, range(1, part_count + 1)))
+            self.client.complete_multipart_upload(Bucket=self.bucket, Key=item["key"], UploadId=upload_id,
+                                                  MultipartUpload={"Part": parts})
+        except Exception:
+            # Abort only this new, uncommitted upload; never delete an object.
+            try:
+                self.client.abort_multipart_upload(Bucket=self.bucket, Key=item["key"], UploadId=upload_id)
+            except Exception:
+                pass  # Keep the original failure; no permission expansion or retry.
+            raise
 
     def put_bytes(self, key, body, content_type):
         digest = hashlib.sha256(body).hexdigest()
@@ -239,6 +299,18 @@ def verify_public_range(url, path):
             raise ValueError(f"Public COS download verification failed: {url}")
 
 
+def verify_public_file(url, path):
+    digest, size = hashlib.sha256(), 0
+    with urllib.request.urlopen(url, timeout=30) as response:
+        if response.status != 200:
+            raise ValueError(f"Public COS download verification failed: {url}")
+        for chunk in iter(lambda: response.read(8 * 1024 * 1024), b""):
+            size += len(chunk)
+            digest.update(chunk)
+    if size != path.stat().st_size or digest.hexdigest() != digest_file(path):
+        raise ValueError(f"Public COS download verification failed: {url}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release-json", required=True)
@@ -248,7 +320,10 @@ def main():
     parser.add_argument("--region", required=True)
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--prefix", default="harness")
-    parser.add_argument("--dry-run", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true")
+    mode.add_argument("--upload-probe-only", action="store_true",
+                      help="Verify only one immutable blockmap using multipart; do not promote or clean up")
     parser.add_argument("--skip-cleanup", action="store_true", help="Keep all existing COS objects")
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
@@ -265,7 +340,8 @@ def main():
                                       SecretKey=os.environ["TENCENT_SECRET_KEY"],
                                       Token=os.environ.get("TENCENT_TOKEN"), Scheme="https"))
         store = CosStore(client, args.bucket)
-        report = publish(plan, store, verify_public_range)
+        report = (verify_upload_path(plan, store, verify_public_file) if args.upload_probe_only else
+                  publish(plan, store, verify_public_range))
         # Verify that public update metadata agrees with this completed promotion.
         if report["promoted"]:
             for name, expected in plan["metadata"].items():

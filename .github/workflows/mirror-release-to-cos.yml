@@ -84,6 +84,12 @@ jobs:
         with:
           node-version: '22.19.0'
 
+      - name: Install official COS SDK for offline contract tests
+        run: python3 -m pip install -r app/scripts/cos-release-requirements.txt
+
+      - name: Test COS protocol and publication without cloud access
+        run: python3 -m unittest discover -s app/scripts -p 'test_cos_*.py'
+
       - name: Resolve published stable release
         shell: bash
         run: |
@@ -109,9 +115,6 @@ jobs:
           gh release download "${RELEASE_TAG}" --pattern '*mac*' --dir release-assets/macos
           gh release download "${RELEASE_TAG}" --pattern '*win*' --pattern 'latest.yml' --dir release-assets/windows
 
-      - name: Test mirror failure paths
-        run: python3 -m unittest discover -s app/scripts -p 'test_cos_release_mirror.py'
-
       - name: Validate exact release assets and hashes before cloud access
         run: |
           python3 app/scripts/mirror-release-to-cos.py \
@@ -122,11 +125,15 @@ jobs:
       - name: Get narrowly scoped short-lived Tencent credentials
         run: python3 app/scripts/tencent-oidc-credentials.py
 
-      - name: Install official COS SDK
-        run: python3 -m pip install -r app/scripts/cos-release-requirements.txt
-
       - name: Verify scoped list access before modifying storage
         run: python3 app/scripts/verify-cos-release-access.py
+
+      - name: Verify minimal multipart path with one immutable release blockmap
+        run: |
+          python3 app/scripts/mirror-release-to-cos.py \
+            --release-json release.json --latest-release-json upstream-latest.json \
+            --assets-root release-assets --bucket "${COS_RELEASE_BUCKET}" --region "${COS_RELEASE_REGION}" \
+            --base-url "${COS_RELEASE_BASE_URL}" --upload-probe-only --output mirror-upload-probe.json
 
       - name: Upload immutable assets, verify downloads, then promote metadata
         shell: bash
@@ -168,6 +175,7 @@ jobs:
           name: cos-mirror-${{ github.run_id }}
           path: |
             mirror-plan.json
+            mirror-upload-probe.json
             mirror-result.json
           if-no-files-found: ignore
           retention-days: 7
