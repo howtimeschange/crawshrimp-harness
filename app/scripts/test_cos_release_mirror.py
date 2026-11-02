@@ -3,10 +3,13 @@ import copy
 import hashlib
 import importlib.util
 import json
+import io
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
+import urllib.parse
 
 
 HERE = Path(__file__).parent
@@ -21,6 +24,7 @@ def load_script(name):
 
 mirror = load_script("mirror-release-to-cos")
 oidc = load_script("tencent-oidc-credentials")
+access = load_script("verify-cos-release-access")
 BASE = "https://downloads.example.com"
 
 
@@ -230,6 +234,33 @@ class MirrorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'manifest changed'):
             mirror.prune_old_releases(plan, store)
 
+    def test_skip_cleanup_promotes_verified_assets_without_any_list_or_delete(self):
+        plan, store = self.plan(), MemoryStore()
+        # MemoryStore has no list_keys/delete: any cleanup would fail this smoke test.
+        release_path, latest_path = self.root / 'release.json', self.root / 'upstream.json'
+        release_path.write_text(json.dumps(self.release))
+        latest_path.write_text(json.dumps(self.latest))
+        output = self.root / 'result.json'
+        argv = ['mirror-release-to-cos.py', '--release-json', str(release_path),
+                '--latest-release-json', str(latest_path), '--assets-root', str(self.root),
+                '--bucket', 'release-bucket', '--region', 'ap-guangzhou', '--base-url', BASE,
+                '--skip-cleanup', '--output', str(output)]
+        public_bodies = [*plan['metadata'].values(), json.dumps(plan['manifest']).encode()]
+        sdk = SimpleNamespace(CosConfig=mock.Mock(), CosS3Client=mock.Mock())
+        with mock.patch('sys.argv', argv), mock.patch.dict('sys.modules', {'qcloud_cos': sdk}), \
+             mock.patch.dict(mirror.os.environ, {'TENCENT_SECRET_ID': 'fake-id', 'TENCENT_SECRET_KEY': 'fake-key'}), \
+             mock.patch.object(mirror.subprocess, 'run'), mock.patch.object(mirror, 'build_plan', return_value=plan), \
+             mock.patch.object(mirror, 'CosStore', return_value=store), \
+             mock.patch.object(mirror, 'verify_public_range'), \
+             mock.patch.object(mirror.urllib.request, 'urlopen', side_effect=[io.BytesIO(b) for b in public_bodies]), \
+             mock.patch('builtins.print'):
+            mirror.main()
+        result = json.loads(output.read_text())
+        self.assertTrue(result['promoted'])
+        self.assertTrue(result['cleanup_skipped'])
+        self.assertEqual(result['deleted_old_objects'], [])
+        self.assertEqual(len(result['uploaded']), 10)
+
 
 class OidcTests(unittest.TestCase):
     def setUp(self):
@@ -282,6 +313,67 @@ class OidcTests(unittest.TestCase):
         self.assertEqual(statements[1]['action'], ['name/cos:DeleteObject'])
         self.assertTrue(statements[1]['resource'][0].endswith('/harness/releases/*'))
         self.assertEqual(statements[2]['condition'], {'string_equal': {'cos:prefix': 'harness%2Freleases%2F'}})
+
+
+class CosAccessTests(unittest.TestCase):
+    def test_list_policy_matches_encoded_request_and_only_release_directory(self):
+        statements = json.loads((HERE.parent.parent / 'docs/tencent-cos-release-policy.json').read_text())['statement']
+        listing = [statement for statement in statements if 'name/cos:GetBucket' in statement['action']]
+        self.assertEqual(len(listing), 1)
+        self.assertEqual(listing[0]['effect'], 'allow')
+        self.assertEqual(listing[0]['action'], ['name/cos:GetBucket'])
+        self.assertEqual(listing[0]['resource'], [
+            'qcs::cos:ap-guangzhou:uid/1252445586:crawshrimp-harness-releases-1252445586/*'])
+        # COS evaluates prefix conditions against the URL-encoded query value.
+        self.assertEqual(listing[0]['condition'], {'string_equal': {
+            'cos:prefix': urllib.parse.quote(access.RELEASE_PREFIX, safe='')}})
+        for prefix in access.DENIED_PREFIXES:
+            self.assertNotEqual(urllib.parse.quote(prefix or '', safe=''),
+                             listing[0]['condition']['string_equal']['cos:prefix'])
+        self.assertEqual(sum('name/cos:GetBucket' in s['action'] for s in statements), 1)
+
+    @staticmethod
+    def denied(status=403, code='AccessDenied'):
+        error = RuntimeError('COS rejected the request')
+        error.get_status_code = lambda: status
+        error.get_error_code = lambda: code
+        return error
+
+    def test_access_probe_checks_allowed_and_denied_boundaries_using_only_list(self):
+        client = mock.Mock(spec=['list_objects'])
+        client.list_objects.side_effect = [{}, *[self.denied() for _ in access.DENIED_PREFIXES]]
+        access.verify_access(client, 'release-bucket')
+        calls = [mock.call(Bucket='release-bucket', Prefix='harness/releases/', MaxKeys=1)]
+        calls.extend(mock.call(**{'Bucket': 'release-bucket', 'MaxKeys': 1,
+                                  **({'Prefix': prefix} if prefix is not None else {})})
+                     for prefix in access.DENIED_PREFIXES)
+        self.assertEqual(client.list_objects.call_args_list, calls)
+
+    def test_access_probe_stops_immediately_if_allowed_prefix_is_denied(self):
+        client = mock.Mock(spec=['list_objects'])
+        client.list_objects.side_effect = self.denied()
+        with self.assertRaises(RuntimeError):
+            access.verify_access(client, 'release-bucket')
+        self.assertEqual(client.list_objects.call_count, 1)
+
+    def test_access_probe_fails_closed_for_each_unexpectedly_allowed_prefix(self):
+        for index, prefix in enumerate(access.DENIED_PREFIXES):
+            with self.subTest(prefix=prefix):
+                client = mock.Mock(spec=['list_objects'])
+                client.list_objects.side_effect = [{}, *[self.denied() for _ in range(index)], {}]
+                with self.assertRaisesRegex(RuntimeError, 'exceeds the release-directory boundary'):
+                    access.verify_access(client, 'release-bucket')
+                self.assertEqual(client.list_objects.call_count, index + 2)
+
+    def test_access_probe_does_not_mistake_auth_or_server_errors_for_a_scoped_denial(self):
+        for error in (self.denied(403, 'SignatureDoesNotMatch'), self.denied(500, 'InternalError'),
+                      TimeoutError('network timeout')):
+            with self.subTest(error=error):
+                client = mock.Mock(spec=['list_objects'])
+                client.list_objects.side_effect = [{}, error]
+                with self.assertRaises(type(error)) as caught:
+                    access.verify_access(client, 'release-bucket')
+                self.assertIs(caught.exception, error)
 
 
 if __name__ == "__main__":

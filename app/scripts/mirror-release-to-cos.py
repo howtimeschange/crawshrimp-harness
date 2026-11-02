@@ -249,6 +249,7 @@ def main():
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--prefix", default="harness")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--skip-cleanup", action="store_true", help="Keep all existing COS objects")
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     release = json.loads(Path(args.release_json).read_text())
@@ -274,7 +275,8 @@ def main():
             with urllib.request.urlopen(report["download_manifest"], timeout=30) as response:
                 if json.load(response) != plan["manifest"]:
                     raise ValueError("Public download manifest mismatch")
-            report["deleted_old_objects"] = prune_old_releases(plan, store)
+            report["cleanup_skipped"] = args.skip_cleanup
+            report["deleted_old_objects"] = [] if args.skip_cleanup else prune_old_releases(plan, store)
     Path(args.output).write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps({"tag": plan["tag"], "dry_run": args.dry_run,
                       "promoted": report.get("promoted", False), "objects": len(plan["objects"])}))

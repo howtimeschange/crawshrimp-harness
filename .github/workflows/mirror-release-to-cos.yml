@@ -6,10 +6,17 @@ on:
       tag:
         type: string
         required: true
+      skip_cleanup:
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       verify_access_only:
         description: 'Only verify OIDC and scoped COS access; do not upload or publish'
+        type: boolean
+        default: false
+      skip_cleanup:
+        description: 'Keep all existing COS objects; skip old-release deletion'
         type: boolean
         default: false
       tag:
@@ -48,13 +55,7 @@ jobs:
       - name: Verify scoped list access without modifying storage
         run: |
           python3 -m pip install -r app/scripts/cos-release-requirements.txt
-          python3 - <<'PY'
-          import os
-          from qcloud_cos import CosConfig, CosS3Client
-          client = CosS3Client(CosConfig(Region=os.environ['COS_RELEASE_REGION'], SecretId=os.environ['TENCENT_SECRET_ID'], SecretKey=os.environ['TENCENT_SECRET_KEY'], Token=os.environ['TENCENT_TOKEN'], Scheme='https'))
-          response = client.list_objects(Bucket=os.environ['COS_RELEASE_BUCKET'], Prefix='harness/releases/', MaxKeys=1)
-          print('OIDC and scoped COS list verified; no objects modified')
-          PY
+          python3 app/scripts/verify-cos-release-access.py
 
   mirror:
     if: vars.COS_RELEASE_ENABLED == 'true' && inputs.verify_access_only != true
@@ -68,6 +69,7 @@ jobs:
       COS_RELEASE_BASE_URL: ${{ vars.COS_RELEASE_BASE_URL }}
       COS_OIDC_PROVIDER: ${{ vars.COS_OIDC_PROVIDER }}
       COS_ROLE_ARN: ${{ vars.COS_ROLE_ARN }}
+      SKIP_CLEANUP: ${{ inputs.skip_cleanup }}
 
     steps:
       - uses: actions/checkout@v4
@@ -123,12 +125,20 @@ jobs:
       - name: Install official COS SDK
         run: python3 -m pip install -r app/scripts/cos-release-requirements.txt
 
+      - name: Verify scoped list access before modifying storage
+        run: python3 app/scripts/verify-cos-release-access.py
+
       - name: Upload immutable assets, verify downloads, then promote metadata
+        shell: bash
         run: |
+          cleanup_args=()
+          if [ "${SKIP_CLEANUP}" = 'true' ]; then
+            cleanup_args+=(--skip-cleanup)
+          fi
           python3 app/scripts/mirror-release-to-cos.py \
             --release-json release.json --latest-release-json upstream-latest.json \
             --assets-root release-assets --bucket "${COS_RELEASE_BUCKET}" --region "${COS_RELEASE_REGION}" \
-            --base-url "${COS_RELEASE_BASE_URL}" --output mirror-result.json
+            --base-url "${COS_RELEASE_BASE_URL}" --output mirror-result.json "${cleanup_args[@]}"
 
       - name: Add verified domestic download links to release notes
         shell: bash

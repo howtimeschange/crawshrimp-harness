@@ -33,7 +33,7 @@ GitHub Actions 使用 `id-token: write` 申请短期 OIDC 令牌，再通过腾�
 - 公钥：GitHub OIDC discovery 的 `jwks_uri`，启用自动轮转。
 - 角色：`harness-release-ci`；ARN：`qcs::cam::uin/793301325:roleName/harness-release-ci`。
 - 信任条件：[角色信任策略](tencent-cos-release-trust.json)，仅该仓库 main / 版本 tag，使用 GitHub 不可变主体 `repo:howtimeschange@4083536/crawshrimp-harness@1334537867`；PR、其他仓库及回收同名账号/仓库均不匹配。
-- 权限：[最小对象读写策略](tencent-cos-release-policy.json)，仅此桶 `harness/*`，增加仅 `harness/releases/*` 的 DeleteObject，用于用户要求的旧安装包清理；GetBucket 仅允许固定 `harness/releases/` 前缀（COS 条件键必须 URL 编码为 `harness%2Freleases%2F`）；不含管理桶、修改权限、其他资源权限。
+- 权限：[最小对象读写策略](tencent-cos-release-policy.json)，对象操作仅此桶 `harness/*`，DeleteObject 仅 `harness/releases/*`，用于已授权的旧安装包清理；GetBucket 使用此桶 `/*` 资源，并通过 `string_equal` 限定请求前缀必须为 `harness/releases/`。策略中的 `cos:prefix` 必须填写 URL 编码后的 `harness%2Freleases%2F`；不含管理桶、修改权限、其他资源权限。
 - 公开下载：[匿名只读对象策略](tencent-cos-public-download-policy.json)，由管理员配置，CI 角色无权修改。
 
 配置仓库 Actions Variables：
@@ -51,14 +51,30 @@ GitHub Actions 使用 `id-token: write` 申请短期 OIDC 令牌，再通过腾�
 
 ## 补传与验证
 
-在 main 的 Actions 页面手动运行 `Mirror Desktop Release to Tencent COS`，tag 输入 `v0.4.10`（留空使用当前最新正式版）。仅同步已发布文件，不重新构建、不重签、不重发版本。
+先运行只读权限检查。它仅发出 MaxKeys=1 的列目录请求：发布目录必须成功，未指定前缀、`harness/`、`harness/latest/`、缺少尾斜杠和相似目录前缀必须返回 403 AccessDenied。检查不上传、不修改元数据、不删除对象，也不输出对象名称。完整镜像同样在上传之前运行此检查，权限不足或越界时立即停止。
 
 ```bash
-gh workflow run mirror-release-to-cos.yml --ref main -f tag=v0.4.10
+gh workflow run mirror-release-to-cos.yml --ref main -f verify_access_only=true
+```
+
+在 main 的 Actions 页面手动运行 `Mirror Desktop Release to Tencent COS`，tag 输入 `v0.4.10`（留空使用当前最新正式版）。仅同步已发布文件，不重新构建、不重签、不重发版本。
+
+如本次验收未授权删除旧对象，必须设置 `skip_cleanup=true`；它映射为镜像脚本的 `--skip-cleanup`，仍验证安装包和公开元数据，但跳过整个旧包列举/删除步骤。默认 `false` 保持日常发布的已有保留策略。
+
+```bash
+gh workflow run mirror-release-to-cos.yml --ref main -f tag=v0.4.10 -f skip_cleanup=true
 python3 -m unittest discover -s app/scripts -p 'test_cos_release_mirror.py'
 ```
 
 检查原运行的 `mirror-result.json`、COS 更新元数据和下载清单；实际下载至少一个安装包并重算 SHA256。官网按钮必须读回相同版本与对应 COS 地址。首次接入不会改变旧客户端包内配置；下一次正常正式版构建才带国内更新源，旧客户端先通过原 GitHub 更新到该版本。
+
+### 排查 OIDC 成功但列目录 AccessDenied
+
+2026-11-02 的运行 `41438561505` attempt 2 在获取临时凭据后，`list_objects(Prefix='harness/releases/', MaxKeys=1)` 返回 AccessDenied。角色关联的策略条件是未编码的 `harness/releases/*`，不符合腾讯云对 `cos:prefix` 请求参数条件的编码要求；桶的 `/` 资源写法也与当前 CAM 操作表及目录授权示例中的 `/*` 不一致。修复仅调整独立的 GetBucket 语句：此桶 `/*` 资源 + 编码后的精确前缀，不扩大对象读写或匿名下载权限。
+
+官方依据：[cos:prefix 条件键示例](https://cloud.tencent.com/document/product/436/71307)、[生效条件与请求参数编码](https://cloud.tencent.com/document/product/436/71306)、[CAM 中的 COS 操作资源格式](https://intl.cloud.tencent.com/document/product/598/57092)。
+
+本次排查期间，线上策略在 12:01:03 UTC 已由其他正在进行的操作切换到版本 2，内容与上述修复一致；本任务只读回查，未重复修改。随后同一工作流 attempt 3 的 job `125264443189` 于 12:03:31 UTC 输出 `OIDC and scoped COS list verified; no objects modified`，mirror job 跳过。版本 1 仍保留，可用于策略回滚。这证明正向列目录访问恢复；新增的反向边界检查和完整镜像仍需运行，不能视为安装包上传成功。
 
 ## 地域与双源回退
 
