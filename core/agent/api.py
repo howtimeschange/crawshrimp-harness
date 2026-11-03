@@ -1241,12 +1241,15 @@ def build_agent_mcp_asgi(token_provider, context_acquirer=None,
 @router.get("/session-resources")
 def session_resources(runtime_session_id: str) -> dict:
     from pathlib import Path
+    from core.office.artifacts import is_office_working_image
     artifacts, tabs, image_calls = {}, {}, {}
     active = ""
     activity = None
     for row in db.list_session_resource_events(runtime_session_id):
         data = json.loads(row["payload_json"])
         if row["event_type"] == "artifact.created":
+            if is_office_working_image(data):
+                continue
             snapshot = data.get("file_snapshot") if isinstance(data.get("file_snapshot"), dict) else {}
             key = snapshot.get("version_id") or data.get("path") or data.get("artifact_id")
             if key:

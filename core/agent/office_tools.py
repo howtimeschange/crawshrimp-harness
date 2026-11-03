@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from core.office import jobs
+from core.office.artifacts import publication_files
 from core.office.executor import execute
 from core.office.runtime import OfficeError, python_executable
 
@@ -34,7 +35,7 @@ def failed(exc: Exception) -> dict:
 def publish(data: dict) -> list[str]:
     gw = gateway()
     result = data.get("result") or {}
-    files = result.get("files") or ([result["document"]] if result.get("document") else [])
+    files = publication_files(result)
     registered = []
     for raw in files:
         path = Path(raw)

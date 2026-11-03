@@ -49,9 +49,17 @@
         </section>
         <section><div class="section-heading"><button :aria-expanded="filesExpanded || !!query" @click="filesExpanded = !filesExpanded"><span class="section-chevron" :class="{ expanded: filesExpanded || query }" aria-hidden="true">›</span> 产物 <small>{{ query ? `${filteredArtifacts.length} / ${artifacts.length}` : artifacts.length }}</small></button></div>
           <div v-if="filesExpanded || query" class="section-items file-items" aria-label="产物列表" tabindex="0"><p v-if="!filteredArtifacts.length" class="empty">{{ loading ? '正在加载资源…' : query ? '没有匹配的产物' : '生成的文件会显示在这里' }}</p>
-            <div v-for="item in filteredArtifacts" :key="item.path || item.artifact_id" class="resource-row">
-              <button class="resource-main" :title="`${item.filename}\n${size(item.size)} · ${item.path}`" @click="openArtifact(item)"><ResourceIcon :item="item" /><span class="resource-name">{{ item.filename }}</span><small v-if="item.historical_after_failure">上次可用历史版本</small><small v-if="currentFileAvailable(item)">{{ item.file_snapshot.status === 'too_large' ? '文件过大，未保存历史版本' : '快照空间已满，未保存历史版本' }}</small><small v-else-if="item.exists === false">已缺失</small><small v-if="item.source">{{ ({ shell: '命令', office: 'Office', adapter: '适配器' })[item.source] || item.source }}</small><small v-if="item.office?.delivery?.status === 'final'" title="文件哈希与数据、视觉验收记录一致">已验收交付</small><small v-else-if="item.office" title="尚未登记为最终交付">待交付</small><small v-if="artifactAge(item)" class="artifact-age">{{ artifactAge(item) }}</small></button>
-              <button v-if="currentFileAvailable(item)" title="未保存历史版本，打开原文件时内容可能变化" @click="openCurrentArtifact(item)">打开当前原文件</button>
+            <div v-for="item in filteredArtifacts" :key="item.path || item.artifact_id" class="resource-row artifact-row">
+              <button class="resource-main" :title="`${item.filename}\n${size(item.size)} · ${item.source_path || item.path}`" @click="openArtifact(item)">
+                <ResourceIcon :item="item" />
+                <span class="resource-details">
+                  <span class="resource-name">{{ item.filename }}</span>
+                  <span class="resource-metadata"><small v-if="item.source">{{ ({ shell: '命令', office: 'Office', adapter: '适配器' })[item.source] || item.source }}</small><small v-if="item.office?.delivery?.status === 'final'" title="文件哈希与数据、视觉验收记录一致">已验收交付</small><small v-else-if="item.office" title="尚未登记为最终交付">待交付</small><small v-if="artifactAge(item)" class="artifact-age">{{ artifactAge(item) }}</small></span>
+                  <small v-if="item.historical_after_failure" class="resource-warning">上次可用历史版本</small>
+                  <small v-if="currentFileAvailable(item)" class="resource-warning">{{ item.file_snapshot.status === 'too_large' ? '文件过大，未保存历史版本' : '快照空间已满，未保存历史版本' }}</small><small v-else-if="item.exists === false" class="resource-warning">已缺失</small>
+                </span>
+              </button>
+              <button v-if="currentFileAvailable(item)" class="current-file-action" title="未保存历史版本，打开原文件时内容可能变化" @click="openCurrentArtifact(item)">打开当前原文件 ↗</button>
               <ResourceMenu v-else label="文件操作"><button @click="fileAction('openFile', item)">{{ extension(item.filename).toLowerCase() === 'zip' ? '显示文件' : '系统打开' }}</button><button @click="fileAction('revealFile', item)">在文件夹中定位</button><button @click="copy(item.path)">复制路径</button></ResourceMenu>
             </div>
           </div>
@@ -461,4 +469,13 @@ button,select,input{font:inherit;color:inherit}button{background:none;border:0;c
 .resource-icon-button{position:relative}.resource-icon-button::after,header button[title]::after,.session-panel-toggle::after{content:attr(title);position:absolute;right:0;top:calc(100% + 6px);z-index:60;white-space:nowrap;padding:5px 8px;border-radius:6px;background:var(--tooltip-bg,#292932);color:#f7f7fa;font:11px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 3px 12px #0002;opacity:0;pointer-events:none;transition:opacity 100ms ease}.resource-icon-button:hover::after,.resource-icon-button:focus-visible::after,header button[title]:hover::after,header button[title]:focus-visible::after,.session-panel-toggle:hover::after,.session-panel-toggle:focus-visible::after{opacity:1}
 .viewing header button:first-child::after{left:0;right:auto}
 .workspace-tab{flex:0 0 160px;min-width:120px;max-width:190px}
+.artifact-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start}
+.artifact-row .resource-main{grid-column:1;grid-row:1;width:100%;align-items:flex-start}
+.resource-details{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.resource-details .resource-name{display:block;flex:none;min-width:0}
+.resource-metadata{display:flex;flex-wrap:wrap;gap:3px 8px;color:var(--text3);font-size:11px;line-height:1.5}
+.resource-metadata small{white-space:nowrap;font-size:inherit}
+.resource-warning{display:block;white-space:normal;overflow-wrap:anywhere;color:var(--text2);font-size:11px;line-height:1.5}
+.current-file-action{grid-column:1 / -1;justify-self:start;margin:0 6px 8px 39px;font-size:11px;line-height:1.5;color:var(--text2);white-space:nowrap}
+
 </style>

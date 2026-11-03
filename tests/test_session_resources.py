@@ -126,3 +126,20 @@ def test_resource_query_projects_image_ownership_without_loading_tool_arguments(
     durable = db.list_events_after('a', 0)
     assert len(durable) == 8
     assert len(json.loads(durable[0]['payload_json'])['arguments']['script']) == 131072
+
+
+@pytest.mark.parametrize('status', [None, 'ready', 'quota_exceeded'])
+def test_old_office_working_images_are_hidden_without_hiding_image_deliveries(monkeypatch, status):
+    items = [
+        {'filename': 'icon.png', 'path': '/_fit/icon.png', 'source': 'office', 'office': {'job_id': 'old'}},
+        {'filename': 'deck.pptx', 'path': '/editable/deck.pptx', 'source': 'office', 'office': {'job_id': 'old'}},
+        {'filename': 'requested-image.png', 'path': '/images/requested.png', 'source': 'adapter'},
+    ]
+    if status:
+        items[0].update(source_path=items[0]['path'], path='/snapshots/icon.png' if status == 'ready' else '',
+                        file_snapshot={'status': status, 'version_id': 'old-image', 'size': 1, 'sha256': 'a' * 64})
+    monkeypatch.setattr(db, 'list_session_resource_events', lambda _: [
+        {'event_type': 'artifact.created', 'created_at': '2026-11-03T10:00:00Z', 'payload_json': json.dumps(item)}
+        for item in items
+    ])
+    assert {item['filename'] for item in api.session_resources('a')['artifacts']} == {'deck.pptx', 'requested-image.png'}
