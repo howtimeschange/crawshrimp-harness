@@ -1,0 +1,67 @@
+{
+  "runtime": {
+    "node": "24.21.0",
+    "electron": "44.7.0",
+    "undici": "7.30.1"
+  },
+  "broker": "native-installed",
+  "results": [
+    {
+      "scenario": "healthy-direct",
+      "systemProxy": false,
+      "requestBytes": 5543083,
+      "expectedBytes": 5543083,
+      "dispatches": 1,
+      "accepted": 1,
+      "completed": true,
+      "uploadAborted": false,
+      "transportCode": null,
+      "clientStatus": 200,
+      "unknown": false,
+      "elapsedMs": 248
+    },
+    {
+      "scenario": "healthy-proxy",
+      "systemProxy": false,
+      "requestBytes": 5543083,
+      "expectedBytes": 5543083,
+      "dispatches": 1,
+      "accepted": 1,
+      "completed": true,
+      "uploadAborted": false,
+      "transportCode": null,
+      "clientStatus": 200,
+      "unknown": false,
+      "elapsedMs": 244
+    },
+    {
+      "scenario": "reset-before-headers",
+      "systemProxy": false,
+      "requestBytes": 5543083,
+      "expectedBytes": 5543083,
+      "dispatches": 1,
+      "accepted": 1,
+      "completed": true,
+      "uploadAborted": false,
+      "transportCode": "UND_ERR_SOCKET",
+      "clientStatus": 409,
+      "unknown": true,
+      "elapsedMs": 335
+    },
+    {
+      "scenario": "reset-during-upload",
+      "systemProxy": false,
+      "requestBytes": 1024,
+      "expectedBytes": 5543083,
+      "dispatches": 1,
+      "accepted": 0,
+      "completed": false,
+      "uploadAborted": true,
+      "transportCode": "EPIPE",
+      "clientStatus": 409,
+      "unknown": true,
+      "elapsedMs": 333
+    }
+  ],
+  "paidCalls": 0
+}

@@ -126,7 +126,7 @@
             <label class="aiw-field aiw-field-wide">
               <span>模型</span>
               <select v-model="form.modelId" @change="syncModelDefaults">
-                <option v-if="!AI_IMAGE_MODELS.some(model => model.id === form.modelId)" :value="form.modelId" disabled>所选模型已移除，请重新选择</option>
+                <option v-if="!AI_IMAGE_MODELS.some(model => model.id === form.modelId)" :value="form.modelId" disabled>请先配置可用的生图模型</option>
                 <option v-for="model in AI_IMAGE_MODELS" :key="model.id" :value="model.id">{{ model.label }}</option>
               </select>
             </label>
@@ -896,6 +896,7 @@ import {
   AI_IMAGE_QUALITIES,
   AI_IMAGE_RATIOS,
   defaultAiImageForm,
+  configuredAiImageModelId,
   refreshAiImageProviders,
   AI_IMAGE_PROVIDER_SETTINGS as settings,
   defaultSizeForRatio,
@@ -1129,6 +1130,7 @@ const dragOverTarget = ref('')
 const inputImportTarget = ref('')
 let autosaveTimer = null
 let restoringState = false
+const providersReady = ref(false)
 let lightboxAnnotationExportResolve = null
 let lightboxAnnotationExportReject = null
 let lightboxAnnotationExportTimer = null
@@ -1161,7 +1163,7 @@ const activeModel = computed(() => getAiImageModel(form.modelId))
 const activeNanoBanana = computed(() => isNanoBananaModel(form.modelId))
 const activeMissingKey = computed(() => missingKeyForModel(form.modelId, settings.value))
 const generationConfigMessage = computed(() => !AI_IMAGE_MODELS.some(model => model.id === form.modelId)
-  ? '所选模型已移除，请重新选择或配置'
+  ? '请先配置可用的生图模型'
   : activeMissingKey.value ? '未配置 Key，暂时无法生成' : '')
 const batchActiveModel = computed(() => getAiImageModel(batchGenerationDialog.modelId || form.modelId))
 const batchNanoBanana = computed(() => isNanoBananaModel(batchActiveModel.value.id))
@@ -1169,7 +1171,7 @@ const batchSizeOptions = computed(() => sizeOptionsForModel(batchActiveModel.val
 const batchQualityOptions = computed(() => qualityOptionsForModel(batchActiveModel.value.id))
 const batchMissingKey = computed(() => missingKeyForModel(batchActiveModel.value.id, settings.value))
 const batchConfigMessage = computed(() => !AI_IMAGE_MODELS.some(model => model.id === (batchGenerationDialog.modelId || form.modelId))
-  ? '所选模型已移除，请重新选择或配置'
+  ? '请先配置可用的生图模型'
   : batchMissingKey.value ? '未配置 Key，暂时无法生成' : '')
 const activeJobUid = computed(() => currentJob.value?.job_uid || '')
 const generationBelongsToCurrentJob = computed(() => generationBelongsToJob(generatingJobUid.value, activeJobUid.value))
@@ -1335,6 +1337,24 @@ onBeforeUnmount(() => {
   saveDraftForCurrentTask()
   persistWorkbenchState()
 })
+
+// Catalog refreshes and restored drafts can both invalidate a saved model selection.
+watch(() => [providersReady.value, settings.value, AI_IMAGE_MODELS.map(model => model.id), form.modelId, batchGenerationDialog.modelId], () => {
+  if (providersReady.value) reconcileConfiguredModels()
+}, { deep: true })
+
+function reconcileConfiguredModels() {
+  const next = configuredAiImageModelId(form.modelId)
+  if (next && next !== form.modelId) {
+    form.modelId = next
+    syncModelDefaults()
+  }
+  const batchNext = configuredAiImageModelId(batchGenerationDialog.modelId || form.modelId)
+  if (batchNext && batchNext !== batchGenerationDialog.modelId) {
+    batchGenerationDialog.modelId = batchNext
+    syncBatchModelDefaults()
+  }
+}
 
 watch(advancedJsonError, (error, previousError) => {
   if (!error && previousError && errorMessage.value === previousError) errorMessage.value = ''
@@ -1855,6 +1875,8 @@ async function chooseDirectory(title = '选择文件夹') {
 async function loadSettings() {
   try {
     if (typeof window?.cs?.getSettings === 'function') await refreshAiImageProviders(() => window.cs.getSettings())
+    providersReady.value = true
+    reconcileConfiguredModels()
     try { recentConnection.value = (await window.cs.imageCallHistory?.())?.recent || null } catch {}
   } catch (error) {
     logs.value.push(`读取设置失败：${error.message || error}`)
@@ -1960,7 +1982,7 @@ function clearGenerateError() {
 
 function buildJobPayload(options = {}) {
   if (!options.silentAdvanced) assertImageInputCount(mainPaths(form), form.referenceImagePaths)
-  if (!AI_IMAGE_MODELS.some(model => model.id === form.modelId)) throw new Error('所选模型已移除，请重新选择模型')
+  if (!AI_IMAGE_MODELS.some(model => model.id === form.modelId)) throw new Error('请先配置可用的生图模型')
   const normalizedSize = sizeForModel(form.modelId, form.ratio, form.size)
   if (normalizedSize !== form.size) form.size = normalizedSize
   const requestedCount = activeNanoBanana.value ? 1 : normalizeImageCount(form.count)
@@ -1989,7 +2011,7 @@ function buildJobPayload(options = {}) {
 
 function buildBatchJobPayload(snapshot = {}, card = {}, index = 0) {
   assertImageInputCount(mainPaths(snapshot), snapshot.referenceImagePaths)
-  if (!AI_IMAGE_MODELS.some(model => model.id === (snapshot.modelId || form.modelId))) throw new Error('所选模型已移除，请重新选择模型')
+  if (!AI_IMAGE_MODELS.some(model => model.id === (snapshot.modelId || form.modelId))) throw new Error('请先配置可用的生图模型')
   const model = getAiImageModel(snapshot.modelId || form.modelId)
   const ratio = snapshot.ratio || form.ratio
   const normalizedSize = sizeForModel(model.id, ratio, snapshot.size || form.size)

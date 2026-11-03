@@ -1,0 +1,314 @@
+{
+  "at": "2026-11-03T15:17:32.749Z",
+  "readOnly": true,
+  "accountId": "newapi:14",
+  "userId": 14,
+  "keyId": 52,
+  "actualRedemptionOperationId": "5bfff0e5-75c6-45f4-8fb2-764d6856910b",
+  "issuanceOperationId": "harness-redeem-qa-20261103-44a9ffa0-code",
+  "codeId": "MJ-E13E7C2E35B00E23E5B38EFF18562F7D",
+  "codeRows": [
+    {
+      "id": "MJ-E13E7C2E35B00E23E5B38EFF18562F7D",
+      "batch_id": "harness-redeem-qa-20261103-44a9ffa0-code",
+      "kind": "balance",
+      "amount_cny": "10.00",
+      "status": "redeemed",
+      "expires_at": "0",
+      "used_by": "14",
+      "redeemed_at": "1793718754505"
+    }
+  ],
+  "operationRows": [
+    {
+      "id": "5bfff0e5-75c6-45f4-8fb2-764d6856910b",
+      "actor": "14",
+      "userId": "14",
+      "kind": "redeem",
+      "createdAt": "1793718754505",
+      "receipt": {
+        "operationId": "5bfff0e5-75c6-45f4-8fb2-764d6856910b",
+        "kind": "balance",
+        "amountCny": "10.00",
+        "codeId": "MJ-E13E7C2E35B00E23E5B38EFF18562F7D",
+        "membership": {
+          "userId": 0,
+          "plan": "",
+          "expiresAt": 0,
+          "version": 0
+        }
+      }
+    }
+  ],
+  "allUserOperationRows": [
+    {
+      "id": "5bfff0e5-75c6-45f4-8fb2-764d6856910b",
+      "actor": "14",
+      "user_id": "14",
+      "kind": "redeem",
+      "created_at": "1793718754505"
+    }
+  ],
+  "user": {
+    "id": "14",
+    "role": "1",
+    "status": "1",
+    "quota": "1027397",
+    "used_quota": "0",
+    "request_count": "0"
+  },
+  "token": {
+    "id": "52",
+    "user_id": "14",
+    "status": "1",
+    "used_quota": "0",
+    "unlimited_quota": true,
+    "model_limits_enabled": true
+  },
+  "receipt": {
+    "codeId": "MJ-E13E7C2E35B00E23E5B38EFF18562F7D",
+    "operationId": "5bfff0e5-75c6-45f4-8fb2-764d6856910b",
+    "kind": "balance",
+    "amountCny": "10.00",
+    "membership": {
+      "userId": 0,
+      "plan": "",
+      "expiresAt": 0,
+      "version": 0
+    }
+  },
+  "benefits": {
+    "active": false,
+    "authoritative": false,
+    "expiresAt": 0,
+    "membership": {
+      "userId": 14,
+      "plan": "free",
+      "expiresAt": 0,
+      "version": 0
+    },
+    "paidModelAccess": true,
+    "plan": "free",
+    "source": "none"
+  },
+  "wallet": {
+    "asOf": "2026-11-03T15:17:32Z",
+    "available": 14.9999962,
+    "currency": "CNY",
+    "monthly": {
+      "remaining": 0,
+      "reserved": 0,
+      "resetsAt": 0,
+      "total": 0,
+      "used": 0
+    },
+    "permanent": {
+      "remaining": 14.9999962,
+      "reserved": 0,
+      "total": 14.9999962,
+      "used": 0
+    },
+    "spendOrder": "monthly_first"
+  },
+  "catalog": {
+    "source": "deployed accountModelCatalog plus owner Key GET /v1/models and authoritative benefits",
+    "total": 22,
+    "available": 22,
+    "models": [
+      {
+        "id": "deepseek-flash",
+        "available": true
+      },
+      {
+        "id": "gpt-6-luna",
+        "available": true
+      },
+      {
+        "id": "gemini-2.5-flash-lite",
+        "available": true
+      },
+      {
+        "id": "deepseek-v4-pro",
+        "available": true
+      },
+      {
+        "id": "gpt-6-sol",
+        "available": true
+      },
+      {
+        "id": "gpt-6-astra",
+        "available": true
+      },
+      {
+        "id": "gpt-6.1-sol",
+        "available": true
+      },
+      {
+        "id": "gpt-5.6-terra",
+        "available": true
+      },
+      {
+        "id": "gpt-5.6-luna",
+        "available": true
+      },
+      {
+        "id": "gpt-5.6-sol",
+        "available": true
+      },
+      {
+        "id": "gemini-3.8-flash-low",
+        "available": true
+      },
+      {
+        "id": "gemini-3.8-flash-medium",
+        "available": true
+      },
+      {
+        "id": "gemini-3.8-flash-high",
+        "available": true
+      },
+      {
+        "id": "gemini-3.8-flash-tiered",
+        "available": true
+      },
+      {
+        "id": "gemini-3-flash",
+        "available": true
+      },
+      {
+        "id": "gemini-2.5-flash-thinking",
+        "available": true
+      },
+      {
+        "id": "gemini-2.5-flash",
+        "available": true
+      },
+      {
+        "id": "gemini-3.5-flash-lite",
+        "available": true
+      },
+      {
+        "id": "gemini-3.1-flash-lite",
+        "available": true
+      },
+      {
+        "id": "gpt-image-2.5-flare",
+        "available": true
+      },
+      {
+        "id": "gpt-image-2.5-sunburst",
+        "available": true
+      },
+      {
+        "id": "gemini-3.1-flash-image",
+        "available": true
+      }
+    ]
+  },
+  "liveReadback": {
+    "source": "existing live desktop grant; GET only; no refresh or revocation",
+    "httpStatus": 200,
+    "catalog": {
+      "total": 22,
+      "available": 22,
+      "models": [
+        {
+          "id": "deepseek-flash",
+          "available": true
+        },
+        {
+          "id": "gpt-6-luna",
+          "available": true
+        },
+        {
+          "id": "gemini-2.5-flash-lite",
+          "available": true
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "available": true
+        },
+        {
+          "id": "gpt-6-sol",
+          "available": true
+        },
+        {
+          "id": "gpt-6-astra",
+          "available": true
+        },
+        {
+          "id": "gpt-6.1-sol",
+          "available": true
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "available": true
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "available": true
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "available": true
+        },
+        {
+          "id": "gemini-3.8-flash-low",
+          "available": true
+        },
+        {
+          "id": "gemini-3.8-flash-medium",
+          "available": true
+        },
+        {
+          "id": "gemini-3.8-flash-high",
+          "available": true
+        },
+        {
+          "id": "gemini-3.8-flash-tiered",
+          "available": true
+        },
+        {
+          "id": "gemini-3-flash",
+          "available": true
+        },
+        {
+          "id": "gemini-2.5-flash-thinking",
+          "available": true
+        },
+        {
+          "id": "gemini-2.5-flash",
+          "available": true
+        },
+        {
+          "id": "gemini-3.5-flash-lite",
+          "available": true
+        },
+        {
+          "id": "gemini-3.1-flash-lite",
+          "available": true
+        },
+        {
+          "id": "gpt-image-2.5-flare",
+          "available": true
+        },
+        {
+          "id": "gpt-image-2.5-sunburst",
+          "available": true
+        },
+        {
+          "id": "gemini-3.1-flash-image",
+          "available": true
+        }
+      ]
+    }
+  },
+  "noCalls": {
+    "consumptionLogs": 0,
+    "walletInferenceLedger": 0,
+    "accountInferenceRequests": 0
+  },
+  "paidCallsByAudit": 0,
+  "redeemSubmittedByAudit": false,
+  "status": "single_redemption_verified"
+}

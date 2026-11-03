@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createAccountRuntimeSync } from './accountRuntimeSync.mjs'
+import { createAccountRuntimeSync, accountRuntimeIdentity } from './accountRuntimeSync.mjs'
 
 test('active run defers account change until idle and records only a successful restart', async () => {
   let calls = 0, pending = false
@@ -55,4 +55,20 @@ test('switching A to B and back to A during a restart reapplies A', async () => 
   assert.equal(calls, 3)
   await sync.setAccount('A')
   assert.equal(calls, 3)
+})
+
+
+test('same Free account redemption updates runtime once, deferring safely during a run', async () => {
+ let calls=0,active=false,pending=false
+ const sync=createAccountRuntimeSync({restart:async()=>{calls++;return active?{ok:false,error:'ACTIVE_RUN'}:{ok:true}},onPending:value=>{pending=value}})
+ const state={user:{id:'same-free-owner'},accountSessionEpoch:'same-broker',plan:'free',modelsRevision:1,modelsUpdatedAt:1}
+ await sync.setAccount(accountRuntimeIdentity(state));assert.equal(calls,1)
+ await sync.setAccount(accountRuntimeIdentity({...state,modelsUpdatedAt:999}));assert.equal(calls,1)
+ active=true
+ const redeemed={...state,modelsRevision:2,paidModelAccess:true}
+ await sync.setAccount(accountRuntimeIdentity(redeemed));assert.equal(calls,2);assert.equal(pending,true)
+ await sync.retryIfIdle('existing-run');assert.equal(calls,2)
+ active=false;await sync.retryIfIdle(null);assert.equal(calls,3);assert.equal(pending,false)
+ await sync.setAccount(accountRuntimeIdentity(redeemed));assert.equal(calls,3)
+ await sync.setAccount(accountRuntimeIdentity({}));assert.equal(calls,4)
 })

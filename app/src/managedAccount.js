@@ -21,7 +21,7 @@ function requestTrace(value,requestId,accountId){
   const rawDate=row.createdAt??row.created_at
   const date=typeof rawDate==='string'?new Date(rawDate):null
   const request={requestId,state:['waiting','in_progress','completed','unknown','upstream_rejected','not_dispatched','failed','canceled'].includes(row.state)?row.state:null,
-    createdAt:date&&Number.isFinite(date.getTime())?date.toISOString():null,billingRequestId:billingRequestID(row.billingRequestId)}
+    createdAt:date&&Number.isFinite(date.getTime())?date.toISOString():null,billingRequestId:billingRequestID(row.billingRequestId??row.billing_request_id)}
   // Queue state is a separate gateway receipt, not a replacement for account state.
   if(Object.prototype.hasOwnProperty.call(row,'queue')){
     const queue=row.queue
@@ -45,7 +45,7 @@ function createManagedAccount({issuer,directory,runtimeDirectory,runtimeEpoch=cr
   fetcher=diagnosticFetch(fetcher,diagnostic?{enabled:()=>diagnostic.active(),campaign:diagnosticCampaign,allowedOrigin:origin,traceConnections:true,emit:event=>record({...event,phase:'finish'}),onHeaders:event=>record({...event,phase:'headers'})}:undefined)
   function logOAuth(error){const event=oauthFailure(error);if(diagnostic){record({...event,phase:'finish',oauthError:event.reason})}else console.warn('[managed-oauth-diagnostic]',JSON.stringify(event))}
   const storage=createEncryptedStorage({file:path.join(directory,'modeljetty-session.enc'),safeStorage})
-  let session=null,config=null,pending=null,broker=null,brokerKey='',accountSessionEpoch='',catalog=[],profile=null,generation=0,refreshing=null,hydrating=null,catalogRefreshing=null,catalogUpdatedAt=0,message='',loginStarting=false
+  let session=null,config=null,pending=null,broker=null,brokerKey='',accountSessionEpoch='',catalog=[],profile=null,generation=0,refreshing=null,hydrating=null,catalogRefreshing=null,catalogUpdatedAt=0,modelsRevision=0,message='',loginStarting=false
   const runtimeFile=()=>path.join(runtimeDirectory(),'managed-model-session.json')
   const modulePromise=import('openid-client')
   async function configuration(){if(config)return config;const oidc=await modulePromise;try{config=await oidc.discovery(authority,'crawshrimp-desktop',undefined,oidc.None(),{[oidc.customFetch]:fetcher,...(development?{execute:[oidc.allowInsecureRequests]}:{})});return config}catch(error){logOAuth(error);throw error}}
@@ -60,10 +60,11 @@ function createManagedAccount({issuer,directory,runtimeDirectory,runtimeEpoch=cr
     return result
   }
   function cancel(){if(pending){clearTimeout(pending.timer);pending.server.close();pending=null;session=null;profile=null;storage.clear();void stopBroker()}generation++;hydrating=null;refreshing=null}
-  async function stopBroker(){brokerKey='';accountSessionEpoch='';catalog=[];catalogUpdatedAt=0;catalogRefreshing=null;try{fs.rmSync(runtimeFile(),{force:true})}catch{}if(broker){broker.closeAllConnections();broker.close();broker=null}}
+  async function stopBroker(){brokerKey='';accountSessionEpoch='';catalog=[];catalogUpdatedAt=0;modelsRevision=0;catalogRefreshing=null;try{fs.rmSync(runtimeFile(),{force:true})}catch{}if(broker){broker.closeAllConnections();broker.close();broker=null}}
   async function startBroker(epoch){await stopBroker();if(epoch!==generation)return;brokerKey=crypto.randomBytes(32).toString('base64url');accountSessionEpoch=crypto.randomUUID();const key=brokerKey,accountId=profile.user.id,memoryEpoch=accountSessionEpoch
     broker=http.createServer(async(req,res)=>{
       const started=performance.now(),timing={outcome:'unknown'}
+      let inferenceDispatched=false
       const elapsed=()=>Math.round(performance.now()-started)
       res.setHeader('Cache-Control','no-store')
       const fail=(status,error)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{message:error,type:'managed_service'}}))}
@@ -126,16 +127,18 @@ function createManagedAccount({issuer,directory,runtimeDirectory,runtimeEpoch=cr
           if(res.destroyed)disconnect.abort()
         }
         const signal=isImage?AbortSignal.any([AbortSignal.timeout(600000),disconnect.signal]):AbortSignal.timeout(600000)
+        inferenceDispatched=true
         const response=await fetcher(new URL('/account/inference'+url.pathname,origin),{method:'POST',redirect:'error',headers:{Authorization:`Bearer ${token}`,'Content-Type':contentType,'X-Request-Id':requestId},body:wireBody,signal})
         timing.upstreamHeadersMs=Math.round(performance.now()-upstreamStarted);timing.status=response.status
         const billingId=billingRequestID(response.headers.get('X-Oneapi-Request-Id'))
-        res.writeHead(response.status,{'Content-Type':response.headers.get('content-type')||'application/json','X-Request-Id':requestId,...(billingId?{'X-Oneapi-Request-Id':billingId}:{})});if(response.body)await pipeline(Readable.fromWeb(response.body),res);else res.end()
+        res.writeHead(response.status,{'Content-Type':response.headers.get('content-type')||'application/json','X-Request-Id':requestId,...(billingId?{'X-Oneapi-Request-Id':billingId}:{})});res.flushHeaders();if(response.body)await pipeline(Readable.fromWeb(response.body),res);else res.end()
         timing.outcome=response.ok?'completed':'rejected'
       }catch(error){
-        timing.outcome='unknown'
+        timing.outcome=inferenceDispatched?'unknown':'not_dispatched'
         const failure=inferenceFailure(error,{requestId:timing.requestId,headersReceived:timing.status!==undefined,startedAt:started})
-        console.warn('[managed-inference-failure]',JSON.stringify(failure))
+        console.warn('[managed-inference-failure]',JSON.stringify({...failure,dispatched:inferenceDispatched}))
         if(res.destroyed)return
+        if(!inferenceDispatched&&!res.headersSent){timing.status=503;return fail(503,'本次模型请求尚未发送，请检查账号服务连接后重试')}
         if(!res.headersSent){if(failure.requestId)res.setHeader('X-Request-Id',failure.requestId);timing.status=409;fail(409,'官方请求结果未知，请核对任务与账单，不要直接重复生成'+(failure.requestId?'。请求编号：'+failure.requestId:''))}else res.destroy()
       }finally{if(!diagnosticCampaign&&process.env.CRAWSHRIMP_MANAGED_TIMINGS==='1'&&timing.requestId){timing.totalMs=elapsed();console.info('[managed-inference-timing]',JSON.stringify(timing))}}
     })
@@ -157,18 +160,20 @@ function createManagedAccount({issuer,directory,runtimeDirectory,runtimeEpoch=cr
       const nextPaid=result.paidModelAccess === true
       const nextCatalog=result.models.map(model=>({...model}))
       const accessChanged=nextPlan!==profile.plan||nextPaid!==profile.paidModelAccess
-      profile.plan=nextPlan;profile.paidModelAccess=nextPaid
       if(!accessChanged&&JSON.stringify(nextCatalog)===JSON.stringify(catalog)&&fs.existsSync(runtimeFile())){catalogUpdatedAt=Date.now();return}
       // Preserve the live broker capability and in-flight inference while updating its catalogue.
-      atomicWriteFileSync(runtimeFile(),JSON.stringify({version:1,accountId,desktopRuntimeEpoch:runtimeEpoch,accountSessionEpoch,accountServiceOrigin:origin,callerRequestIdentity:'managed-text-preserved-v1',baseURL:`http://127.0.0.1:${currentBroker.address().port}`,brokerToken:key,plan:nextPlan,paidModelAccess:nextPaid,models:nextCatalog}))
+      const nextRevision=modelsRevision+1
+      atomicWriteFileSync(runtimeFile(),JSON.stringify({version:1,modelsRevision:nextRevision,accountId,desktopRuntimeEpoch:runtimeEpoch,accountSessionEpoch,accountServiceOrigin:origin,callerRequestIdentity:'managed-text-preserved-v1',baseURL:`http://127.0.0.1:${currentBroker.address().port}`,brokerToken:key,plan:nextPlan,paidModelAccess:nextPaid,models:nextCatalog}))
       fs.chmodSync(runtimeFile(),0o600)
-      catalog=nextCatalog;catalogUpdatedAt=Date.now()
+      profile.plan=nextPlan;profile.paidModelAccess=nextPaid
+      catalog=nextCatalog;catalogUpdatedAt=Date.now();modelsRevision=nextRevision
+      notify()
     })()
     catalogRefreshing=operation
     try{await operation}finally{if(catalogRefreshing===operation)catalogRefreshing=null}
   }
   async function hydrate(){if(hydrating)return hydrating;const epoch=generation;const operation=(async()=>{const next=await api('/account/me');if(epoch!==generation)return;profile={...next,paidModelAccess:next.paidModelAccess === true};await startBroker(epoch);if(epoch===generation&&message==='授权已完成，但账号服务暂时不可用，登录信息已保留，请联网后重试')message=''})().finally(()=>{if(hydrating===operation)hydrating=null});hydrating=operation;return operation}
-  async function status(){load();if(session&&(!profile||hydrating)){await hydrate()}else if(session&&profile){await refreshCatalog()}return {configured:true,managed:true,user:profile?.user||null,accountSessionEpoch:profile?.user?accountSessionEpoch:'',pending:pending?'oauth':'',recovery:false,message,plan:profile?.plan||null,paidModelAccess:profile?.paidModelAccess === true,modelsUpdatedAt:catalogUpdatedAt || null,models:catalog.map(({id,name,kind,available,minimumPlan})=>({id,name,kind,available,minimumPlan})),plansURL:`${origin}/plans`}}
+  async function status(){load();if(session&&(!profile||hydrating)){await hydrate()}else if(session&&profile){await refreshCatalog()}return {configured:true,managed:true,user:profile?.user||null,accountSessionEpoch:profile?.user?accountSessionEpoch:'',pending:pending?'oauth':'',recovery:false,message,plan:profile?.plan||null,paidModelAccess:profile?.paidModelAccess === true,modelsUpdatedAt:catalogUpdatedAt || null,modelsRevision,models:catalog.map(({id,name,kind,available,minimumPlan})=>({id,name,kind,available,minimumPlan})),plansURL:`${origin}/plans`}}
   async function login(flow = 'login'){if(pending||loginStarting)throw new Error('请完成或取消当前网页登录');loginStarting=true;const epoch=generation;try{return await beginLogin(epoch, flow)}finally{loginStarting=false}}
   async function beginLogin(startEpoch, flow){if(pending)throw new Error('请完成或取消当前网页登录');await configuration();if(startEpoch!==generation)return status();const oidc=await modulePromise;const verifier=oidc.randomPKCECodeVerifier(),state=oidc.randomState(),nonce=oidc.randomNonce(),epoch=++generation
     hydrating=null;refreshing=null;await stopBroker();profile=null;session=null;storage.clear();message=''

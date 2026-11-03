@@ -117,7 +117,7 @@
 
 <script setup>
 import { adaptivePoll } from '../utils/adaptivePoll'
-import { createAccountRuntimeSync } from '../utils/accountRuntimeSync.mjs'
+import { createAccountRuntimeSync, accountRuntimeIdentity } from '../utils/accountRuntimeSync.mjs'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { focusFirstInDialog, trapDialogFocus } from '../utils/dialogAccessibility.mjs'
 import WelcomeOnboarding from '../components/WelcomeOnboarding.vue'
@@ -271,10 +271,9 @@ async function refreshOnboardingAccount() {
     const previousOwner = onboardingAccount.value.user?.id
     onboardingAccount.value = state
     if (previousOwner !== state.user?.id) onboardingStep.value = 'choice'
-    const accountId = state.user?.id || ''
-    // A renewed broker for the same account has a new capability and must be
-    // applied to DSH just like an account switch.
-    const runtimeIdentity = accountId ? JSON.stringify([accountId, state.accountSessionEpoch || '']) : ''
+    // The same account may redeem access without changing its broker. Apply
+    // semantic catalog revisions as well as account/capability changes.
+    const runtimeIdentity = accountRuntimeIdentity(state)
     await accountRuntimeSync.setAccount(runtimeIdentity)
     if (refreshGeneration !== onboardingRefreshGeneration) return
     if (hasManagedTextModel(state)) {

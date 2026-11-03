@@ -2,6 +2,7 @@ import { shallowReactive, shallowRef } from 'vue'
 
 export const AI_IMAGE_PROVIDER_SETTINGS = shallowRef({})
 let providerConfigRevision = 0
+let providerReadRevision = 0
 
 export const AI_IMAGE_MODELS = shallowReactive([])
 
@@ -49,8 +50,9 @@ export function configureAiImageProviders(settings = {}) {
 // Ignore a slow read that started before a newer configuration was saved.
 export async function refreshAiImageProviders(readSettings) {
   const revision = providerConfigRevision
+  const readRevision = ++providerReadRevision
   const settings = await readSettings()
-  if (revision === providerConfigRevision) configureAiImageProviders(settings || {})
+  if (readRevision === providerReadRevision && revision === providerConfigRevision) configureAiImageProviders(settings || {})
   return AI_IMAGE_PROVIDER_SETTINGS.value
 }
 
@@ -92,6 +94,12 @@ export function outputDirHint(platform = '') {
 
 export function getAiImageModel(modelId) {
   return AI_IMAGE_MODELS.find((model) => model.id === modelId) || AI_IMAGE_MODELS.find(model => !missingKeyForModel(model.id, AI_IMAGE_PROVIDER_SETTINGS.value)) || AI_IMAGE_MODELS[0]
+}
+
+// Resolve editable future-generation inputs only. Historical runs keep their original identity.
+export function configuredAiImageModelId(modelId, settings = AI_IMAGE_PROVIDER_SETTINGS.value) {
+  const configured = AI_IMAGE_MODELS.filter(model => !missingKeyForModel(model.id, settings))
+  return configured.find(model => model.id === modelId)?.id || configured[0]?.id || ''
 }
 
 export function isNanoBananaModel(modelIdOrKey) {
@@ -234,4 +242,17 @@ export function missingKeyForModel(modelId, settings = {}) {
   const model = getAiImageModel(modelId)
   const normalized = normalizeSettings(settings)
   return String(normalized[model.configId] || '').trim() ? '' : model.configId
+}
+
+
+export function connectAiImageProviderUpdates(cs) {
+  let disposed = false
+  const refresh = () => refreshAiImageProviders(async () => {
+    const settings = await cs.getSettings()
+    if (disposed) throw new Error('Provider subscription disposed')
+    return settings
+  }).catch(() => {})
+  const unsubscribe = cs.onAccountChanged?.(refresh)
+  void refresh()
+  return () => { disposed = true; unsubscribe?.() }
 }

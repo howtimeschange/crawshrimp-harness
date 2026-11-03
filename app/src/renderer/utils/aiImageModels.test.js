@@ -4,6 +4,8 @@ import assert from 'node:assert/strict'
 import {
   AI_IMAGE_MODELS,
   configureAiImageProviders,
+  configuredAiImageModelId,
+  connectAiImageProviderUpdates,
   refreshAiImageProviders,
   AI_IMAGE_PROVIDER_SETTINGS,
   AI_IMAGE_SIZES,
@@ -135,4 +137,39 @@ test('saving a provider updates the shared key and model list immediately; stale
   assert.ok(AI_IMAGE_MODELS.some(model => model.id === 'custom-hot/new-model'))
   configureAiImageProviders({})
   assert.equal(AI_IMAGE_MODELS.some(model => model.id === 'custom-hot/new-model'), false)
+})
+
+
+test('editable selections recover retired and unconfigured choices without changing historical IDs', () => {
+  const settings = {'ai.semir.gpt_api_key': 'configured'}
+  configureAiImageProviders(settings)
+  assert.equal(configuredAiImageModelId('gpt-image-2'), 'semir/gpt-image-2')
+  assert.equal(configuredAiImageModelId('woka/gpt-image-2'), 'semir/gpt-image-2')
+  assert.equal(configuredAiImageModelId('semir/gpt-image-2'), 'semir/gpt-image-2')
+  assert.equal(modelIdForJob({model_key: 'gpt-image-2'}), 'gpt-image-2')
+  configureAiImageProviders({})
+  assert.equal(configuredAiImageModelId('gpt-image-2'), '')
+})
+
+test('configured managed sessions recover old drafts and preserve another configured choice', () => {
+  configureAiImageProviders({'ai.image.custom_providers': [
+    {id: 'custom-managed-modeljetty', name: 'ModelJetty', protocol: 'gemini', models: ['banana'], configured: true},
+  ]})
+  assert.equal(configuredAiImageModelId('gpt-image-2'), 'custom-managed-modeljetty/banana')
+  assert.equal(configuredAiImageModelId('woka/gpt-image-2', {'ai.woka.api_key': 'configured'}), 'woka/gpt-image-2')
+  configureAiImageProviders({})
+})
+
+
+test('account catalog change refreshes image providers and a stale gifted read cannot win', async () => {
+ let changed, finishGift, finishRedeem, reads=0,unsubscribed=false
+ configureAiImageProviders({})
+ const stop=connectAiImageProviderUpdates({getSettings:()=>new Promise(resolve=>{if(++reads===1)finishGift=resolve;else finishRedeem=resolve}),onAccountChanged:fn=>{changed=fn;return()=>{unsubscribed=true}}})
+ const updated=changed()
+ finishGift({managed_image_providers:[]});await Promise.resolve()
+ finishRedeem({managed_image_providers:[{id:'custom-managed-openai',name:'Official GPT Image',protocol:'openai',models:['gpt-image-2'],configured:true}]})
+ await updated
+ assert.ok(AI_IMAGE_MODELS.some(m=>m.id==='custom-managed-openai/gpt-image-2'))
+ assert.equal(missingKeyForModel('custom-managed-openai/gpt-image-2',AI_IMAGE_PROVIDER_SETTINGS.value),'')
+ stop();assert.equal(unsubscribed,true);configureAiImageProviders({})
 })

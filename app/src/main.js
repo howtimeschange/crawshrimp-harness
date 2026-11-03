@@ -2570,6 +2570,7 @@ app.on('before-quit', () => productAnalytics?.stop())
 app.on('render-process-gone', () => productAnalytics?.record('app_error', {feature:'app',error_code:'renderer_process_gone'}))
 app.on('child-process-gone', () => productAnalytics?.record('app_error', {feature:'app',error_code:'child_process_gone'}))
 let accountAuth = null
+let accountCatalogRefresh = null
 function desktopAccountAuth() {
   if (!accountAuth) {
     accountAuth = require('./managedAccount').createManagedAccount({
@@ -2586,9 +2587,14 @@ function desktopAccountAuth() {
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('account:changed')
       },
     })
+    accountCatalogRefresh = require('./managedCatalogRefresh').createManagedCatalogRefresh({
+      refresh: () => accountAuth.run('refresh-models'),
+      isActive: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized()),
+    })
   }
   return accountAuth
 }
+app.on('browser-window-focus', (_event, window) => { if (window === mainWindow) void accountCatalogRefresh?.focus() })
 secureHandle('account:action', async (_, action, input = {}) => {
   if (action === 'finish-onboarding') {
     const state = await desktopAccountAuth().run('status')
@@ -2624,7 +2630,7 @@ const marketplace = require('./marketplace').createMarketplace({
 })
 const marketplaceBridge = require('./marketplaceBridge').createMarketplaceBridge({run:(action,input)=>marketplace.run(action,input)})
 secureHandle('market:action', (_, action, input = {}) => marketplace.run(action, input))
-app.on('before-quit', () => accountAuth?.dispose())
+app.on('before-quit', () => { accountCatalogRefresh?.dispose(); accountAuth?.dispose() })
 
 secureHandle('get-status', async () => readSnapshots.read(`desktop:${apiPort}`, getDesktopStatus))
 secureHandle('agent:export-session-log', async (_, sessionId) => {

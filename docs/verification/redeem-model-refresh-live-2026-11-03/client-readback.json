@@ -1,0 +1,131 @@
+{
+  "before": {
+    "at": 1793718612.478674,
+    "accountId": "newapi:14",
+    "plan": "free",
+    "paidModelAccess": false,
+    "modelsRevision": 1,
+    "availableText": [
+      "gemini-2.5-flash-lite",
+      "gemini-3.8-flash-low",
+      "gemini-3.8-flash-medium",
+      "gemini-3.8-flash-high",
+      "gemini-3.8-flash-tiered",
+      "gemini-3-flash",
+      "gemini-2.5-flash-thinking",
+      "gemini-2.5-flash",
+      "gemini-3.5-flash-lite",
+      "gemini-3.1-flash-lite"
+    ],
+    "availableImage": [
+      "gemini-3.1-flash-image"
+    ],
+    "runtime": {
+      "state": "ready",
+      "generation": 2,
+      "model": "managed-gemini-2.5-flash-lite",
+      "provider": null,
+      "api_key_configured": true
+    }
+  },
+  "after": {
+    "at": 1793718966.8894038,
+    "accountId": "newapi:14",
+    "plan": "free",
+    "paidModelAccess": true,
+    "modelsRevision": 2,
+    "sameAccount": true,
+    "sameAccountSessionEpoch": true,
+    "sameBroker": true,
+    "availableText": [
+      "deepseek-flash",
+      "gpt-6-luna",
+      "gemini-2.5-flash-lite",
+      "deepseek-v4-pro",
+      "gpt-6-sol",
+      "gpt-6-astra",
+      "gpt-6.1-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.6-sol",
+      "gemini-3.8-flash-low",
+      "gemini-3.8-flash-medium",
+      "gemini-3.8-flash-high",
+      "gemini-3.8-flash-tiered",
+      "gemini-3-flash",
+      "gemini-2.5-flash-thinking",
+      "gemini-2.5-flash",
+      "gemini-3.5-flash-lite",
+      "gemini-3.1-flash-lite"
+    ],
+    "availableImage": [
+      "gpt-image-2.5-flare",
+      "gpt-image-2.5-sunburst",
+      "gemini-3.1-flash-image"
+    ],
+    "runtime": {
+      "state": "ready",
+      "generation": 3,
+      "model": "managed-deepseek-flash",
+      "api_key_configured": true
+    },
+    "redemptionOperationId": "5bfff0e5-75c6-45f4-8fb2-764d6856910b",
+    "ui": "¥10 success, permanent15, historyone"
+  },
+  "final": {
+    "at": 1793719170.1524549,
+    "state": "ready",
+    "generation": 3,
+    "modelsRevision": 2,
+    "noRepeatedRestart": true,
+    "managedText": [
+      {
+        "id": "crawshrimp-managed-openai",
+        "models": [
+          "managed-deepseek-flash",
+          "managed-gemini-2.5-flash-lite",
+          "managed-deepseek-v4-pro",
+          "managed-gemini-3.8-flash-low",
+          "managed-gemini-3.8-flash-medium",
+          "managed-gemini-3.8-flash-high",
+          "managed-gemini-3.8-flash-tiered",
+          "managed-gemini-3-flash",
+          "managed-gemini-2.5-flash-thinking",
+          "managed-gemini-2.5-flash",
+          "managed-gemini-3.5-flash-lite",
+          "managed-gemini-3.1-flash-lite",
+          "managed-gemini-3.8-flash"
+        ]
+      },
+      {
+        "id": "crawshrimp-managed-openai-responses",
+        "models": [
+          "managed-gpt-6-luna",
+          "managed-gpt-6-sol",
+          "managed-gpt-6-astra",
+          "managed-gpt-6.1-sol",
+          "managed-gpt-5.6-terra",
+          "managed-gpt-5.6-luna",
+          "managed-gpt-5.6-sol"
+        ]
+      }
+    ],
+    "managedImage": [
+      {
+        "id": "custom-managed-openai",
+        "models": [
+          "gpt-image-2.5-flare",
+          "gpt-image-2.5-sunburst"
+        ],
+        "configured": true
+      },
+      {
+        "id": "custom-managed-gemini",
+        "models": [
+          "gemini-3.1-flash-image"
+        ],
+        "configured": true
+      }
+    ]
+  }
+}

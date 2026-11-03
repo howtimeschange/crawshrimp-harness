@@ -1,3 +1,8 @@
+// Timestamps change on every check; only meaningful catalog revisions reconfigure DSH.
+export function accountRuntimeIdentity(state = {}) {
+  return state.user?.id ? JSON.stringify([state.user.id, state.accountSessionEpoch || '', state.modelsRevision || 0]) : ''
+}
+
 // Reconcile account changes only after the shared runtime is safely restarted.
 export function createAccountRuntimeSync({ restart, onPending = () => {}, onError = () => {} }) {
   let desired = '', applied = '', revision = 0, inFlight = null, retryOnIdle = false, disposed = false

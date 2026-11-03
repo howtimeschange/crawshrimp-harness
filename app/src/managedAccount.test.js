@@ -12,7 +12,7 @@ test('image receipt preserves original identity and supports owner-bound legacy 
   const u=new URL(url);if(u.pathname==='/account/me')return Response.json({user:{id:'fixture-owner'},plan:'pro'})
   if(u.pathname==='/account/models')return Response.json({models:[{id:'gpt-image-2',kind:'image',protocol:'openai',available:true}]})
   calls.push({path:u.pathname,method:init.method,headers:init.headers})
-  if(u.pathname.startsWith('/account/requests/'))return Response.json({request:{id:`fixture-owner:${id}`,state:'unknown',created_at:'2026-10-28T09:00:00Z'}})
+  if(u.pathname.startsWith('/account/requests/'))return Response.json({request:{id:`fixture-owner:${id}`,state:'unknown',created_at:'2026-10-28T09:00:00Z',billing_request_id:'202611031004101612903198268d9d6ZK05kNyj'}})
   return Response.json({data:[{b64_json:'Zml4dHVyZQ=='}]})
  }})
  t.after(()=>{account.dispose();fs.rmSync(dir,{recursive:true,force:true})})
@@ -21,7 +21,7 @@ test('image receipt preserves original identity and supports owner-bound legacy 
  const response=await fetch(session.baseURL+'/v1/images/generations',{method:'POST',headers:{...auth,'Content-Type':'application/json','X-Request-Id':id},body:JSON.stringify({model:'gpt-image-2',prompt:'fixture'})})
  assert.equal(response.status,200);assert.equal(response.headers.get('X-Request-Id'),id);assert.equal(new Headers(calls[0].headers).get('X-Request-Id'),id)
  const read=await fetch(session.baseURL+'/account/requests/'+id,{headers:auth});assert.equal(read.status,200)
- assert.deepEqual(await read.json(),{request:{requestId:id,state:'unknown',createdAt:'2026-10-28T09:00:00.000Z',billingRequestId:null}})
+ assert.deepEqual(await read.json(),{request:{requestId:id,state:'unknown',createdAt:'2026-10-28T09:00:00.000Z',billingRequestId:'202611031004101612903198268d9d6ZK05kNyj'}})
  assert.deepEqual(calls.map(c=>c.method),['POST','GET'])
 })
 test('managed GPT image edits preserve binary multipart and reject unavailable models before forwarding',async t=>{
@@ -380,4 +380,93 @@ test('switching accounts while first authorized profile is delayed keeps the new
  assert.equal((await fixture.account.run('status')).user.id,'new-owner')
  const runtime=JSON.parse(fs.readFileSync(path.join(fixture.dir,'managed-model-session.json')))
  assert.equal(runtime.accountId,'new-owner')
+})
+
+
+test('pre-dispatch catalog failures are distinguished from unknown paid inference without replay', async t => {
+ for (const phase of ['catalog', 'headers', 'body']) {
+  await t.test(phase, async t => {
+   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'managed-dispatch-'))
+   fs.writeFileSync(path.join(dir,'modeljetty-session.enc'),JSON.stringify({session:JSON.stringify({access_token:'fixture-token',expiresAt:Date.now()+3600000})}))
+   let failCatalog=false,inferenceCalls=0
+   const account=createManagedAccount({issuer:'https://account.example',directory:dir,runtimeDirectory:()=>dir,safeStorage:{isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()},openExternal:async()=>{},fetcher:async(url)=>{
+    const pathname=new URL(url).pathname
+    if(pathname==='/account/me')return Response.json({user:{id:'fixture'},plan:'pro'})
+    if(pathname==='/account/models'){
+     if(failCatalog)throw new TypeError('catalog offline')
+     return Response.json({models:[{id:'gemini-fixture',kind:'text',available:true}]})
+    }
+    inferenceCalls++
+    if(phase==='headers')throw new TypeError('inference offline')
+    return new Response(new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('data: fixture\n\n'));setTimeout(()=>controller.error(new Error('truncated')),25)}}),{headers:{'Content-Type':'text/event-stream'}})
+   }})
+   t.after(()=>{account.dispose();fs.rmSync(dir,{recursive:true,force:true})})
+   await account.run('status')
+   const runtime=JSON.parse(fs.readFileSync(path.join(dir,'managed-model-session.json')))
+   failCatalog=phase==='catalog'
+   const id='d503c319-7008-473b-a7ff-313483beff22'
+   const response=await fetch(runtime.baseURL+'/v1/chat/completions',{method:'POST',headers:{Authorization:`Bearer ${runtime.brokerToken}`,'Content-Type':'application/json','X-Request-Id':id},body:JSON.stringify({model:'managed-gemini-fixture',messages:[]})})
+   if(phase==='body'){
+    assert.equal(response.status,200)
+    await assert.rejects(response.text())
+   }else{
+    assert.equal(response.status,phase==='catalog'?503:409)
+    const result=await response.json()
+    assert.match(result.error.message,phase==='catalog'?/尚未发送/:/结果未知/)
+    if(phase==='headers')assert.equal(response.headers.get('X-Request-Id'),id)
+   }
+   assert.equal(inferenceCalls,phase==='catalog'?0:1,'neither transport nor body failures replay paid inference')
+  })
+ }
+})
+
+
+test('broker forwards real upstream headers before a delayed first stream chunk', async t => {
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'managed-headers-'))
+ fs.writeFileSync(path.join(dir,'modeljetty-session.enc'),JSON.stringify({session:JSON.stringify({access_token:'fixture-token',expiresAt:Date.now()+3600000})}))
+ let release, calls=0
+ const gate=new Promise(resolve=>{release=resolve})
+ const account=createManagedAccount({issuer:'https://account.example',directory:dir,runtimeDirectory:()=>dir,safeStorage:{isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()},openExternal:async()=>{},fetcher:async url=>{
+  const pathname=new URL(url).pathname
+  if(pathname==='/account/me')return Response.json({user:{id:'fixture'},plan:'pro'})
+  if(pathname==='/account/models')return Response.json({models:[{id:'gemini-fixture',kind:'text',available:true}]})
+  calls++
+  return new Response(new ReadableStream({async start(controller){await gate;controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));controller.close()}}),{headers:{'Content-Type':'text/event-stream'}})
+ }})
+ t.after(()=>{release();account.dispose();fs.rmSync(dir,{recursive:true,force:true})})
+ await account.run('status');const runtime=JSON.parse(fs.readFileSync(path.join(dir,'managed-model-session.json')))
+ let timer
+ const pending=fetch(runtime.baseURL+'/v1/chat/completions',{method:'POST',headers:{Authorization:`Bearer ${runtime.brokerToken}`,'Content-Type':'application/json'},body:JSON.stringify({model:'managed-gemini-fixture',messages:[]})})
+ const response=await Promise.race([pending,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('broker buffered headers behind body')),1000)})]).finally(()=>clearTimeout(timer))
+ assert.equal(response.status,200);assert.equal(calls,1)
+ release();assert.equal(await response.text(),'data: [DONE]\n\n')
+})
+
+
+test('redemption publishes same-account catalog revisions and notifies only meaningful changes without relogin', async t => {
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'redeem-catalog-'))
+ fs.writeFileSync(path.join(dir,'modeljetty-session.enc'),JSON.stringify({session:JSON.stringify({access_token:'fixture-token',expiresAt:Date.now()+3600000})}))
+ let paid=false,offline=false,notifyCount=0,posts=0
+ const account=createManagedAccount({issuer:'https://account.example',directory:dir,runtimeDirectory:()=>dir,safeStorage:{isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()},openExternal:async()=>{},notify:()=>{notifyCount++},fetcher:async(url,init)=>{
+  assert.equal(init.method,'GET','catalog reconciliation must not log in or dispatch inference');if(init.method==='POST')posts++
+  if(new URL(url).pathname==='/account/me')return Response.json({user:{id:'free-owner'},plan:'free',paidModelAccess:false})
+  if(offline)throw Error('offline')
+  return Response.json({plan:'free',paidModelAccess:paid,models:[{id:'gemini-3.8-flash',kind:'text',protocol:'openai',name:'Gemini',available:true},...['gpt-6.1-sol','deepseek-flash','gpt-image-2'].map(id=>({id,name:id,kind:id.includes('image')?'image':'text',protocol:'openai',available:paid}))]})
+ }})
+ t.after(()=>{account.dispose();fs.rmSync(dir,{recursive:true,force:true})})
+ const first=await account.run('status'), file=path.join(dir,'managed-model-session.json'),before=JSON.parse(fs.readFileSync(file))
+ assert.equal(first.plan,'free');assert.equal(first.paidModelAccess,false);assert.equal(first.modelsRevision,1);assert.equal(notifyCount,1)
+ await account.run('refresh-models');assert.equal(notifyCount,1)
+ paid=true
+ const unlocked=await account.run('refresh-models'),after=JSON.parse(fs.readFileSync(file))
+ assert.equal(unlocked.user.id,first.user.id);assert.equal(unlocked.accountSessionEpoch,first.accountSessionEpoch)
+ assert.equal(unlocked.plan,'free');assert.equal(unlocked.paidModelAccess,true);assert.equal(unlocked.modelsRevision,2)
+ assert.equal(unlocked.models.every(m=>m.available),true);assert.equal(notifyCount,2)
+ assert.equal(after.brokerToken,before.brokerToken);assert.equal(after.baseURL,before.baseURL);assert.equal(after.modelsRevision,2)
+ await account.run('refresh-models');assert.equal(notifyCount,2)
+ offline=true;await assert.rejects(account.run('refresh-models'),/offline/)
+ assert.equal(JSON.parse(fs.readFileSync(file)).modelsRevision,2);assert.equal(notifyCount,2)
+ offline=false;paid=false
+ const revoked=await account.run('refresh-models');assert.equal(revoked.modelsRevision,3);assert.equal(revoked.models.find(m=>m.id==='gpt-image-2').available,false)
+ assert.equal(notifyCount,3);assert.equal(posts,0)
 })
