@@ -9,6 +9,7 @@ import sqlite3
 import tempfile
 
 from core.artifact_version import file_version
+from core import artifact_storage as storage
 from core.atomic_file import replace_with_retry
 from core.windows_acl import assert_no_reparse_components_windows, harden_windows_path
 
@@ -99,6 +100,7 @@ def snapshot(record: dict, session_id: str, root: Path) -> dict:
         index.chmod(0o600)
         harden_windows_path(index)
         connection.execute('CREATE TABLE IF NOT EXISTS snapshots (session_key TEXT, version_key TEXT, receipt TEXT NOT NULL, PRIMARY KEY(session_key,version_key))')
+        storage.schema(connection)
         connection.commit()
         connection.execute('BEGIN IMMEDIATE')
         old = connection.execute('SELECT receipt FROM snapshots WHERE session_key=? AND version_key=?', (session_key, key)).fetchone()
@@ -106,9 +108,24 @@ def snapshot(record: dict, session_id: str, root: Path) -> dict:
             # A missing/modified committed snapshot is not silently rebuilt from
             # a possibly changed original. The download reports its own error.
             receipt = json.loads(old[0])
-            if not _valid_receipt(receipt, version_id, session / key / source.name, expected):
+            if not isinstance(receipt, dict):
                 return {**result, 'reason': 'snapshot_index_invalid'}
-            return receipt
+            if receipt.get('status') == 'deleted':
+                # A later explicit final delivery can freeze the still-matching
+                # source again; ordinary polling cannot resurrect old drafts.
+                if ((record.get('office') or {}).get('delivery') or {}).get('status') != 'final':
+                    return receipt
+            else:
+                destination = Path(receipt.get('path') or '')
+                storage_key = receipt.get('storage_key', key)
+                if (not isinstance(storage_key, str) or len(storage_key) != 64
+                        or destination.parent != session / storage_key or destination.name != receipt.get('name')
+                        or any(c not in '0123456789abcdef' for c in storage_key)
+                        or not _valid_receipt(receipt, version_id, destination, expected)):
+                    return {**result, 'reason': 'snapshot_index_invalid'}
+                storage.remember(connection, session_key, key, record)
+                connection.commit()
+                return receipt
         # Nonblocking open avoids hanging registration if a path was replaced
         # by a FIFO between stat and open. Regular-file reads are unaffected.
         source_descriptor = os.open(source, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0))
@@ -119,12 +136,58 @@ def snapshot(record: dict, session_id: str, root: Path) -> dict:
                 return {**result, 'status': 'source_changed'}
             if before.st_size > MAX_FILE_BYTES:
                 return {**result, 'status': 'too_large'}
+            # Content identity is independent of source inode, timestamps and
+            # Office job copy paths. Hash before checking quota so unchanged
+            # documents still register when the store is full.
+            digest = hashlib.file_digest(original, 'sha256').hexdigest()
+            if file_version(os.fstat(original.fileno())) != expected:
+                return {**result, 'status': 'source_changed'}
+            document, protected = storage.policy(record)
+            candidates = connection.execute('SELECT s.version_key,s.receipt,p.document_key FROM snapshots s LEFT JOIN snapshot_policy p USING(session_key,version_key) WHERE s.session_key=?', (session_key,)).fetchall()
+            shared = None
+            for other_key, raw, other_doc in candidates:
+                candidate = json.loads(raw)
+                if not isinstance(candidate, dict):
+                    continue
+                if candidate.get('status') != 'ready' or candidate.get('sha256') != digest or candidate.get('size') != before.st_size:
+                    continue
+                target = Path(candidate.get('path') or '')
+                valid = (target.parent.parent == session and not target.is_symlink() and not target.parent.is_symlink()
+                         and target.is_file() and file_version(target.stat()) == candidate.get('file_version'))
+                if valid:
+                    with target.open('rb') as handle:
+                        valid = hashlib.file_digest(handle, 'sha256').hexdigest() == digest
+                if not valid:
+                    if other_doc == document:
+                        return {**result, 'reason': 'snapshot_integrity_failed'}
+                    continue
+                if other_doc == document:
+                    storage.remember(connection, session_key, other_key, record)
+                    connection.commit()
+                    return candidate
+                shared = (other_key, candidate)
+            if shared:
+                other_key, candidate = shared
+                result = {**candidate, 'version_id': version_id, 'storage_key': candidate.get('storage_key', other_key)}
+                connection.execute('INSERT OR REPLACE INTO snapshots VALUES(?,?,?)', (session_key, key, json.dumps(result)))
+                storage.remember(connection, session_key, key, record)
+                storage.prune(connection, session_key)
+                connection.commit()
+                connection.execute('BEGIN IMMEDIATE')
+                storage.reclaim(connection, root, session_key)
+                connection.commit()
+                return result
+            original.seek(0)
             folders = [p for p in session.iterdir() if p.is_dir()]
             if any(folder.is_symlink() for folder in folders):
                 return result
             # Include orphan temporary/final copies from interrupted writes.
             used = sum(p.stat().st_size for folder in folders for p in folder.iterdir() if p.is_file())
-            if used + before.st_size > MAX_SESSION_BYTES or len(folders) >= MAX_SESSION_VERSIONS:
+            retiring = storage.retiring_copies(connection, session_key, document) if not protected else set()
+            retiring_paths = [Path(p) for p in retiring if Path(p).parent.parent == session and Path(p).is_file() and not Path(p).is_symlink()]
+            released_bytes = sum(p.stat().st_size for p in retiring_paths)
+            released_folders = sum(all(child in retiring_paths for child in folder.iterdir()) for folder in {p.parent for p in retiring_paths})
+            if used + before.st_size - released_bytes > MAX_SESSION_BYTES or len(folders) + 1 - released_folders > MAX_SESSION_VERSIONS:
                 return {**result, 'status': 'quota_exceeded'}
             folder = session / key
             _private_directory(folder)
@@ -147,7 +210,12 @@ def snapshot(record: dict, session_id: str, root: Path) -> dict:
         result.update(status='ready', path=str(destination), name=source.name, size=total,
                       sha256=digest, file_version=file_version(destination.stat()),
                       verification_scope='byte_copy_sha256')
-        connection.execute('INSERT INTO snapshots VALUES(?,?,?)', (session_key, key, json.dumps(result)))
+        connection.execute('INSERT OR REPLACE INTO snapshots VALUES(?,?,?)', (session_key, key, json.dumps(result)))
+        storage.remember(connection, session_key, key, record)
+        storage.prune(connection, session_key)
+        connection.commit()
+        connection.execute('BEGIN IMMEDIATE')
+        storage.reclaim(connection, root, session_key)
         connection.commit()
         return result
     except ValueError as error:

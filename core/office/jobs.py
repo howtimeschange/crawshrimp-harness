@@ -5,6 +5,7 @@ import contextvars
 import json
 import os
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -118,11 +119,11 @@ def start(root: Path, operation: str, *, code: str = "", document: Path | None =
             with _lock:
                 if cancel.is_set():
                     raise OfficeError("OFFICE_CANCELED", "作业已取消。")
-                data.update(state="completed", result=result)
+                data.update(state="completed", result=result, finished_at=time.time())
                 save(work, data)
         except Exception as exc:
             with _lock:
-                data.update(state="canceled" if getattr(exc, "code", "") == "OFFICE_CANCELED" else "failed",
+                data.update(state="canceled" if getattr(exc, "code", "") == "OFFICE_CANCELED" else "failed", finished_at=time.time(),
                             error={"code": getattr(exc, "code", "OFFICE_FAILED"), "message": str(exc)[:16000]})
                 save(work, data)
         finally:

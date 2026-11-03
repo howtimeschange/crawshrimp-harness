@@ -32,7 +32,7 @@ function harness({ sessionId = 'a', storage = new Map(), poll = () => () => {} }
       listAgentBrowserTabs: async () => ({ ok: true, tabs: [{ id: 'one' }, { id: 'two' }] }),
     } },
   }
-  vm.runInNewContext(script + '\nglobalThis.h = { dragOverResource, dropTarget, clearTabDrag, activePaneTab, switchPane, changeBrowserLayout, collapseBrowser, resizeSplit, startTabDrag, dropResource, tabArrow, splitRatio, draggedTab, retainedTabs, syncSessionPanel, refresh, workTabs, activeIds, split, focusedPane, effectiveSplit, openResource, openArtifact, openCurrentArtifact, currentFileAvailable, error, closeResource, toggleSplit, followBrowserActivity, browserActivity, activeTabId, opened, selection, artifacts, tabs, unseen, openBrowser, back, width, adjustWidth, miniTab, browserReady, resize, onViewportResize, togglePanel, compactOpen, searching, query, toggleSearch, closeSearch, searchInput, searchButton, filteredTabs, filteredArtifacts };', context)
+  vm.runInNewContext(script + '\nglobalThis.h = { snapshotStorage: storage, retrying, retrySnapshot, openVersion, dragOverResource, dropTarget, clearTabDrag, activePaneTab, switchPane, changeBrowserLayout, collapseBrowser, resizeSplit, startTabDrag, dropResource, tabArrow, splitRatio, draggedTab, retainedTabs, syncSessionPanel, refresh, workTabs, activeIds, split, focusedPane, effectiveSplit, openResource, openArtifact, openCurrentArtifact, currentFileAvailable, error, closeResource, toggleSplit, followBrowserActivity, browserActivity, activeTabId, opened, selection, artifacts, tabs, unseen, openBrowser, back, width, adjustWidth, miniTab, browserReady, resize, onViewportResize, togglePanel, compactOpen, searching, query, toggleSearch, closeSearch, searchInput, searchButton, filteredTabs, filteredArtifacts };', context)
   return { ...context.h, props, requests, pointerEvents, viewport: context.window, storage, doc, listeners, unmount: () => unmounts.forEach(fn => fn()),
     enterSession(id, _old, phase = id ? 'active' : 'hero') { props.sessionId = id; props.conversationPhase = phase; context.h.syncSessionPanel() },
   }
@@ -441,4 +441,34 @@ test('split resize cleans global handlers on cancellation and clamps ratio', () 
   h.resizeSplit({button:0,pointerId:1,currentTarget:target,preventDefault(){}})
   h.pointerEvents.get('pointermove')({clientX:850});assert.equal(h.splitRatio.value,.7)
   h.pointerEvents.get('pointercancel')();assert.equal(captured,false);assert.equal(h.pointerEvents.size,0)
+})
+
+
+test('quota notice refreshes and retry cannot update another session', async () => {
+  const h = harness({ sessionId: 'a' })
+  const pending = h.refresh()
+  h.requests.shift()({ artifacts: [], tabs: [], storage: { near_limit: true, versions: 400 } })
+  await pending
+  assert.equal(h.snapshotStorage.value.near_limit, true)
+  const calls = []
+  let resolve
+  h.viewport.cs.agentApi = (method, path, body) => { if (method !== 'POST') return new Promise(() => {}); calls.push({ method, path, body }); return new Promise(r => { resolve = r }) }
+  const retry = h.retrySnapshot({ file_snapshot: { status:'quota_exceeded', version_id:'failed-v1' } })
+  assert.equal(calls[0].body.version_id, 'failed-v1')
+  h.enterSession('b', 'a')
+  resolve({ status:'ready' }); await retry
+  assert.equal(h.snapshotStorage.value, null)
+  assert.equal(h.retrying.value, '')
+  assert.equal(calls.length, 1)
+})
+
+test('deleted history is inert and late version responses are session fenced', async () => {
+  const h = harness({ sessionId: 'a' })
+  await h.openVersion({ artifact_id:'deleted', status:'deleted' })
+  assert.equal(h.requests.length, 0)
+  const pending = h.openVersion({ artifact_id:'version-1', status:'ready' })
+  h.props.sessionId = 'b'
+  h.requests.shift()({ artifact_id:'version-1', filename:'deck.pptx', path:'/old/deck.pptx' })
+  await pending
+  assert.equal(h.selection.value, null)
 })

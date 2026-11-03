@@ -9523,6 +9523,11 @@ async def lifespan(app: FastAPI):
                     archive_cold_logs, runtime_paths.child_dir("logs") / "tasks", cancel=archive_stop)
             except Exception:
                 logger.exception("cold log maintenance failed")
+            try:
+                from core.artifact_maintenance import maintain
+                app.state.artifact_maintenance_stats = await asyncio.to_thread(maintain)
+            except Exception:
+                logger.exception("artifact retention maintenance failed")
     archive_task = asyncio.create_task(maintain_logs()) if owns_backend_instance else None
     logger.info("crawshrimp core started")
     try:

@@ -1073,6 +1073,10 @@ def list_session_resource_events(runtime_session_id: str) -> list[dict]:
             conn.close()
 
 
+def artifact_snapshot_root():
+    return _db_path().parent / 'agent' / 'artifact_versions'
+
+
 def get_session_artifact(session_id: str, artifact_id: str) -> Optional[dict]:
     """Resolve only a durable artifact event owned by the requested product session."""
     with _lock:
@@ -1086,6 +1090,9 @@ def get_session_artifact(session_id: str, artifact_id: str) -> Optional[dict]:
                                    AND json_extract(payload_json, '$.file_snapshot.status')='ready'
                               THEN 1 ELSE 0 END DESC, seq DESC LIMIT 1""",
                 (session_id, artifact_id, artifact_id, artifact_id)).fetchone()
-            return json.loads(row[0]) if row else None
+            if not row:
+                return None
+            from core.artifact_storage import overlay, receipts
+            return overlay(json.loads(row[0]), receipts(artifact_snapshot_root(), session_id))
         finally:
             conn.close()

@@ -37,6 +37,7 @@
     </div>
     <div v-show="!selection" class="resource-inventory">
       <div v-if="searching" class="resource-search"><input ref="searchInput" v-model="query" placeholder="搜索文件或页面" aria-label="搜索文件或页面" @keydown.esc.prevent="closeSearch" /><button aria-label="关闭搜索" title="关闭搜索" @click="closeSearch">×</button></div>
+      <p v-if="storage?.near_limit" class="storage-notice" role="status">{{ storage.full ? '历史快照额度已满' : '历史快照额度接近上限' }} · {{ Math.ceil(storage.bytes / 1048576) }} / {{ Math.ceil(storage.max_bytes / 1048576) }} MiB · {{ storage.versions }} / {{ storage.max_versions }} 份。最终交付和上传原件会保留。</p>
       <div class="resource-list">
         <section>
           <div class="section-heading"><button :aria-expanded="pagesExpanded || !!query" @click="pagesExpanded = !pagesExpanded"><span class="section-chevron" :class="{ expanded: pagesExpanded || query }" aria-hidden="true">›</span> 浏览器页面 <small>{{ query ? `${filteredTabs.length} / ${tabs.length}` : tabs.length }}</small></button><button title="新开页面" aria-label="新开页面" :disabled="busy || !sessionId" @click="newPage">＋</button></div>
@@ -56,11 +57,13 @@
                   <span class="resource-name">{{ item.filename }}</span>
                   <span class="resource-metadata"><small v-if="item.source">{{ ({ shell: '命令', office: 'Office', adapter: '适配器' })[item.source] || item.source }}</small><small v-if="item.office?.delivery?.status === 'final'" title="文件哈希与数据、视觉验收记录一致">已验收交付</small><small v-else-if="item.office" title="尚未登记为最终交付">待交付</small><small v-if="artifactAge(item)" class="artifact-age">{{ artifactAge(item) }}</small></span>
                   <small v-if="item.historical_after_failure" class="resource-warning">上次可用历史版本</small>
-                  <small v-if="currentFileAvailable(item)" class="resource-warning">{{ item.file_snapshot.status === 'too_large' ? '文件过大，未保存历史版本' : '快照空间已满，未保存历史版本' }}</small><small v-else-if="item.exists === false" class="resource-warning">已缺失</small>
+                  <small v-if="currentFileAvailable(item)" class="resource-warning">{{ item.file_snapshot.status === 'too_large' ? '本次文件已生成，但文件过大，未保存历史版本' : '本次文件已生成，但快照额度已满，未保存历史版本' }}</small><small v-else-if="item.file_snapshot?.status === 'deleted'" class="resource-warning">版本已清理</small><small v-else-if="item.exists === false" class="resource-warning">已缺失</small>
                 </span>
               </button>
               <button v-if="currentFileAvailable(item)" class="current-file-action" title="未保存历史版本，打开原文件时内容可能变化" @click="openCurrentArtifact(item)">打开当前原文件 ↗</button>
-              <ResourceMenu v-else label="文件操作"><button @click="fileAction('openFile', item)">{{ extension(item.filename).toLowerCase() === 'zip' ? '显示文件' : '系统打开' }}</button><button @click="fileAction('revealFile', item)">在文件夹中定位</button><button @click="copy(item.path)">复制路径</button></ResourceMenu>
+              <button v-if="currentFileAvailable(item)" class="retry-snapshot-action" :disabled="retrying === item.file_snapshot.version_id" @click="retrySnapshot(item)">{{ retrying === item.file_snapshot.version_id ? '正在保存…' : '清理空间后重试保存' }}</button>
+              <ResourceMenu v-else-if="item.file_snapshot?.status !== 'deleted'" label="文件操作"><button @click="fileAction('openFile', item)">{{ extension(item.filename).toLowerCase() === 'zip' ? '显示文件' : '系统打开' }}</button><button @click="fileAction('revealFile', item)">在文件夹中定位</button><button @click="copy(item.path)">复制路径</button></ResourceMenu>
+              <details v-if="item.versions?.length" class="artifact-history"><summary>历史版本 · {{ item.versions.length }}</summary><div v-for="version in item.versions" :key="version.artifact_id" class="history-version"><button :disabled="version.status === 'deleted'" @click="openVersion(version)">{{ version.status === 'deleted' ? '版本已清理' : '查看版本' }} · {{ version.updated_at || version.created_at }} · {{ version.sha256.slice(0, 8) }}</button></div></details>
             </div>
           </div>
         </section>
@@ -102,6 +105,7 @@ const now = ref(Date.now())
 const artifactAge = item => formatArtifactAge(item.updated_at || item.created_at, now.value)
 const artifacts = ref([]), tabs = ref([]), activeTabId = ref('')
 const closedBrowserIds = new Set()
+const storage = ref(null), retrying = ref('')
 const unseen = ref(0), error = ref(''), loading = ref(false), busy = ref(false)
 const browserReady = ref(true)
 let generation = 0, browserActivityRevision = 0, timer, stopResize, stopSplitResize
@@ -210,7 +214,29 @@ async function openCurrentArtifact(item) {
     if (opened?.ok === false || typeof opened === 'string' && opened) throw new Error(opened.error || opened)
   } catch (e) { error.value = `无法打开原文件：${e.message}` }
 }
-function openArtifact(item) { if (currentFileAvailable(item)) { error.value = '文件未保存历史版本；可选择“打开当前原文件”，其内容可能变化。'; return } window.cs?.analyticsFeature?.('file_preview')?.catch(() => {}); openResource(item) }
+function openArtifact(item) { if (item.file_snapshot?.status === 'deleted') { error.value = '版本已清理'; return } if (currentFileAvailable(item)) { error.value = '文件未保存历史版本；可选择“打开当前原文件”，其内容可能变化。'; return } window.cs?.analyticsFeature?.('file_preview')?.catch(() => {}); openResource(item) }
+async function retrySnapshot(item) {
+  const id = props.sessionId, version = item.file_snapshot.version_id
+  if (retrying.value) return
+  retrying.value = version; error.value = ''
+  try {
+    const result = await window.cs.agentApi('POST', '/agent/session-resources/retry-snapshot', { runtime_session_id: id, version_id: version })
+    if (id !== props.sessionId) return
+    await refresh()
+    if (id !== props.sessionId) return
+    if (result.status !== 'ready') error.value = result.status === 'too_large' ? '文件已生成，但超过单文件历史快照上限；可打开当前原文件。' : '文件已生成，但仍未能保存历史版本；最终交付和上传原件已保留，可打开当前原文件。'
+  } catch (e) { if (id === props.sessionId) error.value = `保存历史版本失败：${e.message}` }
+  finally { if (id === props.sessionId) retrying.value = '' }
+}
+async function openVersion(version) {
+  const id = props.sessionId
+  if (version.status === 'deleted') return
+  try {
+    const params = new URLSearchParams({ runtime_session_id: id, version_id: version.artifact_id })
+    const item = await window.cs.agentApi('GET', `/agent/session-resources/version?${params}`)
+    if (id === props.sessionId) openResource({ ...item, history_version: true })
+  } catch (e) { if (id === props.sessionId) error.value = `无法打开版本：${e.message}` }
+}
 function closeResource(item) {
   const pane = item.pane, old = paneTabs(pane), index = old.findIndex(t => t.key === item.key)
   workTabs.value = workTabs.value.filter(t => t.key !== item.key)
@@ -314,6 +340,7 @@ async function refresh() {
     if (error.value.startsWith('资源加载失败：')) error.value = ''
     const wasLoaded = loadedOnce
     loadedOnce = true
+    storage.value = data.storage || null
     artifacts.value = next
     for (const tab of workTabs.value) {
       const updated = next.find(item => item.path === tab.path)
@@ -371,7 +398,7 @@ function syncSessionPanel() {
   activeTabId.value = ''
   browserActivity.value = null
   browserActivityRevision++
-  generation++; artifacts.value = []; tabs.value = []; query.value = ''; searching.value = false; error.value = ''; unseen.value = 0; maximized.value = false
+  generation++; artifacts.value = []; storage.value = null; retrying.value = ''; tabs.value = []; query.value = ''; searching.value = false; error.value = ''; unseen.value = 0; maximized.value = false
   const state = id ? readState(id) : null
   // DSH assigns IDs to blank sessions too. Only the rendered active phase
   // opens the card; blank/loading transitions must not overwrite user choices.
@@ -477,5 +504,10 @@ button,select,input{font:inherit;color:inherit}button{background:none;border:0;c
 .resource-metadata small{white-space:nowrap;font-size:inherit}
 .resource-warning{display:block;white-space:normal;overflow-wrap:anywhere;color:var(--text2);font-size:11px;line-height:1.5}
 .current-file-action{grid-column:1 / -1;justify-self:start;margin:0 6px 8px 39px;font-size:11px;line-height:1.5;color:var(--text2);white-space:nowrap}
+
+.storage-notice{margin:0 10px 8px;font-size:11px;line-height:1.6;color:var(--text2)}
+.retry-snapshot-action{grid-column:1 / -1;justify-self:start;margin:0 6px 8px 39px;font-size:11px;color:var(--text2);text-align:left}
+.artifact-history{grid-column:1 / -1;min-width:0;margin:0 6px 8px 33px;font-size:11px;color:var(--text3)}
+.artifact-history summary{cursor:pointer}.history-version button{display:block;max-width:100%;padding:5px 0;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}.history-version button:disabled{cursor:default;color:var(--text3)}
 
 </style>

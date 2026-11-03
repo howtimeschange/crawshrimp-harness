@@ -18,6 +18,7 @@ def artifact_chunk(record, artifact_id, offset, length, expected=''):
     snapshot = record.get('file_snapshot')
     if 'file_snapshot' in record:
         if not isinstance(snapshot, dict): raise HTTPException(409, 'Snapshot receipt is invalid')
+        if snapshot.get('status') == 'deleted': raise HTTPException(410, '版本已清理')
         if snapshot.get('status') in ('too_large', 'quota_exceeded'):
             raise HTTPException(413, 'Artifact snapshot exceeds storage limit')
         if snapshot.get('status') != 'ready': raise HTTPException(409, 'Artifact snapshot is unavailable; inspect its delivery')
@@ -58,6 +59,6 @@ def artifact_chunk(record, artifact_id, offset, length, expected=''):
                 _hashes.pop(key, None)
                 raise HTTPException(409, 'Artifact changed; restart download')
     except (OSError, ValueError): raise HTTPException(404, 'Artifact unavailable')
-    return {'artifactId':artifact_id,'name':path.name,'mime':mimetypes.guess_type(path.name)[0] or 'application/octet-stream',
+    return {'artifactId':artifact_id,'name':record.get('filename') or path.name,'mime':mimetypes.guess_type(path.name)[0] or 'application/octet-stream',
             'total':total,'offset':offset,'data':base64.b64encode(raw).decode(),'sha256':digest,
             'chunkSha256':hashlib.sha256(raw).hexdigest(),'nextOffset':offset+len(raw),'eof':offset+len(raw)==total}

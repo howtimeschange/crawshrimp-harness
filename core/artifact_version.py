@@ -27,6 +27,9 @@ def pin_artifact_event(event_type: str, payload, *, session_id: str = '', snapsh
         pinned = payload
     else:
         pinned = _pin_source(payload)
+    from core.office.artifacts import is_office_working_image
+    if is_office_working_image(pinned):
+        return {**pinned, 'path': '', 'source_path': pinned.get('path'), 'file_snapshot': {'status': 'working_file'}}
     if session_id and snapshot_root is not None:
         from core.artifact_snapshots import snapshot
         # Only the local registration boundary can create this receipt. Ignore

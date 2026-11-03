@@ -1242,11 +1242,15 @@ def build_agent_mcp_asgi(token_provider, context_acquirer=None,
 def session_resources(runtime_session_id: str) -> dict:
     from pathlib import Path
     from core.office.artifacts import is_office_working_image
+    from core.artifact_storage import overlay, receipts, usage
+    rows = db.list_session_resource_events(runtime_session_id)
+    product_id = rows[0].get("session_id") if rows else None
+    current = receipts(db.artifact_snapshot_root(), product_id) if product_id else {}
     artifacts, tabs, image_calls = {}, {}, {}
     active = ""
     activity = None
-    for row in db.list_session_resource_events(runtime_session_id):
-        data = json.loads(row["payload_json"])
+    for row in rows:
+        data = overlay(json.loads(row["payload_json"]), current)
         if row["event_type"] == "artifact.created":
             if is_office_working_image(data):
                 continue
@@ -1259,6 +1263,8 @@ def session_resources(runtime_session_id: str) -> dict:
                 if (previous and (previous.get("file_snapshot") or {}).get("status") == "ready"
                         and snapshot.get("status") != "ready"):
                     continue
+                if previous and (previous.get("office", {}).get("delivery") or {}).get("status") == "final":
+                    data["office"] = {**previous["office"], **(data.get("office") or {}), "delivery": previous["office"]["delivery"]}
                 previous = artifacts.pop(key, None)
                 created_at = previous["created_at"] if previous else row["created_at"]
                 artifacts[key] = {**data, "created_at": created_at, "updated_at": row["created_at"]}
@@ -1294,7 +1300,7 @@ def session_resources(runtime_session_id: str) -> dict:
         if "file_snapshot" in item and snapshot.get("status") != "ready":
             item["source_path"] = item.get("source_path") or item.get("path")
             item["path"] = ""
-        if snapshot.get("status") == "ready":
+        if snapshot.get("status") in ("ready", "deleted"):
             # A snapshot token identifies bytes; this session/source grouping
             # identifies the document across edits and Office render job copies.
             # Derive it locally so tool payloads cannot assert another identity.
@@ -1303,10 +1309,11 @@ def session_resources(runtime_session_id: str) -> dict:
             ).encode()).hexdigest()
             versions.setdefault(key, []).append({"artifact_id": snapshot["version_id"], "name": item.get("filename") or snapshot.get("name"),
                                                "size": snapshot["size"], "sha256": snapshot["sha256"],
-                                               "created_at": item["created_at"], "updated_at": item["updated_at"]})
+                                               "created_at": item["created_at"], "updated_at": item["updated_at"], "status": snapshot["status"]})
             item["source_artifact_id"] = item.get("artifact_id")
             item["artifact_id"] = snapshot["version_id"]
-            last_ready[key] = item
+            if snapshot["status"] == "ready":
+                last_ready[key] = item
         latest[key] = item
         previous = documents.get(key)
         if previous and managed:
@@ -1316,19 +1323,19 @@ def session_resources(runtime_session_id: str) -> dict:
         documents[key] = item
     for key, item in documents.items():
         if versions.get(key):
-            item["versions"] = list(reversed(versions[key]))
+            unique = {}
+            for version in versions[key]:
+                unique[version["sha256"]] = version
+            item["versions"] = list(reversed(list(unique.values())))
     visible = []
     for key, item in reversed(list(documents.items())):
         newest = latest[key]
-        snapshot = newest.get("file_snapshot") if isinstance(newest.get("file_snapshot"), dict) else {}
-        failed_newest = snapshot.get("status") and snapshot.get("status") != "ready"
-        visible.append(newest if failed_newest and key in last_ready else item)
-        if failed_newest and key in last_ready:
-            # Keep the failed newest event and expose the last immutable copy
-            # as its own openable row. Never substitute the mutable source.
-            historical = {**last_ready[key], "historical_after_failure": True,
-                          "versions": list(reversed(versions[key]))}
-            visible.append(historical)
+        failed = (newest.get("file_snapshot") or {}).get("status") not in (None, "ready", "deleted")
+        if failed:
+            newest["versions"] = item.get("versions", [])
+        visible.append(newest if failed and key in last_ready else item)
+        if failed and key in last_ready and not item.get("office"):
+            visible.append({**last_ready[key], "historical_after_failure": True, "versions": item.get("versions", [])})
     for item in visible:
         try:
             path = Path(item.get("path") or "")
@@ -1337,8 +1344,12 @@ def session_resources(runtime_session_id: str) -> dict:
                 item["size"] = path.stat().st_size
         except OSError:
             item["exists"] = False
+    for item in visible:
+        office = item.get("office")
+        if office and office.get("pages") and not all(Path(p.get("path") or "").is_file() for p in office["pages"]):
+            item["office"] = {**office, "pages": [], "preview_expired": True}
     delivered_calls = {item.get("tool_call_id") for item in artifacts.values() if item.get("media_kind") == "image"}
-    return {"artifacts": visible,
+    return {"artifacts": visible, "storage": usage(db.artifact_snapshot_root(), product_id) if product_id else None,
             "imageGenerations": [value for key, value in image_calls.items() if key in delivered_calls],
             "tabs": list(tabs.values()), "activeTabId": active, "browserActivity": activity}
 
@@ -1372,6 +1383,47 @@ def current_artifact_file(runtime_session_id: str, version_id: str) -> dict:
     except (OSError, ValueError):
         raise HTTPException(409, "原文件已变化或不可用，请在原目录中重新确认")
     return {"path": str(path), "versioned": False}
+
+
+class ArtifactRetryRequest(BaseModel):
+    runtime_session_id: str
+    version_id: str
+
+
+@router.post("/session-resources/retry-snapshot")
+def retry_artifact_snapshot(req: ArtifactRetryRequest):
+    # Validate the original registration identity before cleanup or recopying.
+    source = current_artifact_file(req.runtime_session_id, req.version_id)["path"]
+    session = db.get_session_by_runtime(req.runtime_session_id)
+    if not session:
+        raise HTTPException(404, "会话不存在")
+    record = db.get_session_artifact(session["session_id"], req.version_id)
+    from core.artifact_maintenance import maintain
+    from core.artifact_storage import usage
+    maintain(session_id=session["session_id"], clear_process=True)
+    item = {**record, "path": source, "file_version": record["source_file_version"]}
+    for field in ("file_snapshot", "source_path", "source_file_version", "document_id", "versions"):
+        item.pop(field, None)
+    _, saved = db.append_session_event(session["session_id"], "artifact.created", item)
+    return {"status": saved["file_snapshot"]["status"], "storage": usage(db.artifact_snapshot_root(), session["session_id"])}
+
+
+@router.get("/session-resources/version")
+def artifact_history_version(runtime_session_id: str, version_id: str):
+    from pathlib import Path
+    session = db.get_session_by_runtime(runtime_session_id)
+    item = db.get_session_artifact(session["session_id"], version_id) if session else None
+    if not item:
+        raise HTTPException(404, "未找到该会话的文件版本")
+    if (item.get("file_snapshot") or {}).get("status") == "deleted":
+        raise HTTPException(410, "版本已清理")
+    if (item.get("file_snapshot") or {}).get("status") != "ready":
+        raise HTTPException(409, "该版本未保存历史文件")
+    office = item.get("office")
+    if office and not all(Path(p.get("path") or "").is_file() for p in office.get("pages", [])):
+        item["office"] = {**office, "pages": [], "preview_expired": True}
+    item["artifact_id"] = item["file_snapshot"]["version_id"]
+    return item
 
 
 class SessionPageRequest(BaseModel):

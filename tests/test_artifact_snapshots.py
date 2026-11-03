@@ -110,13 +110,13 @@ def test_limits_preserve_existing_versions_without_eviction(store, monkeypatch):
     paths = []
     for i in range(3):
         path = store / f'{i}.txt'
-        path.write_bytes(b'1234567890')
+        path.write_bytes(bytes([i]) * 10)
         paths.append(path)
     old = publish(paths[0])
     publish(paths[1])
     blocked = publish(paths[2])
     assert blocked['file_snapshot']['status'] == 'quota_exceeded'
-    assert read('one', old['file_snapshot']['version_id']) == b'1234567890'
+    assert read('one', old['file_snapshot']['version_id']) == bytes([0]) * 10
     with pytest.raises(HTTPException) as error:
         read('one', blocked['artifact_id'])
     assert error.value.status_code == 413
@@ -130,7 +130,7 @@ def test_concurrent_registration_respects_shared_quota(store, monkeypatch):
     paths = []
     for i in range(6):
         path = store / f'{i}.txt'
-        path.write_bytes(b'12345678')
+        path.write_bytes(bytes([i]) * 8)
         paths.append(path)
     with ThreadPoolExecutor(max_workers=6) as pool:
         events = list(pool.map(publish, paths))
@@ -363,13 +363,12 @@ def test_office_newest_failed_snapshot_does_not_hide_behind_older_final(store, m
     failed = db.append_session_event('one', 'artifact.created', failed)[1]
 
     items = api.session_resources('runtime-one')['artifacts']
-    assert len(items) == 2
+    assert len(items) == 1
     assert items[0]['file_snapshot']['version_id'] == failed['file_snapshot']['version_id']
     assert items[0]['file_snapshot']['status'] == 'too_large'
     assert items[0]['path'] == ''
-    assert items[1]['historical_after_failure'] is True
-    assert items[1]['artifact_id'] == old['file_snapshot']['version_id']
-    assert read('one', items[1]['artifact_id']) == b'old'
+    assert items[0]['versions'][0]['artifact_id'] == old['file_snapshot']['version_id']
+    assert read('one', items[0]['versions'][0]['artifact_id']) == b'old'
     assert api.current_artifact_file('runtime-one', failed['file_snapshot']['version_id'])['path'] == str(new_path)
 
 
