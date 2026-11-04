@@ -34,6 +34,10 @@ export function collect(name, base = root) {
     .map(path => relative(base, path).replaceAll('\\', '/')).filter(path => spec.pattern.test('/' + path))
 }
 export const manual = {
+  'app/scripts/ai-image-model-electron-smoke.cjs': 'Manual isolated renderer fixture requires an Electron display and local Vite server.',
+  'app/scripts/managed-transport-repro.cjs': 'Manual loopback transport reproduction compares local/installed Electron and optional long-running disconnect scenarios.',
+  'app/scripts/redeem-model-refresh-electron-smoke.cjs': 'Manual Electron redemption fixture requires a display and CRAWSHRIMP_TEST_PYTHON with backend dependencies.',
+  'app/scripts/session-resources-layout-smoke.cjs': 'Manual resource layout QA requires Electron and the Vite fixture on port 5187.',
   'app/scripts/file-workspace-qa-electron.cjs': 'Manual desktop QA requires the Vite client, file-workspace QA server and a local CDP browser.',
   'app/scripts/file-workspace-qa-preload.cjs': 'Preload bridge used by the manual file-workspace Electron QA entrypoint; not a standalone test.',
   'app/scripts/market-read-smoke.cjs': 'Live read-only cloud check requires a signed-in OS-encrypted desktop account.',

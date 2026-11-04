@@ -187,3 +187,12 @@ Rollback evidence:
 - Scope: PATCH, explicitly requested by release owner after the replaced v0.4.10 installer is downloaded locally.
 - Rationale: maintain the existing desktop updater; add source-aware version-pinned release notes and verify a real v0.4.10 to v0.4.11 update. No new capability family or architecture change.
 - Formal tag must follow the local v0.4.10 download gate; current release evidence is recorded in the task checkpoint.
+
+## v0.4.12 Version Decision (2026-11-04)
+
+- Scope: PATCH, explicitly requested by the release owner.
+- Rationale: maintenance of existing official-model access, stream recovery, image selection and document artifact retention; no new top-level capability or architecture change.
+- Target: `v0.4.12`, upgrading `v0.4.11`; app manifest and lockfile must match.
+- Source baseline: local main `cc4b342c3`, including the seven commits ahead of origin/main.
+- Local checks: test collection verified; 126 Node tests passed; 177 Python tests plus 4 subtests passed; Vite production build passed (existing chunk-size warning).
+- Main/tag CI results: PENDING; signed installer/update acceptance remains PENDING until separately verified.
