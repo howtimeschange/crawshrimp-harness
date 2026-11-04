@@ -195,4 +195,5 @@ Rollback evidence:
 - Target: `v0.4.12`, upgrading `v0.4.11`; app manifest and lockfile must match.
 - Source baseline: local main `cc4b342c3`, including the seven commits ahead of origin/main.
 - Local checks: test collection verified; 126 Node tests passed; 177 Python tests plus 4 subtests passed; Vite production build passed (existing chunk-size warning).
-- Main/tag CI results: PENDING; signed installer/update acceptance remains PENDING until separately verified.
+- Full app suite: 1203 passed, 3 skipped, 0 failed after adding the existing accountRuntimeIdentity import to the onboarding VM fixture. Initial main/tag CI failed on the same two fixture assertions before any release was created.
+- Main/tag CI results after fixture correction: PENDING; signed installer/update acceptance remains PENDING until separately verified.

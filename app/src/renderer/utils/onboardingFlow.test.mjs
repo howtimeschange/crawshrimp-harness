@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { readFileSync } from 'node:fs'
 import { hasManagedTextModel, firstRunCompletion, finishFirstRun } from './firstRun.mjs'
-import { createAccountRuntimeSync } from './accountRuntimeSync.mjs'
+import { createAccountRuntimeSync, accountRuntimeIdentity } from './accountRuntimeSync.mjs'
 
 const source = readFileSync(new URL('../views/AgentWebView.vue', import.meta.url), 'utf8')
 function actualFunction(name) {
@@ -36,7 +36,7 @@ function fixture({ active = true, required = false } = {}) {
     onboardingError: { value: '' }, onboardingBusy: { value: false },
     runtimeNeedsModelKey: { value: false }, onboardingPresented: false,
     onboardingPreviousFocus: null, onboardingRefreshGeneration: 0,
-    completedOnboardingOwners: new Set(), hasManagedTextModel, firstRunCompletion, finishFirstRun,
+    completedOnboardingOwners: new Set(), hasManagedTextModel, firstRunCompletion, finishFirstRun, accountRuntimeIdentity,
     accountRuntimeSync: createAccountRuntimeSync({ restart: async () => { calls.push('restart-runtime'); return { ok: true } } }),
     loadRuntime: async () => calls.push('read-runtime'), pushRuntimeModelConfiguration() {},
   }
