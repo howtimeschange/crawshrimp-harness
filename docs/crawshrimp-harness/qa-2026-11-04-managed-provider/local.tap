@@ -1,0 +1,251 @@
+TAP version 13
+# Subtest: real managed broker and installed providers never replay unknown streams or cancellation
+    # Subtest: openai-completions done
+    ok 1 - openai-completions done
+      ---
+      duration_ms: 33.372459
+      type: 'test'
+      ...
+    # Subtest: openai-completions disconnect
+    ok 2 - openai-completions disconnect
+      ---
+      duration_ms: 5.309541
+      type: 'test'
+      ...
+    # Subtest: openai-completions timeout
+    ok 3 - openai-completions timeout
+      ---
+      duration_ms: 41.529708
+      type: 'test'
+      ...
+    # Subtest: openai-completions 408
+    ok 4 - openai-completions 408
+      ---
+      duration_ms: 4.4485
+      type: 'test'
+      ...
+    # Subtest: openai-completions 409
+    ok 5 - openai-completions 409
+      ---
+      duration_ms: 3.252
+      type: 'test'
+      ...
+    # Subtest: openai-completions 500
+    ok 6 - openai-completions 500
+      ---
+      duration_ms: 4.336333
+      type: 'test'
+      ...
+    # Subtest: openai-completions 502
+    ok 7 - openai-completions 502
+      ---
+      duration_ms: 3.707208
+      type: 'test'
+      ...
+    # Subtest: openai-completions 503
+    ok 8 - openai-completions 503
+      ---
+      duration_ms: 3.713667
+      type: 'test'
+      ...
+    # Subtest: openai-completions destroy
+    ok 9 - openai-completions destroy
+      ---
+      duration_ms: 29.436125
+      type: 'test'
+      ...
+    # Subtest: openai-completions eof
+    ok 10 - openai-completions eof
+      ---
+      duration_ms: 28.481875
+      type: 'test'
+      ...
+    # Subtest: openai-completions finish-only
+    ok 11 - openai-completions finish-only
+      ---
+      duration_ms: 29.072666
+      type: 'test'
+      ...
+    # Subtest: openai-completions cancel
+    ok 12 - openai-completions cancel
+      ---
+      duration_ms: 3.026375
+      type: 'test'
+      ...
+    # Subtest: openai-responses done
+    ok 13 - openai-responses done
+      ---
+      duration_ms: 28.443625
+      type: 'test'
+      ...
+    # Subtest: openai-responses disconnect
+    ok 14 - openai-responses disconnect
+      ---
+      duration_ms: 2.840958
+      type: 'test'
+      ...
+    # Subtest: openai-responses timeout
+    ok 15 - openai-responses timeout
+      ---
+      duration_ms: 41.643875
+      type: 'test'
+      ...
+    # Subtest: openai-responses 408
+    ok 16 - openai-responses 408
+      ---
+      duration_ms: 2.004041
+      type: 'test'
+      ...
+    # Subtest: openai-responses 409
+    ok 17 - openai-responses 409
+      ---
+      duration_ms: 2.656458
+      type: 'test'
+      ...
+    # Subtest: openai-responses 500
+    ok 18 - openai-responses 500
+      ---
+      duration_ms: 3.701625
+      type: 'test'
+      ...
+    # Subtest: openai-responses 502
+    ok 19 - openai-responses 502
+      ---
+      duration_ms: 3.670333
+      type: 'test'
+      ...
+    # Subtest: openai-responses 503
+    ok 20 - openai-responses 503
+      ---
+      duration_ms: 2.219375
+      type: 'test'
+      ...
+    # Subtest: openai-responses destroy
+    ok 21 - openai-responses destroy
+      ---
+      duration_ms: 30.493125
+      type: 'test'
+      ...
+    # Subtest: openai-responses eof
+    ok 22 - openai-responses eof
+      ---
+      duration_ms: 28.448583
+      type: 'test'
+      ...
+    # Subtest: openai-responses cancel
+    ok 23 - openai-responses cancel
+      ---
+      duration_ms: 2.945166
+      type: 'test'
+      ...
+    1..23
+ok 1 - real managed broker and installed providers never replay unknown streams or cancellation
+  ---
+  duration_ms: 410.941
+  type: 'test'
+  ...
+# Subtest: broker preserves original request and billing identity and lookup is GET only
+ok 2 - broker preserves original request and billing identity and lookup is GET only
+  ---
+  duration_ms: 18.853625
+  type: 'test'
+  ...
+# Subtest: logout closes active broker without replay and revokes capability
+ok 3 - logout closes active broker without replay and revokes capability
+  ---
+  duration_ms: 13.963208
+  type: 'test'
+  ...
+# Subtest: real local fetch connection events stay associated under concurrency
+ok 4 - real local fetch connection events stay associated under concurrency
+  ---
+  duration_ms: 117.487542
+  type: 'test'
+  ...
+# Subtest: diagnostics separate delayed headers from delayed body, preserve bytes and send once
+ok 5 - diagnostics separate delayed headers from delayed body, preserve bytes and send once
+  ---
+  duration_ms: 70.796125
+  type: 'test'
+  ...
+# Subtest: disabled diagnostics preserve response identity and do not consume the body
+ok 6 - disabled diagnostics preserve response identity and do not consume the body
+  ---
+  duration_ms: 0.459
+  type: 'test'
+  ...
+# Subtest: transport failures retain the original error with no retry and safe code only
+ok 7 - transport failures retain the original error with no retry and safe code only
+  ---
+  duration_ms: 0.401042
+  type: 'test'
+  ...
+# Subtest: OAuth error records status, correlation and allowlisted field types without values
+ok 8 - OAuth error records status, correlation and allowlisted field types without values
+  ---
+  duration_ms: 0.423084
+  type: 'test'
+  ...
+# Subtest: body disconnect and consumer cancellation propagate without retry
+ok 9 - body disconnect and consumer cancellation propagate without retry
+  ---
+  duration_ms: 0.479542
+  type: 'test'
+  ...
+# Subtest: diagnostic sink failure cannot alter the response
+ok 10 - diagnostic sink failure cannot alter the response
+  ---
+  duration_ms: 0.633667
+  type: 'test'
+  ...
+# Subtest: actual OIDC client distinguishes OAuth JSON rejection from HTML gateway failure, with one exchange
+ok 11 - actual OIDC client distinguishes OAuth JSON rejection from HTML gateway failure, with one exchange
+  ---
+  duration_ms: 8.336958
+  type: 'test'
+  ...
+# Subtest: first SSE byte is distinct from first visible text; split frames preserve bytes and privacy
+ok 12 - first SSE byte is distinct from first visible text; split frames preserve bytes and privacy
+  ---
+  duration_ms: 62.73
+  type: 'test'
+  ...
+# Subtest: oversize or non-text SSE does not claim first text and never changes stream delivery
+ok 13 - oversize or non-text SSE does not claim first text and never changes stream delivery
+  ---
+  duration_ms: 0.598792
+  type: 'test'
+  ...
+# Subtest: campaign marker is restricted to configured origin and target routes and stops at expiry
+ok 14 - campaign marker is restricted to configured origin and target routes and stops at expiry
+  ---
+  duration_ms: 0.689875
+  type: 'test'
+  ...
+# Subtest: SSE observer preserves split UTF-8/CRLF data and requires a complete terminal frame
+ok 15 - SSE observer preserves split UTF-8/CRLF data and requires a complete terminal frame
+  ---
+  duration_ms: 5.032
+  type: 'test'
+  ...
+# Subtest: Responses observer requires completed status and response ID and tolerates multiline data
+ok 16 - Responses observer requires completed status and response ID and tolerates multiline data
+  ---
+  duration_ms: 3.885417
+  type: 'test'
+  ...
+# Subtest: large content frames do not prevent later terminal detection
+ok 17 - large content frames do not prevent later terminal detection
+  ---
+  duration_ms: 33.2545
+  type: 'test'
+  ...
+1..17
+# tests 40
+# suites 0
+# pass 40
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 476.036

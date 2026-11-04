@@ -1,0 +1,64 @@
+TAP version 13
+# Subtest: real service + broker: done
+ok 1 - real service + broker: done
+  ---
+  duration_ms: 129.77525
+  type: 'test'
+  ...
+# Subtest: real service + broker: truncated
+ok 2 - real service + broker: truncated
+  ---
+  duration_ms: 100.253
+  type: 'test'
+  ...
+# Subtest: real service + broker: cancel
+ok 3 - real service + broker: cancel
+  ---
+  duration_ms: 92.626291
+  type: 'test'
+  ...
+# Subtest: real service + broker: 400
+ok 4 - real service + broker: 400
+  ---
+  duration_ms: 30.240292
+  type: 'test'
+  ...
+# Subtest: real service + broker: 403
+ok 5 - real service + broker: 403
+  ---
+  duration_ms: 39.809416
+  type: 'test'
+  ...
+# Subtest: real service + broker: 408
+ok 6 - real service + broker: 408
+  ---
+  duration_ms: 31.326459
+  type: 'test'
+  ...
+# Subtest: real service + broker: 409
+ok 7 - real service + broker: 409
+  ---
+  duration_ms: 27.312583
+  type: 'test'
+  ...
+# Subtest: real service + broker: 500
+ok 8 - real service + broker: 500
+  ---
+  duration_ms: 37.871375
+  type: 'test'
+  ...
+# Subtest: real service + broker: 502
+ok 9 - real service + broker: 502
+  ---
+  duration_ms: 36.621667
+  type: 'test'
+  ...
+1..9
+# tests 9
+# suites 0
+# pass 9
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 698.177583

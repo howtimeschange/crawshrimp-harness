@@ -1,0 +1,47 @@
+TAP version 13
+# Subtest: Harness broker/provider + isolated candidate HTTP + PostgreSQL trace
+    # Subtest: ordinary JSON request and durable original trace
+    ok 1 - ordinary JSON request and durable original trace
+      ---
+      duration_ms: 47.405583
+      type: 'test'
+      ...
+    # Subtest: complete SSE request through broker
+    ok 2 - complete SSE request through broker
+      ---
+      duration_ms: 141.956708
+      type: 'test'
+      ...
+    # Subtest: downstream closes after delta and original upstream completes in PostgreSQL
+    ok 3 - downstream closes after delta and original upstream completes in PostgreSQL
+      ---
+      duration_ms: 150.468458
+      type: 'test'
+      ...
+    # Subtest: installed provider normal completion
+    ok 4 - installed provider normal completion
+      ---
+      duration_ms: 146.606166
+      type: 'test'
+      ...
+    # Subtest: installed provider cancel after delta
+    ok 5 - installed provider cancel after delta
+      ---
+      duration_ms: 157.04925
+      type: 'test'
+      ...
+    1..5
+ok 1 - Harness broker/provider + isolated candidate HTTP + PostgreSQL trace
+  ---
+  duration_ms: 747.722291
+  type: 'test'
+  ...
+1..1
+# tests 6
+# suites 0
+# pass 6
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 791.909791

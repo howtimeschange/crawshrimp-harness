@@ -1,0 +1,209 @@
+TAP version 13
+# Subtest: real managed broker and installed providers never replay unknown streams or cancellation
+    # Subtest: openai-completions done
+    ok 1 - openai-completions done
+      ---
+      duration_ms: 33.604667
+      type: 'test'
+      ...
+    # Subtest: openai-completions disconnect
+    ok 2 - openai-completions disconnect
+      ---
+      duration_ms: 4.84625
+      type: 'test'
+      ...
+    # Subtest: openai-completions timeout
+    ok 3 - openai-completions timeout
+      ---
+      duration_ms: 41.657791
+      type: 'test'
+      ...
+    # Subtest: openai-completions 408
+    ok 4 - openai-completions 408
+      ---
+      duration_ms: 4.570416
+      type: 'test'
+      ...
+    # Subtest: openai-completions 409
+    ok 5 - openai-completions 409
+      ---
+      duration_ms: 3.2805
+      type: 'test'
+      ...
+    # Subtest: openai-completions 500
+    ok 6 - openai-completions 500
+      ---
+      duration_ms: 3.554375
+      type: 'test'
+      ...
+    # Subtest: openai-completions 502
+    ok 7 - openai-completions 502
+      ---
+      duration_ms: 2.707167
+      type: 'test'
+      ...
+    # Subtest: openai-completions 503
+    ok 8 - openai-completions 503
+      ---
+      duration_ms: 4.049708
+      type: 'test'
+      ...
+    # Subtest: openai-completions destroy
+    ok 9 - openai-completions destroy
+      ---
+      duration_ms: 30.022125
+      type: 'test'
+      ...
+    # Subtest: openai-completions eof
+    ok 10 - openai-completions eof
+      ---
+      duration_ms: 28.020792
+      type: 'test'
+      ...
+    # Subtest: openai-completions finish-only
+    not ok 11 - openai-completions finish-only
+      ---
+      duration_ms: 30.221458
+      type: 'test'
+      location: '/Users/xingyicheng/Documents/crawshrimp-harness/app/src/managedAccountInference.test.js:57:15'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+
+        'done' !== 'error'
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 'error'
+      actual: 'done'
+      operator: 'strictEqual'
+      stack: |-
+        TestContext.<anonymous> (/Users/xingyicheng/Documents/crawshrimp-harness/app/src/managedAccountInference.test.js:65:16)
+        process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        async Test.run (node:internal/test_runner/test:1054:7)
+        async TestContext.<anonymous> (/Users/xingyicheng/Documents/crawshrimp-harness/app/src/managedAccountInference.test.js:57:7)
+        async Test.run (node:internal/test_runner/test:1054:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+      ...
+    # Subtest: openai-completions cancel
+    ok 12 - openai-completions cancel
+      ---
+      duration_ms: 4.529291
+      type: 'test'
+      ...
+    # Subtest: openai-responses done
+    ok 13 - openai-responses done
+      ---
+      duration_ms: 28.931209
+      type: 'test'
+      ...
+    # Subtest: openai-responses disconnect
+    ok 14 - openai-responses disconnect
+      ---
+      duration_ms: 1.378584
+      type: 'test'
+      ...
+    # Subtest: openai-responses timeout
+    ok 15 - openai-responses timeout
+      ---
+      duration_ms: 41.546916
+      type: 'test'
+      ...
+    # Subtest: openai-responses 408
+    ok 16 - openai-responses 408
+      ---
+      duration_ms: 4.38125
+      type: 'test'
+      ...
+    # Subtest: openai-responses 409
+    ok 17 - openai-responses 409
+      ---
+      duration_ms: 2.760208
+      type: 'test'
+      ...
+    # Subtest: openai-responses 500
+    ok 18 - openai-responses 500
+      ---
+      duration_ms: 3.52525
+      type: 'test'
+      ...
+    # Subtest: openai-responses 502
+    ok 19 - openai-responses 502
+      ---
+      duration_ms: 2.330916
+      type: 'test'
+      ...
+    # Subtest: openai-responses 503
+    ok 20 - openai-responses 503
+      ---
+      duration_ms: 3.447875
+      type: 'test'
+      ...
+    # Subtest: openai-responses destroy
+    ok 21 - openai-responses destroy
+      ---
+      duration_ms: 29.80675
+      type: 'test'
+      ...
+    # Subtest: openai-responses eof
+    ok 22 - openai-responses eof
+      ---
+      duration_ms: 28.468958
+      type: 'test'
+      ...
+    # Subtest: openai-responses cancel
+    ok 23 - openai-responses cancel
+      ---
+      duration_ms: 2.974375
+      type: 'test'
+      ...
+    1..23
+not ok 1 - real managed broker and installed providers never replay unknown streams or cancellation
+  ---
+  duration_ms: 432.103583
+  type: 'test'
+  location: '/Users/xingyicheng/Documents/crawshrimp-harness/app/src/managedAccountInference.test.js:52:1'
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: broker preserves original request and billing identity and lookup is GET only
+not ok 2 - broker preserves original request and billing identity and lookup is GET only
+  ---
+  duration_ms: 14.624167
+  type: 'test'
+  location: '/Users/xingyicheng/Documents/crawshrimp-harness/app/src/managedAccountInference.test.js:73:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + null
+    - 'billing_fixture'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'billing_fixture'
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/xingyicheng/Documents/crawshrimp-harness/app/src/managedAccountInference.test.js:76:108)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: logout closes active broker without replay and revokes capability
+ok 3 - logout closes active broker without replay and revokes capability
+  ---
+  duration_ms: 14.210792
+  type: 'test'
+  ...
+1..3
+# tests 26
+# suites 0
+# pass 23
+# fail 3
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 503.662292

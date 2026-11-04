@@ -1,0 +1,436 @@
+TAP version 13
+# Subtest: Visual Studio exact web callback and explicit consent preserve offline_access for refresh
+ok 1 - Visual Studio exact web callback and explicit consent preserve offline_access for refresh
+  ---
+  duration_ms: 92.392792
+  type: 'test'
+  ...
+# Subtest: paid permanent credit unlocks Free model access without upgrading membership
+    # Subtest: gift and manually high permanent balance do not imply a paid purchase
+    ok 1 - gift and manually high permanent balance do not imply a paid purchase
+      ---
+      duration_ms: 5.42425
+      type: 'test'
+      ...
+    # Subtest: verified payment opens catalogue, text and image paths while plan and limits stay Free
+    ok 2 - verified payment opens catalogue, text and image paths while plan and limits stay Free
+      ---
+      duration_ms: 11.745375
+      type: 'test'
+      ...
+    # Subtest: refund after catalogue load is rechecked before admission; Gemini still works
+    ok 3 - refund after catalogue load is rechecked before admission; Gemini still works
+      ---
+      duration_ms: 4.891125
+      type: 'test'
+      ...
+    # Subtest: missing payment proof never dispatches a paid model
+    ok 4 - missing payment proof never dispatches a paid model
+      ---
+      duration_ms: 2.525167
+      type: 'test'
+      ...
+    1..4
+ok 2 - paid permanent credit unlocks Free model access without upgrading membership
+  ---
+  duration_ms: 38.072083
+  type: 'test'
+  ...
+# Subtest: computer inference rechecks current Bot membership before admission
+    # Subtest: free / gemini-3.8-flash-tiered
+    ok 1 - free / gemini-3.8-flash-tiered
+      ---
+      duration_ms: 4.121542
+      type: 'test'
+      ...
+    # Subtest: plus / gpt-6.1-sol
+    ok 2 - plus / gpt-6.1-sol
+      ---
+      duration_ms: 2.2845
+      type: 'test'
+      ...
+    # Subtest: plus / gemini-3.8-flash-tiered
+    ok 3 - plus / gemini-3.8-flash-tiered
+      ---
+      duration_ms: 2.968167
+      type: 'test'
+      ...
+    # Subtest: pro / gpt-6.1-sol
+    ok 4 - pro / gpt-6.1-sol
+      ---
+      duration_ms: 3.288292
+      type: 'test'
+      ...
+    1..4
+ok 3 - computer inference rechecks current Bot membership before admission
+  ---
+  duration_ms: 53.396083
+  type: 'test'
+  ...
+# Subtest: vault authenticates ciphertext and model routes reject cross-protocol requests
+ok 4 - vault authenticates ciphertext and model routes reject cross-protocol requests
+  ---
+  duration_ms: 1.108083
+  type: 'test'
+  ...
+# Subtest: real OAuth HTTP flow enforces PKCE, consent, duplicate requests and revocation
+ok 5 - real OAuth HTTP flow enforces PKCE, consent, duplicate requests and revocation
+  ---
+  duration_ms: 69.084875
+  type: 'test'
+  ...
+# Subtest: membership preview offers bonus credit without recurring charges
+ok 6 - membership preview offers bonus credit without recurring charges
+  ---
+  duration_ms: 0.136167
+  type: 'test'
+  ...
+# Subtest: Bot SSE retry waits for the original response after consumer timeout without a second paid call
+ok 7 - Bot SSE retry waits for the original response after consumer timeout without a second paid call
+  ---
+  duration_ms: 271.839666
+  type: 'test'
+  ...
+# Subtest: computer HTTP proxy enforces persisted budget and requests cancellation before any excess call
+ok 8 - computer HTTP proxy enforces persisted budget and requests cancellation before any excess call
+  ---
+  duration_ms: 25.011833
+  type: 'test'
+  ...
+# Subtest: upstream body failure keeps billing identity and unknown request is never replayed
+ok 9 - upstream body failure keeps billing identity and unknown request is never replayed
+  ---
+  duration_ms: 25.066584
+  type: 'test'
+  ...
+# Subtest: new users enroll once across iOS and desktop PKCE flows; unknown provisioning cannot replay
+ok 10 - new users enroll once across iOS and desktop PKCE flows; unknown provisioning cannot replay
+  ---
+  duration_ms: 69.42275
+  type: 'test'
+  ...
+# Subtest: complete account model catalogue preserves registry and combines membership with Key policy
+ok 11 - complete account model catalogue preserves registry and combines membership with Key policy
+  ---
+  duration_ms: 0.7855
+  type: 'test'
+  ...
+# Subtest: model catalogue HTTP uses existing OIDC authority and does not change account/models filtering
+ok 12 - model catalogue HTTP uses existing OIDC authority and does not change account/models filtering
+  ---
+  duration_ms: 20.796
+  type: 'test'
+  ...
+# [managed-network-timing] {"timestamp":"2026-11-04T02:54:08.923Z","requestId":"7c8a4425-7f5c-4db5-8a7c-4026f90bf5e7","route":"inference","headersMs":2,"status":403,"contentType":"application/json","firstByteMs":3,"totalMs":3,"outcome":"consumed"}
+# Subtest: desktop catalogue refresh updates models without replacing broker and ignores stale logout results
+not ok 13 - desktop catalogue refresh updates models without replacing broker and ignores stale logout results
+  ---
+  duration_ms: 127.881167
+  type: 'test'
+  location: '/Users/xingyicheng/Documents/ChatGPT/中转/account-service/test/catalog-refresh-desktop.test.mjs:13:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    403 !== 200
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 200
+  actual: 403
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/xingyicheng/Documents/ChatGPT/%E4%B8%AD%E8%BD%AC/account-service/test/catalog-refresh-desktop.test.mjs:35:265)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: Visual Studio exact web callback and explicit consent preserve offline_access for refresh
+ok 14 - Visual Studio exact web callback and explicit consent preserve offline_access for refresh
+  ---
+  duration_ms: 76.314875
+  type: 'test'
+  ...
+# Subtest: paid permanent credit unlocks Free model access without upgrading membership
+    # Subtest: gift and manually high permanent balance do not imply a paid purchase
+    ok 1 - gift and manually high permanent balance do not imply a paid purchase
+      ---
+      duration_ms: 5.899834
+      type: 'test'
+      ...
+    # Subtest: verified payment opens catalogue, text and image paths while plan and limits stay Free
+    ok 2 - verified payment opens catalogue, text and image paths while plan and limits stay Free
+      ---
+      duration_ms: 8.343917
+      type: 'test'
+      ...
+    # Subtest: refund after catalogue load is rechecked before admission; Gemini still works
+    ok 3 - refund after catalogue load is rechecked before admission; Gemini still works
+      ---
+      duration_ms: 4.923083
+      type: 'test'
+      ...
+    # Subtest: missing payment proof never dispatches a paid model
+    ok 4 - missing payment proof never dispatches a paid model
+      ---
+      duration_ms: 2.628542
+      type: 'test'
+      ...
+    1..4
+ok 15 - paid permanent credit unlocks Free model access without upgrading membership
+  ---
+  duration_ms: 42.523791
+  type: 'test'
+  ...
+# Subtest: computer inference rechecks current Bot membership before admission
+    # Subtest: free / gemini-3.8-flash-tiered
+    ok 1 - free / gemini-3.8-flash-tiered
+      ---
+      duration_ms: 4.722083
+      type: 'test'
+      ...
+    # Subtest: plus / gpt-6.1-sol
+    ok 2 - plus / gpt-6.1-sol
+      ---
+      duration_ms: 2.867791
+      type: 'test'
+      ...
+    # Subtest: plus / gemini-3.8-flash-tiered
+    ok 3 - plus / gemini-3.8-flash-tiered
+      ---
+      duration_ms: 3.580208
+      type: 'test'
+      ...
+    # Subtest: pro / gpt-6.1-sol
+    ok 4 - pro / gpt-6.1-sol
+      ---
+      duration_ms: 2.621334
+      type: 'test'
+      ...
+    1..4
+ok 16 - computer inference rechecks current Bot membership before admission
+  ---
+  duration_ms: 36.787708
+  type: 'test'
+  ...
+# Subtest: vault authenticates ciphertext and model routes reject cross-protocol requests
+ok 17 - vault authenticates ciphertext and model routes reject cross-protocol requests
+  ---
+  duration_ms: 0.94825
+  type: 'test'
+  ...
+# Subtest: real OAuth HTTP flow enforces PKCE, consent, duplicate requests and revocation
+ok 18 - real OAuth HTTP flow enforces PKCE, consent, duplicate requests and revocation
+  ---
+  duration_ms: 68.427875
+  type: 'test'
+  ...
+# Subtest: membership preview offers bonus credit without recurring charges
+ok 19 - membership preview offers bonus credit without recurring charges
+  ---
+  duration_ms: 0.0675
+  type: 'test'
+  ...
+# Subtest: Bot SSE retry waits for the original response after consumer timeout without a second paid call
+ok 20 - Bot SSE retry waits for the original response after consumer timeout without a second paid call
+  ---
+  duration_ms: 267.238042
+  type: 'test'
+  ...
+# Subtest: computer HTTP proxy enforces persisted budget and requests cancellation before any excess call
+ok 21 - computer HTTP proxy enforces persisted budget and requests cancellation before any excess call
+  ---
+  duration_ms: 38.627625
+  type: 'test'
+  ...
+# Subtest: upstream body failure keeps billing identity and unknown request is never replayed
+ok 22 - upstream body failure keeps billing identity and unknown request is never replayed
+  ---
+  duration_ms: 22.17825
+  type: 'test'
+  ...
+# Subtest: new users enroll once across iOS and desktop PKCE flows; unknown provisioning cannot replay
+ok 23 - new users enroll once across iOS and desktop PKCE flows; unknown provisioning cannot replay
+  ---
+  duration_ms: 64.6585
+  type: 'test'
+  ...
+# Subtest: complete account model catalogue preserves registry and combines membership with Key policy
+ok 24 - complete account model catalogue preserves registry and combines membership with Key policy
+  ---
+  duration_ms: 0.910417
+  type: 'test'
+  ...
+# Subtest: model catalogue HTTP uses existing OIDC authority and does not change account/models filtering
+ok 25 - model catalogue HTTP uses existing OIDC authority and does not change account/models filtering
+  ---
+  duration_ms: 38.151083
+  type: 'test'
+  ...
+# [managed-oauth-diagnostic] {"timestamp":"2026-11-04T02:54:08.920Z","requestId":"dfdbf615-c577-48b6-8309-a3f5385b7505","route":"oauth-token","startedAt":"2026-11-04T02:54:08.916Z","headersMs":3,"code":"OAUTH_RESPONSE_BODY_ERROR","reason":"invalid_grant","status":400,"contentType":"application/json","bodyShape":{"error":"string","error_description":"string"},"transportCode":"UNKNOWN"}
+# Subtest: invalid OAuth code produces bounded diagnostic, clears pending and never retries exchange
+ok 26 - invalid OAuth code produces bounded diagnostic, clears pending and never retries exchange
+  ---
+  duration_ms: 128.220959
+  type: 'test'
+  ...
+# Subtest: Visual Studio exact web callback and explicit consent preserve offline_access for refresh
+ok 27 - Visual Studio exact web callback and explicit consent preserve offline_access for refresh
+  ---
+  duration_ms: 100.475209
+  type: 'test'
+  ...
+# Subtest: paid permanent credit unlocks Free model access without upgrading membership
+    # Subtest: gift and manually high permanent balance do not imply a paid purchase
+    ok 1 - gift and manually high permanent balance do not imply a paid purchase
+      ---
+      duration_ms: 5.279208
+      type: 'test'
+      ...
+    # Subtest: verified payment opens catalogue, text and image paths while plan and limits stay Free
+    ok 2 - verified payment opens catalogue, text and image paths while plan and limits stay Free
+      ---
+      duration_ms: 11.668416
+      type: 'test'
+      ...
+    # Subtest: refund after catalogue load is rechecked before admission; Gemini still works
+    ok 3 - refund after catalogue load is rechecked before admission; Gemini still works
+      ---
+      duration_ms: 4.941667
+      type: 'test'
+      ...
+    # Subtest: missing payment proof never dispatches a paid model
+    ok 4 - missing payment proof never dispatches a paid model
+      ---
+      duration_ms: 2.535583
+      type: 'test'
+      ...
+    1..4
+ok 28 - paid permanent credit unlocks Free model access without upgrading membership
+  ---
+  duration_ms: 34.004958
+  type: 'test'
+  ...
+# Subtest: computer inference rechecks current Bot membership before admission
+    # Subtest: free / gemini-3.8-flash-tiered
+    ok 1 - free / gemini-3.8-flash-tiered
+      ---
+      duration_ms: 4.626
+      type: 'test'
+      ...
+    # Subtest: plus / gpt-6.1-sol
+    ok 2 - plus / gpt-6.1-sol
+      ---
+      duration_ms: 3.09525
+      type: 'test'
+      ...
+    # Subtest: plus / gemini-3.8-flash-tiered
+    ok 3 - plus / gemini-3.8-flash-tiered
+      ---
+      duration_ms: 3.599292
+      type: 'test'
+      ...
+    # Subtest: pro / gpt-6.1-sol
+    ok 4 - pro / gpt-6.1-sol
+      ---
+      duration_ms: 2.882958
+      type: 'test'
+      ...
+    1..4
+ok 29 - computer inference rechecks current Bot membership before admission
+  ---
+  duration_ms: 68.057416
+  type: 'test'
+  ...
+# Subtest: vault authenticates ciphertext and model routes reject cross-protocol requests
+ok 30 - vault authenticates ciphertext and model routes reject cross-protocol requests
+  ---
+  duration_ms: 0.96725
+  type: 'test'
+  ...
+# Subtest: real OAuth HTTP flow enforces PKCE, consent, duplicate requests and revocation
+ok 31 - real OAuth HTTP flow enforces PKCE, consent, duplicate requests and revocation
+  ---
+  duration_ms: 60.551042
+  type: 'test'
+  ...
+# Subtest: membership preview offers bonus credit without recurring charges
+ok 32 - membership preview offers bonus credit without recurring charges
+  ---
+  duration_ms: 0.07075
+  type: 'test'
+  ...
+# Subtest: Bot SSE retry waits for the original response after consumer timeout without a second paid call
+ok 33 - Bot SSE retry waits for the original response after consumer timeout without a second paid call
+  ---
+  duration_ms: 281.985375
+  type: 'test'
+  ...
+# Subtest: computer HTTP proxy enforces persisted budget and requests cancellation before any excess call
+ok 34 - computer HTTP proxy enforces persisted budget and requests cancellation before any excess call
+  ---
+  duration_ms: 47.122791
+  type: 'test'
+  ...
+# Subtest: upstream body failure keeps billing identity and unknown request is never replayed
+ok 35 - upstream body failure keeps billing identity and unknown request is never replayed
+  ---
+  duration_ms: 17.196042
+  type: 'test'
+  ...
+# Subtest: new users enroll once across iOS and desktop PKCE flows; unknown provisioning cannot replay
+ok 36 - new users enroll once across iOS and desktop PKCE flows; unknown provisioning cannot replay
+  ---
+  duration_ms: 60.082792
+  type: 'test'
+  ...
+# Subtest: complete account model catalogue preserves registry and combines membership with Key policy
+ok 37 - complete account model catalogue preserves registry and combines membership with Key policy
+  ---
+  duration_ms: 0.703166
+  type: 'test'
+  ...
+# Subtest: model catalogue HTTP uses existing OIDC authority and does not change account/models filtering
+ok 38 - model catalogue HTTP uses existing OIDC authority and does not change account/models filtering
+  ---
+  duration_ms: 15.496875
+  type: 'test'
+  ...
+# Subtest: desktop callback hydrates once under concurrent status reads and broker revokes on logout
+not ok 39 - desktop callback hydrates once under concurrent status reads and broker revokes on logout
+  ---
+  duration_ms: 224.509583
+  type: 'test'
+  location: '/Users/xingyicheng/Documents/ChatGPT/中转/account-service/test/desktop.test.mjs:14:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    403 !== 200
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 200
+  actual: 403
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/xingyicheng/Documents/ChatGPT/%E4%B8%AD%E8%BD%AC/account-service/test/desktop.test.mjs:49:265)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: managed paid calls never replay on missing or partial stream results
+ok 40 - managed paid calls never replay on missing or partial stream results
+  ---
+  duration_ms: 838.061
+  type: 'test'
+  ...
+1..40
+# tests 64
+# suites 0
+# pass 62
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4253.994334
