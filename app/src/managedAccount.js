@@ -6,6 +6,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { Readable } = require('node:stream')
 const { pipeline } = require('node:stream/promises')
+const { managedInferenceStream } = require('./managedInferenceStream')
 const { atomicWriteFileSync } = require('./atomicFile')
 const { applyManagedReasoning } = require('./managedReasoning')
 const { boundedResponse } = require('./managedAgentRoutes')
@@ -67,7 +68,7 @@ function createManagedAccount({issuer,directory,runtimeDirectory,runtimeEpoch=cr
       let inferenceDispatched=false
       const elapsed=()=>Math.round(performance.now()-started)
       res.setHeader('Cache-Control','no-store')
-      const fail=(status,error)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{message:error,type:'managed_service'}}))}
+      const fail=(status,error)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{message:error,type:'managed_service',...(timing.requestId?{request_id:timing.requestId}:{})}}))}
       try{
         const provided=String(req.headers.authorization||'').replace(/^Bearer /,'')||String(req.headers['x-goog-api-key']||'')
         if(epoch!==generation||accountId!==profile?.user?.id||provided.length!==key.length||!crypto.timingSafeEqual(Buffer.from(provided),Buffer.from(key))||req.headers.origin)return fail(401,'本机官方服务会话已失效，请重新选择模型')
@@ -116,6 +117,7 @@ function createManagedAccount({issuer,directory,runtimeDirectory,runtimeEpoch=cr
         const isImage=url.pathname.startsWith('/v1/images/')||url.pathname.startsWith('/v1beta/models/')
         const preserveOriginal=typeof originalId==='string'&&((['/v1/responses','/v1/chat/completions'].includes(url.pathname)&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(originalId))||(isImage&&/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(originalId)))
         const requestId=preserveOriginal?originalId:crypto.randomUUID();timing.requestId=requestId
+        res.setHeader('X-Request-Id',requestId)
         const authStarted=performance.now(),token=await access();timing.authMs=Math.round(performance.now()-authStarted)
         if(epoch!==generation||accountId!==profile?.user?.id)return fail(401,'账号已切换')
         if(!officialModelAvailable(timing.model,profile?.plan,catalog,profile?.paidModelAccess))return fail(403,modelAccessMessage)
@@ -131,8 +133,11 @@ function createManagedAccount({issuer,directory,runtimeDirectory,runtimeEpoch=cr
         const response=await fetcher(new URL('/account/inference'+url.pathname,origin),{method:'POST',redirect:'error',headers:{Authorization:`Bearer ${token}`,'Content-Type':contentType,'X-Request-Id':requestId},body:wireBody,signal})
         timing.upstreamHeadersMs=Math.round(performance.now()-upstreamStarted);timing.status=response.status
         const billingId=billingRequestID(response.headers.get('X-Oneapi-Request-Id'))
-        res.writeHead(response.status,{'Content-Type':response.headers.get('content-type')||'application/json','X-Request-Id':requestId,...(billingId?{'X-Oneapi-Request-Id':billingId}:{})});res.flushHeaders();if(response.body)await pipeline(Readable.fromWeb(response.body),res);else res.end()
-        timing.outcome=response.ok?'completed':'rejected'
+        const responseContentType=response.headers.get('content-type')||'application/json'
+        res.writeHead(response.status,{'Content-Type':responseContentType,'X-Request-Id':requestId,...(billingId?{'X-Oneapi-Request-Id':billingId}:{})});res.flushHeaders()
+        const observer=response.ok?managedInferenceStream(responseContentType,url.pathname):null
+        if(response.body)await pipeline(Readable.fromWeb(response.body),...(observer?[observer]:[]),res);else res.end()
+        timing.outcome=response.status>=500||[408,409].includes(response.status)?'unknown':response.ok?'completed':'rejected'
       }catch(error){
         timing.outcome=inferenceDispatched?'unknown':'not_dispatched'
         const failure=inferenceFailure(error,{requestId:timing.requestId,headersReceived:timing.status!==undefined,startedAt:started})
@@ -197,7 +202,16 @@ function createManagedAccount({issuer,directory,runtimeDirectory,runtimeEpoch=cr
     try{await openExternal(url.href)}catch{cancel();throw new Error('无法打开浏览器，请重试')};return status()
   }
   async function logout(){let token;try{token=load()?.access_token}catch{}cancel();await stopBroker();session=null;profile=null;storage.clear();message='';if(token){try{const response=await fetcher(new URL('/account/session',origin),{method:'DELETE',headers:{Authorization:`Bearer ${token}`},redirect:'error',signal:AbortSignal.timeout(10000)});if(!response.ok)throw new Error('Revocation not confirmed')}catch{message='本机已退出；云端会话未确认撤销，请在账号中心核对'}}notify();return status()}
-  return {async run(action){if(action==='status')return status();if(action==='refresh-models'){await refreshCatalog(true);return status()};if(action==='login'||action==='oauth'||action==='register')return login(action==='register'?'register':'login');if(action==='reopen'){if(!pending?.url)throw new Error('请重新发起登录');await openExternal(pending.url);return status()}if(action==='copy-login-link'){if(!pending?.url)throw new Error('请重新发起登录');if(!copyText)throw new Error('当前客户端不支持复制登录链接');await copyText(pending.url);message='登录链接已复制，请粘贴到浏览器打开';return status()}if(action==='cancel'){cancel();return status()}if(action==='logout')return logout();if(action==='plans'){await openExternal(`${origin}/plans`);return status()}if(action==='usage')return api('/account/usage');if(action==='allowance')return readAllowance('/account/allowance');if(action==='subscription')return readAllowance('/account/apple/subscription');throw new Error('请在网页账号中心完成此操作')},analyticsSession:async()=>null,getClient(){
+  async function traceAction(input){
+    if(typeof input?.requestId!=='string'||!/^[A-Za-z0-9_-]{16,100}$/.test(input.requestId))throw new Error('请求编号无效')
+    if(!broker?.listening||!brokerKey)throw new Error('请先登录抓虾官方服务')
+    // Reuse the broker's owner/session checks, bounded DTO validation and
+    // no-refresh GET contract; do not create a second, weaker trace path.
+    const response=await fetch(`http://127.0.0.1:${broker.address().port}/account/requests/${input.requestId}`,{headers:{Authorization:`Bearer ${brokerKey}`},redirect:'error',signal:AbortSignal.timeout(30000)})
+    if(!response.ok)throw new Error('本次只读核对未确认；不会重新生成')
+    return response.json()
+  }
+  return {async run(action,input={}){if(action==='request-trace')return traceAction(input);if(action==='status')return status();if(action==='refresh-models'){await refreshCatalog(true);return status()};if(action==='login'||action==='oauth'||action==='register')return login(action==='register'?'register':'login');if(action==='reopen'){if(!pending?.url)throw new Error('请重新发起登录');await openExternal(pending.url);return status()}if(action==='copy-login-link'){if(!pending?.url)throw new Error('请重新发起登录');if(!copyText)throw new Error('当前客户端不支持复制登录链接');await copyText(pending.url);message='登录链接已复制，请粘贴到浏览器打开';return status()}if(action==='cancel'){cancel();return status()}if(action==='logout')return logout();if(action==='plans'){await openExternal(`${origin}/plans`);return status()}if(action==='usage')return api('/account/usage');if(action==='allowance')return readAllowance('/account/allowance');if(action==='subscription')return readAllowance('/account/apple/subscription');throw new Error('请在网页账号中心完成此操作')},analyticsSession:async()=>null,getClient(){
     const {createClient}=require('@supabase/supabase-js')
     return createClient(origin+'/account/market','managed-market',{
       auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false},

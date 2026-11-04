@@ -1,0 +1,82 @@
+{
+  "status": "passed",
+  "serviceSource": "minimal production candidate",
+  "realPostgreSQL": true,
+  "realPaidProviderCalls": 0,
+  "requests": [
+    {
+      "name": "nonstream-json",
+      "requestId": "785a6411-a377-4812-a453-a295dbecc7f1",
+      "billingRequestId": "joint-billing-1",
+      "initialState": "completed",
+      "state": "completed",
+      "downstreamDisconnected": false,
+      "duplicateStatus": 409,
+      "originalDispatches": 1,
+      "brokerInferenceFetches": 1,
+      "dispatchCountBeforeDuplicate": 1,
+      "dispatchCountAfterDuplicate": 1
+    },
+    {
+      "name": "complete-sse",
+      "requestId": "d3a1f06f-a90b-40d7-a17b-61a0e486c755",
+      "billingRequestId": "joint-billing-2",
+      "initialState": "completed",
+      "state": "completed",
+      "downstreamDisconnected": false,
+      "duplicateStatus": 409,
+      "originalDispatches": 1,
+      "brokerInferenceFetches": 1,
+      "dispatchCountBeforeDuplicate": 2,
+      "dispatchCountAfterDuplicate": 2
+    },
+    {
+      "name": "delta-then-client-close",
+      "requestId": "de1a59f5-483c-413c-baf7-487151513a4c",
+      "billingRequestId": "joint-billing-3",
+      "initialState": "in_progress",
+      "state": "completed",
+      "downstreamDisconnected": true,
+      "duplicateStatus": 409,
+      "originalDispatches": 1,
+      "brokerInferenceFetches": 1,
+      "dispatchCountBeforeDuplicate": 3,
+      "dispatchCountAfterDuplicate": 3
+    },
+    {
+      "name": "installed-provider-complete",
+      "requestId": "aef5b4a3-968b-49ac-b7d4-0b4db6f53f39",
+      "billingRequestId": "joint-billing-4",
+      "initialState": "completed",
+      "state": "completed",
+      "downstreamDisconnected": false,
+      "duplicateStatus": 409,
+      "originalDispatches": 1,
+      "brokerInferenceFetches": 1,
+      "dispatchCountBeforeDuplicate": 4,
+      "dispatchCountAfterDuplicate": 4
+    },
+    {
+      "name": "installed-provider-cancel",
+      "requestId": "e7666ca8-4606-498c-a474-072a9abb1afe",
+      "billingRequestId": "joint-billing-5",
+      "initialState": "in_progress",
+      "state": "completed",
+      "downstreamDisconnected": true,
+      "duplicateStatus": 409,
+      "originalDispatches": 1,
+      "brokerInferenceFetches": 1,
+      "dispatchCountBeforeDuplicate": 5,
+      "dispatchCountAfterDuplicate": 5
+    }
+  ],
+  "sharedFixtureModeMutations": 0,
+  "sessionRevocations": 0,
+  "finalTraceReadback": {
+    "checked": 5,
+    "completed": 5,
+    "inProgress": 0,
+    "unknown": 0
+  },
+  "candidateManifestPath": "/Users/xingyicheng/Documents/ChatGPT/中转/work/release-ready-20261104/candidate-source-manifest.json"
+}
