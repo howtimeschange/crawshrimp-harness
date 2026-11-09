@@ -10,10 +10,14 @@ aiofiles>=23.0.0
 jsonschema>=4.0.0
 tzdata>=2024.1
 Pillow>=10.4.0
-PyMuPDF>=1.24.0
+PyMuPDF>=1.24.0,<2.0.0
 cryptography>=42.0.0,<49.0.0
 mcp==2.0.0
 pywin32>=311; sys_platform == "win32"
 colorama>=0.4.6; sys_platform == "win32"
 pywinauto==0.6.9; sys_platform == "win32"
 psutil>=6.0; sys_platform == "win32"
+
+# Image transformations for reviewed Mini Bala recipes (no local recognition model).
+opencv-python-headless==4.11.0.86
+numpy>=1.26.4,<3

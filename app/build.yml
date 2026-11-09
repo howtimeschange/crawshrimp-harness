@@ -78,6 +78,8 @@ extraResources:
       - "**/*"
       - "!**/__pycache__/**"
       - "!**/*.pyc"
+      - "!shoe_specialist/assets/**"
+      - "!**/*.onnx"
   - from: "../adapters"
     to: python-scripts/adapters
     filter:

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "version": "bala-shoe-dinov2-onnx-v2-yx-v3",
+  "bundle": {
+    "version": "bala-shoe-dinov2-onnx-v2-yx-v3",
+    "backbone": "facebook/dinov2-small",
+    "training_scope": "pose heads: 13 styles; YX head: 19 styles, 31 color groups; development regression, not independent acceptance",
+    "files": {
+      "models.json": "afd1a7caef64385515fcd49808d37735b32d2c9f205a2fc3243094acd01b6353",
+      "dino-224.onnx": "dd37e71f45583186c43eb2a75fc24105c2e920d3c5dd78a91fad0c20b9182bed",
+      "snow-tmz4.png": "a33a318e900e9ae099bc38c27f66e37ab229ad8b4d2e03d0699146feb6896677",
+      "yx.json": "f845829c9ea9510cad35a206690b04470311e56d57ca08b31a88b44bae4c5bed",
+      "dino-448.onnx": "3d074e82733ff11e4ec4210ff2559ae40a128035ecf017ebe6d7688c2ded2c2e"
+    }
+  },
+  "files": {
+    "models.json": {
+      "sha256": "afd1a7caef64385515fcd49808d37735b32d2c9f205a2fc3243094acd01b6353",
+      "size": 2444287,
+      "url": "https://raw.githubusercontent.com/howtimeschange/crawshrimp/b052144e42c68f0342aef55cde7ec55f7e6c996a/core/shoe_specialist/assets/models.json"
+    },
+    "dino-224.onnx": {
+      "sha256": "dd37e71f45583186c43eb2a75fc24105c2e920d3c5dd78a91fad0c20b9182bed",
+      "size": 88423629,
+      "url": "https://raw.githubusercontent.com/howtimeschange/crawshrimp/b052144e42c68f0342aef55cde7ec55f7e6c996a/core/shoe_specialist/assets/dino-224.onnx"
+    },
+    "snow-tmz4.png": {
+      "sha256": "a33a318e900e9ae099bc38c27f66e37ab229ad8b4d2e03d0699146feb6896677",
+      "size": 956382,
+      "url": "https://raw.githubusercontent.com/howtimeschange/crawshrimp/b052144e42c68f0342aef55cde7ec55f7e6c996a/core/shoe_specialist/assets/snow-tmz4.png"
+    },
+    "yx.json": {
+      "sha256": "f845829c9ea9510cad35a206690b04470311e56d57ca08b31a88b44bae4c5bed",
+      "size": 49201,
+      "url": "https://raw.githubusercontent.com/howtimeschange/crawshrimp/b052144e42c68f0342aef55cde7ec55f7e6c996a/core/shoe_specialist/assets/yx.json"
+    },
+    "dino-448.onnx": {
+      "sha256": "3d074e82733ff11e4ec4210ff2559ae40a128035ecf017ebe6d7688c2ded2c2e",
+      "size": 88423629,
+      "url": "https://raw.githubusercontent.com/howtimeschange/crawshrimp/b052144e42c68f0342aef55cde7ec55f7e6c996a/core/shoe_specialist/assets/dino-448.onnx"
+    }
+  }
+}

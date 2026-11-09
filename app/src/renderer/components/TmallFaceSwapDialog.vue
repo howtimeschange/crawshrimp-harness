@@ -10,7 +10,7 @@
           <p class="hint">只替换脸部，保留服装、姿势和背景。新图将加入本款审批结果，原图保留。</p>
           <p v-if="error" class="error" role="alert">{{ error }}</p>
           <p v-if="busy" role="status">换脸中，请稍候…</p>
-          <button class="primary" type="button" :disabled="busy || !model || Boolean(resultUrl)" @click="$emit('submit', { model_id: model.id, instruction })">{{ busy ? '正在换脸…' : resultUrl ? '已生成，待审批' : '开始换脸' }}</button>
+          <button class="primary" type="button" :disabled="blocked || busy || !model || Boolean(resultUrl)" @click="$emit('submit', { model_id: model.id, instruction })">{{ blocked ? '提交状态待核实' : busy ? '正在换脸…' : resultUrl ? '已生成，待审批' : '开始换脸' }}</button>
         </div>
       </div>
       <BalaModelPicker :open="pickerOpen" :selected="model" @close="closePicker" @select="selectModel" />
@@ -22,7 +22,7 @@ import { useNativeDialog } from '../composables/useNativeDialog'
 import { computed, nextTick, ref, watch } from 'vue'
 import BalaModelPicker from './BalaModelPicker.vue'
 
-const props = defineProps({ open: Boolean, busy: Boolean, sourceUrl: String, resultUrl: String, title: String, error: String })
+const props = defineProps({ open: Boolean, busy: Boolean, blocked: Boolean, sourceUrl: String, resultUrl: String, title: String, error: String })
 const nativeDialog = ref(null)
 useNativeDialog(computed(() => props.open), nativeDialog)
 const emit = defineEmits(['close', 'submit'])

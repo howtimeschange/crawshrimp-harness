@@ -25,6 +25,7 @@ from urllib.request import Request, build_opener, urlopen, ProxyHandler
 import websockets
 
 from core.models import JSResult
+from core.execution_checkpoint import check_execution, has_execution_checkpoint
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,14 @@ NAVIGATION_ERROR_MARKERS = (
     "Cannot find context with specified id",
     "Promise was collected",
     "Execution context was destroyed",
+)
+TRANSIENT_CDP_TRANSPORT_ERROR_MARKERS = (
+    "no close frame received or sent",
+    "no close frame received",
+    "connection closed",
+    "connection is closed",
+    "keepalive ping timeout",
+    "sent 1011",
 )
 WASH_CARE_FIELDS = ("washing", "bleaching", "drying", "ironing", "dryCleaning")
 WASH_CARE_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
@@ -425,6 +434,14 @@ class JSRunner:
         self.last_runtime_shared: dict = {}
         self.last_runtime_page: int = 0
         self.last_runtime_phase: str = ""
+        # Only read-only tasks opt in while they run.  Replaying a write after a
+        # dropped WebSocket could duplicate a business action.
+        self._retry_transient_cdp_errors = False
+        # Write workflows may opt into transport-only recovery.  The current
+        # phase is evaluated again after refreshing the WebSocket, but timeout
+        # replay remains disabled; write adapters must keep their own pending
+        # request/receipt state in the page.
+        self._recover_cdp_connection = False
 
     def _next_id(self) -> int:
         self._msg_id += 1
@@ -452,6 +469,9 @@ class JSRunner:
         return await self._bridge_call_async("close_tab_async", "close_tab", tab_id)
 
     async def _evaluate_raw(self, expression: str, user_gesture: bool = False) -> dict:
+        check_execution()
+        if has_execution_checkpoint() and expression.lstrip().startswith('/* crawshrimp:checkpoints */'):
+            return await self._evaluate_checkpointed_raw(expression, user_gesture=user_gesture)
         msg_id = self._next_id()
         payload = json.dumps({
             "id": msg_id,
@@ -464,13 +484,91 @@ class JSRunner:
                 "userGesture": bool(user_gesture),
             }
         })
-        async with websockets.connect(self.ws_url, max_size=50 * 1024 * 1024, proxy=None) as ws:
+        # CDP is already carried over a local browser WebSocket.  The
+        # websockets library keepalive can mistake a busy Runtime.evaluate
+        # (for example an in-page MTop request) for a dead peer and close the
+        # socket with 1011 keepalive ping timeout.  Transport recovery is
+        # handled by evaluate_with_reconnect instead.
+        async with websockets.connect(
+            self.ws_url,
+            max_size=50 * 1024 * 1024,
+            proxy=None,
+            ping_interval=None,
+        ) as ws:
+            check_execution()
             await ws.send(payload)
             while True:
                 raw = await asyncio.wait_for(ws.recv(), timeout=self.timeout + 5)
                 msg = json.loads(raw)
                 if msg.get("id") == msg_id:
                     return msg
+
+    async def _evaluate_checkpointed_raw(self, expression: str, user_gesture: bool = False) -> dict:
+        """A browser write asks the host for the current lease, not a cached flag.
+
+        Already-sent requests finish normally so their receipts can be saved.
+        Only scripts with explicit per-request checkpoints use this bridge.
+        """
+        binding = '__crawshrimp_check_' + secrets.token_hex(12)
+        pending = binding + '_pending'
+        wrapped = f'''(async () => {{
+          const pending = globalThis[{json.dumps(pending)}] = new Map();
+          let sequence = 0;
+          const __crawshrimpCheckpoint = () => new Promise((resolve, reject) => {{
+            const id = ++sequence;
+            pending.set(id, error => {{ pending.delete(id); error ? reject(new Error(error)) : resolve(); }});
+            globalThis[{json.dumps(binding)}](JSON.stringify({{id}}));
+          }});
+          try {{ return await ({expression}); }}
+          finally {{ delete globalThis[{json.dumps(pending)}]; delete globalThis[{json.dumps(binding)}]; }}
+        }})()'''
+        async with websockets.connect(self.ws_url, max_size=50 * 1024 * 1024, proxy=None) as ws:
+            enable_id = self._next_id()
+            await ws.send(json.dumps({'id': enable_id, 'method': 'Runtime.enable', 'params': {}}))
+            while True:
+                reply = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+                if reply.get('id') == enable_id:
+                    if 'error' in reply:
+                        raise RuntimeError('无法启用云端租约检查，已阻止提交')
+                    break
+            add_id = self._next_id()
+            await ws.send(json.dumps({'id': add_id, 'method': 'Runtime.addBinding', 'params': {'name': binding}}))
+            while True:
+                reply = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+                if reply.get('id') == add_id:
+                    if 'error' in reply:
+                        raise RuntimeError('无法建立云端租约检查，已阻止提交')
+                    break
+            try:
+                check_execution()
+                msg_id = self._next_id()
+                await ws.send(json.dumps({'id': msg_id, 'method': 'Runtime.evaluate', 'params': {
+                    'expression': wrapped, 'awaitPromise': True, 'returnByValue': True,
+                    'timeout': self.timeout * 1000, 'userGesture': user_gesture,
+                }}))
+                async with asyncio.timeout(self.timeout + 5):
+                    while True:
+                        reply = json.loads(await ws.recv())
+                        if reply.get('id') == msg_id:
+                            return reply
+                        event = reply.get('params') or {}
+                        if reply.get('method') != 'Runtime.bindingCalled' or event.get('name') != binding:
+                            continue
+                        sequence = int(json.loads(event['payload'])['id'])
+                        error = ''
+                        try:
+                            check_execution()
+                        except Exception:
+                            error = '云端任务已取消或租约失效，已阻止后续提交'
+                        await ws.send(json.dumps({'id': self._next_id(), 'method': 'Runtime.evaluate', 'params': {
+                            'expression': f'globalThis[{json.dumps(pending)}]?.get({sequence})?.({json.dumps(error)})',
+                            'contextId': event['executionContextId'],
+                        }}))
+            finally:
+                try:
+                    await ws.send(json.dumps({'id': self._next_id(), 'method': 'Runtime.removeBinding', 'params': {'name': binding}}))
+                except Exception:
+                    pass
 
     async def _cdp_send(self, method: str, params: dict) -> dict:
         """直接通过 CDP WebSocket 发送任意命令（非 Runtime.evaluate）"""
@@ -3779,6 +3877,7 @@ class JSRunner:
         }
 
     async def evaluate(self, expression: str, user_gesture: bool = False) -> JSResult:
+        check_execution()
         try:
             msg = await self._evaluate_raw(expression, user_gesture=user_gesture)
         except asyncio.TimeoutError:
@@ -3866,6 +3965,7 @@ class JSRunner:
                 }
             await asyncio.sleep(min(delay, remaining))
 
+
     async def stop_loading_and_wait_for_document_ready(
         self,
         *,
@@ -3897,6 +3997,7 @@ class JSRunner:
         )
         ready["load_stopped"] = True
         return ready
+
 
     async def _refresh_ws_url(self) -> None:
         try:
@@ -3935,6 +4036,10 @@ class JSRunner:
 
     def _is_navigation_error(self, error: str) -> bool:
         return any(marker in (error or "") for marker in NAVIGATION_ERROR_MARKERS)
+
+    def _is_transient_cdp_transport_error(self, error: str) -> bool:
+        normalized = str(error or "").lower()
+        return any(marker in normalized for marker in TRANSIENT_CDP_TRANSPORT_ERROR_MARKERS)
 
     def _params_storage_key(self, run_token: str) -> str:
         return f"__CRAWSHRIMP_PARAMS__:{run_token}"
@@ -4029,6 +4134,63 @@ class JSRunner:
         except Exception:
             logger.debug("Failed to clear persisted run params", exc_info=True)
 
+    async def _navigate_publisher(self, url: str) -> None:
+        """Navigate between jobs, handling only the requested navigation's beforeunload.
+
+        Keep one CDP session open through the dialog and a new document's load.
+        Never replay a publishing phase or continue against the old document.
+        """
+        async with websockets.connect(self.ws_url, max_size=50 * 1024 * 1024, proxy=None) as ws:
+            async def command(method, params):
+                response = await self._cdp_send_on_ws(method, params, ws=ws)
+                if response.get("error"):
+                    raise RuntimeError(f"发布器导航失败: {response['error']}")
+                return response.get("result", {})
+
+            await command("Page.enable", {})
+            await command("Page.setLifecycleEventsEnabled", {"enabled": True})
+            tree = await command("Page.getFrameTree", {})
+            frame = tree["frameTree"]["frame"]
+            old_loader = frame.get("loaderId")
+            navigation_id = self._next_id()
+            method = "Page.reload" if frame.get("url") == url else "Page.navigate"
+            params = {"ignoreCache": True} if method == "Page.reload" else {"url": url}
+            logger.info("受控导航发布器: %s %s", method, url)
+            await ws.send(json.dumps({"id": navigation_id, "method": method, "params": params}))
+            pending = {navigation_id}
+            loaded = False
+            deadline = time.monotonic() + 45.0
+            while pending or not loaded:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError("发布器导航超时：未确认新页面加载完成，已停止后续上传")
+                try:
+                    message = json.loads(await asyncio.wait_for(ws.recv(), timeout=remaining))
+                except asyncio.TimeoutError as exc:
+                    raise RuntimeError("发布器导航超时：未确认新页面加载完成，已停止后续上传") from exc
+                if message.get("id") in pending:
+                    pending.remove(message["id"])
+                    error = message.get("error") or (message.get("result") or {}).get("errorText")
+                    if error:
+                        raise RuntimeError(f"发布器导航失败: {error}")
+                event = message.get("method")
+                details = message.get("params") or {}
+                if event == "Page.javascriptDialogOpening":
+                    if details.get("type") != "beforeunload":
+                        raise RuntimeError("发布器导航遇到非离开确认弹窗，已停止，请检查浏览器")
+                    dialog_id = self._next_id()
+                    pending.add(dialog_id)
+                    logger.info("确认任务切换发布器触发的离开提示")
+                    await ws.send(json.dumps({
+                        "id": dialog_id, "method": "Page.handleJavaScriptDialog",
+                        "params": {"accept": True},
+                    }))
+                if (event == "Page.lifecycleEvent" and details.get("name") == "load"
+                        and details.get("frameId") == frame["id"]
+                        and details.get("loaderId") and details["loaderId"] != old_loader):
+                    loaded = True
+            self._page_file_cache_keys.clear()
+
     async def _reload_current_page(self) -> None:
         tab = None
         if self.tab_id:
@@ -4067,10 +4229,18 @@ class JSRunner:
             return result
 
         retry = 0
-        while not result.success and self._is_navigation_error(result.error or "") and retry < 4:
+        while not result.success and retry < 4:
+            navigation_error = self._retry_transient_cdp_errors and self._is_navigation_error(result.error or "")
+            transport_error = (
+                (self._retry_transient_cdp_errors or self._recover_cdp_connection)
+                and self._is_transient_cdp_transport_error(result.error or "")
+            )
+            if not navigation_error and not transport_error:
+                break
             retry += 1
             delay = min(0.8 * retry + 0.4, 3.0)
-            logger.info(f"导航/重载中，等待 {delay:.1f}s 后重试 (attempt {retry}/4)")
+            reason = "Chrome CDP 连接异常" if transport_error else "导航/重载中"
+            logger.info(f"{reason}，等待 {delay:.1f}s 后重试 (attempt {retry}/4)")
             await asyncio.sleep(delay)
             try:
                 await self._refresh_ws_url()
@@ -4080,9 +4250,24 @@ class JSRunner:
             result = await self.evaluate(expression)
         return result
 
-    async def run_script_file(self, script_path: Path, params: dict = None, control_hook=None) -> List[dict]:
+    async def run_script_file(
+        self,
+        script_path: Path,
+        params: dict = None,
+        control_hook=None,
+        retry_transient_cdp_errors: bool = False,
+        recover_cdp_connection: bool = False,
+    ) -> List[dict]:
         """执行脚本文件，支持自动分页 + 多阶段重入，返回合并后的所有 data 记录
         params: 用户填写的参数，注入为 window.__CRAWSHRIMP_PARAMS__
+
+        retry_transient_cdp_errors: 仅供幂等、只读脚本开启。Chrome 的 CDP
+        WebSocket 非正常断开或阶段超时且结果未返回时，会重新执行当前阶段。
+        写入脚本默认禁止超时重放，回执未知时交由适配器查询核实。
+
+        recover_cdp_connection: 供带有页面内 pending receipt 的写入脚本使用。
+        只对瞬时 WebSocket 断开刷新连接并重新读取当前阶段，不对 timeout
+        做页面刷新或阶段重放；发布适配器必须保证同一阶段重入不会重复提交。
         """
         script = script_path.read_text(encoding="utf-8")
         all_data: List[dict] = []
@@ -4093,8 +4278,17 @@ class JSRunner:
         self.last_runtime_shared = {}
         self.last_runtime_page = 0
         self.last_runtime_phase = ""
+        previous_retry_setting = self._retry_transient_cdp_errors
+        previous_recovery_setting = self._recover_cdp_connection
+        self._retry_transient_cdp_errors = bool(retry_transient_cdp_errors)
+        self._recover_cdp_connection = bool(recover_cdp_connection)
 
-        await self._persist_run_params(run_token, params_json)
+        try:
+            await self._persist_run_params(run_token, params_json)
+        except BaseException:
+            self._retry_transient_cdp_errors = previous_retry_setting
+            self._recover_cdp_connection = previous_recovery_setting
+            raise
 
         async def cooperate(kind: str, page: int, phase: str, shared: Optional[dict] = None, extra: Optional[dict] = None) -> None:
             self.last_runtime_page = int(page or 0)
@@ -4114,6 +4308,42 @@ class JSRunner:
                 payload.update(extra)
             await control_hook(payload)
 
+        async def recover_short_video_page(error, failed_phase, state):
+            # Only this adapter implements the host recovery phase. Never replay a
+            # write phase after losing the renderer's in-memory publish receipt.
+            if (script_path.name != "short-video-batch-upload.js"
+                    or script_path.parent.name != "bala-ai-video-assistant"
+                    or not state.get("jobs")):
+                return False
+            message = str(error or "").lower()
+            if not any(value in message for value in (
+                    "target crashed", "session deleted because of page crash",
+                    "timeout", "timed out", "脚本执行超时")):
+                return False
+            count = int(state.get("page_recovery_count", 0))
+            if count >= 12 or failed_phase == "recover_page":
+                return False
+            state["page_recovery_count"] = count + 1
+            state["page_recovery_phase"] = failed_phase
+            state["current_store"] = "网页崩溃或超时，正在自动刷新并恢复进度"
+            await cooperate("page_recovery", page, failed_phase, state)
+            logger.warning("短视频网页崩溃或超时，自动刷新恢复 %s/12 (phase=%s)", count + 1, failed_phase)
+            # A failed reload is not recovery. Retry the reload, never the POST.
+            for attempt in range(2):
+                try:
+                    await self._refresh_ws_url()
+                    reply = await self._cdp_send("Page.reload", {"ignoreCache": True})
+                    if (reply or {}).get("error"):
+                        raise RuntimeError(str(reply["error"]))
+                    self._page_file_cache_keys.clear()
+                    await asyncio.sleep(2.0)
+                    await self._refresh_ws_url()
+                    return True
+                except Exception:
+                    if attempt:
+                        raise
+            return False
+
         try:
             try:
                 page_shared: dict = {}
@@ -4130,7 +4360,7 @@ class JSRunner:
                             result = await self.evaluate_with_reconnect(payload, allow_navigation_retry=True)
                             if result.success:
                                 break
-                            if result.error != "timeout" or timeout_retry:
+                            if result.error != "timeout" or timeout_retry or not retry_transient_cdp_errors:
                                 break
                             timeout_retry = True
                             logger.info(f"脚本超时，先刷新当前页面后重试 (page={page}, phase={phase})")
@@ -4142,6 +4372,15 @@ class JSRunner:
 
                         if not result.success:
                             error_message = str(result.error or "").strip() or "脚本执行失败：未返回错误详情"
+                            if error_message == "timeout" and not retry_transient_cdp_errors:
+                                error_message = "脚本执行超时，结果待核实；未自动重试，请先核实平台结果，避免重复提交"
+                            elif not retry_transient_cdp_errors and (
+                                self._is_navigation_error(error_message) or self._is_transient_cdp_transport_error(error_message)
+                            ):
+                                error_message += '；结果待核实，未自动重试，请先核实平台结果，避免重复提交'
+                            if await recover_short_video_page(error_message, phase, shared):
+                                phase = "recover_page"
+                                continue
                             logger.error(f"脚本执行失败 (page={page}, phase={phase}): {error_message}")
                             raise RuntimeError(error_message)
 
@@ -4209,9 +4448,15 @@ class JSRunner:
                             await cooperate("before_file_inject", page, phase, shared, {
                                 "file_item_total": len(items),
                             })
-                            inject_result = await self.inject_files(items)
-                            if not inject_result.success:
-                                raise RuntimeError(inject_result.error or "文件注入失败")
+                            try:
+                                inject_result = await self.inject_files(items)
+                                if not inject_result.success:
+                                    raise RuntimeError(inject_result.error or "文件注入失败")
+                            except Exception as error:
+                                if await recover_short_video_page(error, phase, shared):
+                                    phase = "recover_page"
+                                    continue
+                                raise
                             post_sleep = float(meta.get("sleep_ms", 500)) / 1000.0
                             await cooperate("before_sleep", page, phase, shared, {"sleep_ms": int(post_sleep * 1000)})
                             await asyncio.sleep(post_sleep)
@@ -4654,6 +4899,23 @@ class JSRunner:
                             await self._refresh_ws_url()
                             continue
 
+                        if action == "navigate_publisher":
+                            next_phase = meta.get("next_phase")
+                            url = str(meta.get("url") or "").strip()
+                            if not next_phase or not url.startswith("https://"):
+                                raise RuntimeError("发布器导航缺少有效网址或下一阶段")
+                            await cooperate("before_navigate_publisher", page, phase, shared)
+                            try:
+                                await self._navigate_publisher(url)
+                            except Exception as error:
+                                if await recover_short_video_page(error, phase, shared):
+                                    phase = "recover_page"
+                                    continue
+                                raise
+                            phase = str(next_phase)
+                            await self._refresh_ws_url()
+                            continue
+
                         if action == "reload_page":
                             next_phase = meta.get("next_phase") or phase
                             sleep_ms = float(meta.get("sleep_ms", 1000))
@@ -4715,3 +4977,5 @@ class JSRunner:
         finally:
             await self._clear_run_params(run_token)
             self._page_file_cache_keys = set()
+            self._retry_transient_cdp_errors = previous_retry_setting
+            self._recover_cdp_connection = previous_recovery_setting

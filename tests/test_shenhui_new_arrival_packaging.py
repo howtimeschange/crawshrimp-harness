@@ -14,6 +14,7 @@ from core.api_server import (
     _compress_shenhui_label_tile_image_if_beneficial,
     _finalize_shenhui_new_arrival_outputs,
     _prepare_shenhui_shoe_package_rows,
+    _require_shenhui_shoe_package_result,
     _serialize_task_param,
     _shenhui_shoe_box_label_candidate_result,
 )
@@ -26,6 +27,18 @@ SHOE_PACKAGING_PATH = ROOT / "core" / "shenhui_shoe_packaging.py"
 
 
 class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
+    def test_shoe_raw_fallback_is_failure_and_preserves_report_reason(self):
+        rows = [{"输入款号": "204426141029", "处理动作": "失败款跳过",
+                 "规则告警": "整理失败，已跳过该款", "备注": "00316 姿势识别请求超时"}]
+        with self.assertRaisesRegex(ValueError, "0 个图包.*00316 姿势识别请求超时"):
+            _require_shenhui_shoe_package_result(rows, {"__shenhui_shoe_package_refs": []})
+        self.assertEqual(rows[0]["备注"], "00316 姿势识别请求超时")
+        _require_shenhui_shoe_package_result(rows, {"__shenhui_shoe_package_refs": ["successful-style"]})
+
+    def test_empty_shoe_result_cannot_be_reported_as_done(self):
+        with self.assertRaisesRegex(ValueError, "未生成任何可用的鞋品图包"):
+            _require_shenhui_shoe_package_result([], {})
+
     def test_apparel_label_processor_is_called_only_for_prepare_upload_package(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)
@@ -125,7 +138,14 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
             "assets/鞋品品类映射模板.xlsx",
         )
         self.assertEqual(params["model_chain"]["type"], "model_chain")
-        self.assertEqual(params["model_chain"]["label"], "模型策略")
+        self.assertEqual(params["model_chain"]["label"], "旧版对照模型顺序")
+        self.assertEqual(params["model_chain"]["visible_when"], {"field": "shoe_pose_strategy", "not_in": ["mask_board_review", "sequential_templates", "bala_specialist"]})
+        self.assertLess(list(params).index("shoe_pose_strategy"), list(params).index("model_chain"))
+        self.assertEqual(params["shoe_pose_strategy"]["default"], "bala_specialist")
+        self.assertEqual(params["shoe_pose_strategy"]["options"][0],
+                         {"value": "bala_specialist", "label": "【推荐】巴拉鞋品专属模型识别"})
+        self.assertNotIn("shoe_specialist_bundle", params)
+        self.assertNotIn("shoe_specialist_python", params)
         self.assertEqual(params["model_chain"]["ui_span"], "full")
         default_model = params["model_chain"]["default_model"]
         fallback_models = {
@@ -186,14 +206,6 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
                 }
             )
         )
-        self.assertEqual(params["shoe_pose_strategy"]["default"], "single_sheet")
-        self.assertEqual(
-            [
-                option["value"]
-                for option in params["shoe_pose_strategy"]["options"]
-            ],
-            ["single_sheet", "global_pages", "batch_overview", "batch"],
-        )
         self.assertEqual(params["export_folder"]["type"], "directory")
 
         output_columns = task["output"][0]["columns"]
@@ -218,6 +230,7 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
         self.assertEqual(param.fallback_models[0]["label"], "备选模型 1")
 
         serialized = _serialize_task_param("shenhui-new-arrival", param)
+        self.assertEqual(serialized["visible_when"], {"field": "shoe_pose_strategy", "not_in": ["mask_board_review", "sequential_templates", "bala_specialist"]})
         self.assertEqual(serialized["default_model"]["default"], "gpt-5.6-sol")
         self.assertEqual(
             serialized["fallback_models"][0]["default"],
@@ -543,7 +556,7 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
 
             package_dir = export_dir / "测试吊牌洗唛平铺图"
             copied_excel = package_dir / "summary.xlsx"
-            self.assertEqual({Path(path) for path in result}, {package_dir, copied_excel})
+            self.assertEqual({Path(path) for path in result}, {package_dir, copied_excel, package_dir / "素材清单.json", package_dir / "素材清单.csv"})
             self.assertTrue((package_dir / "208426108223" / "208426108223-00316_有模拍.jpg").is_file())
             self.assertTrue((package_dir / "208426108223" / "208426108223_吊牌_yq1.jpg").is_file())
             self.assertFalse(tile_file.exists())
@@ -681,8 +694,8 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
                 )
 
             package_dir = export_dir / "测试鞋品标签下载"
-            final_style = package_dir / "204426141122" / "204426141122-00322.jpg"
-            final_box = package_dir / "204426141122" / "GUDO6815.jpg"
+            final_style = package_dir / "204426141122" / "204426141122_平铺图_01.jpg"
+            final_box = package_dir / "204426141122" / "204426141122_吊牌_01.jpg"
             final_detail = package_dir / "204426141122" / "GUDO6811.jpg"
             copied_excel = package_dir / "summary.xlsx"
 
@@ -703,7 +716,9 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
             local_file_index = header.index("本地文件")
             note_index = header.index("备注")
             self.assertEqual(rows[2][download_result_index], "已下载")
-            self.assertIn("GUDO6815.jpg", rows[2][local_file_index])
+            self.assertIn("204426141122_吊牌_01.jpg", rows[2][local_file_index])
+            self.assertEqual(data_rows[1]["原文件名"], "GUDO6815.jpg")
+            self.assertEqual(rows[2][header.index("文件名")], "204426141122_吊牌_01.jpg")
             self.assertEqual(rows[3][download_result_index], "已跳过")
             self.assertEqual(rows[3][local_file_index], None)
             self.assertIn("未读到当前款号", rows[3][note_index])
@@ -1430,7 +1445,6 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
                 "fallback_model_1": "gpt-5.6-terra",
                 "fallback_model_2": "gpt-5.6-luna",
                 "fallback_model_3": "",
-                "shoe_pose_strategy": "global_pages",
                 "shoe_category_file": {
                     "rows": [
                         {"款号": "208326146209", "品类": "宝宝鞋"},
@@ -1472,12 +1486,8 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
                 ["gpt-5.6-terra", "gpt-5.6-luna"],
             )
             self.assertEqual(
-                prepare.call_args.kwargs["pose_strategy"],
-                "global_pages",
-            )
-            self.assertEqual(
                 prepare.call_args.kwargs["label_fallback_model_ids"],
-                ["gpt-5.6-terra", "gpt-5.6-luna"],
+                None,
             )
             self.assertEqual(
                 prepare.call_args.kwargs["shoe_categories"],
@@ -1486,10 +1496,9 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
                     "204325141014": "休闲",
                 },
             )
-            self.assertIs(
-                prepare.call_args.kwargs["progress"],
-                progress_callback,
-            )
+            prepare.call_args.kwargs["progress"]({"organize_stage":"整理完成", "organize_active":False})
+            self.assertTrue(progress_events[-1]["organize_active"])
+            self.assertIn("等待批次收尾", progress_events[-1]["organize_stage"])
 
             run_params["__shoe_pose_benchmark"] = True
             with patch(
@@ -1513,6 +1522,7 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
             package_root = runtime_dir / "shoe-packages" / "204426146036"
             package_root.mkdir(parents=True)
             run_params = {
+                "shoe_board_review_model": "gpt-6-astra",
                 "shoe_category_file": {
                     "rows": [
                         {"款号": "204426146036", "品类": ""},
@@ -1540,7 +1550,8 @@ class ShenhuiNewArrivalPackagingTests(unittest.TestCase):
 
             self.assertEqual(result, expected_rows)
             self.assertIsNone(prepare.call_args.kwargs["shoe_categories"])
-            self.assertTrue(any("模型兜底识别品类" in item for item in logs))
+            self.assertEqual(prepare.call_args.kwargs["board_review_model_id"], "gpt-6-astra")
+            self.assertTrue(any("先核验吊牌产品名称" in item for item in logs))
 
     def test_finalize_outputs_creates_style_zips_when_auto_zip_enabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:

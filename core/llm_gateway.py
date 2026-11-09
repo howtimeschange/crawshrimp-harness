@@ -119,6 +119,10 @@ OVERSEAS_OPENAI_MODELS = (
     "gpt-5.5",
     "gemini-3.1-pro-preview",
     "gemini-3.5-flash",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
 )
 OVERSEAS_ANTHROPIC_MODELS = (
     "claude-opus-4-8",
@@ -132,6 +136,8 @@ DOMESTIC_OPENAI_MODELS = (
     "deepseek-v4-flash",
     "deepseek-v4-pro",
     "glm-5.2",
+    "glm-5.3-flash",
+    "glm-5.3",
     "kimi-k3",
     "kimi-k2.7-code",
 )
@@ -974,27 +980,40 @@ def _generic_openai_json_request(
     image_references: list[str],
     *,
     timeout_seconds: float | None = None,
+    stream: bool = False,
+    progress: Callable | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict:
-    if route.protocol == "openai-responses":
+    if getattr(route, "protocol", "openai") == "openai-responses":
         return _responses_request(route, system_prompt, user_prompt, image_references, timeout_seconds=timeout_seconds)
     content: list[dict[str, Any]] = [{"type": "text", "text": _compact(user_prompt)}]
     content.extend({
         "type": "image_url",
         "image_url": {"url": model_reference, "detail": "high"},
     } for reference in image_references if (model_reference := _image_reference_for_openai_model(route, reference)))
-    timeout = 240 if timeout_seconds is None else max(1, float(timeout_seconds))
+    request_timeout = max(float(timeout_seconds or 240), 0.001)
+    payload = {"model": route.model_id, "messages": [
+        {"role": "system", "content": _compact(system_prompt)},
+        {"role": "user", "content": content},
+    ]}
+    if reasoning_effort is not None:
+        payload["reasoning_effort"] = reasoning_effort
+    # Managed requests retain the mainline's receipt and account-identity checks.
+    if stream and not str(route.model_id).startswith("managed-"):
+        from core.llm_stream import post_json_stream
+        return post_json_stream(
+            _endpoint(route.base_url, "chat/completions"),
+            payload,
+            {"Authorization": f"Bearer {route.api_key}"},
+            idle_timeout=request_timeout, progress=progress,
+            include_usage=True,
+        )
     return _post_json(
         _endpoint(route.base_url, "chat/completions"),
-        {
-            "model": route.model_id,
-            "messages": [
-                {"role": "system", "content": _compact(system_prompt)},
-                {"role": "user", "content": content},
-            ],
-        },
+        payload,
         {"Authorization": f"Bearer {route.api_key}"},
-        timeout=timeout,
-        total_timeout=timeout,
+        timeout=min(request_timeout, 30),
+        total_timeout=request_timeout,
     )
 
 

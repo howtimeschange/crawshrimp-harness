@@ -11,6 +11,8 @@
   const DOWNLOAD_RETRY_ATTEMPTS = 5
   const DOWNLOAD_RETRY_DELAY_MS = 2000
   const DOWNLOAD_TIMEOUT_SECONDS = 120
+  const AUTH_WAIT_MS = 10 * 60 * 1000
+  const AUTH_MAX_RECOVERIES_PER_CODE = 2
   const SHOE_LABEL_GENERIC_CANDIDATE_LIMIT_PER_COLOR = 8
   const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif', 'tif', 'tiff'])
   const PDF_EXTS = new Set(['pdf'])
@@ -28,6 +30,7 @@
     still: '平拍路径',
   })
   const ASSET_KIND_LABELS = Object.freeze({
+    notice: '任务提示',
     hang_tag: '吊牌',
     wash_label: '洗唛',
     tile: '平铺图',
@@ -42,6 +45,22 @@
   function toSafeFilename(value, fallback = 'file') {
     const text = String(value || '').trim().replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ')
     return text.replace(/^_+|_+$/g, '') || fallback
+  }
+
+  function allocateRuntimeFilename(base, downloadItems) {
+    // Windows ignores case. Include earlier batches because multiple inputs can
+    // resolve to the same style and asset name; never reuse a downloaded path.
+    const key = value => String(value || '').normalize('NFC').replace(/[ .]+$/g, '').toLowerCase()
+    const used = new Set([
+      ...(shared.result_rows || []).map(row => key(row.__runtime_filename)),
+      ...downloadItems.map(item => key(item.filename)),
+    ])
+    const dot = base.lastIndexOf('.')
+    const stem = dot > 0 ? base.slice(0, dot) : base
+    const ext = dot > 0 ? base.slice(dot) : ''
+    let candidate = base
+    for (let index = 2; used.has(key(candidate)); index += 1) candidate = `${stem}_${index}${ext}`
+    return candidate
   }
 
   function parseCloudPath(rawValue) {
@@ -247,6 +266,22 @@
     const prefix = String(sourceConfig?.broadRelativePath || '').trim()
     if (prefix && !(normalized === prefix || normalized.startsWith(`${prefix}/`))) return false
     return pathSegments(normalized).includes(getSourceMarker(sourceType))
+      || isLightSupplySourcePath(normalized, sourceType)
+  }
+
+  function isLightSupplySourcePath(fullpath, sourceType) {
+    const segments = pathSegments(fullpath)
+    const lightSupplyIndex = segments.indexOf('轻供')
+    if (lightSupplyIndex < 0) return false
+    // Light-supply apparel keeps labels, stills and model shots in sibling
+    // folders. Do not widen the fallback to size charts, videos or logistics.
+    const sourceSegments = segments.slice(lightSupplyIndex + 1)
+    if (sourceSegments.some(segment => /视频|尺寸表/.test(segment))) return false
+    const model = sourceSegments.some(segment => /^(?:AI)?模拍(?:原图)?$|^模特图$/i.test(segment))
+    if (sourceType === 'model') return model
+    return !model && sourceSegments.some(segment => (
+      /^(?:静物图|平铺图|平拍原图|电子吊牌洗唛|吊牌洗唛|吊牌|洗唛|鞋品)$/.test(segment)
+    ))
   }
 
   function isShoePathValue(value) {
@@ -262,8 +297,10 @@
       || isShoePathValue(sourceConfig?.broadRelativePath || '')
   }
 
-  function isShoeCodePlan(sourceConfigs, items) {
-    if (Object.values(sourceConfigs || {}).some(isShoeSourceConfig)) return true
+  function isShoeCodePlan(_sourceConfigs, items) {
+    // sourceConfigs describes the whole search scope shared by the batch. It
+    // must not classify every code in that batch as shoes; only the matched
+    // assets for the current code can establish its category.
     return (Array.isArray(items) ? items : []).some(isShoeItem)
   }
 
@@ -350,10 +387,27 @@
     if (hasWasteLabelMarker(item)) return ''
     const yqKind = yqKindFromFilename(item?.filename || item?.name || '')
     if (yqKind) return yqKind
+    const filename = item?.filename || item?.name || ''
+    // Explicit filenames outrank the enclosing combined label folder.
+    if (hasAny(filename, WASH_LABEL_PATTERNS)) return 'wash_label'
+    if (hasAny(filename, HANG_TAG_PATTERNS)) return 'hang_tag'
+    if (isLightSupplyNumberedHangTagPdf(item, code)) return 'hang_tag'
     const text = `${item?.filename || item?.name || ''} ${item?.fullpath || item?.path || ''}`
     if (hasAny(text, WASH_LABEL_PATTERNS)) return 'wash_label'
     if (hasAny(text, HANG_TAG_PATTERNS) || hasLabelStatusParentMarker(item)) return 'hang_tag'
     return ''
+  }
+
+  function isLightSupplyNumberedHangTagPdf(item, code) {
+    if (getExt(item) !== 'pdf') return false
+    const target = getGroupCode(code)
+    const parts = pathSegments(item?.fullpath || item?.path || '')
+    const combined = parts.indexOf('电子吊牌洗唛')
+    if (!target || combined < 0 || !parts.slice(0, combined).includes('轻供')) return false
+    if (parts[combined + 1] !== target || parts.length !== combined + 3) return false
+    // Observed supplier naming: 401_208426103181_红叶.pdf. Requiring the
+    // complete style and folder prevents a generic PDF becoming a hang tag.
+    return new RegExp(`^\\d+_${escapeRegExp(target)}_[^/]+$`, 'i').test(getFileStem(item?.filename || item?.name || ''))
   }
 
   function labelPriority(item, kind, code = '') {
@@ -472,6 +526,53 @@
     return score
   }
 
+  // Status suffixes are metadata, not part of the business style code.
+  function isLightSupplyStyleFolder(part, code) {
+    return new RegExp(`^${escapeRegExp(getGroupCode(code))}(?:[-_\\s]+(?:已选|已写|已补|回齐))?$`, 'i').test(part)
+  }
+
+  // Light-supply assets use layout/size folders, not business color codes.
+  function lightSupplyRelativeParts(item, code) {
+    const parts = pathSegments(item?.fullpath || item?.path || '')
+    const index = parts.findIndex(part => isLightSupplyStyleFolder(part, code))
+    if (index < 0 || !parts.slice(0, index).includes('轻供') || !parts.slice(0, index).includes('鞋品')) return []
+    return parts.slice(index + 1)
+  }
+
+  function isLightSupplyUuidLabel(item, code) {
+    const parts = lightSupplyRelativeParts(item, code)
+    return !getShoeColorCodeFromInput(code) && parts.length === 1 && isImageItem(item)
+      && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.(?:png|jpe?g|webp)$/i.test(parts[0])
+  }
+
+  function selectLightSupplyLayoutItems(items, code) {
+    // Unknown colors cannot satisfy a requested SKC. Keep original names and provenance.
+    if (getShoeColorCodeFromInput(code)) return []
+    const candidates = dedupeItemsByFullpath(items).filter(item => isImageItem(item)
+      && !hasWasteLabelMarker(item) && !hasShoeNegativeLabelMarker(item))
+    const sku = candidates.filter(item => lightSupplyRelativeParts(item, code)[0]?.toLowerCase() === 'sku')
+    const white = candidates.filter(item => lightSupplyRelativeParts(item, code)[0] === '白底')
+    const transparent = candidates.filter(item => lightSupplyRelativeParts(item, code)[0] === '透明图')
+    const namedWhite = candidates.filter(item => {
+      const parts = lightSupplyRelativeParts(item, code)
+      return parts.length === 2 && ['大图', '修片大图'].includes(parts[0])
+        && /白底/.test(item.filename) && !hasAny(item.filename, LABEL_IMAGE_PATTERNS)
+    })
+    const pool = sku.length ? sku : white.length ? white : transparent.length ? transparent : namedWhite
+    const layout = sku.length ? 'SKU' : white.length ? '白底' : transparent.length ? '透明图' : '白底文件名'
+    if (!pool.length) return []
+    const resolution = item => {
+      const parts = lightSupplyRelativeParts(item, code)
+      const folder = parts.slice(1, -1).find(part => /^\d{3,4}$/.test(part))
+      const stem = getFileStem(parts[parts.length - 1])
+      return Number(folder || (/^(750|800|1200)(?:$|[\s(_-])/.exec(stem)?.[1]) || 0)
+    }
+    const best = Math.max(...pool.map(resolution))
+    return pool.filter(item => resolution(item) === best).map(item => ({
+      ...item, __light_supply_layout: layout, __shoe_color_code: '',
+    }))
+  }
+
   function selectShoeStyleColorItems(items, code) {
     const groups = new Map()
     for (const item of dedupeItemsByFullpath(items).filter(candidate => isShoeStyleColorImage(candidate, code))) {
@@ -480,13 +581,14 @@
       if (!groups.has(key)) groups.set(key, [])
       groups.get(key).push(item)
     }
-    return Array.from(groups.values()).map(groupItems => groupItems
+    const named = Array.from(groups.values()).map(groupItems => groupItems
       .slice()
       .sort((left, right) => (
         shoeStyleColorPriority(left, code) - shoeStyleColorPriority(right, code)
         || String(left?.filename || '').localeCompare(String(right?.filename || ''), 'zh-Hans-CN')
         || String(left?.fullpath || '').localeCompare(String(right?.fullpath || ''), 'zh-Hans-CN')
       ))[0])
+    return named.length ? named : selectLightSupplyLayoutItems(items, code)
   }
 
   function hasShoeNegativeLabelMarker(item) {
@@ -537,6 +639,26 @@
     return 90
   }
 
+  function selectLightSupplyBoxCandidates(items, code) {
+    if (getShoeColorCodeFromInput(code)) return []
+    const eligible = dedupeItemsByFullpath(items).filter(item => {
+      if (!isImageItem(item) || hasWasteLabelMarker(item) || hasShoeNegativeLabelMarker(item)) return false
+      const parts = lightSupplyRelativeParts(item, code)
+      const root = parts.length === 1
+      const retouched = parts.length === 2 && parts[0] === '修片大图'
+      const name = getFileStem(item.filename)
+      return (root && /^鞋盒(?:$|[\s_（(-])/.test(name))
+        || ((root || retouched) && /^_?[0-9][A-Z][0-9][A-Z]\d+$/i.test(name))
+    })
+    // Prefer the root's dedicated photo batch; only use the retouched batch
+    // when no root candidate exists. All candidates still need content OCR.
+    const root = eligible.filter(item => lightSupplyRelativeParts(item, code).length === 1)
+    return (root.length ? root : eligible)
+      .sort((a, b) => String(a.filename).localeCompare(String(b.filename), 'en', { numeric: true }))
+      .slice(-SHOE_LABEL_GENERIC_CANDIDATE_LIMIT_PER_COLOR)
+      .map(item => ({ ...item, __shoe_color_code: '', __shoe_label_candidate_kind: 'light_supply_box_ocr' }))
+  }
+
   function selectShoeLabelItems(items, code = '') {
     const explicit = dedupeItemsByFullpath(items)
       .filter(item => isShoeLabelItem(item, code))
@@ -576,7 +698,12 @@
       generic.push(...capped)
     }
 
-    return [...explicit, ...generic].sort((left, right) => (
+    const lightSupply = dedupeItemsByFullpath(items)
+      .filter(item => isLightSupplyUuidLabel(item, code))
+      .sort((a, b) => String(a.fullpath).localeCompare(String(b.fullpath)))
+      .slice(0, SHOE_LABEL_GENERIC_CANDIDATE_LIMIT_PER_COLOR)
+      .map(item => ({ ...item, __shoe_color_code: '', __shoe_label_candidate_kind: 'light_supply_ocr' }))
+    return [...explicit, ...generic, ...lightSupply, ...selectLightSupplyBoxCandidates(items, code)].sort((left, right) => (
       shoeLabelPriority(left) - shoeLabelPriority(right)
       || String(left.__shoe_color_code || '').localeCompare(String(right.__shoe_color_code || ''), 'zh-Hans-CN')
       || String(left?.filename || '').localeCompare(String(right?.filename || ''), 'zh-Hans-CN')
@@ -720,12 +847,14 @@
       '素材类型': ASSET_KIND_LABELS[kind] || kind,
       '素材来源': SOURCE_LABELS[sourceType] || sourceType || '',
       '文件名': packageFilename,
+      '原文件名': String(item?.filename || item?.name || ''),
+      '输出文件名': '',
       '云盘路径': String(item?.fullpath || item?.path || ''),
       '匹配策略': options.strategy || '',
       '模拍路径命中': options.modelMatched ? '是' : '否',
       '下载结果': '',
       '本地文件': '',
-      '备注': options.note || '',
+      '备注': item?.__light_supply_layout ? `轻供${item.__light_supply_layout}目录图；原文件名保留在清单，序号不代表业务色码` : (options.note || ''),
       '__shenhui_group_code': groupCode,
       '__shenhui_asset_role': kind,
       '__shenhui_source_type': sourceType,
@@ -758,11 +887,46 @@
       credentials: 'include',
       ...init,
     })
+    if (response.status === 401 || (response.redirected && /login|logout|signin|passport|auth/i.test(response.url || ''))) {
+      throw authExpiredError()
+    }
     if (!response.ok) {
       const text = await response.text().catch(() => '')
       throw new Error(`HTTP ${response.status}: ${text.slice(0, 240) || response.statusText}`)
     }
-    return response.json()
+    if (/text\/html/i.test(response.headers?.get('content-type') || '')) throw authExpiredError()
+    const payload = await response.json()
+    if ([40106, 401060].includes(Number(payload?.error_code))) throw authExpiredError()
+    return payload
+  }
+
+  function authExpiredError() {
+    const error = new Error('森马云盘登录超时，请在任务浏览器中重新登录；已完成进度保留')
+    error.code = 'CLOUD_AUTH_EXPIRED'
+    return error
+  }
+
+  function finishAuthInterrupted(reason) {
+    const codes = Array.isArray(shared.target_codes) ? shared.target_codes : normalizeCodes(params.item_codes)
+    const remaining = codes.slice(Number(shared.code_index || 0))
+    const rows = [...(shared.result_rows || []), ...remaining.map(code => rowForNotice(code, 'notice', '登录中断，未完成', reason))]
+    return complete(rows, { ...shared, pending_code_rows: [], auth_interrupted: true, current_store: reason })
+  }
+
+  function beginAuthRecovery() {
+    const attempts = Number(shared.auth_recovery_attempts || 0) + 1
+    if (attempts > AUTH_MAX_RECOVERIES_PER_CODE) return finishAuthInterrupted('当前款号反复登录失效，已停止重试并保留已下载结果')
+    const result = nextPhase('wait_cloud_login', 2000, {
+      ...shared,
+      auth_resume_phase: phase,
+      auth_wait_started_at: Date.now(),
+      auth_recovery_attempts: attempts,
+      current_store: '云盘登录超时，请在任务浏览器中登录，完成后自动继续（最多等待10分钟）',
+    })
+    // Cloud routes differ only by hash. A route navigation need not load a new
+    // document; explicitly reload so the SPA rechecks login and shared survives.
+    result.meta.action = 'reload_page'
+    return result
   }
 
   async function fetchMounts() {
@@ -883,6 +1047,7 @@
         }
         return { ok: true, items: all, endpoint: `${attempt.method} ${attempt.endpoint}` }
       } catch (error) {
+        if (error?.code === 'CLOUD_AUTH_EXPIRED') throw error
         errors.push(String(error?.message || error))
       }
     }
@@ -916,7 +1081,10 @@
   async function collectCandidateAssets(inputCode, sourceConfig, options = {}) {
     const searchItems = await searchFiles(sourceConfig.mountId, inputCode)
     const sourceType = options.sourceType
-    const primaryScoped = searchItems.filter(item => isWithinRelativePath(item?.fullpath, sourceConfig.relativePath))
+    const primaryScoped = searchItems.filter(item => (
+      isWithinRelativePath(item?.fullpath, sourceConfig.relativePath)
+      && (!pathSegments(item?.fullpath).includes('轻供') || isLightSupplySourcePath(item?.fullpath, sourceType))
+    ))
     const fallbackScoped = searchItems.filter(item => isWithinBroadSourceScope(item?.fullpath, sourceConfig, sourceType))
     const primaryMatchedFolders = primaryScoped.filter(item => matchesFolderItemForCode(item, inputCode))
     const fallbackMatchedFolders = fallbackScoped.filter(item => matchesFolderItemForCode(item, inputCode))
@@ -983,10 +1151,10 @@
           rows.push({ ...row, '下载结果': '获取下载链接失败', '备注': 'file/info 未返回 uri' })
           continue
         }
-        const runtimeFilename = toSafeFilename(
+        const runtimeFilename = allocateRuntimeFilename(toSafeFilename(
           `${row['输入款号']}__${kind}__${sourceType || 'source'}__${getFileStem(item?.filename || item?.name || '') || 'file'}.${getExt(item) || 'bin'}`,
           `${row['输入款号']}__${kind}.${getExt(item) || 'bin'}`,
-        )
+        ), downloadItems)
         rows.push({ ...row, '__runtime_filename': runtimeFilename })
         downloadItems.push({
           url: downloadUrl,
@@ -997,6 +1165,7 @@
           no_proxy: true,
         })
       } catch (error) {
+        if (error?.code === 'CLOUD_AUTH_EXPIRED') throw error
         rows.push({ ...row, '下载结果': '获取下载链接失败', '备注': String(error?.message || error) })
       }
     }
@@ -1016,7 +1185,7 @@
     const modelItems = modelResult?.items || []
     const allLabelItems = [...stillItems, ...modelItems]
     if (isShoeCodePlan(sourceConfigs, allLabelItems)) {
-      const shoeItems = allLabelItems.filter(item => isShoeItem(item) || isShoeSourceConfig(sourceConfigs?.[item?.__source_type || '']))
+      const shoeItems = allLabelItems.filter(isShoeItem)
       const styleColorItems = selectShoeStyleColorItems(shoeItems, inputCode)
       const shoeLabelItems = selectShoeLabelItems(shoeItems, inputCode)
       const statsNote = [
@@ -1025,11 +1194,11 @@
       ].join('；')
 
       await addDownloadRows(inputCode, sourceConfigs, rows, downloadItems, 'shoe_style_color', styleColorItems, {
-        strategy: '鞋品仅保留每个款色的款色命名图',
+        strategy: styleColorItems.some(item => item.__light_supply_layout) ? '轻供鞋品优先 SKU，白底/透明图及白底文件名兜底，保留最高分辨率组' : '鞋品仅保留每个款色的款色命名图',
         missingNote: statsNote,
       })
       await addDownloadRows(inputCode, sourceConfigs, rows, downloadItems, 'shoe_label', shoeLabelItems, {
-        strategy: shoeLabelItems.some(item => item.__shoe_label_candidate_kind === 'generic_ocr')
+        strategy: shoeLabelItems.some(item => ['generic_ocr', 'light_supply_ocr', 'light_supply_box_ocr'].includes(item.__shoe_label_candidate_kind))
           ? '鞋品下载少量无语义候选，后端 OCR 识别鞋盒标签'
           : '鞋品仅保留显式鞋盒标签/电子吊牌图',
         missingNote: statsNote,
@@ -1053,6 +1222,8 @@
     await addDownloadRows(inputCode, sourceConfigs, rows, downloadItems, 'hang_tag', hangTags, {
       strategy: hangTags.some(item => yqKindFromFilename(item?.filename || item?.name || '') === 'hang_tag')
         ? '优先命中 yq1'
+        : hangTags.some(item => isLightSupplyNumberedHangTagPdf(item, inputCode))
+          ? '轻供电子吊牌洗唛目录内“序号_完整款号_供应商”PDF，按吊牌归类'
         : '按吊牌/合格证文件名查找',
       modelMatched,
       missingNote: statsNote,
@@ -1152,6 +1323,7 @@
       return nextPhase('plan_code', 0, {
         ...nextShared,
         code_index: nextIndex,
+        auth_recovery_attempts: 0,
         result_rows: allRows,
         pending_code_rows: [],
         last_code_download_result: null,
@@ -1210,6 +1382,10 @@
       extractShoeStyleColorKeyFromFilename,
       isShoeStyleColorImage,
       selectShoeStyleColorItems,
+      selectLightSupplyLayoutItems,
+      selectLightSupplyBoxCandidates,
+      isLightSupplyStyleFolder,
+      isLightSupplyUuidLabel,
       isShoeLabelItem,
       isGenericShoeLabelCandidateItem,
       selectShoeLabelItems,
@@ -1224,6 +1400,10 @@
       buildCodePlan,
       finalizeRows,
       summarizeDownloadResult,
+      allocateRuntimeFilename,
+      fetchJson,
+      addDownloadRows,
+      listFolderItems,
     })
   }
 
@@ -1234,6 +1414,25 @@
   }
 
   try {
+    if (phase === 'wait_cloud_login') {
+      if (Date.now() - Number(shared.auth_wait_started_at || 0) >= AUTH_WAIT_MS) {
+        return finishAuthInterrupted('等待云盘登录超过10分钟，已保留已下载结果；其余款号未完成')
+      }
+      // Do not call a relative cloud API while the browser is on an SSO origin.
+      if (/^https:\/\/fmp\.semirapp\.com\/web\//i.test(location.href || '')) {
+        try {
+          const mounts = await fetchMounts()
+          if (mounts.length) {
+            return nextPhase(shared.auth_resume_phase || 'plan_code', 0, {
+              ...shared, auth_wait_started_at: null, current_store: '云盘登录已恢复，继续当前款号',
+            })
+          }
+        } catch (_error) {
+          // A login redirect/network transition is expected while the user signs in.
+        }
+      }
+      return nextPhase('wait_cloud_login', 3000, shared)
+    }
     if (phase === 'init' || phase === 'main') {
       const stillPath = parseCloudPath(params.still_cloud_path)
       const modelPath = String(params.model_cloud_path || '').trim() ? parseCloudPath(params.model_cloud_path) : null
@@ -1393,6 +1592,16 @@
 
     return { success: false, error: `未知 phase: ${phase}` }
   } catch (error) {
+    if (error?.code === 'CLOUD_AUTH_EXPIRED') return beginAuthRecovery()
+    if (phase === 'collect_code') {
+      const codes = Array.isArray(shared.target_codes) ? shared.target_codes : []
+      const index = Number(shared.code_index || 0)
+      const code = String(shared.current_code || codes[index] || '')
+      const rows = [...(shared.result_rows || []), rowForNotice(code, 'notice', '处理失败，已跳过', String(error?.message || error))]
+      return advanceAfterCode(codes, index, code, {
+        ...shared, search_completed_codes: index + 1,
+      }, rows)
+    }
     return { success: false, error: String(error?.message || error) }
   }
 })()

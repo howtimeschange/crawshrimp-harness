@@ -92,3 +92,31 @@ def test_wash_care_does_not_hide_unknown_with_local_text(tmp_path):
     with patch.object(llm_gateway, 'generate_multimodal_json', side_effect=unknown):
         with pytest.raises(llm_gateway.LlmUnknownSubmissionError):
             _recognize_wash_care_media_sync(items=[{'path': str(image)}, {'path': str(text)}], artifact_dir=tmp_path)
+
+
+def test_new_shoe_model_ladder_preserves_unknown_without_fallback():
+    from core import shenhui_shoe_models as models
+    calls = []
+
+    def invoke(**kwargs):
+        calls.append(kwargs['model_id'])
+        unknown()
+
+    route = llm_gateway.LlmRoute(model_id='managed-a', protocol='openai',
+                                 base_url='https://managed.example/v1', api_key='fixture')
+    with patch.object(llm_gateway, 'route_for_model', return_value=route), \
+         patch.object(llm_gateway, 'generate_multimodal_json', side_effect=invoke):
+        with pytest.raises(llm_gateway.LlmUnknownSubmissionError):
+            models.generate_json(models=['managed-a', 'fallback'], sleep=lambda _: None)
+    assert calls == ['managed-a']
+
+
+def test_shoe_stream_request_keeps_managed_receipt_transport():
+    from core import llm_stream
+    route = llm_gateway.LlmRoute(model_id='managed-a', protocol='openai',
+                                 base_url='https://managed.example/v1', api_key='fixture')
+    with patch.object(llm_gateway, '_post_json', return_value={'choices': []}) as tracked, \
+         patch.object(llm_stream, 'post_json_stream') as untracked:
+        llm_gateway._generic_openai_json_request(route, 'system', 'prompt', [], stream=True)
+    tracked.assert_called_once()
+    untracked.assert_not_called()
