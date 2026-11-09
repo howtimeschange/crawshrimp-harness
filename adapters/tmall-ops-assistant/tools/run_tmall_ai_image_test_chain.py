@@ -2142,7 +2142,7 @@ def generate_approval_asset_for_item(
     return asset
 
 
-def face_swap_approval_asset(batch: dict[str, Any], asset_id: str, model_id: str, instruction: str = "") -> dict[str, Any]:
+def prepare_face_swap_inputs(batch: dict[str, Any], asset_id: str, model_id: str, instruction: str = "") -> tuple:
     from core.bala_ai_model_library import load_model_library, resolve_model_image_path
     from core.api_server import _bala_face_swap_prompt
 
@@ -2157,6 +2157,13 @@ def face_swap_approval_asset(batch: dict[str, Any], asset_id: str, model_id: str
         raise ValueError("所选模特不存在，请重新选择")
     model_path = resolve_model_image_path(model_id)
     prompt = _bala_face_swap_prompt(source_path, model, instruction)
+    defaults = approval_generation_defaults(batch, item, source.get("generation_row"))
+    require_one_xm_key_for_generation(resolve_one_xm_settings(), model=defaults["model"], image_size=defaults["image_size"], key_tier=defaults["one_xm_key_tier"])
+    return item, source, source_path, model, model_path, prompt
+
+
+def face_swap_approval_asset(batch: dict[str, Any], asset_id: str, model_id: str, instruction: str = "") -> dict[str, Any]:
+    item, source, source_path, model, model_path, prompt = prepare_face_swap_inputs(batch, asset_id, model_id, instruction)
     # Generate using the existing provider/retry executor, without overwriting the source or stale batch state.
     working = json_safe(batch)
     working["json_path"] = ""
@@ -2522,6 +2529,11 @@ def is_risky_default_prompt(prompt: PromptItem) -> bool:
     return bool(RISKY_DEFAULT_PROMPT_RE.search(f"{prompt.field_name}\n{prompt.prompt}"))
 
 
+def is_general_prompt_group(name: str) -> bool:
+    # Excel truncates the built-in CSV template name to 31 characters.
+    return bool(re.fullmatch(r"(?:tmall-ai-prompt-library-templat.*|sheet[0-9]+|工作表[0-9]+|通用|默认)", compact(name), re.I))
+
+
 def select_prompts(workflow: WorkflowItem, prompts: list[PromptItem], limit: int = 1) -> list[PromptItem]:
     prompt_names = set(parse_list(workflow.prompt_name))
     group = category_to_prompt_sheet(workflow.category)
@@ -2529,7 +2541,7 @@ def select_prompts(workflow: WorkflowItem, prompts: list[PromptItem], limit: int
     matched = [
         prompt
         for prompt in candidates
-        if (workflow.custom_fields or prompt.sheet_name == group) and (not prompt_names or prompt.field_name in prompt_names)
+        if (workflow.custom_fields or prompt.sheet_name == group or is_general_prompt_group(prompt.sheet_name)) and (not prompt_names or prompt.field_name in prompt_names)
     ]
     if not matched and (prompt_names or workflow.custom_fields):
         matched = [prompt for prompt in candidates if not prompt_names or prompt.field_name in prompt_names]
@@ -4954,6 +4966,10 @@ async def run_chain_rows(args: argparse.Namespace, artifact_dir: Path, log=None,
     if not prompts:
         raise RuntimeError("提示词库未解析到可用提示词")
 
+    if not any(select_prompts(workflow, prompts, args.ai_image_count) for workflow in workflow_rows):
+        groups = '、'.join(dict.fromkeys(prompt.sheet_name for prompt in prompts))
+        raise RuntimeError(f"全部 {len(workflow_rows)} 款未匹配到提示词，未开始找图或生图。请检查自定义字段是否一致；留空时请使用通用模板或对应品类分组。当前提示词分组：{groups}")
+
     bridge = CDPBridge(args.cdp_url)
     if not bridge.is_available(timeout=5):
         raise RuntimeError(f"无法连接 Chrome CDP：{args.cdp_url}")
@@ -5159,6 +5175,10 @@ async def run_chain_rows(args: argparse.Namespace, artifact_dir: Path, log=None,
     for plan_index, plan in enumerate(generation_plans):
         for row_index, generation_row in enumerate(plan["generation_rows"]):
             generation_jobs.append((plan_index, row_index, generation_row))
+
+    if getattr(args, "confirm_generation", False) and not generation_plans:
+        reasons = '；'.join(dict.fromkeys(str(row.get('备注') or row.get('执行结果') or '') for row in all_rows))
+        raise RuntimeError(f"没有可进入生图确认的款号，请检查找图及提示词匹配结果：{reasons[:1200]}")
 
     if getattr(args, "confirm_generation", False) and generation_plans:
         for entry in workflow_results:

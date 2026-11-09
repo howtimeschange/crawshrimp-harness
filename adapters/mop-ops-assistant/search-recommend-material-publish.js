@@ -15,6 +15,7 @@
   const DEFAULT_CROP_RATIO = '3:4'
   const ALLOWED_CROP_RATIOS = ['3:4', '1:1']
   const CROP_RATIO_TOLERANCE = 0.01
+  const MAX_UPLOAD_BYTES = 3 * 1024 * 1024
   const MIN_CROP_SIDE = 720
   const MIN_IMAGE_COUNT = 3
   const MAX_IMAGE_COUNT = 9
@@ -28,6 +29,11 @@
 
   function cleanText(value) {
     return String(value ?? '').replace(/\s+/g, ' ').trim()
+  }
+
+  // Filesystem paths must preserve internal spaces exactly.
+  function pathText(value) {
+    return String(value ?? '').trim()
   }
 
   function compact(value) {
@@ -60,12 +66,12 @@
   }
 
   function splitMultiValues(value) {
-    if (Array.isArray(value)) return value.map(cleanText).filter(Boolean)
+    if (Array.isArray(value)) return value.map(pathText).filter(Boolean)
     const normalized = String(value ?? '')
       .replace(/(\s+)(?=(?:https?:\/\/|\/|[A-Za-z]:[\\/]))/g, '\n')
     return normalized
       .split(/[\n\r;；|]+/g)
-      .map(cleanText)
+      .map(pathText)
       .filter(Boolean)
   }
 
@@ -291,7 +297,7 @@
     if (Math.min(box.width, box.height) < MIN_CROP_SIDE) {
       throw new Error(`图片裁剪后宽高不得低于 ${MIN_CROP_SIDE}px：${file?.name || ''}`)
     }
-    if (!box.needsCrop) {
+    if (!box.needsCrop && file.size <= MAX_UPLOAD_BYTES) {
       return { dataUrl: sourceDataUrl, width: box.width, height: box.height, cropRatio: box.ratio, cropStatus: 'matched' }
     }
     const canvas = document.createElement('canvas')
@@ -300,12 +306,17 @@
     const ctx = canvas.getContext?.('2d')
     if (!ctx) throw new Error('当前页面不支持 Canvas 裁剪')
     ctx.drawImage(image, box.left, box.top, box.width, box.height, 0, 0, box.width, box.height)
-    const blob = await canvasToBlob(canvas, file.type && file.type !== 'image/webp' ? file.type : 'image/jpeg', 0.96)
+    let blob = await canvasToBlob(canvas, file.type && file.type !== 'image/webp' ? file.type : 'image/jpeg', 0.96)
+    for (const quality of [0.9, 0.82, 0.72, 0.6]) {
+      if (blob.size <= MAX_UPLOAD_BYTES) break
+      blob = await canvasToBlob(canvas, 'image/jpeg', quality)
+    }
+    if (blob.size > MAX_UPLOAD_BYTES) throw new Error(`图片压缩后仍超过 3 MB：${file.name}`)
     return { dataUrl: await blobToDataUrl(blob), width: box.width, height: box.height, cropRatio: box.ratio, cropStatus: 'center-cropped', cropBox: box }
   }
 
   function extensionOf(path) {
-    const match = cleanText(path).split(/[?#]/)[0].match(/\.([a-zA-Z0-9]+)$/)
+    const match = pathText(path).split(/[?#]/)[0].match(/\.([a-zA-Z0-9]+)$/)
     return match ? match[1].toLowerCase() : ''
   }
 
@@ -315,7 +326,7 @@
   }
 
   function pathBasename(path) {
-    return cleanText(path).replace(/\\/g, '/').split('/').filter(Boolean).pop() || cleanText(path)
+    return pathText(path).replace(/\\/g, '/').split('/').filter(Boolean).pop() || pathText(path)
   }
 
   function pathStem(path) {
@@ -323,7 +334,7 @@
   }
 
   function dirnameParts(path) {
-    return cleanText(path).replace(/\\/g, '/').split('/').filter(Boolean)
+    return pathText(path).replace(/\\/g, '/').split('/').filter(Boolean)
   }
 
   function findProductIdFromPath(path) {
@@ -351,7 +362,7 @@
 
   function normalizeSelectedImagePaths(materialImages) {
     const paths = Array.isArray(materialImages?.paths) ? materialImages.paths : []
-    return paths.map(cleanText).filter(Boolean).filter(isImagePath)
+    return paths.map(pathText).filter(Boolean).filter(isImagePath)
   }
 
   function normalizeDirectoryListingFiles(materialRootFiles) {
@@ -359,11 +370,11 @@
     return paths
       .map((entry, index) => {
         const rawPath = typeof entry === 'string' ? entry : entry?.path
-        const filePath = cleanText(rawPath)
+        const filePath = pathText(rawPath)
         if (!filePath || !isImagePath(filePath)) return null
         return {
           path: filePath,
-          relativePath: cleanText(entry?.relativePath || ''),
+          relativePath: pathText(entry?.relativePath || ''),
           mtimeMs: Number.isFinite(Number(entry?.mtimeMs)) ? Number(entry.mtimeMs) : index,
           order: index,
         }
@@ -372,7 +383,7 @@
   }
 
   function normalizePathParts(path) {
-    return cleanText(path).replace(/\\/g, '/').split('/').filter(Boolean)
+    return pathText(path).replace(/\\/g, '/').split('/').filter(Boolean)
   }
 
   function pathStartsWithParts(parts, rootParts) {
@@ -392,26 +403,36 @@
     return [...new Set(matches.map(item => normalizeMerchantCode(item.toUpperCase())).filter(Boolean))]
   }
 
-  function findKocMainImageMeta(file, root) {
+  function findKocMainImageMeta(file, root, merchantCodes = []) {
     const parts = relativePartsForListingFile(file, root)
-    if (parts.length < 5) return null
+    if (parts.length < 3) return null
     const topFolder = parts[0] || ''
-    const imageDirIndex = parts.findIndex(part => /^图片(?:\(\d+\))?$/.test(part))
-    if (imageDirIndex < 0) return null
-    const mainIndex = imageDirIndex + 1
-    if (parts[mainIndex] !== '主图') return null
-    const creator = parts[mainIndex + 1] || ''
-    const fileName = parts[parts.length - 1] || ''
-    if (!creator || !fileName || parts.length <= mainIndex + 2) return null
-    const codes = extractKocMerchantCodes(topFolder)
+    const tokens = topFolder.toUpperCase().match(/[A-Z0-9]+/g) || []
+    const codes = [...new Set([
+      ...extractKocMerchantCodes(topFolder),
+      ...merchantCodes.map(code => normalizeMerchantCode(code).toUpperCase()).filter(code => tokens.includes(code)),
+    ])]
     if (!codes.length) return null
+    const imageDirIndex = parts.findIndex(part => /^图片(?:\(\d+\))?$/.test(part))
+    let creator = ''
+    if (imageDirIndex >= 0 && parts[imageDirIndex + 1] === '主图' && parts.length === imageDirIndex + 4) {
+      creator = parts[imageDirIndex + 2]
+    } else if (parts.length === 3 && parts[1] === '主图') {
+      creator = cleanText(topFolder.match(/[（(](.*)$/)?.[1] || '').replace(/[）)]$/, '').trim()
+      // Without a creator suffix, keep this folder as its own package.
+      creator = creator || topFolder
+    } else {
+      return null
+    }
+    const fileName = parts[parts.length - 1] || ''
+    if (!creator || !fileName) return null
     return { codes, creator, fileName, topFolder }
   }
 
-  function groupKocMainImageGroupsByMerchantCode(materialRootFiles, root) {
+  function groupKocMainImageGroupsByMerchantCode(materialRootFiles, root, merchantCodes = []) {
     const grouped = {}
     const files = normalizeDirectoryListingFiles(materialRootFiles)
-      .map(file => ({ file, meta: findKocMainImageMeta(file, materialRootFiles?.root || root) }))
+      .map(file => ({ file, meta: findKocMainImageMeta(file, materialRootFiles?.root || root, merchantCodes) }))
       .filter(item => item.meta)
       .sort((a, b) => (
         a.meta.topFolder.localeCompare(b.meta.topFolder, 'zh-CN', { numeric: true }) ||
@@ -467,7 +488,7 @@
   }
 
   function buildRootMaterialPaths(root, productId, count) {
-    const base = cleanText(root).replace(/[\\/]+$/g, '')
+    const base = pathText(root).replace(/[\\/]+$/g, '')
     if (!base || !productId || count <= 0) return []
     const list = []
     for (let index = 1; index <= count; index += 1) {
@@ -479,7 +500,7 @@
   function uniqueRefs(list) {
     const seen = new Set()
     return (list || []).filter(ref => {
-      const key = cleanText(ref)
+      const key = pathText(ref)
       if (!key || seen.has(key)) return false
       seen.add(key)
       return true
@@ -613,7 +634,16 @@
     }
 
     const rootRefs = buildRootMaterialPaths(options.materialRoot, materialKey, materialCount)
-    if (rootRefs.length) return { refs: rootRefs, source: '素材根目录' }
+    if (rootRefs.length) {
+      if (Array.isArray(options.materialRootFiles?.paths)) {
+        const pathKey = value => pathText(value).replace(/\\/g, '/').toLowerCase()
+        const available = new Set(normalizeDirectoryListingFiles(options.materialRootFiles).map(file => pathKey(file.path)))
+        if (rootRefs.some(ref => !available.has(pathKey(ref)))) {
+          return { refs: [], source: '素材根目录', error: `未匹配到素材图片包：商家编码 ${merchantCode || '未填写'}，商品ID ${productId || '未填写'}；请检查目录扫描结果或填写实际素材图片路径` }
+        }
+      }
+      return { refs: rootRefs, source: '素材根目录' }
+    }
 
     return { refs: [], source: '' }
   }
@@ -653,10 +683,25 @@
     return ''
   }
 
+  function recoverTaskRows(rows) {
+    if (!Array.isArray(rows)) return []
+    const identityHeaders = [...PRODUCT_ID_ALIASES, ...MERCHANT_CODE_ALIASES].map(normalizeHeader)
+    const titleHeaders = ['添加标题', '标题', 'title'].map(normalizeHeader)
+    if (rows.some(row => Object.keys(row || {}).some(key => identityHeaders.includes(normalizeHeader(key))))) return rows
+    const headerIndex = rows.slice(0, 10).findIndex(row => {
+      const values = Object.values(row || {}).map(normalizeHeader)
+      return values.some(value => identityHeaders.includes(value)) && values.some(value => titleHeaders.includes(value))
+    })
+    if (headerIndex < 0) return rows
+    const columns = Object.entries(rows[headerIndex]).filter(([, value]) => cleanText(value))
+    return rows.slice(headerIndex + 1).map(row => Object.fromEntries(columns.map(([key, header]) => [cleanText(header), row[key]])))
+  }
+
   function normalizeJobs(rows, options = {}) {
+    rows = recoverTaskRows(rows)
     const selectedPaths = normalizeSelectedImagePaths(options.materialImages || {})
     const selectedByProduct = groupSelectedImagesByProduct(selectedPaths)
-    const kocMainImageGroupsByCode = groupKocMainImageGroupsByMerchantCode(options.materialRootFiles || {}, options.materialRoot)
+    const kocMainImageGroupsByCode = groupKocMainImageGroupsByMerchantCode(options.materialRootFiles || {}, options.materialRoot, rows.map(row => getRowValue(row, MERCHANT_CODE_ALIASES)))
     const jobs = []
     const invalidRows = []
     const sourceRows = Array.isArray(rows) ? rows : []
@@ -676,8 +721,10 @@
         kocMainImageGroupsByCode,
         materialRoot: options.materialRoot,
         defaultMaterialCount: options.defaultMaterialCount,
+        materialRootFiles: options.materialRootFiles,
       })
       const errors = []
+      if (material.error) errors.push(material.error)
       if (!productId && !merchantCode) errors.push('商品ID或商家编码必填')
       const titleError = validateTitle(title)
       if (titleError) errors.push(titleError)
@@ -748,7 +795,7 @@
   }
 
   function refsKey(refs) {
-    return (refs || []).map(cleanText).sort().join('\n')
+    return (refs || []).map(pathText).sort().join('\n')
   }
 
   function outputMaterialDetail(materials) {
@@ -877,7 +924,7 @@
     const files = Array.from(input?.files || [])
     const byName = new Map()
     for (const file of files) {
-      byName.set(cleanText(file.name), file)
+      byName.set(pathText(file.name), file)
     }
     return byName
   }
@@ -896,7 +943,92 @@
     })
   }
 
+  function uploadDataUrlWithImageSpaceUploader(dataUrl, name) {
+    return new Promise((resolve, reject) => {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.style.position = 'fixed'
+      button.style.left = '-9999px'
+      button.style.top = '-9999px'
+      ;(document.body || document.documentElement).appendChild(button)
+      const uploader = new window.ImageSpaceUploader({
+        button,
+        appkey: 'tu',
+        auto: true,
+        multiple: false,
+        maxCount: 1,
+        filters: {
+          mimeTypes: 'jpg,jpeg,png',
+          maxFileSize: '3mb',
+          minWidth: MIN_CROP_SIDE,
+          minHeight: MIN_CROP_SIDE,
+        },
+      })
+      const cleanup = () => {
+        try { uploader.destroy?.() } catch (error) {}
+        try { button.remove?.() } catch (error) {}
+      }
+      const timeout = setTimeout(() => {
+        cleanup()
+        reject(new Error(`图片上传超时：${name}`))
+      }, 45000)
+      const samples = []
+      const sampleText = () => {
+        try {
+          return JSON.stringify(samples).slice(0, 600)
+        } catch (error) {
+          return String(samples).slice(0, 600)
+        }
+      }
+      const remember = payload => {
+        if (payload !== undefined) samples.push(payload)
+      }
+      const done = payload => {
+        remember(payload)
+        clearTimeout(timeout)
+        cleanup()
+        const list = []
+        for (const sample of samples) {
+          if (Array.isArray(sample)) list.push(...sample)
+          else list.push(sample)
+        }
+        const first = list.find(Boolean) || payload
+        const url = findFirstRemoteUrl(list) || findFirstRemoteUrl(first)
+        if (!url) {
+          reject(new Error(`图片空间上传未返回 URL：${name}；返回样本 ${sampleText()}`))
+          return
+        }
+        resolve({ url, name, uploadResult: first })
+      }
+      const failed = error => {
+        clearTimeout(timeout)
+        cleanup()
+        reject(new Error(error?.message || error?.errorCode || `图片上传失败：${name}`))
+      }
+      uploader.on('FileSuccess', remember)
+      uploader.on('UploadComplete', done)
+      uploader.on('UploadError', failed)
+      // Plupload initializes asynchronously. Adding before Init silently loses the file;
+      // starting before FilesAdded emits an empty completion. auto starts the queued file.
+      let queued = false
+      const enqueue = () => {
+        if (queued) return
+        queued = true
+        uploader.addBase64File(dataUrl, name)
+      }
+      if (uploader._uploader?.bind) {
+        uploader._uploader.bind('Init', enqueue)
+        if (uploader._uploader.runtime) enqueue()
+      } else {
+        enqueue()
+      }
+    })
+  }
+
   async function uploadDataUrlWithPageHelper(dataUrl, name) {
+    if (typeof window.$startFileUpload !== 'function' && typeof window.ImageSpaceUploader === 'function') {
+      return await uploadDataUrlWithImageSpaceUploader(dataUrl, name)
+    }
     if (typeof window.$startFileUpload !== 'function') {
       throw new Error('当前页面未暴露图片上传工具 $startFileUpload，请刷新千牛素材中心搜推素材页后重试')
     }
@@ -1130,14 +1262,14 @@
         pageNo: 1,
         pageSize: 10,
         scene: DEFAULT_SCENE,
-        condition: JSON.stringify({ itemId: String(productId) }),
+        condition: JSON.stringify({ itemIds: [String(productId)] }),
         orderBys: '',
         source: SOURCE,
       }, { type: 'GET' })
       const result = data?.result || data?.model || data
       const list = result?.data || result?.list || result?.items || []
       const items = Array.isArray(list) ? list : []
-      return items.find(item => cleanText(item.itemId || item.id || item.item_id) === String(productId)) || items[0] || null
+      return items.find(item => cleanText(item.itemId || item.id || item.item_id) === String(productId)) || null
     } catch (error) {
       return null
     }
@@ -1152,7 +1284,7 @@
       const result = data?.result || data
       const list = result?.list || result?.items || result?.data || []
       const items = Array.isArray(list) ? list : []
-      return items.find(item => cleanText(item.itemId || item.id || item.item_id) === String(productId)) || items[0] || null
+      return items.find(item => cleanText(item.itemId || item.id || item.item_id) === String(productId)) || null
     } catch (error) {
       return null
     }
@@ -1289,6 +1421,75 @@
     return cleanText(data?.contentId || data?.id || result?.contentId || '')
   }
 
+  // Keep the POST and its receipt in the page.  A CDP socket can disappear
+  // while the browser is still waiting for the MTop response; re-evaluating
+  // this phase must poll the original promise instead of submitting again.
+  function publishReceiptKey(job, options = {}) {
+    const runToken = cleanText(window.__CRAWSHRIMP_RUN_TOKEN__ || '')
+    const requestId = cleanText(options.requestId || '')
+    return `${runToken}:${job?.rowNo || ''}:${job?.productId || ''}:${requestId}`
+  }
+
+  function startPublishReceipt(job, options = {}) {
+    const receipts = window.__MOP_SEARCH_RECOMMEND_PUBLISH_RECEIPTS__ = window.__MOP_SEARCH_RECOMMEND_PUBLISH_RECEIPTS__ || {}
+    const key = publishReceiptKey(job, options)
+    let receipt = receipts[key]
+    if (receipt) return receipt
+
+    receipt = receipts[key] = {
+      key,
+      requestId: cleanText(options.requestId || ''),
+      startedAt: Date.now(),
+      status: 'pending',
+    }
+    let payload
+    try {
+      payload = buildPublishPayload(job, job.item, job.resolvedMaterials || [], options)
+    } catch (error) {
+      receipt.status = 'error'
+      receipt.error = describeError(error)
+      return receipt
+    }
+    Promise.resolve()
+      .then(() => callMtop(payload.api, payload.data, payload.options))
+      .then(result => {
+        const contentId = extractContentId(result)
+        if (!contentId) throw new Error('接口已返回成功，但未识别到内容ID')
+        receipt.status = 'done'
+        receipt.contentId = contentId
+        receipt.result = result
+        receipt.receipt = `${payload.api} SUCCESS contentId=${contentId} requestId=${receipt.requestId}`
+      })
+      .catch(error => {
+        receipt.status = 'error'
+        receipt.error = describeError(error)
+      })
+    return receipt
+  }
+
+  function pollPublishReceipt(job, options = {}) {
+    const publishOptions = options.publishOptions || job?.publishOptions || {}
+    const key = publishReceiptKey(job, publishOptions)
+    const receipts = window.__MOP_SEARCH_RECOMMEND_PUBLISH_RECEIPTS__ || {}
+    let receipt = receipts[key]
+    if (!receipt && options.start) receipt = startPublishReceipt(job, publishOptions)
+    if (!receipt) {
+      throw new Error('发布连接已恢复，但原发布回执不存在；结果待核实，请先在千牛搜推素材列表确认，勿重复发布')
+    }
+    if (receipt.status === 'error') throw new Error(receipt.error || '搜推素材发布接口返回失败')
+    if (receipt.status === 'done') return receipt
+    const startedAt = Number(receipt.startedAt || 0)
+    if (startedAt && Date.now() - startedAt > 180000) {
+      throw new Error('等待搜推素材发布回执超过 180 秒；结果待核实，请先在千牛搜推素材列表确认，勿重复发布')
+    }
+    return null
+  }
+
+  function isPublishReceiptUnknownError(error) {
+    const text = describeError(error).toLowerCase()
+    return /回执不存在|结果待核实|keepalive ping timeout|no close frame|connection closed|连接已恢复/.test(text)
+  }
+
   function buildRunShared(jobs, options = {}) {
     return {
       jobs,
@@ -1339,6 +1540,7 @@
         note: `计划发布 ${job.materialRefs.length} 张图片`,
       })),
     ]
+    if (!previewRows.length) return complete([buildOutputRow({}, { status: '预检失败', note: '未识别到商品数据，请检查商品ID、商家编码、添加标题等表头' })], shared)
     if (params.execute_mode !== 'live') {
       return complete(previewRows, {
         ...shared,
@@ -1418,6 +1620,7 @@
       const itemVO = normalizeItemVO(resolvedJob.productId, feedsItem || shopItem || resolvedJob.item, material)
       const materials = await autoCropMaterials(await resolveMaterialUrls(resolvedJob), resolvedJob.cropRatio || params.crop_ratio || DEFAULT_CROP_RATIO)
       const publishOptions = await fetchPublishRuntimeConfig(resolvedJob)
+      publishOptions.requestId = createRequestId()
       const enrichedJob = {
         ...resolvedJob,
         item: itemVO,
@@ -1443,9 +1646,17 @@
     const activeJob = shared.active_job || window.__MOP_SEARCH_RECOMMEND_ACTIVE_JOB__
     if (!activeJob) return nextPhase('process_row', 0, shared)
     try {
-      const payload = buildPublishPayload(activeJob, activeJob.item, activeJob.resolvedMaterials || [], activeJob.publishOptions || {})
-      const result = await callMtop(payload.api, payload.data, payload.options)
-      const contentId = extractContentId(result)
+      const receipt = pollPublishReceipt(activeJob, {
+        start: true,
+        publishOptions: activeJob.publishOptions || {},
+      })
+      if (!receipt) {
+        return nextPhase('wait_publish_receipt', 1000, {
+          ...shared,
+          current_store: '等待搜推发布回执（连接恢复可继续，不重新提交）',
+        })
+      }
+      const contentId = receipt.contentId || ''
       const successShared = finishCurrentJob(shared, buildOutputRow(activeJob, {
         status: contentId ? '发布成功' : '提交成功',
         contentId,
@@ -1457,7 +1668,42 @@
       return nextPhase('process_row', shared.submit_delay_ms || 0, { ...successShared, active_job: null })
     } catch (error) {
       const failedShared = finishCurrentJob(shared, buildOutputRow(activeJob, {
-        status: '发布失败',
+        status: isPublishReceiptUnknownError(error) ? '发布待核实' : '发布失败',
+        item: activeJob.item,
+        materials: activeJob.resolvedMaterials || [],
+        materialSource: activeJob.materialSource,
+        note: describeError(error),
+      }))
+      return nextPhase('process_row', shared.submit_delay_ms || 0, { ...failedShared, active_job: null })
+    }
+  }
+
+  async function runWaitPublishReceiptPhase() {
+    const activeJob = shared.active_job || window.__MOP_SEARCH_RECOMMEND_ACTIVE_JOB__
+    if (!activeJob) return nextPhase('process_row', 0, shared)
+    try {
+      const receipt = pollPublishReceipt(activeJob, {
+        start: false,
+        publishOptions: activeJob.publishOptions || {},
+      })
+      if (!receipt) {
+        return nextPhase('wait_publish_receipt', 1000, {
+          ...shared,
+          current_store: '等待搜推发布回执（连接恢复可继续，不重新提交）',
+        })
+      }
+      const successShared = finishCurrentJob(shared, buildOutputRow(activeJob, {
+        status: '发布成功',
+        contentId: receipt.contentId || '',
+        item: activeJob.item,
+        materials: activeJob.resolvedMaterials || [],
+        materialSource: activeJob.materialSource,
+        note: receipt.contentId ? '' : '接口已返回成功，但未识别到内容ID，请在千牛搜推素材列表中确认',
+      }))
+      return nextPhase('process_row', shared.submit_delay_ms || 0, { ...successShared, active_job: null })
+    } catch (error) {
+      const failedShared = finishCurrentJob(shared, buildOutputRow(activeJob, {
+        status: isPublishReceiptUnknownError(error) ? '发布待核实' : '发布失败',
         item: activeJob.item,
         materials: activeJob.resolvedMaterials || [],
         materialSource: activeJob.materialSource,
@@ -1485,6 +1731,9 @@
       autoCropMaterial,
       autoCropMaterials,
       describeError,
+      uploadDataUrlWithPageHelper,
+      fetchItemFromFeedsList,
+      cropFileToDataUrl,
       normalizeSelectedImagePaths,
       normalizeDirectoryListingFiles,
       extractKocMerchantCodes,
@@ -1503,6 +1752,10 @@
       buildRunShared,
       buildOutputRow,
       extractContentId,
+      publishReceiptKey,
+      startPublishReceipt,
+      pollPublishReceipt,
+      isPublishReceiptUnknownError,
       MIN_IMAGE_COUNT,
       MAX_IMAGE_COUNT,
       TITLE_MAX,
@@ -1519,6 +1772,7 @@
     if (phase === 'main' || phase === 'init') return await runMainPhase()
     if (phase === 'process_row') return await runProcessRowPhase()
     if (phase === 'submit_job') return await runSubmitJobPhase()
+    if (phase === 'wait_publish_receipt') return await runWaitPublishReceiptPhase()
     return fail(`未知 phase: ${phase}`)
   } catch (error) {
     return fail(error?.message || error)

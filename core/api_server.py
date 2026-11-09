@@ -759,6 +759,74 @@ def _is_bala_short_video_batch_upload(adapter_id: str, task_id: str) -> bool:
     return adapter_id == "bala-ai-video-assistant" and task_id == "short_video_batch_upload"
 
 
+def _is_mop_search_recommend_material_publish(adapter_id: str, task_id: str) -> bool:
+    return adapter_id == "mop-ops-assistant" and task_id == "search_recommend_material_publish"
+
+
+def _mop_search_recommend_cached_rows_from_shared(
+    shared_state: Optional[dict],
+    error: str = "",
+    phase: str = "",
+) -> list[dict]:
+    """Recover durable搜推 rows after a CDP failure without replaying a POST."""
+    if not isinstance(shared_state, dict):
+        return []
+
+    rows = [*_dict_rows(shared_state.get("invalid_rows")), *_dict_rows(shared_state.get("results"))]
+    jobs = _dict_rows(shared_state.get("jobs"))
+    try:
+        job_index = max(0, int(shared_state.get("job_index") or 0))
+    except Exception:
+        job_index = 0
+    active = shared_state.get("active_job") if isinstance(shared_state.get("active_job"), dict) else {}
+    job = dict(active or (jobs[job_index] if 0 <= job_index < len(jobs) else {}))
+    if not job:
+        return rows
+
+    identity = (str(job.get("productId") or job.get("product_id") or "").strip(), str(job.get("merchantCode") or job.get("merchant_code") or "").strip())
+    already_reported = any(
+        (identity[0] and str(row.get("商品ID") or "").strip() == identity[0])
+        or (identity[1] and str(row.get("商家编码") or "").strip() == identity[1])
+        for row in rows
+    )
+    if already_reported:
+        return rows
+
+    refs = job.get("materialRefs") or job.get("material_refs") or []
+    if not isinstance(refs, list):
+        refs = []
+    phase_text = str(phase or "").strip()
+    publish_phase = phase_text in {"submit_job", "wait_publish_receipt"}
+    note = "Chrome CDP 连接恢复失败"
+    if publish_phase:
+        status = "发布待核实"
+        note += "；发布请求可能已到达平台，请先回查千牛搜推素材列表，勿重复发布"
+    else:
+        status = "连接恢复失败"
+        note += "；本行未确认进入发布提交阶段"
+    if error:
+        note += f"；阶段错误：{str(error).strip()}"
+
+    rows.append({
+        "表格行号": job.get("rowNo") or job.get("row_no") or "",
+        "商品ID": identity[0],
+        "商家编码": identity[1],
+        "达人": str(job.get("creator") or "").strip(),
+        "商品标题": str(job.get("itemTitle") or job.get("item_title") or (job.get("item") or {}).get("title") or "").strip(),
+        "添加标题": str(job.get("title") or "").strip(),
+        "内容描述": str(job.get("description") or "").strip(),
+        "裁剪比例": str(job.get("cropRatio") or job.get("crop_ratio") or "").strip(),
+        "素材来源": str(job.get("materialSource") or job.get("material_source") or "").strip(),
+        "素材数量": len(refs),
+        "素材明细": "\n".join(str(ref).strip() for ref in refs if str(ref).strip()),
+        "发布内容ID": "",
+        "执行结果": status,
+        "备注": note,
+        "抓取时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    })
+    return rows
+
+
 def _dict_rows(value) -> list[dict]:
     if not isinstance(value, list):
         return []
@@ -816,7 +884,10 @@ def _short_video_cached_rows_from_shared(shared_state: Optional[dict], error: st
         status = str(work.get(work_key) or "").strip()
         if status:
             return status
-        return "执行中断" if bool(job.get(enabled_key)) else "已关闭"
+        if not bool(job.get(enabled_key)):
+            return "已关闭"
+        pending_phase = {"guang_status": "wait_guang_receipt", "recommend_status": "wait_recommend_receipt"}.get(work_key)
+        return "回执待核实，请勿重复发布" if phase == pending_phase else "执行中断"
 
     rows.append({
         "款号": style_code,
@@ -2882,7 +2953,7 @@ BALA_VIDEO_TEMPLATE_CATALOG_JSON = BALA_VIDEO_TEMPLATE_DIR / "template-catalog.j
 BALA_VIDEO_TEMPLATE_CATALOG_CSV = BALA_VIDEO_TEMPLATE_DIR / "template-catalog.csv"
 BALA_SEEDANCE_CLI_DIR = Path(__file__).resolve().parents[1] / "integrations" / "seedanceCLI"
 BALA_SEEDANCE_DEFAULT_MODEL = "doubao-seedance-2-0-260128"
-BALA_VIDEO_COPY_DEFAULT_MODEL = "gemini-3.5-flash"
+BALA_VIDEO_COPY_DEFAULT_MODEL = "gemini-3.8-flash"
 BALA_VIDEO_PROMPT_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 BALA_HAPPYHORSE_CLI_DIR = Path(__file__).resolve().parents[1] / "integrations" / "bailianCLI"
 BALA_HAPPYHORSE_MODELS = {
@@ -3733,6 +3804,22 @@ def _finalize_bala_ai_video_assistant_outputs(
     return final_refs
 
 
+def _validate_shenhui_shoe_categories(run_params):
+    strategy = run_params.get("shoe_pose_strategy") or run_params.get("pose_strategy") or "bala_specialist"
+    if strategy != "bala_specialist":
+        return
+    category_file = run_params.get("shoe_category_file") or {}
+    rows = category_file.get("rows") if isinstance(category_file, dict) else category_file
+    categories = shenhui_shoe_packaging.parse_shoe_category_rows(rows)
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        style = shenhui_shoe_packaging._normalize_style_code(row.get("款号"))
+        if style and style not in categories:
+            raise shenhui_shoe_packaging.ShoeSelectionError(
+                f"{style} 专属模型需要品类表明确填写运动/休闲/婴童/雪地；请补全后再开始找图下载"
+            )
+
 def _prepare_shenhui_shoe_package_rows(
     *,
     data_rows: list,
@@ -3753,6 +3840,11 @@ def _prepare_shenhui_shoe_package_rows(
             or run_params.get("fallback_models")
             or ""
         )
+    execution_fields = ['shoe_execution_model', *[f'shoe_execution_fallback_{i}' for i in range(1, 4)]]
+    execution_model_ids = None
+    if any(key in run_params for key in execution_fields):
+        execution_model_ids = [str(run_params.get('shoe_execution_model') or 'deepseek-official-flash').strip()]
+        execution_model_ids.extend(str(run_params[key]).strip() for key in execution_fields[1:] if run_params.get(key))
     category_file = run_params.get("shoe_category_file")
     shoe_categories = None
     if isinstance(category_file, dict) and (
@@ -3768,7 +3860,7 @@ def _prepare_shenhui_shoe_package_rows(
             )
         )
         if isinstance(category_rows, list) and not has_category_value:
-            log("鞋品品类 Excel 未填写品类，后续使用模型兜底识别品类")
+            log("鞋品品类 Excel 未填写品类，先核验吊牌产品名称再确定姿势模板")
         else:
             shoe_categories = shenhui_shoe_packaging.parse_shoe_category_rows(
                 category_rows
@@ -3785,9 +3877,12 @@ def _prepare_shenhui_shoe_package_rows(
             or shenhui_shoe_packaging.SHOE_POSE_DEFAULT_STRATEGY
         ),
         fallback_model_ids=fallback_model_ids,
+        execution_model_ids=execution_model_ids,
+        board_review_model_id=run_params.get("shoe_board_review_model"),
+        style_workers=run_params.get("shoe_style_workers", 8),
+        request_workers=run_params.get("shoe_request_workers", 8),
         label_model_id=str(run_params.get("label_model_id") or "").strip(),
-        label_fallback_model_ids=run_params.get("label_fallback_model_ids")
-        or fallback_model_ids,
+        label_fallback_model_ids=run_params.get("label_fallback_model_ids"),
         shoe_categories=shoe_categories,
         analyze_color_label=(
             False
@@ -3801,7 +3896,27 @@ def _prepare_shenhui_shoe_package_rows(
         str(package_roots[key])
         for key in sorted(package_roots)
     ]
+    run_params["__shenhui_shoe_pending_refs"] = [
+        str(path.parent) for path in output_root.glob("*/_待核验原图")
+        if path.parent not in {Path(value) for value in package_roots.values()}
+    ]
     return report_rows
+
+
+def _require_shenhui_shoe_package_result(data_rows: list, run_params: dict) -> None:
+    """Raw download fallback is recoverable output, not a completed package."""
+    if run_params.get("__shenhui_shoe_package_refs"):
+        return
+    reasons = list(dict.fromkeys(
+        str(row.get("备注") or row.get("规则告警") or "").strip()
+        for row in data_rows or []
+        if isinstance(row, dict)
+        and str(row.get("备注") or row.get("规则告警") or "").strip()
+    ))
+    detail = "；".join(reasons[:3]) or "未生成任何可用的鞋品图包"
+    raise shenhui_shoe_packaging.ShoeSelectionError(
+        f"鞋品图包整理失败（0 个图包），已下载原素材将保留：{detail}"
+    )
 
 
 _SHENHUI_LABEL_TILE_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
@@ -4346,6 +4461,72 @@ def _shenhui_shoe_box_label_candidate_result(
     }
 
 
+def _shenhui_light_supply_box_candidate_result(row: dict, local_path: Path, log) -> dict:
+    """Small photographed boxes: verify full style and label fields, never filename alone."""
+    from core.label_tile_manifest import matches_style_directory
+    style = str(row.get("__shenhui_group_code") or row.get("输入款号") or "").strip()
+    parts = str(row.get("云盘路径") or "").replace("\\", "/").split("/")
+    root_index = next((i for i, part in enumerate(parts[:-1]) if matches_style_directory(part, style)), -1)
+    relative = parts[root_index + 1:] if root_index >= 0 else []
+    stem = Path(parts[-1]).stem
+    is_root_box = len(relative) == 1 and re.match(r"^鞋盒(?:$|[\s_（(-])", stem)
+    is_camera = (len(relative) == 1 or (len(relative) == 2 and relative[0] == "修片大图")) and re.fullmatch(r"_?[0-9][A-Z][0-9][A-Z]\d+", stem, re.I)
+    if not (root_index >= 0 and "轻供" in parts[:root_index] and "鞋品" in parts[:root_index]
+            and (is_root_box or is_camera)):
+        return {"accepted": False, "note": "轻供实拍标签候选路径或文件名不符合要求"}
+    # Root-scoped batches have no known business color. Preserve all verified
+    # labels independently, rather than collapsing them under an empty color.
+    for scope, recognize in (("整图", _shenhui_shoe_label_ocr_text), ("裁剪", _shenhui_shoe_label_crop_ocr_text)):
+        try:
+            _text, confidence, normalized = recognize(local_path)
+            signals = _shenhui_shoe_label_ocr_structure_signals(normalized, style_code=style)
+            # Preserve OCR line boundaries: concatenating lines can append a
+            # stray Latin character to an otherwise exact business code.
+            exact_style = bool(
+                re.search(r"(?<![A-Za-z0-9])" + re.escape(style) + r"(?![A-Za-z0-9])", _text, re.I)
+                or re.search(r"(?<![0-9])" + re.escape(style) + r"(?![A-Za-z0-9])", normalized, re.I)
+            )
+            if confidence >= 35 and exact_style and "standard" in signals and len(signals) >= 3:
+                return {"accepted": True, "note": f"OCR{scope}确认轻供鞋盒标签；完整款号 {style} 已核验；未推断业务色码；signals={','.join(signals)} confidence={confidence:.0f}"}
+        except Exception as exc:
+            if log:
+                log(f"Light-supply box OCR {scope} failed: {local_path.name} ({exc})")
+    return {"accepted": False, "note": "轻供实拍标签 OCR 未同时确认完整款号和标签结构"}
+
+
+def _shenhui_light_supply_label_candidate_result(row: dict, local_path: Path, log) -> dict:
+    """Supplier labels belong to the exact style folder; never invent a color mapping."""
+    from core.label_tile_manifest import matches_style_directory
+    style_code = str(row.get("__shenhui_group_code") or row.get("输入款号") or "").strip()
+    parts = str(row.get("云盘路径") or "").replace("\\", "/").split("/")
+    valid_path = (
+        bool(style_code) and len(parts) >= 4 and matches_style_directory(parts[-2], style_code)
+        and "轻供" in parts[:-2] and "鞋品" in parts[:-2]
+        and re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.(?:png|jpe?g|webp)", parts[-1], re.I)
+    )
+    if not valid_path:
+        return {"accepted": False, "note": "轻供标签候选路径或 UUID 文件名不符合要求"}
+    try:
+        _text, confidence, normalized = _shenhui_shoe_label_ocr_text(local_path)
+    except Exception as exc:
+        return {"accepted": False, "note": f"轻供电子标签 OCR 失败：{exc}"}
+    signals = _shenhui_shoe_label_ocr_structure_signals(normalized, style_code=style_code)
+    # Unlike photographed brown boxes, flat electronic certificates can be white.
+    # Require multiple independent certificate fields, not a product-photo score.
+    accepted = (
+        confidence >= 35 and "label_words" in signals and "standard" in signals
+        and len(signals) >= 4 and any(word in normalized for word in ("合格证", "产品货号", "产品名称"))
+    )
+    note = (
+        ("OCR确认轻供电子合格证；归属依据为云盘款号目录，未校验供应商货号与内部款号映射，未推断色码"
+         if accepted else "轻供电子标签 OCR 结构证据不足")
+        + f"；signals={','.join(signals)} confidence={confidence:.0f}"
+    )
+    if log:
+        log(f"Light-supply label OCR: {local_path.name} ({note})")
+    return {"accepted": accepted, "note": note}
+
+
 def _filter_shenhui_shoe_label_ocr_candidates(
     successful_rows: list[tuple[dict, Path]],
     log,
@@ -4355,6 +4536,22 @@ def _filter_shenhui_shoe_label_ocr_candidates(
     passthrough: list[tuple[dict, Path]] = []
 
     for row, local_path in successful_rows:
+        if (row.get("__shenhui_asset_role") == "shoe_label"
+                and row.get("__shoe_label_candidate_kind") in ("light_supply_ocr", "light_supply_box_ocr")):
+            kind = row["__shoe_label_candidate_kind"]
+            recognize = (_shenhui_light_supply_box_candidate_result if kind == "light_supply_box_ocr"
+                         else _shenhui_light_supply_label_candidate_result)
+            result = recognize(row, local_path, log)
+            _append_shenhui_label_tile_note(row, str(result.get("note") or ""))
+            if result.get("accepted"):
+                row["__shoe_label_candidate_kind"] = kind + "_selected"
+                if kind == "light_supply_box_ocr":
+                    row["标签货号核验"] = "OCR已核验完整款号；未推断业务色码"
+                passthrough.append((row, local_path))
+            else:
+                row["下载结果"] = "已跳过"
+                row["本地文件"] = ""
+            continue
         if _is_shenhui_shoe_label_ocr_candidate_row(row):
             generic_candidates.setdefault(
                 _shenhui_shoe_label_candidate_key(row),
@@ -4920,6 +5117,11 @@ def _finalize_shenhui_label_tile_download_outputs(
     runtime_artifact_dir: str,
     log,
 ) -> list[str]:
+    from core.label_tile_manifest import assign_output_names, enrich_row, write_manifest
+
+    for row in data_rows or []:
+        if isinstance(row, dict):
+            enrich_row(row)
     runtime_dir = Path(runtime_artifact_dir)
     runtime_dir.mkdir(parents=True, exist_ok=True)
 
@@ -4946,6 +5148,10 @@ def _finalize_shenhui_label_tile_download_outputs(
 
     if successful_rows:
         successful_rows = _filter_shenhui_shoe_label_ocr_candidates(successful_rows, log)
+        for row in data_rows:
+            row["分类依据"] = "；".join(str(row.get(k) or "") for k in ("匹配策略", "备注")).strip("；")
+            enrich_row(row)
+        assign_output_names([row for row, _ in successful_rows])
         compressed_count = 0
         saved_bytes = 0
         for row, local_path in successful_rows:
@@ -4991,9 +5197,10 @@ def _finalize_shenhui_label_tile_download_outputs(
             data_rows,
             log,
             context="Shenhui label tile download",
-            columns=("下载结果", "本地文件", "备注"),
+            columns=("文件名", "输出文件名", "原文件名", "分类依据", "云盘目录归属", "标签货号核验", "下载结果", "本地文件", "备注"),
         )
         final_refs.append(str(external_dir))
+        final_refs.extend(write_manifest(external_dir, data_rows))
         for file_path in exported_files or []:
             source = Path(str(file_path or "")).expanduser()
             if not source.is_file():
@@ -5002,6 +5209,7 @@ def _finalize_shenhui_label_tile_download_outputs(
             final_refs.append(str(copied))
         log(f"Shenhui label/tile download folder moved to output folder: {external_dir}")
     else:
+        final_refs.extend(write_manifest(target_root, data_rows))
         if package_root.exists():
             shutil.rmtree(package_root, ignore_errors=True)
         for file_path in exported_files or []:
@@ -5214,7 +5422,8 @@ def _finalize_shenhui_new_arrival_outputs(
         runtime_dir = Path(runtime_artifact_dir)
         package_refs = [
             Path(str(path)).expanduser()
-            for path in (run_params.get("__shenhui_shoe_package_refs") or [])
+            for path in [*(run_params.get("__shenhui_shoe_package_refs") or []),
+                         *(run_params.get("__shenhui_shoe_pending_refs") or [])]
             if str(path or "").strip()
         ]
         package_refs = [path for path in package_refs if path.is_dir()]
@@ -5246,7 +5455,7 @@ def _finalize_shenhui_new_arrival_outputs(
             final_refs.append(str(relocated))
             log(f"Shenhui shoe package moved to output folder: {relocated}")
 
-        if export_folder and not final_refs:
+        if not final_refs:
             final_refs.extend(
                 _fallback_export_shenhui_shoe_downloaded_materials(
                     data_rows=data_rows,
@@ -7597,7 +7806,7 @@ def _finalize_tiktok_creator_video_outputs(
     return final_refs
 
 
-def _rows_raw_to_table(rows_raw, header_row: int = 1):
+def _rows_raw_to_table(rows_raw, header_row: int = 1, grouped_header_columns: Optional[set[int]] = None):
     if not rows_raw:
         return {"headers": [], "rows": [], "total": 0}
 
@@ -7605,8 +7814,11 @@ def _rows_raw_to_table(rows_raw, header_row: int = 1):
     if hi < 0 or hi >= len(rows_raw):
         return {"error": f"Header row index {hi} out of range", "headers": [], "rows": [], "total": 0}
 
-    def _stringify_row(raw_row):
-        return [str(c) if c is not None else '' for c in raw_row]
+    def _stringify_row(raw_row, width: Optional[int] = None):
+        values = [str(c) if c is not None else '' for c in raw_row]
+        if width is not None and len(values) < width:
+            values.extend([''] * (width - len(values)))
+        return values
 
     def _dedupe_headers(raw_headers):
         used = {}
@@ -7622,19 +7834,49 @@ def _rows_raw_to_table(rows_raw, header_row: int = 1):
         return headers
 
     def _build_headers():
-        primary = _stringify_row(rows_raw[hi])
+        table_width = max((len(raw_row) for raw_row in rows_raw[hi:] if raw_row is not None), default=0)
+        primary = _stringify_row(rows_raw[hi], table_width)
         if hi + 1 >= len(rows_raw):
             return _dedupe_headers(primary), hi + 1
 
-        secondary = _stringify_row(rows_raw[hi + 1])
+        secondary = _stringify_row(rows_raw[hi + 1], table_width)
         width = max(len(primary), len(secondary))
-        # Only collapse when row 2 is clearly filling blanks from row 1.
-        # Trailing blank header cells in wide templates should not treat row 2 as another header row.
-        has_grouped_children = any(
-            not str(primary[index] if index < len(primary) else '').strip()
-            and str(secondary[index] if index < len(secondary) else '').strip()
+        blank_child_indexes = [
+            index
             for index in range(width)
-        )
+            if not str(primary[index] if index < len(primary) else '').strip()
+            and str(secondary[index] if index < len(secondary) else '').strip()
+        ]
+        named_primary_indexes = [
+            index
+            for index in range(width)
+            if str(primary[index] if index < len(primary) else '').strip()
+        ]
+        last_named_primary_index = named_primary_indexes[-1] if named_primary_indexes else -1
+
+        metadata_grouped_children = False
+        if grouped_header_columns:
+            metadata_grouped_children = any(
+                index in grouped_header_columns
+                and str(secondary[index] if index < len(secondary) else '').strip()
+                for index in range(width)
+            )
+
+        # Only collapse when row 2 is clearly filling a grouped header. A trailing
+        # unnamed data column must stay in the first data row, while a real
+        # horizontal merge in the header row can still define a final grouped band.
+        has_grouped_children = metadata_grouped_children
+        if not has_grouped_children and blank_child_indexes:
+            has_middle_blank_child = any(index < last_named_primary_index for index in blank_child_indexes)
+            group_parent_indexes = [index for index in named_primary_indexes if index < blank_child_indexes[0]]
+            group_parent_index = group_parent_indexes[-1] if group_parent_indexes else -1
+            has_rowspan_identity = bool(
+                named_primary_indexes
+                and named_primary_indexes[0] < group_parent_index
+                and not secondary[named_primary_indexes[0]].strip()
+                and secondary[group_parent_index].strip()
+            )
+            has_grouped_children = has_middle_blank_child or has_rowspan_identity
         if not has_grouped_children:
             return _dedupe_headers(primary), hi + 1
 
@@ -7676,6 +7918,72 @@ MAX_EXCEL_COLUMNS = 512
 MAX_EXCEL_CELLS = 2_000_000
 
 
+def _xlsx_header_group_columns(xlsx_path: Path, target_header_row: int) -> dict[str, set[int]]:
+    if xlsx_path.suffix.lower() not in ('.xlsx', '.xlsm'):
+        return {}
+    try:
+        from openpyxl.utils.cell import range_boundaries
+        import xml.etree.ElementTree as ET
+    except Exception:
+        return {}
+
+    try:
+        with zipfile.ZipFile(xlsx_path) as archive:
+            workbook_xml = ET.fromstring(archive.read("xl/workbook.xml"))
+            rels_xml = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+            rel_targets = {}
+            for rel in rels_xml:
+                rel_id = rel.attrib.get("Id")
+                target = rel.attrib.get("Target")
+                if not rel_id or not target:
+                    continue
+                target_path = target.lstrip("/")
+                if not target_path.startswith("xl/"):
+                    target_path = f"xl/{target_path}"
+                rel_targets[rel_id] = target_path
+
+            namespaces = {
+                "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+                "rel": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+            }
+            sheet_paths = {}
+            for sheet_node in workbook_xml.findall(".//main:sheets/main:sheet", namespaces):
+                title = sheet_node.attrib.get("name")
+                rel_id = sheet_node.attrib.get(f"{{{namespaces['rel']}}}id")
+                target = rel_targets.get(rel_id or "")
+                if title and target:
+                    sheet_paths[title] = target
+
+            grouped_columns_by_sheet = {}
+            for title, sheet_path in sheet_paths.items():
+                grouped_columns: set[int] = set()
+                try:
+                    with archive.open(sheet_path) as sheet_stream:
+                        # Keep the merge scan streaming like the value reader;
+                        # materializing the whole XML doubles large-sheet memory.
+                        parents = []
+                        for event, element in ET.iterparse(sheet_stream, events=("start", "end")):
+                            if event == "start":
+                                parents.append(element)
+                                continue
+                            if element.tag == f"{{{namespaces['main']}}}mergeCell":
+                                ref = str(element.attrib.get("ref") or "").strip()
+                                if ref:
+                                    min_col, min_row, max_col, max_row = range_boundaries(ref)
+                                    if min_row == target_header_row and max_row == target_header_row and max_col > min_col:
+                                        grouped_columns.update(range(min_col - 1, max_col))
+                            parents.pop()
+                            if parents:
+                                parents[-1].remove(element)
+                            element.clear()
+                except KeyError:
+                    continue
+                grouped_columns_by_sheet[title] = grouped_columns
+            return grouped_columns_by_sheet
+    except Exception:
+        return {}
+
+
 def _read_local_excel(path: str, sheet: Optional[str] = None, header_row: int = 1):
     """Internal helper to read Excel/CSV without raising HTTPExceptions"""
     p = Path(path)
@@ -7689,6 +7997,7 @@ def _read_local_excel(path: str, sheet: Optional[str] = None, header_row: int = 
 
     total_rows_seen = 0
     total_cells_seen = 0
+    grouped_columns_by_sheet = {}
 
     def _worksheet_table(ws):
         nonlocal total_rows_seen, total_cells_seen
@@ -7707,7 +8016,7 @@ def _read_local_excel(path: str, sheet: Optional[str] = None, header_row: int = 
             if total_cells_seen > MAX_EXCEL_CELLS:
                 raise ValueError(f"工作簿总单元格数超过 {MAX_EXCEL_CELLS} 个上限")
             rows.append(row)
-        return _rows_raw_to_table(rows, header_row)
+        return _rows_raw_to_table(rows, header_row, grouped_header_columns=grouped_columns_by_sheet.get(ws.title))
 
     suffix = p.suffix.lower()
     try:
@@ -7726,6 +8035,7 @@ def _read_local_excel(path: str, sheet: Optional[str] = None, header_row: int = 
             try:
                 if len(wb.sheetnames) > MAX_EXCEL_SHEETS:
                     raise ValueError(f"工作表数量超过 {MAX_EXCEL_SHEETS} 个上限")
+                grouped_columns_by_sheet = _xlsx_header_group_columns(p, header_row)
                 if sheet:
                     ws = wb[sheet]
                     table = _worksheet_table(ws)
@@ -8215,6 +8525,13 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
         for p in task.params:
             if p.id not in run_params and p.default is not None:
                 run_params[p.id] = p.default
+
+        if (adapter_id, task_id) == ("shenhui-new-arrival", "prepare_shoe_upload_package"):
+            strategy = run_params.get("shoe_pose_strategy") or run_params.get("pose_strategy") or "bala_specialist"
+            if strategy == "bala_specialist":
+                from core.bala_shoe_runtime import require_installed
+                require_installed()
+                _validate_shenhui_shoe_categories(run_params)
 
         mode = _resolve_task_open_mode(adapter_id, task_id, run_params, task_param_ids)
         requires_dedicated_new_tab = (
@@ -8739,7 +9056,25 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
                     log(f"[warn] 巴拉AI视频任务后处理失败，回退到原始输出: {package_error}")
                     return merge_output_file_refs(runtime_files, exported_files)
 
-            if adapter_id == 'plm-ops-assistant' and task_id == 'size_chart_downloader':
+            if adapter_id == 'semir-launch-assistant' and task_id in {
+                'prepare_image_package', 'wash_hangtag_batch_download', 'quality_report_download',
+            }:
+                from core.semir_launch_packaging import package_materials
+                packaged_refs = await asyncio.to_thread(
+                    package_materials, data_rows=data_rows, run_params=run_params,
+                    runtime_artifact_dir=runtime_artifact_dir, log=log,
+                )
+                return merge_output_file_refs(packaged_refs)
+
+            if adapter_id == 'mini-bala-launch-assistant' and task_id == 'prepare_image_package':
+                from core.mini_bala_packaging import package_images
+                packaged_refs = await asyncio.to_thread(
+                    package_images, data_rows=data_rows, run_params=run_params,
+                    runtime_artifact_dir=runtime_artifact_dir, log=log,
+                )
+                return merge_output_file_refs(packaged_refs, exported_files)
+
+            if adapter_id in ('plm-ops-assistant', 'semir-launch-assistant', 'mini-bala-launch-assistant') and task_id == 'size_chart_downloader':
                 try:
                     packaged_refs = await asyncio.to_thread(
                         _finalize_plm_size_chart_downloader_outputs,
@@ -8825,9 +9160,9 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
 
             return merge_output_file_refs(runtime_files, exported_files)
 
-        async def export_short_video_cached_rows_on_error(error_message: str) -> tuple[list[dict], list[str]]:
+        def recover_short_video_cached_rows(current_rows, error_message: str) -> list[dict]:
             if not _is_bala_short_video_batch_upload(adapter_id, task_id) or not runner:
-                return [], []
+                return list(current_rows or [])
             cached_shared = {}
             if run_control and isinstance(run_control.get('shared_progress'), dict):
                 cached_shared.update(run_control.get('shared_progress') or {})
@@ -8836,14 +9171,65 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
                 cached_shared.update(runner_shared)
             phase_name = str(getattr(runner, 'last_runtime_phase', '') or '').strip()
             cached_rows = _short_video_cached_rows_from_shared(cached_shared, error_message, phase_name)
-            cached_rows = _apply_final_export_guards(adapter_id, task_id, cached_rows)
+            # Partial data can overlap the shared cache; prefer its latest fields.
+            rows, positions = [], {}
+            for row in [*cached_rows, *(current_rows or [])]:
+                if not isinstance(row, dict):
+                    continue
+                key = (str(row.get("ID") or ""), str(row.get("款号") or ""))
+                if any(key) and key in positions:
+                    rows[positions[key]].update(row)
+                elif row not in rows:
+                    if any(key):
+                        positions[key] = len(rows)
+                    rows.append(dict(row))
+            return rows
+
+        async def export_short_video_cached_rows_on_error(error_message: str) -> tuple[list[dict], list[str]]:
+            cached_rows = recover_short_video_cached_rows(data, error_message)
             if not cached_rows:
                 return [], []
             runtime_files = list(getattr(runner, 'runtime_output_files', []) or [])
             exported_files = await export_outputs(cached_rows)
             finalized_files = await finalize_output_files(cached_rows, runtime_files, exported_files)
-            log(f"[warn] 短视频任务异常中断，已导出缓存结果 {len(cached_rows)} 行")
+            log(f"[warn] 短视频任务中断，已导出缓存结果 {len(cached_rows)} 行")
             return cached_rows, finalized_files
+
+        def recover_mop_search_recommend_cached_rows(current_rows, error_message: str) -> list[dict]:
+            if not _is_mop_search_recommend_material_publish(adapter_id, task_id) or not runner:
+                return list(current_rows or [])
+            cached_shared = {}
+            if run_control and isinstance(run_control.get('shared_progress'), dict):
+                cached_shared.update(run_control.get('shared_progress') or {})
+            runner_shared = getattr(runner, 'last_runtime_shared', None)
+            if isinstance(runner_shared, dict):
+                cached_shared.update(runner_shared)
+            phase_name = str(getattr(runner, 'last_runtime_phase', '') or '').strip()
+            cached_rows = _mop_search_recommend_cached_rows_from_shared(cached_shared, error_message, phase_name)
+            rows, positions = [], {}
+            for row in [*cached_rows, *(current_rows or [])]:
+                if not isinstance(row, dict):
+                    continue
+                key = (str(row.get("商品ID") or ""), str(row.get("商家编码") or ""), str(row.get("表格行号") or ""))
+                if any(key) and key in positions:
+                    rows[positions[key]].update(row)
+                else:
+                    if any(key):
+                        positions[key] = len(rows)
+                    rows.append(dict(row))
+            return rows
+
+        async def export_mop_search_recommend_cached_rows_on_error(error_message: str) -> tuple[list[dict], list[str]]:
+            if not _is_mop_search_recommend_material_publish(adapter_id, task_id) or not runner:
+                return [], []
+            recovered_rows = recover_mop_search_recommend_cached_rows(data, error_message)
+            if not recovered_rows:
+                return [], []
+            runtime_files = list(getattr(runner, 'runtime_output_files', []) or [])
+            exported_files = await export_outputs(recovered_rows)
+            finalized_files = await finalize_output_files(recovered_rows, runtime_files, exported_files)
+            log(f"[warn] 搜推任务异常中断，已导出缓存结果 {len(recovered_rows)} 行")
+            return recovered_rows, finalized_files
 
         def recover_shenhui_shoe_partial_rows(current_rows) -> list[dict]:
             rows = [row for row in (current_rows or []) if isinstance(row, dict)]
@@ -8987,7 +9373,20 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
                 aggregated_data.extend(item_rows)
             data = aggregated_data
         else:
-            data = await runner.run_script_file(script_path, params=run_params, control_hook=wait_for_control)
+            script_run_kwargs = {
+                "params": run_params,
+                "control_hook": wait_for_control,
+                # PLM 尺码表下载仅查询页面内的 RequestHandler；若 Chrome
+                # CDP 短暂断连，安全重放尚未返回结果的当前款号阶段。
+            }
+            if adapter_id in ("plm-ops-assistant", "semir-launch-assistant", "mini-bala-launch-assistant") and task_id == "size_chart_downloader":
+                script_run_kwargs["retry_transient_cdp_errors"] = True
+            if _is_mop_search_recommend_material_publish(adapter_id, task_id):
+                # 搜推发布把 POST 和回执保存在页面内。允许恢复 Runtime.evaluate
+                # 的 WebSocket 连接，但不允许按 timeout 刷新页面或重放发布阶段；
+                # 重新提交由脚本的 pending receipt 状态决定。
+                script_run_kwargs["recover_cdp_connection"] = True
+            data = await runner.run_script_file(script_path, **script_run_kwargs)
         raw_count = len(data)
         data = _apply_final_export_guards(adapter_id, task_id, data)
         if adapter_id == 'tiktok-ops-assistant' and task_id == 'creator_video_download':
@@ -9043,6 +9442,7 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
                 log=log,
                 progress=report_shoe_organize_progress,
             )
+            _require_shenhui_shoe_package_result(data, run_params)
             raw_count = len(data)
         deduped_count = len(data)
         log(f"Script complete. Records: {raw_count}")
@@ -9205,6 +9605,10 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
     except RunAbortedError as e:
         err = e.reason or str(e)
         data = list(e.partial_data or data or [])
+        if 'recover_short_video_cached_rows' in locals():
+            data = recover_short_video_cached_rows(data, err)
+        if 'recover_mop_search_recommend_cached_rows' in locals():
+            data = recover_mop_search_recommend_cached_rows(data, err)
         if 'recover_shenhui_shoe_partial_rows' in locals():
             data = recover_shenhui_shoe_partial_rows(data)
         raw_count = len(data)
@@ -9275,6 +9679,8 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
             run_control['pause_logged'] = False
         if 'recover_shenhui_shoe_partial_rows' in locals():
             data = recover_shenhui_shoe_partial_rows(data)
+        if 'recover_mop_search_recommend_cached_rows' in locals():
+            data = recover_mop_search_recommend_cached_rows(data, err)
         raw_count = len(data)
         data = _apply_final_export_guards(adapter_id, task_id, data)
         if adapter_id == 'tiktok-ops-assistant' and task_id == 'creator_video_download':
@@ -9339,6 +9745,14 @@ async def _execute_task(adapter_id: str, task_id: str, params: Optional[dict] = 
                     output_files = recovered_files
             except Exception as export_error:
                 log(f"[warn] 短视频异常收尾导出失败: {export_error}")
+        if _is_mop_search_recommend_material_publish(adapter_id, task_id) and 'export_mop_search_recommend_cached_rows_on_error' in locals():
+            try:
+                recovered_rows, recovered_files = await export_mop_search_recommend_cached_rows_on_error(err)
+                if recovered_rows:
+                    data = recovered_rows
+                    output_files = recovered_files
+            except Exception as export_error:
+                log(f"[warn] 搜推异常收尾导出失败: {export_error}")
         if (adapter_id, task_id) == ("shenhui-new-arrival", "prepare_shoe_upload_package") and 'export_shenhui_shoe_partial_rows_on_error' in locals():
             try:
                 recovered_rows, recovered_files = await export_shenhui_shoe_partial_rows_on_error(err)
@@ -11983,6 +12397,7 @@ class TmallApprovalFaceSwapRequest(BaseModel):
     asset_id: str
     model_id: str
     instruction: str = ""
+    request_id: str = ""
 
 
 class TmallApprovalGenerateRequest(BaseModel):
@@ -12185,6 +12600,12 @@ def _safe_tmall_generation_confirmation_items(batch: dict, items: list[dict]) ->
 def get_tmall_ai_image_approval_batch(batch_id: str, token: str = ""):
     batch = _load_tmall_approval_batch(batch_id)
     _validate_tmall_approval_token(batch, token)
+    from core.tmall_face_swap_submission import blocked_assets, UNKNOWN_MESSAGE
+    blocked = blocked_assets(batch)
+    for item in batch.get('items', []):
+        for asset in item.get('assets', []):
+            asset['face_swap_blocked'] = asset.get('id') in blocked
+            asset['face_swap_message'] = UNKNOWN_MESSAGE if asset['face_swap_blocked'] else ''
     return batch
 
 
@@ -12306,13 +12727,18 @@ async def face_swap_tmall_ai_image_approval_asset(batch_id: str, req: TmallAppro
     if str(batch.get("status") or "") in {"generating", "submitting", "creating"}:
         raise HTTPException(409, "当前批次正在执行，请完成后再换脸")
     module = _load_tmall_ai_image_chain_module()
+    from core.tmall_face_swap_submission import execute, SubmissionBlocked
     try:
-        asset = await asyncio.to_thread(module.face_swap_approval_asset, batch, req.asset_id, req.model_id, req.instruction)
+        module.prepare_face_swap_inputs(batch, req.asset_id, req.model_id, req.instruction)
+        asset = await asyncio.to_thread(execute, batch, req.asset_id, req.request_id or secrets.token_hex(16),
+            lambda: module.face_swap_approval_asset(batch, req.asset_id, req.model_id, req.instruction))
         return {"ok": True, "asset": asset}
+    except SubmissionBlocked as exc:
+        return {"ok": False, "error_code": exc.code, "error": str(exc), "retry_allowed": False}
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(400, str(exc)) from exc
+        return {"ok": False, "error_code": "FACE_SWAP_REJECTED", "error": str(exc), "retry_allowed": True}
 
 
 @app.post("/tmall-ai-image-approval/api/{batch_id}/generate")
@@ -12470,6 +12896,27 @@ def unfavorite_script(adapter_id: str):
     if not adapter_loader.get_adapter(adapter_id):
         raise HTTPException(404, f"Adapter not found: {adapter_id}")
     return {"favorites": script_favorites.unfavorite(adapter_id)}
+
+@app.get("/agent/runtimes/bala-shoe")
+def get_bala_shoe_runtime_status():
+    from core.bala_shoe_runtime import status
+    return status()
+
+
+@app.post("/agent/runtimes/bala-shoe/install")
+def install_bala_shoe_runtime():
+    from core.bala_shoe_runtime import start_install
+    try:
+        return start_install()
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/agent/runtimes/bala-shoe/cancel")
+def cancel_bala_shoe_runtime_install():
+    from core.bala_shoe_runtime import cancel_install
+    return cancel_install()
+
 
 @app.get("/adapters")
 def list_adapters():

@@ -609,8 +609,8 @@ class TmallVideoCopyPostProcessTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(len(rows), 3)
-        self.assertEqual(generate.call_args.kwargs["model_id"], "gemini-3.5-flash")
-        self.assertTrue(any("准备使用 gemini-3.5-flash" in item for item in logs))
+        self.assertEqual(generate.call_args.kwargs["model_id"], "gemini-3.8-flash")
+        self.assertTrue(any("准备使用 gemini-3.8-flash" in item for item in logs))
 
     async def test_final_workbook_matches_batch_upload_headers_and_text_ids(self):
         with tempfile.TemporaryDirectory() as tmpdir:

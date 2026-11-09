@@ -35,6 +35,7 @@
           <span v-if="dynamicParamProbeLoading">正在探测页面筛选项…</span>
           <span v-else>{{ dynamicParamProbeError }}</span>
         </div>
+        <BalaShoeRuntime v-if="usesBalaShoeModel" :disabled="isRunning" @ready="balaShoeRuntimeReady = $event" />
         <div :class="['params-grid', paramsGridClass]">
           <div v-for="param in visibleParams" :key="param.id" :class="['param-group', paramLayoutClass(param)]">
             <label class="param-label">
@@ -1081,6 +1082,7 @@ import BalaAiImageReviewDrawer from './BalaAiImageReviewDrawer.vue'
 import BalaAiMaterialSelectionDrawer from './BalaAiMaterialSelectionDrawer.vue'
 import TmallAiApprovalDrawer from './TmallAiApprovalDrawer.vue'
 import TaskOutputDrawer from './TaskOutputDrawer.vue'
+import BalaShoeRuntime from '../components/BalaShoeRuntime.vue'
 import { summarizePrecheckRows } from '../utils/precheckSummary'
 import { buildTaskRunnerProgressSummary, resolveTaskProgressConfig } from '../utils/taskProgress'
 import { buildOdpsSyncFile, isOdpsSyncableFile, isOdpsSyncableTask } from '../utils/odpsSyncTasks'
@@ -1112,6 +1114,8 @@ const props = defineProps({
   initialStep: { type: String, default: '' },
 })
 const emit = defineEmits(['status-change', 'instance-updated', 'open-task'])
+const balaShoeRuntimeReady = ref(false)
+const usesBalaShoeModel = computed(() => props.adapterId === 'shenhui-new-arrival' && props.task?.task_id === 'prepare_shoe_upload_package' && (values.value.shoe_pose_strategy || 'bala_specialist') === 'bala_specialist')
 
 const AI_CHAIN_STEP_IDS = new Set(['config', 'confirm', 'approval', 'create'])
 
@@ -2920,6 +2924,7 @@ async function stopCurrentTask() {
 }
 
 async function startTaskRun(params, pendingMessage) {
+  if (usesBalaShoeModel.value && !balaShoeRuntimeReady.value) throw new Error('请先下载并安装巴拉鞋品组件')
   const currentTabId = await resolveCurrentTabId(params)
   const runInstanceUid = await ensureTaskInstanceForRun(params)
   await window.cs.updateTaskInstance(runInstanceUid, { params })

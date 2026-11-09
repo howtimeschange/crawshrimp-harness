@@ -355,14 +355,16 @@
   function openPublishPageForJob(url, next, state, markerKey, label = '') {
     const { index } = currentJob(state)
     if (state?.[markerKey] === index) return null
-    if (compact(location.href) === url && typeof location.reload === 'function') location.reload()
-    else location.href = url
-    return nextPhase(next, 1200, {
+    const result = nextPhase(next, 1200, {
       ...state,
       [markerKey]: index,
       page_ready_attempts: 0,
       current_store: label || url,
     })
+    // Persist the next job state before the runner navigates and handles beforeunload.
+    result.meta.action = 'navigate_publisher'
+    result.meta.url = url
+    return result
   }
 
   const AUTH_EXPIRED_PATTERN = /SESSION_EXPIRED|Session\s*过期|session\s*(?:expired|timeout)|会话(?:已)?(?:过期|失效)|登录(?:状态)?(?:已)?(?:过期|失效|超时)|请重新登录/i
@@ -905,6 +907,31 @@
     }
   }
 
+  // CDP phases have a 60s budget, while publication alone can take 120s.
+  // Keep the request in the page and poll its receipt without replaying a POST.
+  function pollPublishReceipt(scene, { start = false, publish = publishPreparedContent, now = Date.now() } = {}) {
+    const key = `${window.__CRAWSHRIMP_RUN_TOKEN__ || ''}:${currentJob(shared).index}:${scene}`
+    const requests = window.__CRAWSHRIMP_VIDEO_PUBLISH_RECEIPTS__ ||= {}
+    let request = requests[scene]
+    if (!request || request.key !== key) {
+      if (!start) throw new Error('发布回执等待被页面刷新或关闭中断，结果待核对；请先在平台确认，勿重复发布')
+      request = requests[scene] = { key, startedAt: now, status: 'pending' }
+      Promise.resolve().then(() => publish(scene)).then(result => {
+        request.status = 'done'
+        request.result = result
+      }, error => {
+        request.status = 'error'
+        request.error = compact(error?.message || error)
+      })
+    }
+    if (request.status === 'error') throw new Error(request.error)
+    if (request.status === 'done') return request.result
+    if (now - request.startedAt > 180000) {
+      throw new Error('等待发布回执超过 180 秒，结果待核对；请先在平台确认，勿重复发布')
+    }
+    return null
+  }
+
   function normalizeItem(item, itemId) {
     const id = normalizeItemId(item?.itemId || item?.id || itemId)
     const title = compact(item?.title || item?.itemTitle || item?.name)
@@ -1440,6 +1467,7 @@
       authExpiredReason,
       markUnstartedTargetStatuses,
       resultRow,
+      pollPublishReceipt,
     })
   }
   if (phase === '__exports__') return complete([])
@@ -1480,6 +1508,35 @@
         ? `已跳过 ${invalidRows.length} 行预检失败款号，准备上传 1/${jobs.length}`
         : `准备上传 1/${jobs.length}`,
     })
+  }
+
+  if (phase === 'recover_page') {
+    const interrupted = compact(shared.page_recovery_phase)
+    const state = { ...shared, page_ready_attempts: 0, upload_attempts: 0, selector_attempts: 0 }
+    delete state.page_recovery_phase
+    const target = interrupted.includes('recommend') ? 'recommend'
+      : /selector|video_record|sell|product/.test(interrupted) ? 'product' : 'guang'
+    const key = `${state.job_index}:${target}`
+    const attempts = { ...(state.page_recovery_attempts || {}) }
+    attempts[key] = Number(attempts[key] || 0) + 1
+    state.page_recovery_attempts = attempts
+    // A crashed renderer loses pending receipts. Never resubmit an ambiguous write.
+    if (/^(publish_(guang|recommend)_api|wait_(guang|recommend)_receipt|submit_product_api)$/.test(interrupted)) {
+      const uncertain = appendNote(mergeWork(state, { [`${target}_status`]: '待核实' }),
+        `网页崩溃或超时，${interrupted}提交结果待核实；未重复提交，请核实平台结果`)
+      return target === 'guang' ? routeAfterGuang(uncertain)
+        : target === 'recommend' ? routeAfterRecommend(uncertain) : finishJob(uncertain)
+    }
+    if (attempts[key] > 2) {
+      const failed = appendNote(mergeWork(state, { [`${target}_status`]: '失败' }), '当前入口连续恢复失败，已跳过并继续后续任务')
+      return target === 'guang' ? routeAfterGuang(failed)
+        : target === 'recommend' ? routeAfterRecommend(failed) : finishJob(failed)
+    }
+    if (/sell_readback/.test(interrupted)) return nextPhase('wait_sell_readback', 1200, state)
+    if (target === 'product') return nextPhase('navigate_selector', 0, state)
+    delete state[`${target}_page_job_index`]
+    delete state[`${target}_injected_job_index`]
+    return nextPhase(`navigate_${target}`, 0, state)
   }
 
   if (phase === 'navigate_guang') {
@@ -1566,11 +1623,12 @@
     }
   }
 
-  if (phase === 'publish_guang_api') {
+  if (phase === 'publish_guang_api' || phase === 'wait_guang_receipt') {
     try {
       const { job } = currentJob(shared)
       validatePublishReadback(job, currentWork(shared).guang_form_readback || {}, 'pc_newcreator_video')
-      const result = await publishPreparedContent('pc_newcreator_video')
+      const result = pollPublishReceipt('pc_newcreator_video', { start: phase === 'publish_guang_api' })
+      if (!result) return nextPhase('wait_guang_receipt', 1000, { ...shared, current_store: '等待光合发布回执' })
       assertUnusedContentId(shared, result.contentId, '光合', ['内容ID', '光合内容ID'])
       return routeAfterGuang(mergeWork(shared, {
         guang_status: '发布成功',
@@ -1648,11 +1706,12 @@
     }
   }
 
-  if (phase === 'publish_recommend_api') {
+  if (phase === 'publish_recommend_api' || phase === 'wait_recommend_receipt') {
     try {
       const { job } = currentJob(shared)
       validatePublishReadback(job, currentWork(shared).recommend_form_readback || {}, 'qn_material_manager')
-      const result = await publishPreparedContent('qn_material_manager')
+      const result = pollPublishReceipt('qn_material_manager', { start: phase === 'publish_recommend_api' })
+      if (!result) return nextPhase('wait_recommend_receipt', 1000, { ...shared, current_store: '等待搜推发布回执' })
       assertUnusedContentId(shared, result.contentId, '搜推', ['搜推内容ID'])
       return routeAfterRecommend(mergeWork(shared, {
         recommend_status: '发布成功',

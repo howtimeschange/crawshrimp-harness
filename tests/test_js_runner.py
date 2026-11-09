@@ -8,7 +8,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from core.js_runner import (
     JSRunner,
@@ -2517,6 +2517,241 @@ class JSRunnerTests(unittest.IsolatedAsyncioTestCase):
                 "Page.setInterceptFileChooserDialog",
             ],
         )
+
+
+    async def test_evaluate_with_reconnect_retries_unclean_cdp_close_when_explicitly_enabled(self):
+        class TransientCloseRunner(JSRunner):
+            def __init__(self):
+                super().__init__("ws://example.invalid")
+                self.calls = 0
+                self.refreshes = 0
+
+            async def evaluate(self, expression: str, user_gesture: bool = False) -> JSResult:
+                self.calls += 1
+                if self.calls == 1:
+                    return JSResult(success=False, error="no close frame received or sent")
+                return JSResult(success=True, data=[{"retried": True}], meta={"has_more": False})
+
+            async def _refresh_ws_url(self) -> None:
+                self.refreshes += 1
+
+        runner = TransientCloseRunner()
+        runner._retry_transient_cdp_errors = True
+
+        async def fake_sleep(_seconds):
+            return None
+
+        with patch("asyncio.sleep", new=fake_sleep):
+            result = await runner.evaluate_with_reconnect("read-only PLM query", allow_navigation_retry=True)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.data, [{"retried": True}])
+        self.assertEqual(runner.calls, 2)
+        self.assertEqual(runner.refreshes, 1)
+
+
+    async def test_evaluate_with_reconnect_does_not_retry_unclean_cdp_close_by_default(self):
+        class TransientCloseRunner(JSRunner):
+            def __init__(self):
+                super().__init__("ws://example.invalid")
+                self.calls = 0
+                self.refreshes = 0
+
+            async def evaluate(self, expression: str, user_gesture: bool = False) -> JSResult:
+                self.calls += 1
+                return JSResult(success=False, error="no close frame received or sent")
+
+            async def _refresh_ws_url(self) -> None:
+                self.refreshes += 1
+
+        runner = TransientCloseRunner()
+        result = await runner.evaluate_with_reconnect("write-capable task", allow_navigation_retry=True)
+
+        self.assertFalse(result.success)
+        self.assertEqual(runner.calls, 1)
+        self.assertEqual(runner.refreshes, 0)
+
+
+    async def test_evaluate_with_reconnect_transport_only_mode_recovers_keepalive_timeout(self):
+        class PublishRecoveryRunner(JSRunner):
+            def __init__(self):
+                super().__init__("ws://example.invalid")
+                self.calls = 0
+                self.refreshes = 0
+
+            async def evaluate(self, expression: str, user_gesture: bool = False) -> JSResult:
+                self.calls += 1
+                if self.calls == 1:
+                    return JSResult(success=False, error="sent 1011 (internal error) keepalive ping timeout; no close frame received")
+                return JSResult(success=True, data=[], meta={"has_more": False})
+
+            async def _refresh_ws_url(self) -> None:
+                self.refreshes += 1
+
+        runner = PublishRecoveryRunner()
+        runner._recover_cdp_connection = True
+        result = await runner.evaluate_with_reconnect("pending publish receipt", allow_navigation_retry=True)
+
+        self.assertTrue(result.success)
+        self.assertEqual(runner.calls, 2)
+        self.assertEqual(runner.refreshes, 1)
+
+
+    async def test_run_script_file_recovers_a_long_read_only_batch_after_unclean_cdp_close(self):
+        class LongReadOnlyBatchRunner(JSRunner):
+            def __init__(self):
+                super().__init__("ws://example.invalid")
+                self.phase_attempts = {}
+                self.refreshes = 0
+                self.retry_refreshes = 0
+                self.did_drop_connection = False
+
+            async def _persist_run_params(self, run_token: str, params_json: str) -> None:
+                return None
+
+            async def _clear_run_params(self, run_token: str) -> None:
+                return None
+
+            async def _refresh_ws_url(self) -> None:
+                self.refreshes += 1
+                if self.did_drop_connection and self.phase_attempts.get(171) == 1:
+                    self.retry_refreshes += 1
+
+            async def evaluate(self, expression: str, user_gesture: bool = False) -> JSResult:
+                phase_raw = _extract_window_assignment(expression, "__CRAWSHRIMP_PHASE__")
+                shared_raw = _extract_window_assignment(expression, "__CRAWSHRIMP_SHARED__")
+                phase = json.loads(phase_raw) if phase_raw is not None else ""
+                shared = json.loads(shared_raw) if shared_raw is not None else {}
+
+                if phase == "main":
+                    return JSResult(
+                        success=True,
+                        data=[],
+                        meta={
+                            "action": "next_phase",
+                            "next_phase": "collect_style",
+                            "sleep_ms": 0,
+                            "shared": {"style_index": 1},
+                        },
+                    )
+
+                style_index = int(shared.get("style_index") or 0)
+                self.phase_attempts[style_index] = self.phase_attempts.get(style_index, 0) + 1
+                if style_index == 171 and not self.did_drop_connection:
+                    self.did_drop_connection = True
+                    return JSResult(success=False, error="no close frame received or sent")
+
+                rows = [
+                    {"款号": f"style-{style_index}", "测量点": row_index}
+                    for row_index in range(130)
+                ]
+                done = style_index == 178
+                return JSResult(
+                    success=True,
+                    data=rows,
+                    meta={
+                        "action": "complete" if done else "next_phase",
+                        "has_more": False,
+                        "next_phase": "collect_style",
+                        "sleep_ms": 0,
+                        "shared": {"style_index": style_index + 1},
+                    },
+                )
+
+        runner = LongReadOnlyBatchRunner()
+
+        async def fake_sleep(_seconds):
+            return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script_path = Path(tmpdir) / "read-only-plm.js"
+            script_path.write_text("({ success: true, data: [], meta: { has_more: false } })", encoding="utf-8")
+            with patch("asyncio.sleep", new=fake_sleep):
+                data = await runner.run_script_file(
+                    script_path,
+                    params={},
+                    retry_transient_cdp_errors=True,
+                )
+
+        self.assertEqual(len(data), 178 * 130)
+        self.assertEqual(len({(row["款号"], row["测量点"]) for row in data}), 178 * 130)
+        self.assertEqual(runner.phase_attempts[171], 2)
+        self.assertEqual(runner.retry_refreshes, 1)
+        self.assertFalse(runner._retry_transient_cdp_errors)
+
+
+    async def test_short_video_crash_and_timeout_refresh_without_replaying_phase(self):
+        class CrashRunner(JSRunner):
+            def __init__(self, error, cap=False):
+                super().__init__("ws://example.invalid")
+                self.error = error
+                self.cap = cap
+                self.phases = []
+                self.reloads = []
+            async def _persist_run_params(self, *args): pass
+            async def _clear_run_params(self, *args): pass
+            async def _refresh_ws_url(self): pass
+            async def _cdp_send(self, method, params): self.reloads.append(method)
+            async def evaluate(self, expression, **kwargs):
+                phase = json.loads(_extract_window_assignment(expression, "__CRAWSHRIMP_PHASE__"))
+                state = json.loads(_extract_window_assignment(expression, "__CRAWSHRIMP_SHARED__"))
+                self.phases.append(phase)
+                if phase == "main":
+                    return JSResult(success=True, data=[], meta={
+                        "action": "next_phase", "next_phase": "publish_guang_api", "sleep_ms": 0,
+                        "shared": {"jobs": [{}], "results": [{"id": "done"}],
+                                   "page_recovery_count": 12 if self.cap else 0}})
+                if phase == "publish_guang_api":
+                    return JSResult(success=False, error=self.error)
+                assert phase == "recover_page"
+                assert state["page_recovery_phase"] == "publish_guang_api"
+                return JSResult(success=True, data=state["results"], meta={"action": "complete"})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            directory = Path(tmpdir) / "bala-ai-video-assistant"
+            directory.mkdir()
+            script = directory / "short-video-batch-upload.js"
+            script.write_text("/* recovery-aware adapter */")
+            for error in ("{'code': -32000, 'message': 'Target crashed'}", "timeout"):
+                runner = CrashRunner(error)
+                with patch("core.js_runner.asyncio.sleep", new=AsyncMock()):
+                    result = await runner.run_script_file(script)
+                self.assertEqual(result, [{"id": "done"}])
+                self.assertEqual(runner.phases, ["main", "publish_guang_api", "recover_page"])
+                self.assertEqual(runner.reloads, ["Page.reload"])
+            runner = CrashRunner("Target crashed", cap=True)
+            with self.assertRaisesRegex(RuntimeError, "Target crashed"):
+                await runner.run_script_file(script)
+            self.assertEqual(runner.reloads, [])
+
+
+    async def test_timeout_replay_requires_explicit_read_only_contract(self):
+        class TimeoutRunner(JSRunner):
+            def __init__(self):
+                super().__init__("ws://example.invalid")
+                self.calls = 0
+                self.reloads = 0
+            async def _persist_run_params(self, *args): pass
+            async def _clear_run_params(self, *args): pass
+            async def _reload_current_page(self): self.reloads += 1
+            async def evaluate(self, *args, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return JSResult(success=False, error="timeout")
+                return JSResult(success=True, data=[{"id": "committed"}], meta={"has_more": False})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(tmpdir) / "submit.js"
+            script.write_text("/* platform request */")
+            writer = TimeoutRunner()
+            with self.assertRaisesRegex(RuntimeError, "结果待核实"):
+                await writer.run_script_file(script)
+            self.assertEqual((writer.calls, writer.reloads), (1, 0))
+            reader = TimeoutRunner()
+            result = await reader.run_script_file(script, retry_transient_cdp_errors=True)
+            self.assertEqual(result, [{"id": "committed"}])
+            self.assertEqual((reader.calls, reader.reloads), (2, 1))
+
 
 
 if __name__ == "__main__":

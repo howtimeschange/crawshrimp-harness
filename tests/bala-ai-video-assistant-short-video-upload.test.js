@@ -18,7 +18,7 @@ async function runAdapter({ params = {}, phase = 'main', shared = {}, exportsBox
   const context = {
     window: windowObject,
     document: contextExtra.document || {},
-    location: contextExtra.location || { href: 'https://huodong.taobao.com/wow/z/guang/gg_publish/gg-video' },
+    location: contextExtra.location || { href: 'https://huodong.taobao.com/wow/z/guang/gg_publish/gg-video?contentType=video' },
     console,
     setTimeout,
     clearTimeout,
@@ -72,19 +72,6 @@ function inputRow(overrides = {}) {
     ...overrides,
   }
 }
-
-test('short video upload validates title limits by visible characters', async () => {
-  const helpers = await loadExports()
-
-  assert.equal(helpers.visibleLength('👧'.repeat(30)), 30)
-  const parsed = helpers.normalizeJobs({
-    input_file: { rows: [inputRow({ 逛逛标题: '👧'.repeat(30), 搜推标题: '童装'.repeat(10) })] },
-    video_override_path: '/Users/test/6ec7e3d213229297.mp4',
-  })
-
-  assert.equal(parsed.jobs.length, 1)
-  assert.equal(parsed.invalidRows.length, 0)
-})
 
 test('short video upload parses the reference template and Shanghai schedule', async () => {
   const helpers = await loadExports()
@@ -150,6 +137,31 @@ test('short video upload blocks invalid title and missing video before live chan
   assert.equal(parsed.invalidRows.length, 1)
   assert.equal(parsed.invalidRows[0].上传情况, '预检失败')
   assert.match(parsed.invalidRows[0].备注, /20字限制/)
+})
+
+test('short video upload counts emoji as one visible character in titles', async () => {
+  const helpers = await loadExports()
+  const guangTitle = 'OOTD｜女儿初秋穿搭这件小外套真的太好看出门拍照也可爱啦🍂'
+  const recommendTitle = '女儿初秋小外套出门拍照好可爱日常也好搭🍂'
+  const parsed = helpers.normalizeJobs({
+    input_file: {
+      rows: [inputRow({
+        逛逛标题: guangTitle,
+        搜推标题: recommendTitle,
+      })],
+    },
+    video_override_path: '/Users/test/208326133201.mp4',
+    publish_targets: ['guang', 'recommend'],
+  })
+
+  assert.equal(guangTitle.length, 31)
+  assert.equal(helpers.visibleLength(guangTitle), 30)
+  assert.equal(recommendTitle.length, 21)
+  assert.equal(helpers.visibleLength(recommendTitle), 20)
+  assert.equal(parsed.invalidRows.length, 0)
+  assert.equal(parsed.jobs.length, 1)
+  assert.equal(parsed.jobs[0].guang_title, guangTitle)
+  assert.equal(parsed.jobs[0].recommend_title, recommendTitle)
 })
 
 test('short video upload skips precheck failures and continues live jobs', async () => {
@@ -502,7 +514,9 @@ test('short video upload reopens the Guang publisher for each live job', async (
     },
   })
 
-  assert.equal(reloads, 1)
+  assert.equal(reloads, 0)
+  assert.equal(result.meta.action, 'navigate_publisher')
+  assert.match(result.meta.url, /^https:\/\/huodong\.taobao\.com\//)
   assert.equal(result.meta.next_phase, 'wait_guang_page')
   assert.equal(result.meta.shared.guang_page_job_index, 0)
 })
@@ -810,4 +824,145 @@ test('short video upload finds the product page-owned submit API without a click
     })),
     ['商品标题为必填项，不能为空'],
   )
+})
+
+test('slow publication keeps one request across phase polls beyond the CDP timeout', async () => {
+  const helpers = await loadExports()
+  let resolveReceipt
+  let submits = 0
+  const publish = () => {
+    submits += 1
+    return new Promise(resolve => { resolveReceipt = resolve })
+  }
+  assert.equal(helpers.pollPublishReceipt('pc_newcreator_video', { start: true, publish, now: 1000 }), null)
+  await Promise.resolve()
+  assert.equal(submits, 1)
+  assert.equal(helpers.pollPublishReceipt('pc_newcreator_video', { now: 91000 }), null)
+  assert.equal(helpers.pollPublishReceipt('pc_newcreator_video', { start: true, publish, now: 92000 }), null)
+  assert.equal(submits, 1)
+  resolveReceipt({ contentId: '9001234567', receipt: 'SUCCESS' })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(helpers.pollPublishReceipt('pc_newcreator_video').contentId, '9001234567')
+  assert.equal(helpers.pollPublishReceipt('pc_newcreator_video', { start: true, publish }).contentId, '9001234567')
+  assert.equal(submits, 1)
+})
+
+test('lost or overdue publication receipts do not resubmit and require platform verification', async () => {
+  const helpers = await loadExports()
+  assert.throws(() => helpers.pollPublishReceipt('qn_material_manager'), /结果待核对/)
+  let submits = 0
+  const publish = () => { submits += 1; return new Promise(() => {}) }
+  helpers.pollPublishReceipt('qn_material_manager', { start: true, publish, now: 1000 })
+  await Promise.resolve()
+  assert.throws(() => helpers.pollPublishReceipt('qn_material_manager', { now: 182000 }), /180 秒.*勿重复发布/)
+  assert.equal(submits, 1)
+})
+
+test('publication request failure is consumed without an unhandled rejection or repeat POST', async () => {
+  const helpers = await loadExports()
+  let submits = 0
+  helpers.pollPublishReceipt('qn_material_manager', {
+    start: true,
+    publish: async () => { submits += 1; throw new Error('SESSION_EXPIRED') },
+  })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.throws(() => helpers.pollPublishReceipt('qn_material_manager'), /SESSION_EXPIRED/)
+  assert.equal(submits, 1)
+})
+
+test('Guang and recommend publication phases return promptly and consume their own deferred receipt', async () => {
+  const helpers = await loadExports()
+  for (const [target, scene] of [['guang', 'pc_newcreator_video'], ['recommend', 'qn_material_manager']]) {
+    const job = helpers.normalizeJobs({
+      input_file: { rows: [inputRow({ 参与活动: '', '定时/日': '', '定时/具体时间': '' })] },
+      video_override_path: '/tmp/example.mp4',
+      publish_targets: ['guang', 'recommend'],
+    }).jobs[0]
+    const content = {
+      shortTitle: helpers.titleForScene(job, scene), title: job.description, editorTitle: job.description,
+      items: [{ itemId: job.item_id }], coverUser: { url: 'https://example.test/cover.jpg' },
+      fileId: 'file123', videoStatus: 'success', onlineTime: null,
+    }
+    let finishPublish
+    let submits = 0
+    const receipts = {}
+    const contextExtra = {
+      document: { querySelectorAll: () => [{ __reactFiberTest: { memoizedProps: {
+        store: { getState: () => ({ content: { value: content } }) },
+        actions: { content: { updateContentItem() {} } }, dispatch() {},
+      } } }] },
+      window: {
+        __USER_INFO__: { userId: '12345' },
+        __CRAWSHRIMP_RUN_TOKEN__: `test-${target}`,
+        __CRAWSHRIMP_VIDEO_PUBLISH_RECEIPTS__: receipts,
+        lib: { mtop: { request: async ({ api }) => {
+          if (api.endsWith('session.generate')) return { data: { publishSession: 'session123' } }
+          submits += 1
+          return new Promise(resolve => { finishPublish = resolve })
+        } } },
+      },
+    }
+    const shared = { jobs: [job], job_index: 0, results: [], current_work: { [`${target}_form_readback`]: content } }
+    const first = await runAdapter({ phase: `publish_${target}_api`, shared, contextExtra })
+    assert.equal(first.meta.next_phase, `wait_${target}_receipt`)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(submits, 1)
+    const waiting = await runAdapter({ phase: first.meta.next_phase, shared: first.meta.shared, contextExtra })
+    assert.equal(waiting.meta.next_phase, `wait_${target}_receipt`)
+    assert.equal(submits, 1)
+    finishPublish({ data: { contentId: '9001234567' }, ret: ['SUCCESS'] })
+    await new Promise(resolve => setImmediate(resolve))
+    const done = await runAdapter({ phase: first.meta.next_phase, shared: first.meta.shared, contextExtra })
+    if (target === 'guang') {
+      assert.equal(done.meta.next_phase, 'navigate_recommend')
+      assert.equal(done.meta.shared.current_work.guang_content_id, '9001234567')
+    } else {
+      assert.equal(done.meta.action, 'complete')
+      assert.equal(done.data[0].搜推内容ID, '9001234567')
+    }
+    assert.equal(submits, 1)
+  }
+})
+
+test('renderer recovery restarts only the interrupted upload and preserves completed work', async () => {
+  const shared = {
+    jobs: [{ publish_guang: true, publish_recommend: true }], job_index: 0,
+    results: [{ 内容ID: '123456789' }], current_work: { guang_content_id: '987654321', guang_status: '成功' },
+    page_recovery_phase: 'wait_recommend_upload', recommend_page_job_index: 0,
+    recommend_injected_job_index: 0, upload_attempts: 80,
+  }
+  const result = await runAdapter({ phase: 'recover_page', shared })
+  assert.equal(result.meta.next_phase, 'navigate_recommend')
+  assert.equal(result.meta.shared.recommend_injected_job_index, undefined)
+  assert.equal(result.meta.shared.recommend_page_job_index, undefined)
+  assert.equal(result.meta.shared.upload_attempts, 0)
+  assert.deepEqual(plain(result.meta.shared.results), shared.results)
+  assert.deepEqual(plain(result.meta.shared.current_work), shared.current_work)
+})
+
+for (const interrupted of ['publish_guang_api', 'wait_guang_receipt', 'publish_recommend_api', 'wait_recommend_receipt', 'submit_product_api']) {
+  test(`renderer recovery never replays ${interrupted}`, async () => {
+    const shared = {
+      jobs: [{ publish_guang: true, publish_recommend: true, bind_product: false }], job_index: 0,
+      results: [], current_work: { guang_content_id: '987654321' }, page_recovery_phase: interrupted,
+    }
+    const result = await runAdapter({ phase: 'recover_page', shared })
+    if (interrupted.includes('guang')) {
+      assert.equal(result.meta.next_phase, 'navigate_recommend')
+      assert.equal(result.meta.shared.current_work.guang_status, '待核实')
+    } else {
+      assert.equal(result.meta.action, 'complete')
+      assert.match(JSON.stringify(result.data), /待核实/)
+    }
+    assert.match(JSON.stringify(result.meta.shared), /未重复提交/)
+  })
+}
+
+test('repeated renderer failures skip the failing target within a bounded retry count', async () => {
+  const result = await runAdapter({ phase: 'recover_page', shared: {
+    jobs: [{ publish_guang: true, publish_recommend: true }], job_index: 0, results: [],
+    page_recovery_phase: 'prepare_guang_upload', page_recovery_attempts: { '0:guang': 2 },
+  } })
+  assert.equal(result.meta.next_phase, 'navigate_recommend')
+  assert.equal(result.meta.shared.current_work.guang_status, '失败')
 })

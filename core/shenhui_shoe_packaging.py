@@ -6,13 +6,17 @@ import json
 import logging
 import re
 import shutil
+import tempfile
+import time
+import threading
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from core import llm_gateway, ocr_service, shenhui_shoe_rules
+from core import llm_gateway, ocr_service, shenhui_shoe_rules, shenhui_shoe_models
 
 
 logger = logging.getLogger(__name__)
@@ -20,6 +24,10 @@ logger = logging.getLogger(__name__)
 
 class ShoeSelectionError(ValueError):
     """Raised when a required DeepDraw shoe slot cannot be selected."""
+
+
+class ShoeLabelCropError(ShoeSelectionError):
+    """Independent readers found a crop missing the printed identity fields."""
 
 
 SHOE_CATEGORY_ALIASES = {
@@ -69,6 +77,7 @@ def parse_shoe_category_rows(rows: Any) -> dict[str, str]:
     if not isinstance(rows, list):
         raise ShoeSelectionError("鞋品品类 Excel 无法读取 rows 数据")
     parsed: dict[str, str] = {}
+    has_style = False
     for row_index, row in enumerate(rows, start=2):
         if not isinstance(row, dict):
             continue
@@ -76,10 +85,13 @@ def parse_shoe_category_rows(rows: Any) -> dict[str, str]:
         raw_category = _text(row.get("品类"))
         if not style_code and not raw_category:
             continue
-        if not style_code or not raw_category:
+        if not style_code:
             raise ShoeSelectionError(
-                f"鞋品品类 Excel 第 {row_index} 行必须同时填写“款号”和“品类”"
+                f"鞋品品类 Excel 第 {row_index} 行填写了品类但缺少“款号”"
             )
+        has_style = True
+        if not raw_category:
+            continue
         category = normalize_shoe_category(raw_category)
         existing = parsed.get(style_code)
         if existing and existing != category:
@@ -88,7 +100,7 @@ def parse_shoe_category_rows(rows: Any) -> dict[str, str]:
                 f"{existing} / {category}"
             )
         parsed[style_code] = category
-    if not parsed:
+    if not has_style:
         raise ShoeSelectionError("鞋品品类 Excel 没有有效的“款号/品类”数据")
     return parsed
 
@@ -408,11 +420,13 @@ def build_output_assignments(
                 "output_path": f"{folder}/{output_filename('yx', source_filename=yx_source)}",
             })
         else:
+            pending_yx = (slots.get("_pending_slots") or {}).get("yx")
             warnings.append(_slot_warning(
                 color=color,
                 slot="yx",
-                warning="允许缺少 yx.jpg：未识别到功能吊牌图",
-                action="允许缺少",
+                warning=("yx.jpg 待补齐/人工核验：" + pending_yx if pending_yx
+                         else "允许缺少 yx.jpg：未识别到功能吊牌图"),
+                action="待补齐/人工核验" if pending_yx else "允许缺少",
             ))
 
     return assignments, warnings
@@ -452,6 +466,7 @@ SHOE_MAIN_TEMPLATE_CATEGORY_ORDER: tuple[str, ...] = (
     "婴童",
     "休闲",
 )
+SHOE_YX_REFERENCE_IMAGE = SHOE_YQ_REFERENCE_IMAGE.with_name("shoe-yx-template.jpg")
 SHOE_MAIN_TEMPLATE_CATEGORY_SLUGS: dict[str, str] = {
     "雪地": "snow",
     "运动": "sports",
@@ -461,25 +476,28 @@ SHOE_MAIN_TEMPLATE_CATEGORY_SLUGS: dict[str, str] = {
 SHOE_POSE_MULTI_MODEL_ID = "multi-model"
 SHOE_LABEL_OCR_MODEL = "gpt-5.6-sol"
 SHOE_POSE_DEFAULT_MODEL = "gpt-5.6-sol"
-SHOE_OFFICIAL_DEEPSEEK_VISION_MODEL = "deepseek-official-flash"
+SHOE_OFFICIAL_DEEPSEEK_VISION_MODEL = "deepseek-official-v4-flash-vision-exp"
 SHOE_POSE_DEFAULT_FALLBACK_MODELS: tuple[str, ...] = (
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "gpt-5.5",
-    "deepseek-official-flash",
+    "deepseek-official-v4-flash-vision-exp",
     "kimi-k2.7-code",
 )
 SHOE_LABEL_OCR_DEFAULT_MODEL_CHAIN: tuple[str, ...] = (
     "gpt-5.6-sol",
-    "gemini-3.5-flash",
+    "gemini-3.8-flash",
     "qwen3.7-plus",
     "gpt-5.6-terra",
     "kimi-k2.7-code",
-    "deepseek-official-flash",
+    "deepseek-official-v4-flash-vision-exp",
 )
 SHOE_FALLBACK_MODEL_LIMIT = 5
 SHOE_POSE_MODEL_CANDIDATES = (
+    "gpt-6-astra",
     "deepseek-official-flash",
+    "deepseek-official-v4-flash-vision-exp",
+    "deepseek-official-v4-flash",
     "deepseek-official-v4-pro",
     "glm-official-5.3-flash",
     "gpt-5.6-sol",
@@ -489,7 +507,7 @@ SHOE_POSE_MODEL_CANDIDATES = (
     "claude-opus-4-8",
     "claude-sonnet-5",
     "gemini-3.1-pro-preview",
-    "gemini-3.5-flash",
+    "gemini-3.8-flash",
     "qwen3.8-max-preview",
     "qwen3.7-plus",
     "deepseek-v4-flash",
@@ -517,8 +535,9 @@ SHOE_GLOBAL_PAGE_MAX_PAGES = 8
 SHOE_MULTIMODAL_IMAGE_INPUT_LIMIT = 10
 SHOE_POSE_MODEL_MAX_ATTEMPTS = 3
 SHOE_LABEL_OCR_MODEL_MAX_ATTEMPTS = 3
-SHOE_POSE_MODEL_TIMEOUT_SECONDS = 60
-SHOE_LABEL_OCR_TIMEOUT_SECONDS = 60
+SHOE_POSE_MODEL_TIMEOUT_SECONDS = 120
+SHOE_POSE_FULL_SHEET_TIMEOUT_SECONDS = 240
+SHOE_LABEL_OCR_TIMEOUT_SECONDS = 90
 SHOE_POSE_TIMEOUT_PROBE_SECONDS = 180
 SHOE_LABEL_OCR_TIMEOUT_PROBE_SECONDS = 180
 SHOE_POSE_BATCH_PARALLELISM = 2
@@ -529,7 +548,8 @@ SHOE_POSE_STRATEGY_BATCH = "batch"
 SHOE_POSE_STRATEGY_BATCH_OVERVIEW = "batch_overview"
 SHOE_POSE_STRATEGY_SINGLE_SHEET = "single_sheet"
 SHOE_POSE_STRATEGY_FOCUSED = "focused"
-SHOE_POSE_DEFAULT_STRATEGY = SHOE_POSE_STRATEGY_SINGLE_SHEET
+SHOE_POSE_DEFAULT_STRATEGY = "mask_board_review"
+SHOE_REVIEW_STRATEGIES = {"sequential_templates", "mask_board_review"}
 SHOE_FULL_POSE_REQUIRED_CONSENSUS_SLOTS = (
     "tmz1",
     "tmz2",
@@ -596,7 +616,7 @@ SHOE_FOCUSED_POSE_SLOTS = (
 )
 SHOE_FOCUSED_MAX_CANDIDATES = 36
 SHOE_CHANNEL_CANVAS_SIZE = 800
-SHOE_WPT_MAX_BYTES = 600 * 1024
+SHOE_WPT_MAX_BYTES = 600_000
 SHOE_TMQ_CANVAS_SIZE = 800
 
 SHOE_POSE5_FEATURE_RULES = {
@@ -635,7 +655,7 @@ SHOE_POSE5_FEATURE_RULES = {
 }
 
 SHOE_SELECTION_SYSTEM_PROMPT = """你是电商鞋品图片审核员。你要把候选原图匹配到深绘鞋品图包槽位。
-只能选择候选图编号，不能编造编号或文件名。先识别鞋盒标签中的产品名称和颜色，再结合参考模板判断品类和姿势。
+只能选择候选图编号，不能编造编号或文件名。若输入已明确品类，直接对照对应模板判断姿势，不要重新猜测品类；未指定时才结合标签和外观判断品类。
 如果输入中包含当前品类 tmz1..tmz5 的切片参考，主图位必须优先逐张对照这些参考图判断。
 品类只能是：运动、休闲、雪地、婴童。
 运动：运动鞋、板鞋。
@@ -665,7 +685,7 @@ def _is_auto_shoe_model_id(model_id: str) -> bool:
 
 def _is_timeout_like_llm_error(exc: Exception | str) -> bool:
     text = _text(exc).lower()
-    return any(
+    return bool(re.search(r"\bhttp\s+(408|504|524)\b", text)) or any(
         marker in text
         for marker in (
             "timeout",
@@ -706,6 +726,10 @@ def normalize_shoe_pose_strategy(value: Any) -> str:
         "batched": SHOE_POSE_STRATEGY_BATCH,
         "chunk": SHOE_POSE_STRATEGY_BATCH,
         "chunked": SHOE_POSE_STRATEGY_BATCH,
+        "single_model_verified": "single_model_verified",
+        "bala_specialist": "bala_specialist",
+        "sequential_templates": "sequential_templates",
+        "mask_board_review": "mask_board_review",
         "batch_overview": SHOE_POSE_STRATEGY_BATCH_OVERVIEW,
         "batched_overview": SHOE_POSE_STRATEGY_BATCH_OVERVIEW,
         "batch_context": SHOE_POSE_STRATEGY_BATCH_OVERVIEW,
@@ -723,7 +747,7 @@ def normalize_shoe_pose_strategy(value: Any) -> str:
         return strategy
     raise ShoeSelectionError(
         f"不支持的鞋品候选图识别策略“{_text(value)}”；"
-        "支持 global_pages、batch、batch_overview、single_sheet"
+        "支持 global_pages、batch、batch_overview、single_sheet、single_model_verified"
     )
 
 
@@ -732,10 +756,14 @@ def _shoe_append_fallback_model_ids(
     config: dict | None = None,
     fallback_model_ids: Any = None,
 ) -> list[str]:
-    selected = list(dict.fromkeys(_text(item) for item in model_ids if _text(item)))
-    for fallback in _configured_shoe_fallback_model_ids(fallback_model_ids):
-        if fallback not in selected:
-            selected.append(fallback)
+    selected: list[str] = []
+    seen_routes: set[str] = set()
+    for item in [*model_ids, *_configured_shoe_fallback_model_ids(fallback_model_ids)]:
+        model = _text(item)
+        route = llm_gateway.deepseek_official_real_model(model)
+        if model and route not in seen_routes:
+            seen_routes.add(route)
+            selected.append(model)
     return selected
 
 
@@ -1086,40 +1114,57 @@ def _replace_border_background(
         for channel in range(3)
     )
 
-    def is_background(pixel: tuple[int, int, int]) -> bool:
-        return max(
-            abs(pixel[channel] - source_background[channel])
-            for channel in range(3)
-        ) <= tolerance
+    from PIL import ImageChops, ImageDraw
 
+    # Build the identical max-channel-distance predicate in Pillow's C loops.
+    # A byte per pixel plus scanline seeds avoids millions of Python tuples on
+    # full-resolution photos, particularly on machines with 8 GB of memory.
+    eligible = None
+    for channel, background in enumerate(source_background):
+        band = image.getchannel(channel).point(
+            [255 if abs(value - background) <= tolerance else 0 for value in range(256)]
+        )
+        eligible = band if eligible is None else ImageChops.darker(eligible, band)
+    remaining = bytearray(eligible.tobytes())
+    del eligible, band
     output = image.copy()
-    output_pixels = output.load()
-    visited = bytearray(width * height)
-    stack: list[tuple[int, int]] = []
+    draw = ImageDraw.Draw(output)
+    stack: list[int] = []
     for x in range(width):
-        stack.append((x, 0))
-        stack.append((x, height - 1))
+        stack.append(x)
+        stack.append((height - 1) * width + x)
     for y in range(height):
-        stack.append((0, y))
-        stack.append((width - 1, y))
+        stack.append(y * width)
+        stack.append((y + 1) * width - 1)
 
     while stack:
-        x, y = stack.pop()
-        offset = y * width + x
-        if visited[offset]:
+        offset = stack.pop()
+        if not remaining[offset]:
             continue
-        visited[offset] = 1
-        if not is_background(pixels[x, y]):
-            continue
-        output_pixels[x, y] = background_rgb
-        if x > 0:
-            stack.append((x - 1, y))
-        if x + 1 < width:
-            stack.append((x + 1, y))
-        if y > 0:
-            stack.append((x, y - 1))
-        if y + 1 < height:
-            stack.append((x, y + 1))
+        y, x = divmod(offset, width)
+        row_start = y * width
+        left = remaining.rfind(b'\x00', row_start, offset) + 1
+        if left < row_start:
+            left = row_start
+        right = remaining.find(b'\x00', offset, row_start + width)
+        if right < 0:
+            right = row_start + width
+        remaining[left:right] = b'\x00' * (right - left)
+        draw.line((left - row_start, y, right - row_start - 1, y), fill=background_rgb)
+        for adjacent_y in (y - 1, y + 1):
+            if not 0 <= adjacent_y < height:
+                continue
+            shift = (adjacent_y - y) * width
+            end = right + shift
+            cursor = left + shift
+            while cursor < end:
+                seed = remaining.find(b'\xff', cursor, end)
+                if seed < 0:
+                    break
+                stack.append(seed)
+                cursor = remaining.find(b'\x00', seed, end)
+                if cursor < 0:
+                    break
     return output
 
 
@@ -2284,7 +2329,23 @@ def _apply_selection_quality_rules(
                     >= SHOE_POSE1_MIN_SCORE_IMPROVEMENT
                 )
             )
-            if should_replace:
+            # Landing evidence outranks silhouette similarity in this legacy path
+            # too. A current source whose own facts say the pair is floating is
+            # never replaced by a look-alike; it is withdrawn for review, because
+            # no silhouette score can prove 双鞋并排落地.
+            floating_facts = [
+                fact for fact in (slots.get("_candidate_facts") or [])
+                if isinstance(fact, dict) and "floating" in str(fact.get("pair_arrangement") or "")
+                and fact.get("filename") in {current_wpz1, current_tmz1}
+            ]
+            if floating_facts:
+                ruled["tmz1"] = ""
+                wpz[0] = ""
+                corrections.append(
+                    "主图1原图事实为双鞋悬空，已撤下等待重新选图："
+                    f"{current_wpz1}"
+                )
+            elif should_replace:
                 wpz[0] = replacement
                 ruled["tmz1"] = replacement
                 retire_source(current_wpz1, current_tmz1)
@@ -3185,6 +3246,14 @@ def _apply_post_selection_quality_rules(
 ) -> tuple[dict[str, Any], list[str]]:
     """Keep semantic consensus authoritative; legacy analyzers retain old repair rules."""
 
+    if slots.get("_sequential_context"):
+        from core.shenhui_shoe_sequential import preserve_background_pairs
+        return preserve_background_pairs(slots)
+    if slots.get("_fast_context"):
+        # Single-reader facts are proposals. Geometric rewrites would discard
+        # the candidates before the independent final visual review sees them.
+        return dict(slots), []
+
     has_consensus_evidence = any(
         isinstance(slots.get(key), (dict, list)) and bool(slots.get(key))
         for key in ("_model_votes", "_model_votes_by_batch")
@@ -3650,7 +3719,7 @@ def _shoe_selection_prompt(
         elif forced_category == "休闲":
             pose5_extra = "休闲海报图不要选择两只鞋竖向上下分开的旧版俯视对角线图。\n"
         forced_rule = (
-            f"\n本款品类已由 Excel 确定为“{forced_category}”，"
+            f"\n本款已核验品类为“{forced_category}”，"
             f"只能按模板{category_column}选择姿势；不得自行改判品类，"
             f'shoe_category 必须返回“{forced_category}”。'
             "新版规则中主图5和海报图已经拆开："
@@ -3708,7 +3777,7 @@ def _shoe_selection_prompt(
    婴童海报固定复用 tmz1/wpz1；
    公主鞋/皮鞋/靴子/女生凉鞋海报固定复用 tmz1/wpz1。
    非主推色不输出 o.jpg。
-4. yq 必须且只能返回3张，按第四张参考模板从左到右依次匹配：斜前方鞋+后方鞋底、完整鞋底平铺、完整外侧面。不要把 AI 角度图、颜色图或其他展示图放进 yq。
+4. yq 必须且只能返回3张，按输入说明中标注的 yq 专用参考模板从左到右依次匹配：斜前方鞋+后方鞋底、完整鞋底平铺、完整外侧面。不要把 AI 角度图、颜色图或其他展示图放进 yq。
 5. yk 不用选择，程序会合并主推色云盘中的 1.jpg..N.jpg 和主推色云盘中已经命名为 yk1..ykN 的细节图；细节有几张就输出几张，非主推色不输出 yk。
    雪地款缺少独立 yk 细节图时，程序会优先复用未占用的鞋口内里细节原图；若没有独立细节图，会从正确的雪地第4姿势鞋口内里图裁切生成 yk1。
    yx 只允许选择“鞋子主体与一张或多张功能吊牌/功能卡同框”的完整展示图。
@@ -3739,7 +3808,7 @@ def _shoe_targeted_slot_prompt(
     """Ask one model route to arbitrate exactly one unresolved semantic slot."""
 
     target_slot = shenhui_shoe_rules.normalize_slot_name(target_slot)
-    if target_slot not in SHOE_FULL_POSE_REQUIRED_CONSENSUS_SLOTS:
+    if target_slot not in SHOE_FOCUSED_POSE_SLOTS:
         raise ShoeSelectionError(f"不支持的鞋品单槽位裁决：{target_slot or '空'}")
     candidate_sheet_count = max(1, int(candidate_sheet_count or 1))
     if candidate_sheet_count == 1:
@@ -3780,6 +3849,12 @@ def _shoe_targeted_slot_prompt(
         ),
         "yq2": "完整鞋底平铺并朝向镜头，不接受局部鞋底、斜角鞋身或普通侧视图",
         "yq3": "无遮挡的完整单鞋外侧面，鞋头到鞋跟完整可见；内侧、竖立、鞋底和功能卡图都不合格",
+        "yx": (
+            "完整鞋子主体与功能吊牌或功能卡同框，允许卡片遮住部分鞋身；"
+            "单独吊牌、单独鞋垫、鞋盒、普通鞋图和局部特写都不合格。"
+            "鞋与卡同框时 asset_type 应为 shoe，feature_card=true；"
+            "只有卡片而没有完整鞋子时 asset_type=other，complete=false"
+        ),
     }
     candidate_text = "\n".join(
         f"{candidate_id}={filename}"
@@ -4015,7 +4090,7 @@ def _create_targeted_slot_contact_sheets(
     """Render large, stable-ID panels for one exact-template arbitration."""
 
     target_slot = shenhui_shoe_rules.normalize_slot_name(target_slot)
-    if target_slot not in SHOE_FULL_POSE_REQUIRED_CONSENSUS_SLOTS:
+    if target_slot not in SHOE_FOCUSED_POSE_SLOTS:
         raise ShoeSelectionError(
             f"不支持的鞋品单槽位候选面板：{target_slot or '空'}"
         )
@@ -4107,7 +4182,7 @@ def _create_pose_contact_inputs(
     pose_strategy: str,
 ) -> tuple[list[Path], dict[str, str], Path | None]:
     strategy = normalize_shoe_pose_strategy(pose_strategy)
-    if strategy == SHOE_POSE_STRATEGY_GLOBAL_PAGES:
+    if strategy in {SHOE_POSE_STRATEGY_GLOBAL_PAGES, "single_model_verified", *SHOE_REVIEW_STRATEGIES}:
         sheets, candidate_ids = _create_global_page_contact_sheets(entries, target)
         return sheets, candidate_ids, None
     if strategy == SHOE_POSE_STRATEGY_SINGLE_SHEET:
@@ -4992,6 +5067,49 @@ def _restrict_pose_payload_to_target_slot(
     }
 
 
+def _strict_gray_tmz5_pair_ids(
+    candidate_ids: dict[str, str],
+    focused_slots: dict[str, Any],
+    entries_by_name: dict[str, dict[str, Any]],
+) -> set[str]:
+    """Find background-only copies of the independently verified white source.
+
+    The caller supplies one color's pool and must establish the exact tmz5
+    contract first. Contours alone cannot establish the same shoe/angle; require
+    aligned unchanged foreground pixels too. This selects a review pool, never
+    contributes model votes or bypasses semantic validation.
+    """
+    anchor_name = candidate_ids.get(_consensus_slot_value(focused_slots, "tmz5"))
+    anchor_path = (entries_by_name.get(anchor_name) or {}).get("path")
+    if not anchor_path or not Path(anchor_path).is_file():
+        return set()
+    anchor = _binary_pose_feature(Path(anchor_path))
+    if not anchor.valid or anchor.background_luma < SHOE_WHITE_BACKGROUND_LUMA:
+        return set()
+    anchor_signature = None
+    paired: set[str] = set()
+    for candidate_id, filename in candidate_ids.items():
+        path = (entries_by_name.get(filename) or {}).get("path")
+        if not path or not Path(path).is_file():
+            continue
+        feature = _binary_pose_feature(Path(path))
+        if not (
+            feature.valid
+            and 235.0 <= feature.background_luma < SHOE_WHITE_BACKGROUND_LUMA
+            and abs(anchor.aspect_ratio - feature.aspect_ratio) <= 0.05
+            and abs(anchor.bounding_coverage - feature.bounding_coverage) <= 0.05
+            and _binary_pose_distance(anchor, feature) <= SHOE_VISUAL_VARIANT_MAX_DISTANCE
+        ):
+            continue
+        if anchor_signature is None:
+            anchor_signature = _same_background_visual_signature(Path(anchor_path))
+        if _same_background_foreground_pixel_match(
+            anchor_signature, _same_background_visual_signature(Path(path))
+        ) >= SHOE_SAME_BACKGROUND_VISUAL_MIN_PIXEL_MATCH:
+            paired.add(candidate_id)
+    return paired
+
+
 def _targeted_slot_candidate_ids(
     target_slot: str,
     candidate_ids: dict[str, str],
@@ -5079,6 +5197,11 @@ def _targeted_slot_candidate_ids(
         if target_slot == "wpz5"
         else None
     )
+    strict_pair_ids = (
+        _strict_gray_tmz5_pair_ids(candidate_ids, focused_slots, entries_by_name)
+        if target_slot == "wpz5" and prefer_exact_tmz5_visual_pair and entries_by_name
+        else set()
+    )
     filtered: dict[str, str] = {}
     for candidate_id, filename in candidate_ids.items():
         family = _consensus_vote_key(candidate_id, candidate_ids)
@@ -5094,7 +5217,9 @@ def _targeted_slot_candidate_ids(
             if path.is_file():
                 pose = _binary_pose_feature(path)
                 if pose.valid:
-                    if not (
+                    # An exact background-only pair inherits the already
+                    # verified source's geometry, including tall boot shapes.
+                    if candidate_id not in strict_pair_ids and not (
                         pose5_rule["min_aspect"]
                         <= pose.aspect_ratio
                         <= pose5_rule["max_aspect"]
@@ -5123,57 +5248,14 @@ def _targeted_slot_candidate_ids(
             )
             continue
         filtered[candidate_id] = filename
-    if (
-        target_slot == "wpz5"
-        and prefer_exact_tmz5_visual_pair
-        and entries_by_name
-        and filtered
-    ):
-        tmz5_candidate_id = _consensus_slot_value(focused_slots, "tmz5")
-        tmz5_filename = _text(candidate_ids.get(tmz5_candidate_id))
-        tmz5_entry = entries_by_name.get(tmz5_filename) or {}
-        tmz5_path = tmz5_entry.get("path")
-        tmz5_feature = (
-            _binary_pose_feature(Path(tmz5_path))
-            if tmz5_path and Path(tmz5_path).is_file()
-            else None
-        )
-        visual_pair_ids: set[str] = set()
-        if (
-            tmz5_feature is not None
-            and tmz5_feature.mask is not None
-            and tmz5_feature.background_luma >= SHOE_WHITE_BACKGROUND_LUMA
-        ):
-            for candidate_id, filename in filtered.items():
-                entry = entries_by_name.get(filename) or {}
-                candidate_path = entry.get("path")
-                if not candidate_path or not Path(candidate_path).is_file():
-                    continue
-                candidate_feature = _binary_pose_feature(Path(candidate_path))
-                if (
-                    candidate_feature.mask is None
-                    or not (
-                        235.0
-                        <= candidate_feature.background_luma
-                        < SHOE_WHITE_BACKGROUND_LUMA
-                    )
-                ):
-                    continue
-                if (
-                    _binary_pose_distance(tmz5_feature, candidate_feature)
-                    <= SHOE_BACKGROUND_PAIR_MAX_DISTANCE
-                ):
-                    visual_pair_ids.add(candidate_id)
-        if visual_pair_ids:
-            for candidate_id in list(filtered):
-                if candidate_id in visual_pair_ids:
-                    continue
-                exclusions[candidate_id] = (
-                    "not the verified gray visual pair of exact tmz5"
-                )
-                filtered.pop(candidate_id, None)
+    eligible_pairs = strict_pair_ids.intersection(filtered)
+    if eligible_pairs:
+        for candidate_id in list(filtered):
+            if candidate_id not in eligible_pairs:
+                exclusions[candidate_id] = "not the verified gray visual pair of exact tmz5"
+                filtered.pop(candidate_id)
     eligible_nominations = nominated_candidate_ids.intersection(filtered)
-    if prefer_prior_slot_nominations and eligible_nominations:
+    if prefer_prior_slot_nominations and eligible_nominations and not eligible_pairs:
         for candidate_id in list(filtered):
             if candidate_id in eligible_nominations:
                 continue
@@ -5747,10 +5829,153 @@ def _focused_candidate_ids_from_page_payloads(
     }
 
 
+def _review_missing_shoe_feature_card(
+    payload: dict[str, Any],
+    *,
+    candidate_ids: dict[str, str],
+    candidate_entries: list[dict[str, Any]],
+    contact_sheet: str,
+    style_code: str,
+    color_code: str,
+    shoe_category: str,
+    model_ids: list[str],
+    required_votes: int,
+    invoke: Any,
+    log: Any,
+) -> dict[str, Any]:
+    """Review nominated optional yx images before treating them as absent."""
+    if _text((payload.get("slots") or {}).get("yx")) or not candidate_entries:
+        return payload
+    nominated = {
+        _text(fact.get("filename"))
+        for evidence in payload.get("_candidate_facts_by_model") or []
+        for fact in evidence.get("candidate_facts") or []
+        if fact.get("feature_card") and fact.get("complete")
+    }
+    entries_by_name = {_text(entry.get("filename")): entry for entry in candidate_entries}
+    review_ids = {
+        key: filename for key, filename in candidate_ids.items()
+        if filename in nominated and filename in entries_by_name
+    }
+    if not review_ids:
+        return payload
+    target = Path(contact_sheet).with_name(f"{color_code}-optional-yx.jpg")
+    sheets, rendered_ids = _create_targeted_slot_contact_sheets(
+        "yx", review_ids, entries_by_name, target, round_index=1,
+        reference_image=SHOE_YX_REFERENCE_IMAGE,
+    )
+    if rendered_ids != review_ids:
+        raise ShoeSelectionError("鞋品功能吊牌复核候选编号不一致")
+    image_inputs = [str(sheet) for sheet in sheets] + [str(SHOE_YX_REFERENCE_IMAGE)]
+    _ensure_pose_image_input_limit(
+        image_inputs, style_code=style_code, color_code=color_code,
+        pose_strategy="optional_yx",
+    )
+    batch = {
+        "batch_index": 1,
+        "total_batches": 1,
+        "phase": "功能吊牌 yx 复核",
+        "candidate_ids": review_ids,
+        "image_inputs": image_inputs,
+        "user_prompt": _shoe_targeted_slot_prompt(
+            style_code, color_code, review_ids, shoe_category,
+            target_slot="yx", candidate_sheet_count=len(sheets),
+            has_reference_image=True,
+        ),
+    }
+    log(f"鞋品功能吊牌候选复核：{style_code}-{color_code}，{len(review_ids)} 张候选")
+    responses: list[dict[str, Any]] = []
+    routes: set[str] = set()
+    errors: list[str] = []
+    reviewed: dict[str, Any] = {}
+    vote: dict[str, Any] = {}
+    remaining = list(dict.fromkeys(model_ids))
+    while remaining:
+        wave_size = max(1, required_votes - len(routes))
+        wave, remaining = remaining[:wave_size], remaining[wave_size:]
+        results = _run_pose_model_wave(wave, lambda model: invoke(batch, model))
+        for model, result in zip(wave, results):
+            if not result.get("ok"):
+                errors.append(f"{model}: {_text(result.get('error'))}")
+                continue
+            route = _text(result.get("route_model_id"))
+            if not route or route in routes:
+                continue
+            routes.add(route)
+            response = _restrict_pose_payload_to_target_slot(
+                dict(result["payload"]), review_ids, "yx",
+            )
+            response["_model_id"] = route
+            responses.append(response)
+        if responses:
+            reviewed = _consensus_pose_payload(
+                responses, review_ids, shoe_category, required_votes=required_votes,
+            )
+            vote = (reviewed.get("_model_votes") or {}).get("yx") or {}
+            if vote.get("status") == "locked":
+                break
+    result = dict(payload)
+    evidence = {
+        "status": "locked" if vote.get("status") == "locked" else "unresolved_optional",
+        "candidate_ids": review_ids, "contact_sheets": image_inputs,
+        "routes": sorted(routes), "required_votes": required_votes,
+        "model_votes": reviewed.get("_model_votes") or {},
+        "candidate_facts_by_model": reviewed.get("_candidate_facts_by_model") or [],
+        "errors": errors,
+    }
+    result["_targeted_slot_consensus"] = {
+        **(payload.get("_targeted_slot_consensus") or {}), "yx": evidence,
+    }
+    if vote.get("status") == "locked":
+        result["slots"] = {**payload["slots"], "yx": reviewed["slots"]["yx"]}
+        result["_model_votes"] = {**(payload.get("_model_votes") or {}), "yx": vote}
+        result["_candidate_facts_by_model"] = [
+            *(reviewed.get("_candidate_facts_by_model") or []),
+            *(payload.get("_candidate_facts_by_model") or []),
+        ]
+        result["_consensus_issues"] = [
+            issue for issue in payload.get("_consensus_issues") or []
+            if issue.get("slot") != "yx"
+        ]
+        log(f"鞋品功能吊牌已通过独立模型复核：{style_code}-{color_code}，{review_ids[vote['selected']]}")
+    else:
+        log(f"[warn] 鞋品功能吊牌候选未达独立模型共识，保留缺图告警：{style_code}-{color_code}")
+    return result
+
+
+def _retry_shoe_single_sheet_as_pages(kwargs: dict[str, Any]) -> dict[str, Any]:
+    target = Path(kwargs["contact_sheet"]).with_name(
+        Path(kwargs["contact_sheet"]).stem + "-retry-pages.jpg"
+    )
+    sheets, rendered_ids = _create_global_page_contact_sheets(
+        kwargs["candidate_entries"], target,
+    )
+    if rendered_ids != kwargs["candidate_ids"]:
+        raise ShoeSelectionError("鞋品分页复核候选编号不一致，拒绝继续")
+    retry_kwargs = dict(kwargs)
+    retry_kwargs.update(
+        pose_strategy=SHOE_POSE_STRATEGY_GLOBAL_PAGES,
+        contact_sheet=str(sheets[0]),
+        contact_sheets=[str(sheet) for sheet in sheets],
+        overview_contact_sheet="",
+    )
+    evidence_path = _text(kwargs.get("pose_evidence_path"))
+    if evidence_path:
+        path = Path(evidence_path)
+        retry_kwargs["pose_evidence_path"] = str(path.with_name(path.stem + "-pages.json"))
+    return _default_analyze_color(**retry_kwargs)
+
+
 def _default_analyze_color(**kwargs) -> dict[str, Any]:
+    if kwargs.get("pose_strategy") and normalize_shoe_pose_strategy(kwargs.get("pose_strategy")) in SHOE_REVIEW_STRATEGIES:
+        from core.shenhui_shoe_sequential import analyze
+        return analyze(**kwargs)
+    if normalize_shoe_pose_strategy(kwargs.get("pose_strategy")) == "single_model_verified":
+        from core.shenhui_shoe_fast import analyze
+        return analyze(**kwargs)
     candidate_ids = kwargs["candidate_ids"]
     contact_sheets = kwargs.get("contact_sheets") or [kwargs["contact_sheet"]]
-    pose_strategy = normalize_shoe_pose_strategy(kwargs.get("pose_strategy"))
+    pose_strategy = normalize_shoe_pose_strategy(kwargs.get("pose_strategy") or SHOE_POSE_STRATEGY_SINGLE_SHEET)
     overview_contact_sheet = _text(kwargs.get("overview_contact_sheet"))
     config = kwargs.get("config")
     model_id = _text(kwargs.get("model_id")) or SHOE_POSE_DEFAULT_MODEL
@@ -5805,6 +6030,7 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
     model_payloads: list[dict[str, Any]] = []
     route_model_ids: list[str] = []
     disabled_models: set[str] = set()
+    unavailable_models: set[str] = set()
     batch_inputs: list[dict[str, Any]] = []
     for batch_index, contact_sheet in enumerate(contact_sheets[:total_batches], start=1):
         if pose_strategy == SHOE_POSE_STRATEGY_SINGLE_SHEET:
@@ -5909,21 +6135,39 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
         batch_input: dict[str, Any],
         current_model_id: str,
         *,
-        timeout_seconds: float = SHOE_POSE_MODEL_TIMEOUT_SECONDS,
+        timeout_seconds: float | None = None,
         max_attempts: int = SHOE_POSE_MODEL_MAX_ATTEMPTS,
         timeout_probe: bool = False,
     ) -> dict[str, Any]:
         batch_index = int(batch_input["batch_index"])
         batch_candidate_ids = batch_input["candidate_ids"]
+        if current_model_id in unavailable_models:
+            return {
+                "ok": False, "batch_index": batch_index,
+                "error": "本款色已收到网关容量不可用，跳过重复请求并保留独立票数要求",
+                "route_unavailable": True,
+            }
+        if timeout_seconds is None:
+            # A full colour sheet asks for facts for every candidate. The real
+            # 24-image request takes over two minutes even on a healthy route;
+            # the small-page deadline discarded every configured model.
+            timeout_seconds = (
+                SHOE_POSE_FULL_SHEET_TIMEOUT_SECONDS
+                if len(batch_candidate_ids) > SHOE_GLOBAL_PAGE_CHUNK_SIZE
+                else SHOE_POSE_MODEL_TIMEOUT_SECONDS
+            )
         last_error = ""
         timeout_like = False
         configuration_error = False
         max_attempts = max(1, int(max_attempts or 1))
         phase_prefix = "单批耐心复测 " if timeout_probe else ""
+        phase = _text(batch_input.get("phase")) or pose_strategy
+        phase_batches = int(batch_input.get("total_batches") or total_batches)
         for attempt in range(1, max_attempts + 1):
+            started_at = time.monotonic()
             stage = (
-                f"姿势识别 {phase_prefix}{current_model_id} 第{attempt}/{max_attempts}次 "
-                f"批次{batch_index}/{total_batches}"
+                f"姿势识别 {phase} {phase_prefix}{current_model_id} 第{attempt}/{max_attempts}次 "
+                f"批次{batch_index}/{phase_batches}"
             )
             _notify_shoe_model_progress(
                 progress,
@@ -5933,8 +6177,9 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
             )
             log(
                 f"鞋品姿势识别模型{phase_prefix}尝试：{style_code}-{color_code}，"
+                f"阶段 {phase}，"
                 f"模型 {current_model_id}，第 {attempt}/{max_attempts} 次，"
-                f"候选批次 {batch_index}/{total_batches}，候选 {len(batch_candidate_ids)} 张，"
+                f"候选批次 {batch_index}/{phase_batches}，候选 {len(batch_candidate_ids)} 张，"
                 f"超时上限 {float(timeout_seconds):g} 秒"
             )
             try:
@@ -5957,16 +6202,31 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
                 last_error = _text(exc)
                 log(
                     f"[warn] 鞋品姿势识别模型失败：{style_code}-{color_code}，"
+                    f"阶段 {phase}，耗时 {time.monotonic() - started_at:.1f} 秒，"
                     f"模型 {current_model_id}，第 {attempt}/{max_attempts} 次，"
-                    f"批次 {batch_index}/{total_batches}：{last_error}"
+                    f"批次 {batch_index}/{phase_batches}：{last_error}"
                 )
                 if isinstance(exc, llm_gateway.LlmConfigurationError):
                     configuration_error = True
+                    break
+                # The gateway's empty upstream token pool cannot be repaired by
+                # immediately repeating every page/slot request. Scope the
+                # circuit to this colour; the next colour may probe recovery.
+                if "http 503" in last_error.lower() and "no access tokens" in last_error.lower():
+                    unavailable_models.add(current_model_id)
+                    disabled_models.add(current_model_id)
+                    log(f"[warn] 网关模型容量不可用，本款色停止重复请求并切换 fallback："
+                        f"{style_code}-{color_code}，{current_model_id}；保留独立模型票数门槛")
                     break
                 if _is_timeout_like_llm_error(exc):
                     timeout_like = True
                     break
                 continue
+            log(
+                f"鞋品姿势识别模型返回：{style_code}-{color_code}，"
+                f"阶段 {phase}，模型 {current_model_id}，"
+                f"耗时 {time.monotonic() - started_at:.1f} 秒"
+            )
             return {
                 "ok": True,
                 "batch_index": batch_index,
@@ -6205,6 +6465,24 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
                     f"{current_model_id}: 批次{batch_index}/{total_batches} {error_text}"
                 )
 
+        if (
+            pose_strategy == SHOE_POSE_STRATEGY_SINGLE_SHEET
+            and SHOE_GLOBAL_PAGE_CHUNK_SIZE < len(candidate_ids)
+            <= SHOE_GLOBAL_PAGE_CHUNK_SIZE * SHOE_GLOBAL_PAGE_MAX_PAGES
+            and candidate_entries
+            and len(routes_by_batch.get(1, set())) >= required_model_votes
+            and missing_required_consensus_slots(batch_inputs[0])
+        ):
+            # Preserve independent semantic validation, but give ambiguous
+            # full-sheet candidates the existing paged/focused/targeted review.
+            # More votes on the same tiny thumbnails cannot resolve the detail.
+            log(
+                f"鞋品全量大图存在槽位分歧：{style_code}-{color_code}，"
+                "自动转分页及单槽位复核"
+            )
+            flush_pose_evidence("fallback_global_pages")
+            return _retry_shoe_single_sheet_as_pages(kwargs)
+
     pending_batches = [
         item
         for item in batch_inputs
@@ -6351,6 +6629,8 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
                 )
                 focused_batch = {
                     "batch_index": 1,
+                    "total_batches": 1,
+                    "phase": "focused 全候选复核",
                     "candidate_ids": focused_candidate_ids,
                     "user_prompt": _shoe_selection_prompt(
                         style_code,
@@ -6442,20 +6722,29 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
                 })
 
             def targeted_reference_for_slot(slot: str) -> str:
+                # Blank Excel categories are inferred by the models. Resolve the
+                # corresponding template only after focused category inference.
+                references = main_pose_reference_images
+                if not references:
+                    references = (kwargs.get("main_pose_references_by_category") or {}).get(
+                        target_category, []
+                    )
                 match = re.fullmatch(r"tmz([1-5])", slot)
                 if match:
                     index = int(match.group(1)) - 1
-                    if index < len(main_pose_reference_images):
-                        return main_pose_reference_images[index]
+                    if index < len(references):
+                        return _text(references[index])
                     return ""
                 if slot == "wpz5":
                     return (
-                        main_pose_reference_images[4]
-                        if len(main_pose_reference_images) >= 5
+                        _text(references[4])
+                        if len(references) >= 5
                         else ""
                     )
                 if slot in {"yq1", "yq2", "yq3"}:
                     return _text(yq_reference_images.get(slot))
+                if slot == "yx":
+                    return str(SHOE_YX_REFERENCE_IMAGE)
                 return ""
 
             available_mandatory_targeted_slots = tuple(
@@ -6619,10 +6908,22 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
                 update_focused_evidence()
                 flush_pose_evidence("partial")
 
+            target_category = normalize_shoe_category(
+                kwargs.get("shoe_category") or (focused_payload or {}).get("shoe_category")
+            ) or ""
+            if not kwargs.get("shoe_category") and target_category:
+                log(
+                    f"鞋品单槽位复核采用模型识别品类：{style_code}-{color_code}，"
+                    f"{target_category}"
+                )
             focused_targets = list(focused_missing)
             for mandatory_slot in available_mandatory_targeted_slots:
                 if mandatory_slot not in focused_targets:
                     focused_targets.append(mandatory_slot)
+            # wpz5 excludes sources occupied by other slots. Finish their
+            # pending reviews first, so a provisional tmz3 (for example) cannot
+            # hide the exact gray pair after tmz3 later selects another image.
+            focused_targets.sort(key=lambda slot: slot == "wpz5")
             if focused_payload is not None and focused_targets:
                 log(
                     f"鞋品 focused 单槽位复核：{style_code}-{color_code}，"
@@ -6634,6 +6935,10 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
                     target_errors: list[str] = []
                     if target_slot != "wpz6" and not reference_image:
                         target_errors.append(f"{target_slot} 缺少精确模板切片")
+                        log(
+                            f"[warn] 鞋品单槽位复核无法执行：{style_code}-{color_code}，"
+                            f"{target_slot} 缺少精确模板切片，品类 {target_category or '未识别'}"
+                        )
                         targeted_slot_consensus[target_slot] = {
                             "status": "failed",
                             "reference_image": "",
@@ -6664,11 +6969,10 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
                             ),
                             required_votes=target_required_votes,
                             entries_by_name=entries_by_name,
-                            shoe_category=kwargs.get("shoe_category") or "",
+                            shoe_category=target_category,
                             prefer_prior_slot_nominations=targeted_from_batch_overview,
                             prefer_exact_tmz5_visual_pair=bool(
-                                targeted_from_batch_overview
-                                and target_slot == "wpz5"
+                                target_slot == "wpz5"
                                 and "tmz5"
                                 in (focused_payload.get("_exact_contract_locked_slots") or [])
                             ),
@@ -6686,8 +6990,14 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
                                 ),
                                 required_votes=target_required_votes,
                                 entries_by_name=entries_by_name,
-                                shoe_category=kwargs.get("shoe_category") or "",
+                                shoe_category=target_category,
                                 prefer_prior_slot_nominations=False,
+                                prefer_exact_tmz5_visual_pair=bool(
+                                    target_slot == "wpz5"
+                                    and "tmz5" in (
+                                        focused_payload.get("_exact_contract_locked_slots") or []
+                                    )
+                                ),
                             )
                         )
                     if not target_candidate_ids:
@@ -6753,12 +7063,14 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
                         )
                         target_batch = {
                             "batch_index": 1,
+                            "total_batches": 1,
+                            "phase": f"单槽位 {target_slot} 第{round_index}轮",
                             "candidate_ids": current_candidate_ids,
                             "user_prompt": _shoe_targeted_slot_prompt(
                                 style_code,
                                 color_code,
                                 current_candidate_ids,
-                                kwargs.get("shoe_category") or "",
+                                target_category,
                                 target_slot=target_slot,
                                 candidate_sheet_count=len(target_sheets),
                                 has_reference_image=bool(reference_image),
@@ -6880,7 +7192,7 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
                                 target_payload = _consensus_pose_payload(
                                     target_payloads,
                                     current_candidate_ids,
-                                    kwargs.get("shoe_category") or "",
+                                    target_category,
                                     required_votes=target_required_votes,
                                     entries_by_name=(
                                         candidate_entries_by_name
@@ -6979,7 +7291,7 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
                             target_payloads,
                             current_candidate_ids,
                             target_slot,
-                            kwargs.get("shoe_category") or "",
+                            target_category,
                         )
                         if (
                             round_index == 1
@@ -7138,6 +7450,15 @@ def _default_analyze_color(**kwargs) -> dict[str, Any]:
                 for item in consensus_payloads
                 for evidence in (item.get("_candidate_facts_by_model") or [])
             ]
+        payload = _review_missing_shoe_feature_card(
+            payload, candidate_ids=candidate_ids, candidate_entries=candidate_entries,
+            contact_sheet=str(contact_sheets[0]), style_code=style_code,
+            color_code=color_code, shoe_category=kwargs.get("shoe_category") or "",
+            model_ids=[model for model in model_ids if model not in disabled_models],
+            required_votes=required_model_votes,
+            invoke=lambda batch, model: analyze_batch_with_model(batch, model, max_attempts=1),
+            log=log,
+        )
         _validate_pose_payload_references(payload, candidate_ids)
         if errors:
             payload["_model_attempt_warnings"] = "；".join(errors[:5])
@@ -7507,7 +7828,22 @@ def _default_analyze_color_label(**kwargs) -> dict[str, Any]:
         )
         return refined
 
-    for current_model_id in model_ids:
+    remaining_model_ids = list(model_ids)
+    while remaining_model_ids:
+        # After a valid color vote, another route in that same family cannot
+        # establish independence. Try an unseen family first, retaining every
+        # deferred route if independent votes disagree or fail.
+        voted_families = {
+            model_family(_text(item.get("_model_id")))
+            for votes in ai_color_votes.values()
+            for item in votes
+        }
+        next_index = next(
+            (index for index, candidate_id in enumerate(remaining_model_ids)
+             if model_family(candidate_id) not in voted_families),
+            0,
+        )
+        current_model_id = remaining_model_ids.pop(next_index)
         last_error = ""
         for attempt in range(1, SHOE_LABEL_OCR_MODEL_MAX_ATTEMPTS + 1):
             _notify_shoe_model_progress(
@@ -7621,6 +7957,8 @@ def _resolve_selection_payload(
 
     resolved: dict[str, Any] = {"_model_id": _text(payload.get("_model_id"))}
     for metadata_key in (
+        "_fast_context",
+        "_sequential_context",
         "_consensus_routes",
         "_model_votes",
         "_model_votes_by_batch",
@@ -7632,6 +7970,8 @@ def _resolve_selection_payload(
         "_label_model_id",
         "_label_transcription",
         "_ruleset",
+        "_sequential_audits",
+        "_label_identity_votes",
     ):
         if metadata_key in payload:
             resolved[metadata_key] = payload.get(metadata_key)
@@ -7664,6 +8004,8 @@ def _write_selection_evidence(
         "_targeted_slot_consensus",
         "_candidate_facts_by_model",
         "_ruleset",
+        "_sequential_audits",
+        "_label_identity_votes",
     )
     resolved_slots = {
         key: value
@@ -7784,6 +8126,21 @@ def _semantic_report_fields(
     slot: str,
     source_name: str,
 ) -> dict[str, str]:
+    if selection.get("_specialist_evidence"):
+        evidence = selection["_specialist_evidence"]
+        return {"专属模型选图证据": json.dumps({
+            "model": evidence["version"], "slot": slot,
+            "source_sha256": evidence["source_sha256"].get(source_name),
+            "label_verified": evidence["label_verified"],
+            "validation_scope": "trained-style regression; not independent new-style acceptance",
+        }, ensure_ascii=False)}
+    if selection.get("_sequential_context"):
+        from core.shenhui_shoe_sequential import report_evidence
+        if slot not in {*[f"tmz{i}" for i in range(1, 6)], *[f"wpz{i}" for i in range(1, 7)],
+                        "yq1", "yq2", "yq3", "yx", "o", "tms"}:
+            return {}
+        evidence = report_evidence(selection, slot, source_name)
+        return {"逐坑位复核": json.dumps(evidence, ensure_ascii=False, sort_keys=True)}
     vote_slot = _semantic_vote_slot(slot, _text(selection.get("shoe_category")))
     source_family = _copy_variant_key(source_name)
     vote_candidates: list[dict[str, Any]] = []
@@ -8094,12 +8451,50 @@ def _save_transparent_canvas_png(
     return target
 
 
+_WPT_COMPRESSION_NOTES: dict[str, str] = {}
+# 产品口径：质量优先。尺寸不达标时保留可用文件并在报告中报警要求人工处理。
+# 以下两个开关默认关闭，只有业务确认后才打开：
+#   SHOE_WPT_ALLOW_SCALE   允许用 71%~97% 缩放换取达标体积（长边仍有 1776px 以上）
+#   SHOE_WPT_RELAX_QUALITY 允许在 600KB 内接受更大的可见误差（RMSE 6~17，报告会标注）
+SHOE_WPT_ALLOW_SCALE = True   # 业务口径（2026-09-16）：允许缩放换达标体积
+SHOE_WPT_RELAX_QUALITY = False
+SHOE_WPT_VISIBLE_RMSE_BOUND = 6.0
+
+
+def _wpt_palette_candidates(image, source_rgb, visible_mask):
+    """Yield (colors, rmse, png_bytes) for palette steps, best quality first."""
+    from PIL import Image, ImageChops, ImageStat
+    import io
+
+    for colors in (256, 192, 128, 96, 64, 48, 32, 24, 16, 12, 8):
+        try:
+            quantized = image.quantize(colors=colors, method=Image.Quantize.FASTOCTREE)
+            rmse = 0.0
+            if visible_mask.getbbox():
+                difference = ImageChops.difference(source_rgb, quantized.convert('RGB'))
+                rmse = float(max(ImageStat.Stat(difference, visible_mask).rms))
+            buffer = io.BytesIO()
+            quantized.save(buffer, format="PNG", optimize=True, compress_level=9)
+            yield colors, rmse, buffer.getvalue()
+        except Exception:
+            logger.debug("Failed to quantize wpt image with %s colors", colors, exc_info=True)
+
+
 def _save_wpt_original_png(
     source: Path | str,
     target: Path | str,
     *,
     max_bytes: int = SHOE_WPT_MAX_BYTES,
 ) -> Path:
+    """Keep the original size and a real alpha channel, and fit the byte cap.
+
+    The previous ladder aborted as soon as one palette step exceeded the visible
+    RMS bound, so every oversize file fell straight back to the multi-megabyte
+    RGBA original (measured 2026-09-16: 14/14 oversize files were cut short this
+    way). The ladder now walks every colour step and picks the candidate that
+    fits the cap with the smallest visible error, still preferring the highest
+    quality step that both fits the cap and keeps the RMS bound.
+    """
     from PIL import Image, ImageOps
 
     source = Path(source)
@@ -8110,24 +8505,104 @@ def _save_wpt_original_png(
         with Image.open(source) as opened:
             image = ImageOps.exif_transpose(opened).convert("RGBA")
     image.save(target, format="PNG", optimize=True, compress_level=9)
-    if target.stat().st_size <= max_bytes:
+    original_bytes = target.stat().st_size
+    if original_bytes < max_bytes:
+        _WPT_COMPRESSION_NOTES.pop(str(target), None)
         return target
 
-    for colors in (256, 192, 128, 96, 64, 48, 32, 24, 16, 12, 8):
-        try:
-            quantized = image.quantize(colors=colors, method=Image.Quantize.FASTOCTREE)
-            quantized.save(target, format="PNG", optimize=True, compress_level=9)
-            if target.stat().st_size <= max_bytes:
-                return target
-        except Exception:
-            logger.debug(
-                "Failed to quantize wpt image %s with %s colors",
-                source,
-                colors,
-                exc_info=True,
-            )
+    source_rgb = image.convert('RGB')
+    visible_mask = image.getchannel('A').point(lambda value: 255 if value >= 128 else 0)
+    # Coarsen alpha to four levels and drop the colour under fully transparent
+    # pixels. Neither is visible, and both are what makes a palette PNG small.
+    alpha = image.getchannel('A').point(lambda value: 0 if value < 43 else 85 if value < 128 else 170 if value < 213 else 255)
+    prepared = image.copy()
+    prepared.putalpha(alpha)
+    prepared.paste((0, 0, 0, 0), mask=alpha.point(lambda value: 255 if value == 0 else 0))
 
+    best_fit: tuple[float, int, bytes, str] | None = None
+    smallest: bytes | None = None
+
+    def consider(step_image, step_mask, note_prefix):
+        """Best candidate for one canvas size: (rmse, colors, bytes, note, meets_bound)."""
+        nonlocal best_fit, smallest
+        step_rgb = step_image.convert('RGB')
+        found = None
+        for colors, rmse, payload in _wpt_palette_candidates(step_image, step_rgb, step_mask):
+            if smallest is None or len(payload) < len(smallest):
+                smallest = payload
+            if len(payload) >= max_bytes:
+                continue
+            note = note_prefix + f"调色板 {colors} 色，可见区 RMSE {rmse:.2f}"
+            if found is None or rmse < found[0]:
+                found = (rmse, colors, payload, note, rmse <= SHOE_WPT_VISIBLE_RMSE_BOUND)
+            if rmse <= SHOE_WPT_VISIBLE_RMSE_BOUND:
+                break
+        if found is not None and (best_fit is None or found[0] < best_fit[0]):
+            best_fit = found[:4]
+        return found
+
+    hit = consider(prepared, visible_mask, "")
+    if hit is not None and hit[4]:
+        target.write_bytes(hit[2])
+        _WPT_COMPRESSION_NOTES[str(target)] = hit[3]
+        return target
+
+    if SHOE_WPT_ALLOW_SCALE:
+        width, height = prepared.size
+        for ratio in (0.97, 0.92, 0.86, 0.80, 0.74, 0.71):
+            resized = prepared.resize((max(1, round(width * ratio)), max(1, round(height * ratio))),
+                                      Image.Resampling.LANCZOS)
+            scaled_mask = resized.getchannel('A').point(lambda value: 255 if value >= 128 else 0)
+            hit = consider(resized, scaled_mask, f"线性缩放 {ratio*100:.0f}%，")
+            if hit is not None and hit[4]:
+                target.write_bytes(hit[2])
+                _WPT_COMPRESSION_NOTES[str(target)] = hit[3]
+                return target
+
+    if (SHOE_WPT_ALLOW_SCALE or SHOE_WPT_RELAX_QUALITY) and best_fit is not None:
+        # Opt-in only: the business accepts a larger visible error to stay inside
+        # 600KB without scaling. The report states the measured error.
+        rmse, colors, payload, note = best_fit
+        target.write_bytes(payload)
+        if rmse > SHOE_WPT_VISIBLE_RMSE_BOUND:
+            note += f"（超出 RMSE {SHOE_WPT_VISIBLE_RMSE_BOUND:g} 门限，已在报告中标注）"
+        _WPT_COMPRESSION_NOTES[str(target)] = note
+        return target
+
+    # Default product policy: never trade visible colour detail for the byte cap.
+    # Keep the source file, keep its dimensions and alpha, and let the report ask
+    # for a human decision. `smallest` is only used when it is strictly better and
+    # still meets the quality bound, which is already handled above.
+    target.write_bytes(Path(source).read_bytes())
+    _WPT_COMPRESSION_NOTES[str(target)] = "保留原图（质量优先）；600KB 目标未达成，需人工处理"
     return target
+
+
+def _wpt_size_report(target: Path | str) -> dict[str, str]:
+    from PIL import Image, ImageOps
+
+    size = Path(target).stat().st_size
+    actual = f"{size / 1000:.2f}KB（{size} 字节）"
+    note = _WPT_COMPRESSION_NOTES.get(str(target), "")
+    scaled = "线性缩放" in note
+    size_claim = "保持原图尺寸和透明通道"
+    if scaled:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+                with Image.open(target) as opened:
+                    width, height = ImageOps.exif_transpose(opened).size
+            size_claim = f"按业务口径允许缩放后保持透明通道；{width}x{height}"
+        except (OSError, ValueError):
+            size_claim = "按业务口径允许缩放后保持透明通道"
+
+    return {
+        "规则告警": (
+            f"WPT 压缩后仍未达到小于 600KB 的要求；实际 {actual}；图片已保留，需人工处理"
+            if size >= SHOE_WPT_MAX_BYTES else ""
+        ),
+        "备注": f"{size_claim}；目标小于 600KB；实际 {actual}" + (f"；{note}" if note else ""),
+    }
 
 
 def _normalized_bbox(value: Any) -> tuple[float, float, float, float] | None:
@@ -8150,6 +8625,8 @@ def _create_tmq_asset(
     style_code_bbox: Any = None,
     style_code: str = "",
     require_style_code_bbox: bool = False,
+    style_code_bbox_verified: bool = False,
+    preserve_full_label: bool = False,
 ) -> Path:
     from PIL import Image, ImageDraw, ImageOps
 
@@ -8177,28 +8654,50 @@ def _create_tmq_asset(
         )
     if label is None:
         label = (0.50, 0.31, 0.79, 0.57)
-    try:
-        exact_style = ocr_service.locate_exact_style_code_bbox(
-            source,
-            style_code=style_code,
-            label_bbox=label,
-        )
-    except Exception:
-        exact_style = None
-        logger.debug(
-            "Failed to locate exact local style-code bbox for tmq %s",
-            source,
-            exc_info=True,
-        )
-    if exact_style is not None:
-        style = exact_style
-    else:
-        style = ocr_service.refine_style_code_bbox(
-            image=image,
-            label_bbox=label,
-            style_code_bbox=style,
-            style_code=style_code,
-        )
+    if style_code_bbox_verified and style is None:
+        raise ShoeSelectionError("已核验的鞋盒款号坐标缺失，无法生成 tmq.jpg")
+    if not style_code_bbox_verified:
+        try:
+            exact_style = ocr_service.locate_exact_style_code_bbox(
+                source,
+                style_code=style_code,
+                label_bbox=label,
+            )
+        except Exception:
+            exact_style = None
+            logger.debug(
+                "Failed to locate exact local style-code bbox for tmq %s",
+                source,
+                exc_info=True,
+            )
+        if exact_style is not None:
+            style = exact_style
+        else:
+            style = ocr_service.refine_style_code_bbox(
+                image=image,
+                label_bbox=label,
+                style_code_bbox=style,
+                style_code=style_code,
+            )
+    if preserve_full_label:
+        if style is None:
+            raise ShoeSelectionError("电子盒标缺少独立核验款号坐标")
+        left, top, right, bottom = (round(label[0]*width), round(label[1]*height),
+                                    round(label[2]*width), round(label[3]*height))
+        tile = image.crop((left, top, right, bottom))
+        canvas_size = SHOE_TMQ_CANVAS_SIZE
+        scale = canvas_size / max(tile.size)
+        resized = tile.resize((round(tile.width*scale), round(tile.height*scale)), Image.Resampling.LANCZOS)
+        crop = Image.new('RGB', (canvas_size, canvas_size), 'white')
+        ox, oy = (canvas_size-resized.width)//2, (canvas_size-resized.height)//2
+        crop.paste(resized, (ox, oy))
+        rect = [ox+(style[0]*width-left)*scale-3, oy+(style[1]*height-top)*scale-3,
+                ox+(style[2]*width-left)*scale+3, oy+(style[3]*height-top)*scale+3]
+        ImageDraw.Draw(crop).rectangle(rect, outline='red', width=3)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        crop.save(target, quality=95)
+        return target
+
     label_px = (
         label[0] * width,
         label[1] * height,
@@ -8231,7 +8730,7 @@ def _create_tmq_asset(
         # few pixels. Keep the box anchored to the recognized text while sizing
         # it for a full 12-digit style code.
         min_width_px = style_height_px * max(5.5, min(len(_text(style_code)) * 0.58, 8.8))
-        if style_width_px < min_width_px:
+        if not style_code_bbox_verified and style_width_px < min_width_px:
             center = (style[0] + style[2]) / 2
             half_width = (min_width_px / width) / 2
             expanded_x1 = max(label_x1, center - half_width)
@@ -8250,8 +8749,8 @@ def _create_tmq_asset(
     draw = ImageDraw.Draw(crop)
     scale = canvas_size / side
     style_height_on_crop = max(1.0, (style[3] - style[1]) * height * scale)
-    pad_left = max(3, round(style_height_on_crop * 0.22))
-    pad_right = max(4, round(style_height_on_crop * 0.32))
+    pad_left = max(3, round(style_height_on_crop * (0.08 if style_code_bbox_verified else 0.22)))
+    pad_right = max(3, round(style_height_on_crop * 0.08)) if style_code_bbox_verified else max(4, round(style_height_on_crop * 0.32))
     pad_y = max(3, round(style_height_on_crop * 0.30))
     rectangle = (
         max(0, round((style[0] * width - left) * scale) - pad_left),
@@ -8391,6 +8890,517 @@ def _skipped_slot_report_row(
     }
 
 
+def _label_model_family(model_id: str) -> str:
+    normalized = _text(model_id).lower()
+    for prefix, family in (("gpt-", "openai"), ("gemini-", "google"),
+                           ("deepseek-", "deepseek"), ("kimi-", "kimi"),
+                           ("qwen", "qwen"), ("glm-", "glm"), ("claude-", "anthropic")):
+        if normalized.startswith(prefix):
+            return family
+    return normalized
+
+
+def _label_votes_agree(votes: list[dict]) -> bool:
+    if len(votes) < 2:
+        return False
+    identities = {tuple(_text(v.get(k)) for k in
+                        ("style_code", "color_code", "product_name", "color_name")) for v in votes}
+    if len(identities) != 1:
+        return False
+    families = {_label_model_family(v.get("model_id", "")) for v in votes}
+    if len(families) >= 2:
+        return True
+    return (families == {"deepseek"}
+            and all(v.get("verification_mode") == "same_model_distinct_views"
+                    and re.fullmatch(r"\d{12}", _text(v.get("style_code")))
+                    and re.fullmatch(r"\d{5}", _text(v.get("color_code")))
+                    and _text(v.get("color_name"))
+                    and v.get("label_complete") is True for v in votes)
+            and {v.get("view") for v in votes} == {"full", "details"})
+
+
+def _category_from_label_product_name(product_name: str) -> str:
+    """Only unambiguous printed names select a template without visual inference."""
+    name = re.sub(r"\s+", "", product_name)
+    if any(word in name for word in ("稳步鞋", "学步鞋", "宝宝鞋", "婴童鞋")):
+        return "婴童"
+    for category, words in (("雪地", ("雪地靴", "秋冬拖鞋", "运动靴")),
+                            ("休闲", ("公主鞋", "皮鞋", "休闲鞋", "女生凉鞋")),
+                            ("运动", ("板鞋", "运动鞋", "跑步鞋"))):
+        if any(word in name for word in words):
+            return category
+    return ""
+
+
+def _label_detail_panels(crop: Path) -> list[str]:
+    """Overlapping native-image tiles retain strokes without inventing OCR text."""
+    from PIL import Image
+    paths = [str(crop)]
+    with Image.open(crop) as image:
+        width, height = image.size
+        for index, (left, top, right, bottom) in enumerate((
+            (0, 0, .6, .6), (.4, 0, 1, .6),
+            (0, .4, .6, 1), (.4, .4, 1, 1),
+        )):
+            tile = crop.with_name(crop.stem + f"-detail-{index}.jpg")
+            image.crop((round(left * width), round(top * height),
+                        round(right * width), round(bottom * height))).save(tile, quality=96)
+            paths.append(str(tile))
+    return paths
+
+
+def _label_verification_panels(crop: Path) -> list[str]:
+    """Keep each printed line intact in two overlapping full-width views."""
+    from PIL import Image
+    paths = []
+    with Image.open(crop) as image:
+        width, height = image.size
+        for index, (top, bottom) in enumerate(((0, .65), (.35, 1))):
+            target = crop.with_name(crop.stem + f"-verification-{index}.jpg")
+            image.crop((0, round(top * height), width, round(bottom * height))).save(target, quality=96)
+            paths.append(str(target))
+    return paths
+
+
+def _label_stream_requester(log, progress, style_code, color_code):
+    def on_progress(state):
+        message = (f"标签识别 · 已等待{state['elapsed_seconds']:g}秒 · "
+                   f"思考片段{state['reasoning_chars']}字 / 答案{state['content_chars']}字")
+        log(message)
+        _notify_shoe_model_progress(progress, message, style_code=style_code, color_code=color_code)
+    return partial(shenhui_shoe_models.stream_request, progress=on_progress)
+
+
+def _label_model_request(*, model_state=None, log=None, **kwargs):
+    model = kwargs.pop('model_id')
+    fallbacks = kwargs.pop('fallback_model_ids', [])
+    kwargs.pop('retry_same_model', None)
+    return shenhui_shoe_models.generate_json(
+        models=[model, *fallbacks], state=model_state, log=log, **kwargs,
+    )
+
+
+def _verify_label_identity_from_crop(payload: dict[str, Any], *, source: Path,
+                                     target: Path, style_code: str, color_code: str,
+                                     model_ids: list[str], config: dict | None,
+                                     log, progress=None, detail_retry: bool = False, model_state=None) -> dict[str, Any]:
+    """Read original-resolution crop independently; never vote on supplied OCR text."""
+    crop = _create_focused_label_preview(source, target, payload.get("label_bbox"))
+    image_inputs = _label_detail_panels(crop) if detail_retry else [str(crop)]
+    single_provider = len(model_ids) == 1
+    reader_model = model_ids[0] if single_provider else ""
+    view_inputs = {}
+    if single_provider:
+        view_inputs = {"full": [str(crop)], "details": _label_verification_panels(crop)}
+        model_ids = ["full", "details"]
+    durations = {}
+    def read_label(model):
+        begin = time.monotonic()
+        display_model = (reader_model + " / " + ("完整标签" if model == "full" else "局部裁片")) if single_provider else model
+        _notify_shoe_model_progress(progress, f"并行读取标签 {display_model}", style_code=style_code, color_code=color_code)
+        response = _label_model_request(model_state=model_state, log=log,
+            request_openai=_label_stream_requester(log, progress, style_code, color_code),
+            request_metadata={'style':style_code, 'color':color_code, 'stage':'label', 'operation':'label_transcription', 'request_purpose':'label_transcription'},
+            system_prompt="你是印刷标签文字审核员。逐字读图，不补全、改写或猜测。只返回 JSON。",
+            user_prompt=("从原图裁出的标签读取完整产品货号、产品名称、颜色（含5位色码）。"
+                         "只抄写文字，不判断鞋型或品类，不根据标签里的鞋子图改写产品名称。"
+                         "看不清的字段返回空字符串。color_code单独返回标签上的5位色码。"
+                         "输入可能是一张完整标签、按上下顺序排列的两张整行裁片，或按左上、右上、左下、右下排列的四张局部。所有图片来自同一张标签；重叠处文字只计一次，不要拼接出重复文字。结合全部裁片读取完整内容和判断边界。颜色字段的色调等字样必须按原文完整保留。"
+                         '返回 {"style_code":"", "product_name":"", "color_name":"", '
+                         '"color_code":"", "product_name_present":true, "label_complete":true}。'
+                         "product_name_present表示完整标签是否印有产品名称字段；"
+                         "label_complete表示裁图是否包含整张标签及四周边界。"
+                         "只有整张标签清晰完整且根本未印产品名称时，才同时返回名称空、"
+                         "product_name_present=false和label_complete=true；看不清不能当作未印刷。"),
+            image_inputs=view_inputs.get(model, image_inputs), model_id=reader_model if single_provider else model, fallback_model_ids=[],
+            config=config, timeout_seconds=SHOE_LABEL_OCR_TIMEOUT_SECONDS,
+            retry_same_model=False,
+        )
+
+        durations[model] = time.monotonic() - begin
+        return response
+
+    first_wave=[]
+    for candidate in model_ids:
+        if single_provider or all(_label_model_family(candidate) != _label_model_family(m) for m in first_wave):
+            first_wave.append(candidate)
+        if len(first_wave)==2:break
+    prefetched={}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures={m:pool.submit(read_label,m) for m in first_wave}
+        for m,future in futures.items():
+            try:prefetched[m]=future.result()
+            except llm_gateway.LlmGatewayError as exc:prefetched[m]=exc
+    remaining = list(model_ids)
+    seen_families: set[str] = set()
+    votes: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+    errors = []
+    unreadable_families: set[str] = set()
+    while remaining:
+        index = next((i for i, model in enumerate(remaining)
+                      if _label_model_family(model) not in seen_families), 0)
+        model = remaining.pop(index)
+        seen_families.add(_label_model_family(model))
+        display_model = (reader_model + " / " + ("完整标签" if model == "full" else "局部裁片")) if single_provider else model
+        _notify_shoe_model_progress(progress, f"吊牌产品名称与颜色复核 {display_model}",
+                                    style_code=style_code, color_code=color_code)
+        begin = time.monotonic()
+        try:
+            cached = prefetched.pop(model, None)
+            if isinstance(cached, Exception):raise cached
+            result, route = cached if cached is not None else read_label(model)
+            if not isinstance(result, dict):
+                raise llm_gateway.LlmResponseError("标签文字复核未返回对象")
+            name = re.sub(r"\s+", "", _text(result.get("product_name")))
+            color = re.sub(r"\s+", "", _text(result.get("color_name")))
+            # Both schema forms are lossless: a complete color field, or its
+            # printed name and separately verified five-digit code.
+            if (_text(result.get("color_code")) == color_code
+                    and re.fullmatch(r"[^\d/、]+", color)):
+                color += color_code
+            name_absent = (not name and result.get("product_name_present") is False
+                           and result.get("label_complete") is True)
+            if ((not name and not name_absent) or not color
+                    or not re.fullmatch(r"\d{12}", _text(result.get("style_code")))
+                    or not re.fullmatch(r"\d{5}", _text(result.get("color_code")))
+                    or result.get("label_complete") is False):
+                unreadable_families.add(model if single_provider else _label_model_family(route.model_id))
+                if unreadable_families:
+                    raise ShoeLabelCropError(
+                        f"{style_code}-{color_code} 核验输入未读到完整款号/名称/颜色，需修复标签裁切范围"
+                    )
+            if (result.get("label_complete") is False
+                    or (single_provider and result.get("label_complete") is not True)
+                    or _text(result.get("style_code")) != style_code
+                    or _text(result.get("color_code")) != color_code
+                    or (not name_absent and not re.fullmatch(r"[\u4e00-\u9fffA-Za-z·]+", name))
+                    or not re.fullmatch(r"[^\d/、]+" + re.escape(color_code), color)):
+                raise llm_gateway.LlmResponseError(
+                    "标签复核缺字段或款色身份不一致："
+                    + json.dumps({k: result.get(k) for k in
+                                  ("style_code", "color_code", "product_name", "color_name")}, ensure_ascii=False)
+                )
+            family = model if single_provider else _label_model_family(route.model_id)
+            seen_families.add(family)
+            bucket = votes.setdefault((name, color), {})
+            bucket[family] = {"model_id": route.model_id,
+                              "verification_mode": "same_model_distinct_views" if single_provider else "cross_family",
+                              "view": model if single_provider else "full",
+                              "product_name_present": result.get("product_name_present"),
+                              "label_complete": result.get("label_complete"),
+                              "style_code": _text(result.get("style_code")),
+                              "color_code": _text(result.get("color_code")),
+                              "product_name": name, "color_name": color}
+            log(f"吊牌文字独立复核：{style_code}-{color_code}，{route.model_id}，"
+                f"{durations.get(model, time.monotonic() - begin):.1f} 秒，{name} / {color}，{len(bucket)} 个核验输入同票")
+            if len(bucket) < 2:
+                continue
+            category = _category_from_label_product_name(name)
+            refined = dict(payload)
+            refined.update(product_name=name, color_name=color,
+                           style_code=style_code, color_code=color_code,
+                           _label_identity_verified=True, _label_category=category,
+                           _label_category_source="吊牌名称映射" if category else "",
+                           _label_identity_votes=list(bucket.values()),
+                           _product_name_source="标签未印刷" if name_absent else "标签原文",
+                           _label_product_name_absent=name_absent)
+            return refined
+        except llm_gateway.LlmGatewayError as exc:
+            errors.append(f"{model}: {_text(exc)}")
+            log(f"[warn] 吊牌文字独立复核失败：{style_code}-{color_code}，{errors[-1]}")
+    if len(votes) > 1 and not single_provider and not detail_retry and crop.is_file():
+        log(f"标签文字有分歧，改用完整标签及原图局部独立重读：{style_code}-{color_code}")
+        refined = _verify_label_identity_from_crop(
+            payload, source=source, target=target.with_name(target.stem + "-detail-retry.jpg"),
+            style_code=style_code, color_code=color_code, model_ids=model_ids,
+            config=config, log=log, progress=progress, detail_retry=True,
+            model_state=model_state,
+        )
+        refined["_label_detail_retry"] = True
+        return refined
+    requirement = "完整标签与局部裁片同票" if single_provider else "两个独立模型家族同票"
+    raise ShoeSelectionError(f"{style_code}-{color_code} 吊牌产品名称/颜色缺少{requirement}；"
+                             + "；".join(errors[:4]))
+
+
+def _infer_category_from_verified_label(payload: dict[str, Any], *, crop: Path,
+                                        model_ids: list[str], config: dict | None,
+                                        style_code: str, color_code: str, log, progress=None,
+                                        appearance_image: Path | None = None, model_state=None) -> str:
+    """For broad printed names, classify separately so shoe appearance cannot rewrite OCR."""
+    mapped = _category_from_label_product_name(_text(payload.get("product_name")))
+    if mapped:
+        return mapped
+    remaining = list(model_ids)
+    while remaining:
+        model = remaining.pop(0)
+        _notify_shoe_model_progress(progress, f"吊牌名称已确认，复核品类 {model}",
+                                    style_code=style_code, color_code=color_code)
+        try:
+            result, route = _label_model_request(model_state=model_state, log=log,
+                request_openai=_label_stream_requester(log, progress, style_code, color_code),
+                request_metadata={'style':style_code, 'color':color_code, 'stage':'label', 'operation':'label_category', 'request_purpose':'label_category'},
+                system_prompt="你是鞋品业务分类审核员。只返回 JSON。标签产品名称已经独立核验，不要重新识别或修改它。",
+                user_prompt=("已核验标签产品名称：" + json.dumps(payload["product_name"], ensure_ascii=False)
+                             + "。名称为空表示完整标签未印名称，不能补造标签文字。"
+                             "第一张为标签，若有第二张则为同款各色实拍鞋图。同款各色必须统一品类，不能因颜色变化改变模板类别。结合可见鞋型归类：运动=运动鞋/板鞋/跑步鞋；"
+                             "休闲=公主鞋/皮鞋/普通靴子/女生凉鞋；雪地=雪地靴/秋冬拖鞋/运动靴；"
+                             "婴童=婴童鞋/宝宝鞋/稳步鞋/学步鞋。普通系带皮靴不能仅因高帮就归雪地；"
+                             "儿童商品不能仅因尺码小就归婴童。名称不足且图像也不能确定时返回空字符串。"
+                             "高帮系带、侧拉链和皮质鞋帮的时尚靴属于普通靴子；运动鞋必须有明确运动鞋结构，不能仅凭厚底/拼色判断。"
+                             "先观察鞋面材质、鞋帮结构和鞋口内里。亮面系带皮靴/马丁靴属于普通靴子，归休闲，"
+                             "不能因为黑色、高帮、厚底就叫运动靴或雪地靴；雪地靴需有保暖绒毛内里或明确雪地靴结构证据。"
+                             '返回 {"shoe_category":"运动|休闲|雪地|婴童或空","evidence":"具体可见鞋型依据"}。'),
+                image_inputs=[str(crop)] + ([str(appearance_image)] if appearance_image else []), model_id=model, fallback_model_ids=[], config=config,
+                timeout_seconds=SHOE_LABEL_OCR_TIMEOUT_SECONDS, retry_same_model=False,
+            )
+            category = normalize_shoe_category(result.get("shoe_category") if isinstance(result, dict) else "")
+            payload.setdefault("_label_category_votes", []).append({
+                "model_id": route.model_id, "shoe_category": category,
+                "evidence": result.get("evidence", "") if isinstance(result, dict) else "",
+            })
+            evidence = _text(result.get("evidence")) if isinstance(result, dict) else ""
+            log(f"吊牌品类判断：{style_code}-{color_code}，{route.model_id}，{category}，{evidence}")
+            if category and evidence:
+                return category
+        except (ShoeSelectionError, llm_gateway.LlmGatewayError) as exc:
+            log(f"[warn] 吊牌品类复核未通过：{style_code}-{color_code}，{model}：{_text(exc)}")
+    return ""
+
+
+def _refine_label_paper_bbox(source, label_bbox, style_code_bbox):
+    """Tighten an oversized output crop using enclosed paper and an exact code anchor."""
+    from PIL import Image, ImageOps
+    old = _normalized_bbox(label_bbox)
+    code = _normalized_bbox(style_code_bbox)
+    if old is None or code is None:
+        return None
+    with Image.open(source) as raw:
+        im = ImageOps.exif_transpose(raw).convert('RGB')
+        im.thumbnail((500, 500))
+    w, h = im.size
+    mask = Image.new('L', im.size)
+    mask.putdata([255 if min(p)>160 and max(p)-min(p)<65 else 0 for p in im.getdata()])
+    flags = bytearray(v>0 for v in mask.getdata())
+    candidates = []
+    for start in range(w*h):
+        if not flags[start]:
+            continue
+        flags[start] = 0
+        stack = [start]
+        n = 0
+        x1, y1, x2, y2 = w, h, 0, 0
+        while stack:
+            i = stack.pop()
+            y, x = divmod(i, w)
+            n += 1
+            x1, y1, x2, y2 = min(x1,x), min(y1,y), max(x2,x), max(y2,y)
+            for yy in range(max(0,y-1), min(h,y+2)):
+                for xx in range(max(0,x-1), min(w,x+2)):
+                    j = yy*w+xx
+                    if flags[j]:
+                        flags[j] = 0
+                        stack.append(j)
+        if x1 == 0 or y1 == 0 or x2 == w-1 or y2 == h-1:
+            continue
+        box = (x1/w, y1/h, (x2+1)/w, (y2+1)/h)
+        bw, bh = box[2]-box[0], box[3]-box[1]
+        if (box[0]<=code[0] and box[1]<=code[1] and box[2]>=code[2] and box[3]>=code[3]
+                and bw>=1.2*(code[2]-code[0]) and bh>=3*(code[3]-code[1])
+                and n/((x2-x1+1)*(y2-y1+1))>=.6):
+            candidates.append((n, box))
+    if not candidates:
+        return None
+    _, box = max(candidates)
+    result = (max(0,box[0]-.005), max(0,box[1]-.005),
+              min(1,box[2]+.005), min(1,box[3]+.005))
+    if ((result[2]-result[0])*(result[3]-result[1])
+            >= .85*(old[2]-old[0])*(old[3]-old[1])):
+        return None
+    return [v*1000 for v in result]
+
+
+def _prepare_label_before_pose(*, entries: list[dict[str, Any]], analysis_root: Path,
+                               style_code: str, color_code: str, model_id: str,
+                               label_model_id: str, fallback_model_ids: Any,
+                               label_fallback_model_ids: Any, config: dict | None,
+                               log, progress=None, shoe_category: str = "", single_model_views=False,
+                               model_state=None, category_context=None, category_examples=None) -> dict[str, Any]:
+    """Locate a box without requiring pose/category consensus, then verify its label."""
+    root = analysis_root / style_code
+    root.mkdir(parents=True, exist_ok=True)
+    sheets, candidate_ids = _create_contact_sheets(entries, root / f"{color_code}-label-locator.jpg")
+    models = _shoe_label_model_ids(label_model_id or "deepseek-official-flash", config,
+                                  label_fallback_model_ids if label_fallback_model_ids is not None else [])
+    entries_by_name = {entry["filename"]: entry for entry in entries}
+    attempted: set[tuple[str, str]] = set()
+    errors = []
+    for model in models:
+        _notify_shoe_model_progress(progress, f"前置定位鞋盒标签 {model}",
+                                    style_code=style_code, color_code=color_code)
+        try:
+            def locate_candidates():
+                # Keep locator batches small enough to distinguish a shoebox
+                # certificate from a price/barcode sticker inside the shoe.
+                for page in range(0, len(sheets)):
+                    located, _ = _label_model_request(model_state=model_state, log=log,
+                        request_openai=_label_stream_requester(log, progress, style_code, color_code),
+                        request_metadata={'style':style_code, 'color':color_code, 'stage':'label', 'operation':'label_localization', 'request_purpose':'label_localization'},
+                        system_prompt="你是商品图片定位员。只定位实拍鞋盒上的印刷标签，不识别鞋子姿势。只返回 JSON。",
+                        user_prompt=('选出实物鞋盒上完整产品合格证标签的图片编号，优先可见产品名称、颜色文字和货号的大标签，清晰度从高到低，最多3张。'
+                                     '鞋内/鞋垫上的价格尺码条码贴纸没有产品名称和颜色名称，不要选；单独鞋子、鞋上功能卡、无实物盒的合成图也不要选。'
+                                     '返回 {"candidate_ids":["I01"]}；不存在则返回空数组。'),
+                        image_inputs=[str(sheets[page])], model_id=model, fallback_model_ids=[],
+                        config=config, timeout_seconds=SHOE_LABEL_OCR_TIMEOUT_SECONDS, retry_same_model=False,
+                    )
+                    page_ids = located.get("candidate_ids") if isinstance(located, dict) else None
+                    if not isinstance(page_ids, list):
+                        raise llm_gateway.LlmResponseError("鞋盒定位未返回候选数组")
+                    yield from page_ids[:3]
+            for candidate_id in locate_candidates():
+                filename = candidate_ids.get(_text(candidate_id))
+                if not filename or (model, filename) in attempted:
+                    continue
+                attempted.add((model, filename))
+                source = Path(entries_by_name[filename]["path"])
+                preview = root / f"{color_code}-label-first-{len(attempted):02d}.jpg"
+                _create_label_preview(source, preview)
+                try:
+                    # This pass only locates the crop. The two independent
+                    # crop transcriptions below establish the actual identity;
+                    # repeating the old full-image color OCR would add work
+                    # without providing another independent identity check.
+                    payload, route = _label_model_request(model_state=model_state, log=log,
+                        request_openai=_label_stream_requester(log, progress, style_code, color_code),
+                        request_metadata={'style':style_code, 'color':color_code, 'stage':'label', 'operation':'label_coordinates', 'request_purpose':'label_coordinates'},
+                        system_prompt="你是标签坐标定位员。只返回 JSON，坐标范围0到1000。",
+                        user_prompt=("找出实物鞋盒上的完整白色产品标签，以及其中完整12位产品货号的文字框。"
+                                     "label_bbox包含整张标签，不能裁掉产品名称、颜色或货号；"
+                                     "style_code_bbox只圈完整12位数字，不含字段名，不能漏数字。"
+                                     '返回 {"label_bbox":[x1,y1,x2,y2], '
+                                     '"style_code_bbox":[x1,y1,x2,y2]}。'),
+                        image_inputs=[str(preview)], model_id=model, fallback_model_ids=[],
+                        config=config, timeout_seconds=SHOE_LABEL_OCR_TIMEOUT_SECONDS,
+                        retry_same_model=False,
+                    )
+                    if (not isinstance(payload, dict)
+                            or _normalized_bbox(payload.get("label_bbox")) is None
+                            or _normalized_bbox(payload.get("style_code_bbox")) is None):
+                        raise llm_gateway.LlmResponseError("前置标签定位缺少有效标签/完整款号坐标")
+                    payload["_model_id"] = route.model_id
+                    # Both regions describe the same label. Preserve the known
+                    # product-code row even if the label box covers only the
+                    # lower information table; do not discover this via two OCRs.
+                    label_rect = _normalized_bbox(payload["label_bbox"])
+                    code_rect = _normalized_bbox(payload["style_code_bbox"])
+                    payload["label_bbox"] = [
+                        min(label_rect[0], code_rect[0]) * 1000,
+                        min(label_rect[1], code_rect[1]) * 1000,
+                        max(label_rect[2], code_rect[2]) * 1000,
+                        max(label_rect[3], code_rect[3]) * 1000,
+                    ]
+                    paper_bbox = _refine_label_paper_bbox(
+                        source, payload["label_bbox"], payload["style_code_bbox"]
+                    )
+                    if paper_bbox is not None:
+                        payload["_label_bbox_before_paper_refinement"] = payload["label_bbox"]
+                        payload["label_bbox"] = paper_bbox
+                        payload["_label_paper_refined"] = True
+                    crop_path = root / f"{color_code}-identity-{len(attempted):02d}.jpg"
+                    try:
+                        payload = _verify_label_identity_from_crop(
+                            payload, source=source, target=crop_path,
+                            style_code=style_code, color_code=color_code, model_ids=[model] if single_model_views else models,
+                            config=config, log=log, progress=progress,
+                            model_state=model_state,
+                        )
+                    except ShoeLabelCropError:
+                        x1, y1, x2, y2 = _normalized_bbox(payload["label_bbox"])
+                        # Re-anchor a clipped code using the existing local OCR;
+                        # never infer missing digits from the requested style.
+                        try:
+                            exact_code = ocr_service.locate_exact_style_code_bbox(
+                                source, style_code=style_code, timeout_seconds=15,
+                            )
+                        except Exception:
+                            exact_code = None
+                        if exact_code is not None:
+                            x1, y1 = min(x1, exact_code[0]), min(y1, exact_code[1])
+                            x2, y2 = max(x2, exact_code[2]), max(y2, exact_code[3])
+                            payload["style_code_bbox"] = [value * 1000 for value in exact_code]
+                        width, height = x2 - x1, y2 - y1
+                        payload["label_bbox"] = [
+                            max(0.0, x1 - width * 0.30) * 1000,
+                            max(0.0, y1 - height * 0.30) * 1000,
+                            min(1.0, x2 + width * 0.30) * 1000,
+                            min(1.0, y2 + height * 0.30) * 1000,
+                        ]
+                        crop_path = crop_path.with_name(crop_path.stem + "-expanded.jpg")
+                        log(f"前置吊牌裁切范围扩大后重新独立核验：{style_code}-{color_code}，{filename}")
+                        payload = _verify_label_identity_from_crop(
+                            payload, source=source, target=crop_path, style_code=style_code,
+                            color_code=color_code, model_ids=[model] if single_model_views else models, config=config,
+                            log=log, progress=progress,
+                            model_state=model_state,
+                        )
+                    if not shoe_category and category_context and category_context.get('style_code') == style_code:
+                        current_name = re.sub(r'\s+', '', _text(payload.get('product_name')))
+                        prior_name = category_context['product_name']
+                        if current_name == prior_name:
+                            mapped = payload.get('_label_category')
+                            if mapped and mapped != category_context['category']:
+                                payload['_label_category_conflict'] = '同款已核验标签的明确品类与先前品类冲突，需复核品类，不能混用模板'
+                            else:
+                                payload['_label_category'] = category_context['category']
+                                payload['_label_category_source'] = '同款已核验品类复用（标签名称一致）'
+                                payload['_label_category_reference_color'] = category_context['color_code']
+                    if not shoe_category and not payload.get("_label_category"):
+                        appearance_image = root / f"{color_code}-category-appearance.jpg"
+                        # A full inventory makes the shoe opening and material too
+                        # small to distinguish a leather boot from a lined snow boot.
+                        detailed = [entry for entry in entries if
+                                    _is_tms_source_filename(entry["filename"], style_code, color_code)
+                                    or _is_yk_source_filename(entry["filename"])]
+                        _create_contact_sheet((category_examples or detailed or entries)[:6],
+                                              appearance_image, columns=2, tile_width=600,
+                                              image_height=540, quality=90)
+                        payload["_label_category"] = _infer_category_from_verified_label(
+                            payload, crop=crop_path,
+                            model_ids=models, config=config, style_code=style_code,
+                            color_code=color_code, log=log, progress=progress,
+                            appearance_image=appearance_image,
+                            model_state=model_state,
+                        )
+                        if payload["_label_category"]:
+                            payload["_label_category_source"] = "实拍鞋型独立复核"
+                    tmq = _create_tmq_asset(
+                        source=source, target=root / f"{color_code}-label-circled.jpg",
+                        label_bbox=payload.get("label_bbox"), style_code_bbox=payload.get("style_code_bbox"),
+                        style_code=style_code, require_style_code_bbox=True,
+                    )
+                    if category_context is not None and not shoe_category and payload.get('_label_category'):
+                        decision = {'style_code':style_code,'color_code':color_code,
+                                    'product_name':re.sub(r'\s+', '', _text(payload.get('product_name'))),
+                                    'category':payload['_label_category'],'source':payload.get('_label_category_source'),
+                                    'votes':payload.get('_label_category_votes',[])}
+                        if not category_context:
+                            category_context.update(decision)
+                            (root/'style-category.json').write_text(json.dumps(decision,ensure_ascii=False,indent=2))
+                        elif category_context['category'] != decision['category']:
+                            payload['_label_category_conflict'] = '同款多个颜色品类核验冲突，保留证据并停止该色模板分配'
+                    evidence = {"filename": filename, "payload": payload, "tmq_path": str(tmq), "crop_path": str(crop_path)}
+                    (root / f"{color_code}-label-first.json").write_text(
+                        json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
+                    return evidence
+                except (ShoeSelectionError, llm_gateway.LlmGatewayError) as exc:
+                    errors.append(f"{filename}: {_text(exc)}")
+                    log(f"[warn] 前置标签候选未通过：{errors[-1]}")
+        except llm_gateway.LlmGatewayError as exc:
+            errors.append(f"{model}: {_text(exc)}")
+            log(f"[warn] 前置鞋盒定位失败：{errors[-1]}")
+    raise ShoeSelectionError(f"{style_code}-{color_code} 前置标签识别未通过：" + "；".join(errors[:5]))
+
+
 def prepare_shoe_packages(
     *,
     data_rows: list[dict[str, Any]],
@@ -8400,6 +9410,12 @@ def prepare_shoe_packages(
     label_model_id: str = "",
     fallback_model_ids: Any = None,
     label_fallback_model_ids: Any = None,
+    execution_model_ids: Any = None,
+    board_review_model_id: str | None = None,
+    model_state=None,
+    _prepared_colors=None,
+    _reuse_prepared=False,
+    _analysis_root=None,
     shoe_categories: dict[str, str] | None = None,
     config: dict | None = None,
     analyze_color=None,
@@ -8416,6 +9432,8 @@ def prepare_shoe_packages(
 
     output_root = Path(output_root)
     pose_strategy = normalize_shoe_pose_strategy(pose_strategy)
+    execution = shenhui_shoe_models.execution_models(execution_model_ids) if pose_strategy in SHOE_REVIEW_STRATEGIES else []
+    model_state = model_state or shenhui_shoe_models.ShoeModelState(board_review_model_id=board_review_model_id)
     reference_image = Path(reference_image)
     poster_reference_image = Path(poster_reference_image)
     yq_reference_image = Path(yq_reference_image)
@@ -8481,8 +9499,9 @@ def prepare_shoe_packages(
         label_analyzer = _default_analyze_color_label
     report_rows: list[dict[str, Any]] = []
     package_roots: dict[str, Path] = {}
-    analysis_root = output_root / "_shoe_analysis"
-    model_input_root = analysis_root / "_model_inputs"
+    analysis_root = Path(_analysis_root) if _analysis_root else output_root / "_shoe_analysis"
+    # Concurrent styles must never rewrite another style's model input files.
+    model_input_root = analysis_root / (next(iter(grouped)) if len(grouped) == 1 else "_shared") / "_model_inputs"
     reference_image_for_model = _create_model_input_preview(
         reference_image,
         model_input_root / "main-template.jpg",
@@ -8522,414 +9541,526 @@ def prepare_shoe_packages(
         anchor_slots: dict[str, Any] | None = None
         anchor_selection_entries: list[dict[str, Any]] = []
         anchor_category = ""
+        category_context = next((dict(prepared['category_context'])
+            for (prepared_style, _), prepared in (_prepared_colors or {}).items()
+            if _reuse_prepared and prepared_style == style_code and not prepared.get('error')
+            and prepared.get('category_context')), {})
+        category_examples = []
+        for candidate_color, color_entries in colors.items():
+            examples = [entry for entry in color_entries if
+                        _is_tms_source_filename(entry['filename'],style_code,candidate_color)
+                        or _is_yk_source_filename(entry['filename'])]
+            category_examples.extend((examples or color_entries)[:2])
 
         for color_code, entries in colors.items():
-            entries, size_warning = _filter_single_shoe_size_entries(entries)
-            if size_warning:
-                log(f"[warn] {style_code}-{color_code} {size_warning}")
-            report_progress(
-                "识别姿势",
-                style_code=style_code,
-                color_code=color_code,
-            )
-            entries_by_name = {
-                entry["filename"]: entry
-                for entry in entries
-            }
-            pose_matching_entries = [
-                entry
-                for entry in entries
-                if _is_pose_matching_candidate(entry["filename"])
-            ]
-            selection_entries = [
-                entry
-                for entry in pose_matching_entries
-                if _is_pose_selection_candidate(entry["filename"])
-            ]
-            if not selection_entries:
-                reason = f"{style_code}-{color_code} 没有可用于鞋品姿势识别的候选图片"
-                log(f"[warn] {reason}，已跳过该款色")
-                report_rows.append(_skipped_slot_report_row(
+            cache_key = (style_code, color_code)
+            if _reuse_prepared and _prepared_colors is not None and cache_key in _prepared_colors:
+                cached = _prepared_colors[cache_key]
+                if cached.get('error'):
+                    report_rows.extend(cached['report_rows'])
+                    continue
+                cached_name = cached['color_name']
+                selections_by_color[cached_name] = cached['slots']
+                entries_by_color_name[cached_name] = cached['entries_by_name']
+                original_entries_by_color_name[cached_name] = cached['entries']
+                color_order.append(cached_name)
+                organize_completed += 1
+                continue
+            try:
+                entries, size_warning = _filter_single_shoe_size_entries(entries)
+                if size_warning:
+                    log(f"[warn] {style_code}-{color_code} {size_warning}")
+                report_progress(
+                    "识别姿势",
                     style_code=style_code,
-                    color=color_code,
-                    slot="款色",
-                    warning=f"{reason}，不影响同款其他色",
-                    action="失败款色跳过",
-                    download_result="已跳过",
-                    remarks=reason,
-                ))
+                    color_code=color_code,
+                )
+                entries_by_name = {
+                    entry["filename"]: entry
+                    for entry in entries
+                }
+                pose_matching_entries = [
+                    entry
+                    for entry in entries
+                    if _is_pose_matching_candidate(entry["filename"])
+                ]
+                selection_entries = [
+                    entry
+                    for entry in pose_matching_entries
+                    if _is_pose_selection_candidate(entry["filename"])
+                ]
+                if not selection_entries:
+                    reason = f"{style_code}-{color_code} 没有可用于鞋品姿势识别的候选图片"
+                    log(f"[warn] {reason}，已跳过该款色")
+                    report_rows.append(_skipped_slot_report_row(
+                        style_code=style_code,
+                        color=color_code,
+                        slot="款色",
+                        warning=f"{reason}，不影响同款其他色",
+                        action="失败款色跳过",
+                        download_result="已跳过",
+                        remarks=reason,
+                    ))
+                    organize_completed += 1
+                    report_progress(
+                        "款色跳过",
+                        style_code=style_code,
+                        color_code=color_code,
+                    )
+                    continue
+                label_first = None
+                pose_category = forced_category
+                if analyze_color is None and label_analyzer is _default_analyze_color_label:
+                    label_first = _prepare_label_before_pose(
+                        entries=selection_entries, analysis_root=analysis_root,
+                        style_code=style_code, color_code=color_code, model_id=model_id,
+                        label_model_id=execution[0] if execution else label_model_id, fallback_model_ids=fallback_model_ids,
+                        label_fallback_model_ids=execution[1:] if execution else label_fallback_model_ids, config=config,
+                        single_model_views=bool(execution), model_state=model_state,
+                        log=log, progress=report_progress, shoe_category=forced_category,
+                        category_context=category_context, category_examples=category_examples,
+                    )
+                    if label_first["payload"].get("_label_category_conflict"):
+                        raise ShoeSelectionError(label_first["payload"]["_label_category_conflict"])
+                    pose_category = forced_category or label_first["payload"].get("_label_category", "")
+                    if not pose_category:
+                        raise ShoeSelectionError(
+                            f"{style_code}-{color_code} 吊牌名称已确认，但品类仍不明确，无法选择姿势模板"
+                        )
+                    log(f"吊牌前置识别完成：{style_code}-{color_code}，"
+                        f"产品名称 {label_first['payload']['product_name']}，"
+                        f"品类 {pose_category}（{'Excel指定' if forced_category else label_first['payload'].get('_label_category_source', '吊牌确认')}）")
+                report_progress("识别姿势", style_code=style_code, color_code=color_code)
+                candidate_ids: dict[str, str] = {}
+                # A geometry-only cross-colour transfer has no independent semantic
+                # votes for the target colour. Keep it only for explicitly supplied
+                # legacy/custom analyzers; the production analyzer audits every colour.
+                used_local_match = anchor_slots is not None and analyze_color is not None
+                if used_local_match:
+                    target_match_entries = (
+                        _entries_with_ai_angle_images(pose_matching_entries, entries)
+                        if _text(anchor_category) == "雪地"
+                        else pose_matching_entries
+                    )
+                    matched_slots, worst_distance = _match_slots_from_anchor_color(
+                        anchor_slots=anchor_slots,
+                        anchor_entries=anchor_selection_entries,
+                        target_entries=target_match_entries,
+                    )
+                    if worst_distance <= SHOE_CROSS_COLOR_MAX_DISTANCE:
+                        payload = {
+                            "color_name": color_code,
+                            "shoe_category": anchor_category,
+                            "slots": matched_slots,
+                            "_model_id": matched_slots.get("_model_id"),
+                        }
+                        log(
+                            f"鞋品跨色姿势匹配：{style_code}-{color_code}，"
+                            f"复用基准色姿势，最大轮廓差 {worst_distance:.3f}"
+                        )
+                    else:
+                        used_local_match = False
+                        log(
+                            f"[warn] {style_code}-{color_code} 跨色轮廓差 "
+                            f"{worst_distance:.3f} 超过 {SHOE_CROSS_COLOR_MAX_DISTANCE:.2f}，"
+                            "改用大模型单独识别"
+                        )
+
+                if not used_local_match:
+                    contact_sheet = analysis_root / style_code / f"{color_code}.jpg"
+                    effective_pose_strategy = pose_strategy
+                    if effective_pose_strategy == SHOE_POSE_STRATEGY_GLOBAL_PAGES:
+                        global_limit = SHOE_GLOBAL_PAGE_CHUNK_SIZE * SHOE_GLOBAL_PAGE_MAX_PAGES
+                        if len(selection_entries) > global_limit:
+                            before_count = len(selection_entries)
+                            selection_entries = _deduplicate_exact_image_entries(selection_entries)
+                            log(
+                                f"鞋品全局分页候选去重：{style_code}-{color_code}，"
+                                f"{before_count} -> {len(selection_entries)} 张"
+                            )
+                        if len(selection_entries) > global_limit:
+                            effective_pose_strategy = SHOE_POSE_STRATEGY_BATCH_OVERVIEW
+                            log(
+                                f"[warn] 鞋品全局分页候选超过 {global_limit} 张："
+                                f"{style_code}-{color_code}，已自动降级为 batch_overview"
+                            )
+                    contact_sheets, candidate_ids, overview_contact_sheet = _create_pose_contact_inputs(
+                        selection_entries,
+                        contact_sheet,
+                        pose_strategy=effective_pose_strategy,
+                    )
+                    log(
+                        f"鞋品姿势识别：{style_code}-{color_code}，"
+                        f"候选图 {len(selection_entries)} 张，策略 {effective_pose_strategy}"
+                    )
+                    payload = analyzer(
+                        verified_label_filename=(label_first["filename"] if label_first else ""),
+                        style_code=style_code,
+                        color_code=color_code,
+                        contact_sheet=str(contact_sheets[0]),
+                        contact_sheets=[str(path) for path in contact_sheets],
+                        overview_contact_sheet=(
+                            str(overview_contact_sheet) if overview_contact_sheet else ""
+                        ),
+                        pose_strategy=effective_pose_strategy,
+                        reference_image=str(reference_image_for_model),
+                        main_pose_reference_images=[
+                            str(path)
+                            for path in main_pose_references_by_category.get(
+                                pose_category,
+                                [],
+                            )
+                        ],
+                        main_pose_references_by_category={
+                            category: [str(path) for path in paths]
+                            for category, paths in main_pose_references_by_category.items()
+                        },
+                        main_pose_reference_sheet=str(
+                            main_pose_reference_sheets_by_category.get(pose_category)
+                            or reference_image_for_model
+                        ),
+                        poster_reference_image=str(poster_reference_image_for_model),
+                        yq_reference_image=str(yq_reference_image_for_model),
+                        yq_reference_images={
+                            slot: str(path)
+                            for slot, path in yq_reference_cells.items()
+                        },
+                        candidate_ids=candidate_ids,
+                        candidate_names=[
+                            entry["filename"]
+                            for entry in selection_entries
+                        ],
+                        candidate_entries=[
+                            {
+                                "filename": entry["filename"],
+                                "path": entry["path"],
+                            }
+                            for entry in selection_entries
+                        ],
+                        shoe_category=pose_category,
+                        model_id=model_id,
+                        fallback_model_ids=fallback_model_ids,
+                        execution_model_ids=execution or None,
+                        model_state=model_state,
+                        config=config,
+                        log=log,
+                        progress=report_progress,
+                        pose_evidence_path=(
+                            str(analysis_root / style_code / f"{color_code}-pose-evidence.json")
+                            if preserve_analysis_artifacts
+                            else ""
+                        ),
+                    )
+                if not isinstance(payload, dict):
+                    raise ShoeSelectionError(f"{style_code}-{color_code} 识别结果不是对象")
+                try:
+                    color_name, model_category, slots = _resolve_selection_payload(payload, candidate_ids)
+                except ShoeSelectionError as exc:
+                    raise ShoeSelectionError(f"{style_code}-{color_code} {exc}") from exc
+                if label_first and not forced_category:
+                    category = pose_category
+                    category_source = label_first["payload"].get("_label_category_source") or "吊牌确认"
+                    current_category_warning = ""
+                else:
+                    category, category_source, current_category_warning = resolve_style_category(
+                        style_code, model_category, shoe_categories,
+                    )
+                if current_category_warning and not category_warning:
+                    category_warning = current_category_warning
+                if not color_name:
+                    color_name = color_code
+                if color_code not in color_name:
+                    color_name = f"{color_name}{color_code}"
+
+                exact_tms = next(
+                    (
+                        filename
+                        for filename in entries_by_name
+                        if _is_tms_source_filename(filename, style_code, color_code)
+                    ),
+                    "",
+                )
+                if exact_tms:
+                    slots["tms"] = exact_tms
+
+                yk_sources = sorted(
+                    (
+                        filename
+                        for filename in entries_by_name
+                        if _is_yk_source_filename(filename)
+                    ),
+                    key=_named_yk_sort_key,
+                )
+                slots["yk"] = yk_sources
+                slots["yq"] = (_selection_array(slots, "yq", 3) if slots.get("_sequential_context")
+                               else _selection_list(slots, "yq")[:3])
+
+                named_yx = next(
+                    (
+                        filename
+                        for filename in entries_by_name
+                        if re.match(r"^yx(?:\b|[\s_\-(（])", Path(filename).stem, re.IGNORECASE)
+                    ),
+                    "",
+                )
+                if named_yx:
+                    slots["yx"] = named_yx
+
+                quality_rule_entries = list(selection_entries)
+                if _text(category) == "雪地":
+                    quality_rule_entries = _entries_with_ai_angle_images(
+                        quality_rule_entries,
+                        entries,
+                    )
+                pose_entries_by_name = {
+                    entry["filename"]: entry
+                    for entry in quality_rule_entries
+                }
+                outsole_entries_by_name = {
+                    entry["filename"]: entry
+                    for entry in pose_matching_entries
+                }
+                slots, quality_corrections = _apply_post_selection_quality_rules(
+                    category,
+                    slots,
+                    pose_entries_by_name,
+                    outsole_entries_by_name=outsole_entries_by_name,
+                )
+                for correction in quality_corrections:
+                    log(f"鞋品确定性校验：{style_code}-{color_code}，{correction}")
+                slots, wpz_sync_corrections = _sync_wpz_main_slots(slots)
+                for correction in wpz_sync_corrections:
+                    log(f"鞋品确定性校验：{style_code}-{color_code}，{correction}")
+                slots = _apply_o_category_rule(category, slots)
+
+                if _text(category) == "雪地":
+                    slots, yk_fallback = _ensure_snow_detail_yk(
+                        style_code=style_code,
+                        color_code=color_code,
+                        slots=slots,
+                        entries_by_name=entries_by_name,
+                        analysis_root=analysis_root,
+                    )
+                    if yk_fallback:
+                        log(
+                            "鞋品确定性校验："
+                            f"{style_code}-{color_code}，{yk_fallback}"
+                        )
+
+                tmz5_source = _text(slots.get("tmz5"))
+                if tmz5_source:
+                    slots["tms"] = tmz5_source
+
+                slots, current_selection_warnings = _validate_selection_sources(
+                    style_code,
+                    color_name,
+                    slots,
+                    entries_by_name,
+                )
+                selection_warnings.extend(current_selection_warnings)
+                if anchor_slots is None:
+                    anchor_slots = dict(slots)
+                    anchor_selection_entries = list(quality_rule_entries)
+                    anchor_category = category
+                if label_analyzer:
+                    label_candidates = _label_ocr_candidate_sources_for_wpz6(
+                        selection=slots,
+                        candidate_ids=candidate_ids,
+                        entries_by_name=entries_by_name,
+                        style_code=style_code,
+                        color_code=color_code,
+                    )
+                    if label_first:
+                        label_candidates = [{"filename": label_first["filename"]}]
+                    if not label_candidates:
+                        raise ShoeSelectionError(
+                            f"{style_code}-{color_code} 缺少共识支持的 wpz6 鞋盒标签图，"
+                            "无法验证款色命名和生成 tmq.jpg"
+                        )
+                    if label_first:
+                        label_candidates.sort(key=lambda item: item.get("filename") != label_first["filename"])
+                    label_image = analysis_root / style_code / f"{color_code}-label.jpg"
+                    label_payload: dict[str, Any] | None = None
+                    box_source_name = ""
+                    selected_label_candidate: dict[str, Any] | None = None
+                    label_candidate_errors: list[str] = []
+                    for label_candidate in label_candidates:
+                        candidate_name = _text(label_candidate.get("filename"))
+                        box_source = entries_by_name.get(candidate_name)
+                        if not box_source:
+                            continue
+                        _create_label_preview(Path(box_source["path"]), label_image)
+                        log(
+                            f"鞋盒标签 OCR：{style_code}-{color_code}，"
+                            f"候选 {candidate_name}"
+                        )
+                        try:
+                            if label_first and candidate_name == label_first["filename"]:
+                                current_label_payload = dict(label_first["payload"])
+                                log(f"复用前置吊牌识别与圈选：{style_code}-{color_code}，{candidate_name}")
+                            else:
+                                current_label_payload = label_analyzer(
+                                    style_code=style_code,
+                                    color_code=color_code,
+                                    label_image=str(label_image),
+                                    label_source_image=str(box_source["path"]),
+                                    model_id=model_id,
+                                    label_model_id=label_model_id,
+                                    fallback_model_ids=fallback_model_ids,
+                                    label_fallback_model_ids=(
+                                        label_fallback_model_ids or fallback_model_ids
+                                    ),
+                                    config=config,
+                                    log=log,
+                                    progress=report_progress,
+                                )
+                                if label_first:
+                                    current_label_payload = _verify_label_identity_from_crop(
+                                        current_label_payload, source=Path(box_source["path"]),
+                                        target=label_image.with_name(f"{color_code}-alternate-identity.jpg"),
+                                        style_code=style_code, color_code=color_code,
+                                        model_ids=_shoe_label_model_ids(label_model_id or model_id, config,
+                                            label_fallback_model_ids or fallback_model_ids),
+                                        config=config, log=log, progress=report_progress,
+                                    )
+                                    if any(current_label_payload.get(field) != label_first["payload"].get(field)
+                                           for field in ("product_name", "color_name")):
+                                        raise ShoeSelectionError("姿势选中的鞋盒标签与前置标签产品名称/颜色冲突")
+                            if not isinstance(current_label_payload, dict):
+                                raise llm_gateway.LlmResponseError(
+                                    "鞋盒标签 OCR 结果不是对象"
+                                )
+                            _validate_label_ocr_payload(
+                                current_label_payload,
+                                style_code=style_code,
+                                color_code=color_code,
+                            )
+                            resolved_color_name, label_warning = _resolve_label_color_name(
+                                current_color_name=color_name,
+                                color_code=color_code,
+                                label_payload=current_label_payload,
+                            )
+                            if label_warning:
+                                raise llm_gateway.LlmResponseError(label_warning)
+                        except (ShoeSelectionError, llm_gateway.LlmGatewayError) as exc:
+                            label_candidate_errors.append(
+                                f"{candidate_name}: {_text(exc)}"
+                            )
+                            log(
+                                f"[warn] 鞋盒标签 OCR 候选未通过："
+                                f"{style_code}-{color_code}，{candidate_name}：{_text(exc)}"
+                            )
+                            continue
+                        label_payload = current_label_payload
+                        color_name = resolved_color_name
+                        box_source_name = candidate_name
+                        selected_label_candidate = label_candidate
+                        break
+                    if label_payload is None or not box_source_name:
+                        raise ShoeSelectionError(
+                            f"{style_code}-{color_code} 鞋盒标签 OCR 所有共识候选均未通过："
+                            + "；".join(label_candidate_errors[:6])
+                        )
+                    wpz = _selection_array(slots, "wpz", 6)
+                    previous_wpz6 = wpz[5]
+                    wpz[5] = box_source_name
+                    slots["wpz"] = wpz
+                    if previous_wpz6 != box_source_name:
+                        log(
+                            f"鞋盒标签 OCR 已纠正 wpz6：{style_code}-{color_code}，"
+                            f"{previous_wpz6 or '空'} -> {box_source_name}"
+                        )
+                    if selected_label_candidate and isinstance(
+                        selected_label_candidate.get("vote"),
+                        dict,
+                    ):
+                        model_votes = dict(slots.get("_model_votes") or {})
+                        model_votes["wpz6"] = dict(selected_label_candidate["vote"])
+                        slots["_model_votes"] = model_votes
+                    slots["_label_wpz6_resolution"] = {
+                        "selected": box_source_name,
+                        "previous": previous_wpz6,
+                        "candidates": [
+                            {
+                                "filename": item.get("filename"),
+                                "box_fact_models": item.get("box_fact_models") or [],
+                                "vote_models": item.get("vote_models") or [],
+                            }
+                            for item in label_candidates
+                        ],
+                    }
+                    slots["product_name"] = _text(label_payload.get("product_name"))
+                    slots["_product_name_source"] = label_payload.get("_product_name_source", "标签原文")
+                    if label_payload.get("_label_product_name_absent"):
+                        slots["_label_warning"] = "完整标签未印产品名称；未补造名称，品类依据实拍鞋图独立复核"
+                    slots["label_bbox"] = label_payload.get("label_bbox")
+                    slots["style_code_bbox"] = label_payload.get("style_code_bbox")
+                    slots["_label_verified"] = True
+                    if label_first:
+                        slots["_label_identity_votes"] = label_payload.get("_label_identity_votes", [])
+                        if box_source_name == label_first["filename"]:
+                            slots["_label_tmq_path"] = label_first["tmq_path"]
+                    slots["_label_color_name"] = color_name
+                    slots["_label_model_id"] = _text(label_payload.get("_model_id"))
+                    slots["_label_transcription"] = dict(
+                        label_payload.get("_label_transcription") or {}
+                    )
+
+                if pose_strategy in SHOE_REVIEW_STRATEGIES and slots.get("_sequential_context"):
+                    from core.shenhui_shoe_sequential import verify_packaged_selection
+                    slots = verify_packaged_selection(slots)
+                if pose_strategy == "single_model_verified" and slots.get("_fast_context"):
+                    from core.shenhui_shoe_fast import verify_selection
+                    slots = verify_selection(slots["_fast_context"], slots)
+                slots["shoe_category"] = category
+                slots["shoe_category_source"] = category_source
+                if preserve_analysis_artifacts:
+                    _write_selection_evidence(
+                        analysis_root=analysis_root,
+                        style_code=style_code,
+                        color_code=color_code,
+                        color_name=color_name,
+                        category=category,
+                        model_category=model_category,
+                        model_id=model_id,
+                        selection=slots,
+                    )
+                if _prepared_colors is not None:
+                    _prepared_colors[cache_key] = {'slots':slots, 'color_name':color_name,
+                                                   'entries_by_name':entries_by_name, 'entries':entries,
+                                                   'category_context':dict(category_context)}
+                selections_by_color[color_name] = slots
+                entries_by_color_name[color_name] = entries_by_name
+                original_entries_by_color_name[color_name] = entries
+                color_order.append(color_name)
+                log(
+                    f"鞋品姿势识别完成：{style_code}-{color_name}，"
+                    f"品类 {category or '未返回'}（{category_source}），"
+                    f"模型 {slots.get('_model_id') or model_id}"
+                )
                 organize_completed += 1
                 report_progress(
-                    "款色跳过",
+                    "款色识别完成",
                     style_code=style_code,
-                    color_code=color_code,
+                    color_code=color_name,
                 )
+            except (ShoeSelectionError, llm_gateway.LlmGatewayError) as exc:
+                if pose_strategy not in SHOE_REVIEW_STRATEGIES:
+                    raise
+                reason = f'{style_code}-{color_code} 款色待处理：{exc}'
+                log('[warn] ' + reason + '；保留原图并继续其他颜色')
+                row = _skipped_slot_report_row(style_code=style_code, color=color_code,
+                    slot='款色', source_name='', output_path='', warning=reason)
+                report_rows.append(row)
+                if _prepared_colors is not None:
+                    _prepared_colors[cache_key] = {'error':reason, 'report_rows':[row]}
+                raw_root = output_root / style_code / '_待核验原图' / _safe_path_component(color_code)
+                raw_root.mkdir(parents=True, exist_ok=True)
+                for entry in entries:
+                    shutil.copy2(entry['path'], raw_root / _safe_path_component(entry['filename']))
+                package_roots[style_code] = output_root / style_code
+                organize_completed += 1
                 continue
-            candidate_ids: dict[str, str] = {}
-            # A geometry-only cross-colour transfer has no independent semantic
-            # votes for the target colour. Keep it only for explicitly supplied
-            # legacy/custom analyzers; the production analyzer audits every colour.
-            used_local_match = anchor_slots is not None and analyze_color is not None
-            if used_local_match:
-                target_match_entries = (
-                    _entries_with_ai_angle_images(pose_matching_entries, entries)
-                    if _text(anchor_category) == "雪地"
-                    else pose_matching_entries
-                )
-                matched_slots, worst_distance = _match_slots_from_anchor_color(
-                    anchor_slots=anchor_slots,
-                    anchor_entries=anchor_selection_entries,
-                    target_entries=target_match_entries,
-                )
-                if worst_distance <= SHOE_CROSS_COLOR_MAX_DISTANCE:
-                    payload = {
-                        "color_name": color_code,
-                        "shoe_category": anchor_category,
-                        "slots": matched_slots,
-                        "_model_id": matched_slots.get("_model_id"),
-                    }
-                    log(
-                        f"鞋品跨色姿势匹配：{style_code}-{color_code}，"
-                        f"复用基准色姿势，最大轮廓差 {worst_distance:.3f}"
-                    )
-                else:
-                    used_local_match = False
-                    log(
-                        f"[warn] {style_code}-{color_code} 跨色轮廓差 "
-                        f"{worst_distance:.3f} 超过 {SHOE_CROSS_COLOR_MAX_DISTANCE:.2f}，"
-                        "改用大模型单独识别"
-                    )
-
-            if not used_local_match:
-                contact_sheet = analysis_root / style_code / f"{color_code}.jpg"
-                effective_pose_strategy = pose_strategy
-                if effective_pose_strategy == SHOE_POSE_STRATEGY_GLOBAL_PAGES:
-                    global_limit = SHOE_GLOBAL_PAGE_CHUNK_SIZE * SHOE_GLOBAL_PAGE_MAX_PAGES
-                    if len(selection_entries) > global_limit:
-                        before_count = len(selection_entries)
-                        selection_entries = _deduplicate_exact_image_entries(selection_entries)
-                        log(
-                            f"鞋品全局分页候选去重：{style_code}-{color_code}，"
-                            f"{before_count} -> {len(selection_entries)} 张"
-                        )
-                    if len(selection_entries) > global_limit:
-                        effective_pose_strategy = SHOE_POSE_STRATEGY_BATCH_OVERVIEW
-                        log(
-                            f"[warn] 鞋品全局分页候选超过 {global_limit} 张："
-                            f"{style_code}-{color_code}，已自动降级为 batch_overview"
-                        )
-                contact_sheets, candidate_ids, overview_contact_sheet = _create_pose_contact_inputs(
-                    selection_entries,
-                    contact_sheet,
-                    pose_strategy=effective_pose_strategy,
-                )
-                log(
-                    f"鞋品姿势识别：{style_code}-{color_code}，"
-                    f"候选图 {len(selection_entries)} 张，策略 {effective_pose_strategy}"
-                )
-                payload = analyzer(
-                    style_code=style_code,
-                    color_code=color_code,
-                    contact_sheet=str(contact_sheets[0]),
-                    contact_sheets=[str(path) for path in contact_sheets],
-                    overview_contact_sheet=(
-                        str(overview_contact_sheet) if overview_contact_sheet else ""
-                    ),
-                    pose_strategy=effective_pose_strategy,
-                    reference_image=str(reference_image_for_model),
-                    main_pose_reference_images=[
-                        str(path)
-                        for path in main_pose_references_by_category.get(
-                            forced_category,
-                            [],
-                        )
-                    ],
-                    main_pose_reference_sheet=str(
-                        main_pose_reference_sheets_by_category.get(forced_category)
-                        or reference_image_for_model
-                    ),
-                    poster_reference_image=str(poster_reference_image_for_model),
-                    yq_reference_image=str(yq_reference_image_for_model),
-                    yq_reference_images={
-                        slot: str(path)
-                        for slot, path in yq_reference_cells.items()
-                    },
-                    candidate_ids=candidate_ids,
-                    candidate_names=[
-                        entry["filename"]
-                        for entry in selection_entries
-                    ],
-                    candidate_entries=[
-                        {
-                            "filename": entry["filename"],
-                            "path": entry["path"],
-                        }
-                        for entry in selection_entries
-                    ],
-                    shoe_category=forced_category,
-                    model_id=model_id,
-                    fallback_model_ids=fallback_model_ids,
-                    config=config,
-                    log=log,
-                    progress=report_progress,
-                    pose_evidence_path=(
-                        str(analysis_root / style_code / f"{color_code}-pose-evidence.json")
-                        if preserve_analysis_artifacts
-                        else ""
-                    ),
-                )
-            if not isinstance(payload, dict):
-                raise ShoeSelectionError(f"{style_code}-{color_code} 识别结果不是对象")
-            try:
-                color_name, model_category, slots = _resolve_selection_payload(payload, candidate_ids)
-            except ShoeSelectionError as exc:
-                raise ShoeSelectionError(f"{style_code}-{color_code} {exc}") from exc
-            category, category_source, current_category_warning = resolve_style_category(
-                style_code,
-                model_category,
-                shoe_categories,
-            )
-            if current_category_warning and not category_warning:
-                category_warning = current_category_warning
-            if not color_name:
-                color_name = color_code
-            if color_code not in color_name:
-                color_name = f"{color_name}{color_code}"
-
-            exact_tms = next(
-                (
-                    filename
-                    for filename in entries_by_name
-                    if _is_tms_source_filename(filename, style_code, color_code)
-                ),
-                "",
-            )
-            if exact_tms:
-                slots["tms"] = exact_tms
-
-            yk_sources = sorted(
-                (
-                    filename
-                    for filename in entries_by_name
-                    if _is_yk_source_filename(filename)
-                ),
-                key=_named_yk_sort_key,
-            )
-            slots["yk"] = yk_sources
-            slots["yq"] = _selection_list(slots, "yq")[:3]
-
-            named_yx = next(
-                (
-                    filename
-                    for filename in entries_by_name
-                    if re.match(r"^yx(?:\b|[\s_\-(（])", Path(filename).stem, re.IGNORECASE)
-                ),
-                "",
-            )
-            if named_yx:
-                slots["yx"] = named_yx
-
-            quality_rule_entries = list(selection_entries)
-            if _text(category) == "雪地":
-                quality_rule_entries = _entries_with_ai_angle_images(
-                    quality_rule_entries,
-                    entries,
-                )
-            pose_entries_by_name = {
-                entry["filename"]: entry
-                for entry in quality_rule_entries
-            }
-            outsole_entries_by_name = {
-                entry["filename"]: entry
-                for entry in pose_matching_entries
-            }
-            slots, quality_corrections = _apply_post_selection_quality_rules(
-                category,
-                slots,
-                pose_entries_by_name,
-                outsole_entries_by_name=outsole_entries_by_name,
-            )
-            for correction in quality_corrections:
-                log(f"鞋品确定性校验：{style_code}-{color_code}，{correction}")
-            slots, wpz_sync_corrections = _sync_wpz_main_slots(slots)
-            for correction in wpz_sync_corrections:
-                log(f"鞋品确定性校验：{style_code}-{color_code}，{correction}")
-            slots = _apply_o_category_rule(category, slots)
-
-            if _text(category) == "雪地":
-                slots, yk_fallback = _ensure_snow_detail_yk(
-                    style_code=style_code,
-                    color_code=color_code,
-                    slots=slots,
-                    entries_by_name=entries_by_name,
-                    analysis_root=analysis_root,
-                )
-                if yk_fallback:
-                    log(
-                        "鞋品确定性校验："
-                        f"{style_code}-{color_code}，{yk_fallback}"
-                    )
-
-            tmz5_source = _text(slots.get("tmz5"))
-            if tmz5_source:
-                slots["tms"] = tmz5_source
-
-            slots, current_selection_warnings = _validate_selection_sources(
-                style_code,
-                color_name,
-                slots,
-                entries_by_name,
-            )
-            selection_warnings.extend(current_selection_warnings)
-            if anchor_slots is None:
-                anchor_slots = dict(slots)
-                anchor_selection_entries = list(quality_rule_entries)
-                anchor_category = category
-            if label_analyzer:
-                label_candidates = _label_ocr_candidate_sources_for_wpz6(
-                    selection=slots,
-                    candidate_ids=candidate_ids,
-                    entries_by_name=entries_by_name,
-                    style_code=style_code,
-                    color_code=color_code,
-                )
-                if not label_candidates:
-                    raise ShoeSelectionError(
-                        f"{style_code}-{color_code} 缺少共识支持的 wpz6 鞋盒标签图，"
-                        "无法验证款色命名和生成 tmq.jpg"
-                    )
-                label_image = analysis_root / style_code / f"{color_code}-label.jpg"
-                label_payload: dict[str, Any] | None = None
-                box_source_name = ""
-                selected_label_candidate: dict[str, Any] | None = None
-                label_candidate_errors: list[str] = []
-                for label_candidate in label_candidates:
-                    candidate_name = _text(label_candidate.get("filename"))
-                    box_source = entries_by_name.get(candidate_name)
-                    if not box_source:
-                        continue
-                    _create_label_preview(Path(box_source["path"]), label_image)
-                    log(
-                        f"鞋盒标签 OCR：{style_code}-{color_code}，"
-                        f"候选 {candidate_name}"
-                    )
-                    try:
-                        current_label_payload = label_analyzer(
-                            style_code=style_code,
-                            color_code=color_code,
-                            label_image=str(label_image),
-                            label_source_image=str(box_source["path"]),
-                            model_id=model_id,
-                            label_model_id=label_model_id,
-                            fallback_model_ids=fallback_model_ids,
-                            label_fallback_model_ids=(
-                                label_fallback_model_ids or fallback_model_ids
-                            ),
-                            config=config,
-                            log=log,
-                            progress=report_progress,
-                        )
-                        if not isinstance(current_label_payload, dict):
-                            raise llm_gateway.LlmResponseError(
-                                "鞋盒标签 OCR 结果不是对象"
-                            )
-                        _validate_label_ocr_payload(
-                            current_label_payload,
-                            style_code=style_code,
-                            color_code=color_code,
-                        )
-                        resolved_color_name, label_warning = _resolve_label_color_name(
-                            current_color_name=color_name,
-                            color_code=color_code,
-                            label_payload=current_label_payload,
-                        )
-                        if label_warning:
-                            raise llm_gateway.LlmResponseError(label_warning)
-                    except (ShoeSelectionError, llm_gateway.LlmGatewayError) as exc:
-                        label_candidate_errors.append(
-                            f"{candidate_name}: {_text(exc)}"
-                        )
-                        log(
-                            f"[warn] 鞋盒标签 OCR 候选未通过："
-                            f"{style_code}-{color_code}，{candidate_name}：{_text(exc)}"
-                        )
-                        continue
-                    label_payload = current_label_payload
-                    color_name = resolved_color_name
-                    box_source_name = candidate_name
-                    selected_label_candidate = label_candidate
-                    break
-                if label_payload is None or not box_source_name:
-                    raise ShoeSelectionError(
-                        f"{style_code}-{color_code} 鞋盒标签 OCR 所有共识候选均未通过："
-                        + "；".join(label_candidate_errors[:6])
-                    )
-                wpz = _selection_array(slots, "wpz", 6)
-                previous_wpz6 = wpz[5]
-                wpz[5] = box_source_name
-                slots["wpz"] = wpz
-                if previous_wpz6 != box_source_name:
-                    log(
-                        f"鞋盒标签 OCR 已纠正 wpz6：{style_code}-{color_code}，"
-                        f"{previous_wpz6 or '空'} -> {box_source_name}"
-                    )
-                if selected_label_candidate and isinstance(
-                    selected_label_candidate.get("vote"),
-                    dict,
-                ):
-                    model_votes = dict(slots.get("_model_votes") or {})
-                    model_votes["wpz6"] = dict(selected_label_candidate["vote"])
-                    slots["_model_votes"] = model_votes
-                slots["_label_wpz6_resolution"] = {
-                    "selected": box_source_name,
-                    "previous": previous_wpz6,
-                    "candidates": [
-                        {
-                            "filename": item.get("filename"),
-                            "box_fact_models": item.get("box_fact_models") or [],
-                            "vote_models": item.get("vote_models") or [],
-                        }
-                        for item in label_candidates
-                    ],
-                }
-                slots["product_name"] = _text(label_payload.get("product_name"))
-                slots["label_bbox"] = label_payload.get("label_bbox")
-                slots["style_code_bbox"] = label_payload.get("style_code_bbox")
-                slots["_label_verified"] = True
-                slots["_label_color_name"] = color_name
-                slots["_label_model_id"] = _text(label_payload.get("_model_id"))
-                slots["_label_transcription"] = dict(
-                    label_payload.get("_label_transcription") or {}
-                )
-
-            slots["shoe_category"] = category
-            slots["shoe_category_source"] = category_source
-            if preserve_analysis_artifacts:
-                _write_selection_evidence(
-                    analysis_root=analysis_root,
-                    style_code=style_code,
-                    color_code=color_code,
-                    color_name=color_name,
-                    category=category,
-                    model_category=model_category,
-                    model_id=model_id,
-                    selection=slots,
-                )
-            selections_by_color[color_name] = slots
-            entries_by_color_name[color_name] = entries_by_name
-            original_entries_by_color_name[color_name] = entries
-            color_order.append(color_name)
-            log(
-                f"鞋品姿势识别完成：{style_code}-{color_name}，"
-                f"品类 {category or '未返回'}（{category_source}），"
-                f"模型 {slots.get('_model_id') or model_id}"
-            )
-            organize_completed += 1
-            report_progress(
-                "款色识别完成",
-                style_code=style_code,
-                color_code=color_name,
-            )
 
         if not selections_by_color:
             reason = f"{style_code} 没有可继续整理的款色，已跳过该款"
@@ -8943,6 +10074,10 @@ def prepare_shoe_packages(
             output_color_order,
         )
         warnings.extend(selection_warnings)
+        warnings.extend({'color':color, 'slot':slot, 'warning':'待补齐/人工核验：'+reason,
+                         'action':'保留已通过图片', 'download_result':'部分完成'}
+                        for color, selection in selections_by_color.items()
+                        for slot, reason in selection.get('_pending_slots', {}).items())
         warnings.extend(
             {
                 "color": color_name,
@@ -9123,6 +10258,7 @@ def prepare_shoe_packages(
                             if slot.startswith("jdt")
                             else "保持原图透明；目标小于 600KB"
                         ),
+                        **(_wpt_size_report(target) if not slot.startswith("jdt") else {}),
                     })
 
             if color_index == 1:
@@ -9161,6 +10297,7 @@ def prepare_shoe_packages(
                 wpz_by_index = dict(_selection_indexed(selections_by_color[color_name], "wpz", 6))
                 box_source_name = wpz_by_index.get(6, "")
                 box_entry = entries_by_name.get(box_source_name) if box_source_name else None
+                box_entry = selections_by_color[color_name].get("_label_tmq_source") or box_entry
                 if not box_entry:
                     report_rows.append(_skipped_slot_report_row(
                         style_code=style_code,
@@ -9178,14 +10315,24 @@ def prepare_shoe_packages(
                     ))
                 else:
                     try:
-                        tmq_target = _create_tmq_asset(
-                            source=Path(box_entry["path"]),
-                            target=package_root / "tmq.jpg",
-                            label_bbox=selections_by_color[color_name].get("label_bbox"),
-                            style_code_bbox=selections_by_color[color_name].get("style_code_bbox"),
-                            style_code=style_code,
-                            require_style_code_bbox=True,
-                        )
+                        cached_tmq = selections_by_color[color_name].get("_label_tmq_path")
+                        if cached_tmq and Path(cached_tmq).is_file():
+                            tmq_target = package_root / "tmq.jpg"
+                            shutil.copy2(cached_tmq, tmq_target)
+                        else:
+                            tmq_target = _create_tmq_asset(
+                                source=Path(box_entry["path"]),
+                                target=package_root / "tmq.jpg",
+                                label_bbox=selections_by_color[color_name].get("label_bbox"),
+                                style_code_bbox=selections_by_color[color_name].get("style_code_bbox"),
+                                style_code=style_code,
+                                require_style_code_bbox=True,
+                                preserve_full_label=bool(selections_by_color[color_name].get("_label_tmq_source")),
+                                style_code_bbox_verified=bool(
+                                    selections_by_color[color_name].get("_specialist_evidence")
+                                    and selections_by_color[color_name].get("_label_verified")
+                                ),
+                            )
                     except ShoeSelectionError as exc:
                         report_rows.append(_skipped_slot_report_row(
                             style_code=style_code,
@@ -9347,13 +10494,14 @@ def _count_shoe_organize_colors(rows: list[dict[str, Any]]) -> int:
     return len(colors)
 
 
-def prepare_shoe_packages_skip_failed_styles(**kwargs) -> tuple[list[dict[str, Any]], dict[str, Path]]:
+def _prepare_shoe_packages_initial(**kwargs) -> tuple[list[dict[str, Any]], dict[str, Path]]:
     """Prepare shoe packages while dropping only the style that fails.
 
     Some business source folders lack a required pose or channel image. The
     interactive task should still finish the other styles in the same batch.
     """
 
+    requested_workers = kwargs.pop("style_workers", None)
     original_rows = list(kwargs.get("data_rows") or [])
     output_root_raw = kwargs.get("output_root")
     output_root = Path(output_root_raw) if output_root_raw else None
@@ -9362,6 +10510,50 @@ def prepare_shoe_packages_skip_failed_styles(**kwargs) -> tuple[list[dict[str, A
     style_groups = _group_rows_by_style(original_rows)
     if not style_groups:
         return prepare_shoe_packages(**kwargs)
+
+    workers = min(8, max(1, int(requested_workers or 8)))
+    strategy = normalize_shoe_pose_strategy(kwargs.get("pose_strategy"))
+    if strategy in SHOE_REVIEW_STRATEGIES:
+        kwargs.setdefault('model_state', shenhui_shoe_models.ShoeModelState())
+    if strategy in SHOE_REVIEW_STRATEGIES and workers > 1 and len(style_groups) > 1:
+        # Styles share the batch request and image-processing bounds.
+        totals = {style: _count_shoe_organize_colors(rows) or 1 for style, rows in style_groups}
+        completed = {style: 0 for style, _ in style_groups}
+        total = sum(totals.values())
+        progress_lock = threading.RLock()
+        results = {}
+
+        def run_style(style, rows):
+            def update(event):
+                if progress is None:
+                    return
+                with progress_lock:
+                    completed[style] = min(totals[style], int(event.get("organize_completed") or 0))
+                    count = sum(completed.values())
+                    progress({**event, "organize_total": total,
+                              "organize_completed": count, "organize_active": count < total})
+            return _prepare_shoe_packages_initial(
+                **{**kwargs, "data_rows": rows, "progress": update,
+                   "style_workers": 1, "preserve_analysis_artifacts": True})
+
+        log(f"鞋品批量调度：{len(style_groups)} 款，并行 {workers} 款；每款逐坑位处理")
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(run_style, style, rows): style for style, rows in style_groups}
+            for future in as_completed(futures):
+                results[futures[future]] = future.result()
+        reports = []
+        packages = {}
+        for style, _ in style_groups:
+            current_rows, current_packages = results[style]
+            reports.extend(current_rows)
+            packages.update(current_packages)
+        if output_root is not None and not bool(kwargs.get("preserve_analysis_artifacts")):
+            shutil.rmtree(output_root / "_shoe_analysis", ignore_errors=True)
+        if progress is not None:
+            progress({"organize_total": total, "organize_completed": total,
+                      "organize_active": False, "organize_current_style": "",
+                      "organize_current_color": "", "organize_stage": "整理完成"})
+        return reports, packages
 
     report_rows: list[dict[str, Any]] = []
     package_roots: dict[str, Path] = {}
@@ -9413,7 +10605,10 @@ def prepare_shoe_packages_skip_failed_styles(**kwargs) -> tuple[list[dict[str, A
             )
             report_rows.append(_skipped_style_report_row(style_code, reason))
             if output_root is not None:
-                shutil.rmtree(output_root / style_code, ignore_errors=True)
+                if strategy not in SHOE_REVIEW_STRATEGIES:
+                    shutil.rmtree(output_root / style_code, ignore_errors=True)
+                elif (output_root / style_code).is_dir():
+                    package_roots[style_code] = output_root / style_code
                 if not bool(kwargs.get("preserve_analysis_artifacts")):
                     shutil.rmtree(output_root / "_shoe_analysis" / style_code, ignore_errors=True)
         finally:
@@ -9434,3 +10629,360 @@ def prepare_shoe_packages_skip_failed_styles(**kwargs) -> tuple[list[dict[str, A
             "organize_stage": "整理完成",
         })
     return report_rows, package_roots
+
+
+def shoe_accepted_sources_snapshot(cache: dict) -> dict:
+    """Per style-color: the slots this round already passed, with their files."""
+    accepted = {}
+    for (style, color), prepared in cache.items():
+        slots = prepared.get('slots') or {}
+        passed = {}
+        for record in prepared.get('export_review') or []:
+            if not record.get('accepted'):
+                continue
+            semantic = record.get('semantic') or record.get('slot')
+            name = _consensus_slot_value(slots, semantic) if semantic else ''
+            if semantic and name:
+                passed[semantic] = name
+        accepted[(style, color)] = passed
+    return accepted
+
+
+def shoe_restore_approved_sources(cache: dict, snapshot: dict, log=None) -> set:
+    """A repair round may not leave a previously approved slot worse.
+
+    Board A/B/C swaps and full-pool retrieval can replace an approved source with
+    one that then fails its own review. Those colors go back to the approved
+    sources of this round; the identical export hits the cached board verdict, so
+    the rollback costs no new model call.
+    """
+    restored = set()
+    for (style, color), passed in (snapshot or {}).items():
+        if not passed or (style, color) not in cache:
+            continue
+        prepared = cache[(style, color)]
+        slots = prepared.get('slots') or {}
+        outcomes = {}
+        for record in prepared.get('export_review') or []:
+            semantic = record.get('semantic') or record.get('slot')
+            if semantic:
+                outcomes[semantic] = record.get('status')
+        regressed = [semantic for semantic, name in passed.items()
+                     if _consensus_slot_value(slots, semantic) != name
+                     and outcomes.get(semantic) != 'accepted']
+        if not regressed:
+            continue
+        for semantic, name in passed.items():
+            _replace_consensus_slot_value(slots, semantic, name)
+            slots.setdefault('_pending_slots', {}).pop(semantic, None)
+            (slots.get('_repair_choice') or {}).pop(semantic, None)
+        for semantic in passed:
+            (prepared.get('export_errors') or {}).pop(semantic, None)
+        restored.add(style)
+        if log:
+            log(f'换源未通过，回退到本轮前已通过的原图：{style}-{color}；涉及 {",".join(regressed)}')
+    return restored
+
+
+def prepare_shoe_packages_skip_failed_styles(**kwargs):
+    """Select concurrently, independently audit every color, then repair boundedly."""
+    if normalize_shoe_pose_strategy(kwargs.get('pose_strategy')) == 'bala_specialist':
+        from core.shenhui_shoe_specialist import prepare
+        return prepare(**kwargs)
+    request_workers = kwargs.pop('request_workers', 8)
+    if normalize_shoe_pose_strategy(kwargs.get('pose_strategy')) not in SHOE_REVIEW_STRATEGIES:
+        return _prepare_shoe_packages_initial(**kwargs)
+    from core.shenhui_shoe_sequential import ORDER, verify_packaged_selection
+    cache = {}
+    progress = kwargs.get('progress')
+    progress_state = {}
+    def ongoing(event):
+        if progress:
+            event = dict(event)
+            for field in ('organize_completed', 'organize_total'):
+                if field in event:
+                    event[field] = max(progress_state.get(field, 0), event[field])
+            progress_state.update(event)
+            event = dict(progress_state)
+            event['organize_active'] = True
+            if event.get('organize_stage') == '整理完成':
+                event['organize_stage'] = '首轮整理完成，等待批次收尾复核'
+            progress(event)
+    kwargs = {**kwargs, 'progress': ongoing}
+    kwargs.setdefault('model_state', shenhui_shoe_models.ShoeModelState(request_workers=request_workers,
+        board_review_model_id=kwargs.get('board_review_model_id')))
+    reports, packages = _prepare_shoe_packages_initial(**{**kwargs, '_prepared_colors':cache,
+                                                         'preserve_analysis_artifacts':True})
+    log = kwargs.get('log') or (lambda message: None)
+    style_groups = _group_rows_by_style(kwargs.get('data_rows') or [])
+    def reexport(style, rows):
+        # Keep the previous usable package until all replacement files exist.
+        # Rebuilding the directory also removes stale names after color promotion.
+        output_root = Path(kwargs['output_root'])
+        with tempfile.TemporaryDirectory(prefix='.shoe-recovery-', dir=output_root) as temporary:
+            staging = Path(temporary)
+            current, roots = _prepare_shoe_packages_initial(**{**kwargs, 'data_rows':rows,
+                'output_root':staging, 'style_workers':1, '_prepared_colors':cache,
+                '_reuse_prepared':True, 'preserve_analysis_artifacts':True,
+                '_analysis_root':output_root / '_shoe_analysis' / 'batch-color-retry'})
+            if style not in roots:
+                return None
+            staged = Path(roots[style])
+            destination = output_root / style
+            previous = staging / 'previous-package'
+            if destination.exists():
+                destination.rename(previous)
+            try:
+                staged.rename(destination)
+            except OSError:
+                if previous.exists():
+                    previous.rename(destination)
+                raise
+            for row in current:
+                path = _text(row.get('本地文件'))
+                if path:
+                    try:
+                        relative = Path(path).relative_to(staged)
+                    except ValueError:
+                        continue
+                    row['本地文件'] = str(destination / relative)
+            return current, {style:destination}
+
+    # Retry only colors whose first pass could not reach a prepared selection.
+    # Good colors stay cached. Each failed color gets one batch-end retry.
+    failed_styles = {style for (style, _), prepared in cache.items() if prepared.get('error')}
+    for style, rows in style_groups:
+        if style not in failed_styles:
+            continue
+        failed = {key:value for key,value in cache.items() if key[0] == style and value.get('error')}
+        for key in failed:
+            cache.pop(key)
+        log(f'批次收尾重跑：{style}；仅重新处理首轮标签/选图失败的颜色')
+        ongoing({'organize_current_style':style, 'organize_stage':'批次收尾：重跑失败颜色'})
+        try:
+            refreshed = reexport(style, rows)
+            if refreshed:
+                current, roots = refreshed
+                reports = [r for r in reports if _text(r.get('输入款号')) != style] + current
+                packages.update(roots)
+        except (OSError, ShoeSelectionError, llm_gateway.LlmGatewayError) as exc:
+            log(f'[warn] 收尾重跑失败，保留已有图包：{style}：{exc}')
+            reports.append(_skipped_style_report_row(style, str(exc)))
+        finally:
+            for key,value in failed.items():
+                cache.setdefault(key, value)
+    changed_styles = set()
+    workers = min(8, max(1, int(kwargs.get('style_workers') or 8)))
+    # Each style owns its colors. Stage barriers separate independent review
+    # from repair; neither phase treats the initial acceptance as ground truth.
+    def repair_stage():
+        # Colors own separate selection contexts and file roots. Scheduling the
+        # pending colors together keeps later colors from waiting behind a slow
+        # sibling, while all model calls share the same request semaphore.
+        def work(item):
+            (style, color), prepared = item
+            slots = prepared.get('slots')
+            if not slots or not slots.get('_pending_slots'):
+                return None
+            before = {slot:_consensus_slot_value(slots,slot) for slot in ORDER}
+            log(f'批次补齐：{style}-{color}；按统一审核问题清单修复')
+            try:
+                updated = verify_packaged_selection(slots, recovery=True, repair_only=True)
+                prepared['slots'] = updated
+                prepared.pop('final_review_error', None)
+                if any(_consensus_slot_value(updated,slot) != name for slot,name in before.items()):
+                    return style
+            except (OSError, ShoeSelectionError, llm_gateway.LlmGatewayError) as exc:
+                prepared['final_review_error'] = str(exc)
+                log(f'[warn] 批次补齐未完成：{style}-{color}：{exc}')
+            return None
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for style in executor.map(work, list(cache.items())):
+                if style:
+                    changed_styles.add(style)
+
+    def export_changed():
+        nonlocal reports
+        for style, rows in style_groups:
+            if style not in changed_styles:
+                continue
+            try:
+                refreshed = reexport(style, rows)
+                if not refreshed:
+                    raise ShoeSelectionError('重导出未返回图包')
+                current, roots = refreshed
+                reports = [r for r in reports if _text(r.get('输入款号')) != style] + current
+                packages.update(roots)
+            except (OSError, ShoeSelectionError, llm_gateway.LlmGatewayError) as exc:
+                log(f'[warn] 收尾导出失败：{style}：{exc}')
+                reports.append(_skipped_style_report_row(style, str(exc)))
+        changed_styles.clear()
+
+    def exported_stage():
+        from core.shenhui_shoe_final_review import review_exports
+        from core.shenhui_shoe_board_review import review_style
+        board_groups = {}
+        legacy = []
+        for (style, color), prepared in cache.items():
+            slots = prepared.get('slots', {})
+            if slots.get('_sequential_context', {}).get('board_review'):
+                slots['_sequential_context']['export_source_paths'] = {
+                    name: str(entry['path']) for name, entry in prepared.get('entries_by_name', {}).items()
+                    if entry.get('path')}
+                color_rows = [r for r in reports if _text(r.get('输入款号')) == style
+                    and re.search(r'(?<!\d)' + re.escape(color) + r'(?!\d)', _text(r.get('颜色')))]
+                board_groups.setdefault(style, {})[color] = (slots, color_rows)
+            else:
+                legacy.append(((style, color), prepared))
+
+        def apply_review(item, reviewed=None):
+            (style, color), prepared = item
+            slots = prepared.get('slots', {})
+            if not slots.get('_sequential_context'):
+                return
+            color_rows = [r for r in reports if _text(r.get('输入款号')) == style
+                and re.search(r'(?<!\d)' + re.escape(color) + r'(?!\d)', _text(r.get('颜色')))]
+            rejected, records = reviewed if reviewed is not None else review_exports(slots, color_rows)
+            prepared['export_review'] = records
+            prepared['export_errors'] = rejected
+            prepared['export_rebuild'] = any(r.get('status') == 'export_invalid' for r in records)
+            prepared['review_unknown'] = {r.get('semantic',r.get('slot')):r.get('reason','')
+                                         for r in records if r.get('status') == 'review_unknown'}
+            outcomes = {}
+            for record in records:
+                semantic = record.get('semantic', record.get('slot'))
+                if semantic:
+                    status = record.get('status', 'accepted' if record.get('accepted') else 'source_invalid')
+                    severity = {'accepted':0, 'optional_absent':0, 'review_unknown':1,
+                                'export_invalid':2, 'source_missing':3, 'source_invalid':4}
+                    if severity.get(status, 1) >= severity.get(outcomes.get(semantic, 'accepted'), 0):
+                        outcomes[semantic] = status
+                if record.get('accepted') and record.get('review'):
+                    slots.setdefault('_sequential_audits', []).append(record['review'])
+                    for row in color_rows:
+                        if row.get('本地文件') == record['path']:
+                            row.update(_semantic_report_fields(slots,
+                                slot=row['规则槽位'], source_name=row.get('原文件名', '')))
+            pending_slots = slots.setdefault('_pending_slots', {})
+            slots['_invalid_sources'] = []
+            # A board that compared A/B/C can name the replacement candidate; the
+            # repair round then swaps that exact file instead of re-searching.
+            repair_choices = slots.setdefault('_repair_choice', {})
+            for record in records:
+                semantic = record.get('semantic', record.get('slot'))
+                if semantic and record.get('board_choice'):
+                    repair_choices[semantic] = record['board_choice']
+            for slot,status in outcomes.items():
+                if status in {'accepted','review_unknown','export_invalid'}:
+                    pending_slots.pop(slot, None)
+            for slot, reason in rejected.items():
+                status = outcomes.get(slot, 'source_invalid')
+                if slot in ORDER and status in {'source_invalid','source_missing'}:
+                    slots.setdefault('_pending_slots', {})[slot] = reason
+                    if status == 'source_invalid':
+                        slots['_invalid_sources'].append(slot)
+        def board_work(item):
+            style, colors = item
+            reviewed = review_style(colors)
+            for color, result in reviewed.items():
+                apply_review(((style, color), cache[(style, color)]), result)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            list(executor.map(board_work, board_groups.items()))
+            list(executor.map(apply_review, legacy))
+        for style, _ in style_groups:
+            members = [p for (item_style,_),p in cache.items() if item_style == style]
+            if members and all(not (p.get('error') or p.get('export_errors')
+                                    or p.get('slots',{}).get('_pending_slots')) for p in members):
+                ongoing({'organize_style_reviewed':style, 'organize_stage':'该款统一审核完成'})
+
+    # One logical reviewer sees actual files, originals and templates together.
+    # The repair worker receives its rejection list rather than auditing it again.
+    exported_stage()
+    for _round in range(2):
+        before = {(style, color): (dict(p.get('slots', {}).get('_pending_slots', {})),
+                   dict(p.get('slots', {}).get('_sequential_result', {}).get('selected', {})),
+                   dict(p.get('export_errors', {}))) for (style, color), p in cache.items()}
+        if not any(p.get('slots', {}).get('_pending_slots') or p.get('export_errors') for p in cache.values()):
+            break
+        approved_before = shoe_accepted_sources_snapshot(cache)
+        repair_stage()
+        changed_styles.update(style for (style, _), p in cache.items() if p.get('export_rebuild'))
+        export_changed()
+        exported_stage()
+        rolled_back = shoe_restore_approved_sources(cache, approved_before, log)
+        if rolled_back:
+            changed_styles.update(rolled_back)
+            export_changed()
+            exported_stage()
+        after = {(style, color): (dict(p.get('slots', {}).get('_pending_slots', {})),
+                  dict(p.get('slots', {}).get('_sequential_result', {}).get('selected', {})),
+                  dict(p.get('export_errors', {}))) for (style, color), p in cache.items()}
+        if before == after:
+            break
+    # A slot that stays empty after every repair round has no compliant original
+    # in this color. The business rule (2026-09-16) counts that as a correct
+    # delivery, but it must be stated explicitly instead of looking like a
+    # pipeline failure.
+    reported_missing = []
+    for (style, color), prepared in cache.items():
+        result = (prepared.get('slots') or {}).get('_sequential_result') or {}
+        for slot, reason in (result.get('proposal_missing') or {}).items():
+            if slot in (prepared.get('slots') or {}).get('_pending_slots', {}):
+                reported_missing.append({'style': style, 'color': color, 'slot': slot,
+                                         'reason': str(reason)[:200]})
+    missing_index = {(item['style'], item['color'], item['slot']) for item in reported_missing}
+
+    # Failed finished files remain evidence, outside the usable package folder.
+    for (style, color), prepared in cache.items():
+        for record in prepared.get('export_review', []):
+            if record['accepted']:
+                continue
+            source = Path(record['path'])
+            if source.is_file():
+                quarantine = '_unreviewed_exports' if record.get('status') == 'review_unknown' else '_unresolved_exports'
+                target = Path(kwargs['output_root']) / quarantine / style / color / source.name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                source.replace(target)
+            for row in reports:
+                if row.get('本地文件') == str(source):
+                    row['本地文件'] = ''
+                    slot = str(row.get('规则槽位') or '')
+                    # The quarantined file belongs to this (style, color) pair, so the
+                    # pending-slot index needs no colour parsing here.
+                    if (style, color, slot) in missing_index:
+                        row['处理动作'] = '报缺（无合规原图）'
+                        row['规则告警'] = ('该色组没有符合本图位姿势的合规原图，按「报缺」处理；'
+                                           '业务口径（2026-09-16）：报缺计为正确交付，需在结果表中特殊标明。原因：'
+                                           + str((prepared.get('slots', {}).get('_sequential_result', {})
+                                                  .get('proposal_missing') or {}).get(slot, ''))[:160])
+                    else:
+                        row['处理动作'] = '待补齐/人工核验'
+                        row['规则告警'] = record.get('reason', '成品审核未通过')
+    pending = {style for (style, _), p in cache.items()
+               if p.get('error') or p.get('final_review_error') or p.get('export_errors') or p.get('slots', {}).get('_pending_slots')}
+    pending.update(_text(r.get('输入款号')) for r in reports
+                   if r.get('处理动作') in {'失败款跳过', '失败款色跳过',
+                       '缺少源图已跳过', '待补齐/人工核验'})
+    for row in reports:
+        if _text(row.get('处理动作')) == '报缺（无合规原图）':
+            row['验收状态'] = '已报缺（无合规原图，计为正确交付）'
+        elif _text(row.get('输入款号')) in pending:
+            row['验收状态'] = '部分完成，待补齐/人工核验'
+        else:
+            row['验收状态'] = '程序复核完成，待逐图验收'
+    unresolved = [dict(style=style, color=color,
+                       slots=p.get('slots', {}).get('_pending_slots', {}), exports=p.get('export_errors', {}),
+                       review_unknown=p.get('review_unknown', {}),
+                       error=p.get('error') or p.get('final_review_error') or '')
+                  for (style, color), p in cache.items()
+                  if p.get('error') or p.get('final_review_error') or p.get('export_errors') or p.get('slots', {}).get('_pending_slots')]
+    Path(kwargs['output_root']).mkdir(parents=True, exist_ok=True)
+    Path(kwargs['output_root'], 'unresolved-selections.json').write_text(
+        json.dumps({'items':unresolved, 'reported_missing':reported_missing, 'report_issues':[
+            r for r in reports if r.get('处理动作') in {'失败款跳过', '失败款色跳过',
+                '缺少源图已跳过', '待补齐/人工核验'}]}, ensure_ascii=False, indent=2), encoding='utf-8')
+    if progress:
+        progress({**progress_state, 'organize_active':False, 'organize_current_style':'',
+                  'organize_current_color':'', 'organize_stage':
+                  '部分完成，待补齐/人工核验' if pending else '程序复核完成，待逐图验收'})
+    return reports, packages
