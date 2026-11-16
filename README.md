@@ -4,7 +4,7 @@
 
 Crawshrimp Harness 把抓虾桌面应用与 DeepSeek Harness（DSH）组合成一个本地优先的电商运营智能体。DSH Web 会话是唯一主界面；抓虾提供任务、Adapter、文件、浏览器 CDP、媒体、审批和审计能力。
 
-本仓库是独立的 Harness 开发线，不是上游 `crawshrimp` 发布仓的 README 镜像。当前桌面版本为 **0.4.12**，DSH 依赖族精确锁定在 `@deepseek-ai/dsh@0.2.1-rc.2` 与 `@xmanrui/dsh-im@4.11.0`；升级时必须重新验证 Web Profile/RPC、插件和 hash 类名。
+本仓库是独立的 Harness 开发线，不是上游 `crawshrimp` 发布仓的 README 镜像。当前桌面版本为 **0.4.13**，DSH 依赖族精确锁定在 `@deepseek-ai/dsh@0.2.1-rc.2` 与 `@xmanrui/dsh-im@4.11.0`；升级时必须重新验证 Web Profile/RPC、插件和 hash 类名。
 
 ## 合作交流与赞助
 
@@ -45,6 +45,15 @@ Harness 面向个人本地使用，本地功能免登录。个人账号通过 Mo
 
 仅展示最近三个版本；历史版本见 [GitHub Releases](https://github.com/howtimeschange/crawshrimp-harness/releases)。
 
+### v0.4.13
+
+- 同步森马、迷你巴拉及上新、视频、搜推脚本，完善素材下载、尺码表和图片包生成。
+- 巴拉鞋品专属模型与独立推理运行时按需下载并校验，支持进度、取消和重启后复用。
+- 完善发布回执恢复、素材去重、标签与打包复核、天猫换脸提交校验，以及 Excel 表头兼容。
+- 修复 Windows 恢复会话时的控制台启动失败，兼容旧版引导配置并保留诊断信息。
+
+完整说明见 [v0.4.13 发布说明](release-notes/v0.4.13.md)。
+
 ### v0.4.12
 
 - 兑换或账号权益变化后自动刷新官方文字与生图模型，无需重新登录；恢复生图表单中的可用模型及兼容参数。
@@ -62,14 +71,6 @@ Harness 面向个人本地使用，本地功能免登录。个人账号通过 Mo
 - 正式版自动同步 COS，完整验证成功后清理旧安装包；GitHub 保留历史版本。
 
 完整说明见 [v0.4.11 发布说明](release-notes/v0.4.11.md)。
-
-### v0.4.10
-
-- 修复应用恢复焦点时后台检查版本与下载确认冲突，导致误报“当前没有可下载的桌面更新”的问题。
-- 自动检查保留已发现版本、下载进度、任务等待与安装准备状态；下载前仍可手动检查最新版本。
-- 补充更新竞态、下载进度与安装状态回归。更新继续沿用已有安装路径和用户数据目录。
-
-完整说明见 [v0.4.10 发布说明](release-notes/v0.4.10.md)。
 
 发布渠道为本仓库 GitHub Release，提供 macOS Apple Silicon / Intel 和 Windows x64 安装包及自动更新元数据；国内优先腾讯云 COS，海外优先 GitHub。
 

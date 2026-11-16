@@ -197,3 +197,10 @@ Rollback evidence:
 - Local checks: test collection verified; 126 Node tests passed; 177 Python tests plus 4 subtests passed; Vite production build passed (existing chunk-size warning).
 - Full app suite: 1203 passed, 3 skipped, 0 failed after adding the existing accountRuntimeIdentity import to the onboarding VM fixture. Initial main/tag CI failed on the same two fixture assertions before any release was created.
 - Main/tag CI results after fixture correction: PENDING; signed installer/update acceptance remains PENDING until separately verified.
+
+## v0.4.13 Version Decision (2026-11-16)
+
+- Target: `v0.4.13`, explicitly requested by the release owner.
+- Classification: `PATCH`, covering upstream adapter synchronization, on-demand Bala specialist runtime installation and Windows console bootstrap recovery.
+- Source baseline: `1901e5340e835a05291904ee3215225afb9b7ae9`, local main ahead of origin/main by three commits.
+- CI build, installer publication and update metadata readback: `PENDING`.
