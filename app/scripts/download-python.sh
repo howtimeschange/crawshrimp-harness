@@ -217,10 +217,10 @@ target_pip_platform() {
       echo "win_amd64"
       ;;
     mac-arm64)
-      echo "macosx_11_0_arm64"
+      echo "macosx_13_0_arm64"
       ;;
     mac-x64)
-      echo "macosx_11_0_x86_64"
+      echo "macosx_13_0_x86_64"
       ;;
     *)
       return 1

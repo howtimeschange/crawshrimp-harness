@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PLATFORMS = {"mac-arm64": "macosx_11_0_arm64", "mac-x64": "macosx_10_15_x86_64", "win-x64": "win_amd64"}
+PLATFORMS = {"mac-arm64": "macosx_13_0_arm64", "mac-x64": "macosx_13_0_x86_64", "win-x64": "win_amd64"}
 
 
 def main():
