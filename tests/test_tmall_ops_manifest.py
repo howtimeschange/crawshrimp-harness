@@ -28,7 +28,7 @@ class TmallOpsManifestTests(unittest.TestCase):
         output_columns = task["output"][0]["columns"]
 
         self.assertEqual(manifest["id"], "tmall-ops-assistant")
-        self.assertEqual(manifest["version"], "0.1.5")
+        self.assertEqual(manifest["version"], "0.1.6")
         self.assertNotIn(
             "tmall_video_copy_generate",
             {item["id"] for item in manifest["tasks"]},

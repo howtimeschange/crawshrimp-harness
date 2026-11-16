@@ -167,6 +167,7 @@ def test_concurrent_face_swaps_append_and_keep_approval_during_generation(tmp_pa
         return {'id': threading.current_thread().name, 'updated_at': 'now', 'status': 'pending'}
     with patch.object(bala_ai_model_library, 'load_model_library', return_value={'items': [{'id': 'm'}]}), \
          patch.object(bala_ai_model_library, 'resolve_model_image_path', return_value=source), \
+         patch.object(m, 'resolve_one_xm_settings', return_value={'2k': 'unit-key', '4k': 'unit-key-4k'}), \
          patch.object(m, 'generate_approval_asset_for_item', side_effect=generated):
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = [executor.submit(m.face_swap_approval_asset, copy.deepcopy(batch), 'source', 'm') for _ in range(2)]
