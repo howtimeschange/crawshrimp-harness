@@ -162,6 +162,7 @@
           <SettingsPage
             v-if="settingsMountedOnce"
             v-show="currentView === 'settings'"
+            :active="currentView === 'settings'"
             :status="status"
             :focus-panel-id="focusSettingsPanelId"
             :focus-request-id="focusSettingsRequestId"

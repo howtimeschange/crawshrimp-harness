@@ -621,14 +621,15 @@
           </div>
 
           <div v-if="imSettingsUrl" class="im-settings-shell">
-            <div v-if="!imSettingsReady" class="im-settings-loading" role="status" aria-live="polite">
-              <span class="im-settings-loading-spinner" aria-hidden="true"></span>
-              <strong>正在载入机器人渠道</strong>
-              <p>正在准备接入页面，请稍候…</p>
+            <div v-if="!imSettingsReady" class="im-settings-loading" :role="imSettingsError ? 'alert' : 'status'" aria-live="polite">
+              <span v-if="!imSettingsError" class="im-settings-loading-spinner" aria-hidden="true"></span>
+              <strong>{{ imSettingsError ? '暂时无法打开机器人渠道' : '正在载入机器人渠道' }}</strong>
+              <p>{{ imSettingsError || '正在准备接入页面，请稍候…' }}</p>
+              <button v-if="imSettingsError" class="btn-orange" type="button" @click="retryImSettings">重新加载</button>
             </div>
             <iframe
               ref="imSettingsFrame"
-              :key="imSettingsUrl"
+              :key="`${imSettingsUrl}:${imSettingsReload}`"
               :class="['im-settings-frame', { 'is-ready': imSettingsReady }]"
               :src="imSettingsUrl"
               title="抓虾 IM机器人设置"
@@ -820,6 +821,7 @@ import crawshrimpLogoUrl from '../../../assets/branding/crawshrimp-avatar-C1.png
 import { useNativeDialog } from '../composables/useNativeDialog'
 import { MODELJETTY_LLM_PRESETS } from '../utils/modeljettyPresets.mjs'
 import { requestArchivedSessions } from '../utils/archivedSessions.mjs'
+import { adaptivePoll } from '../utils/adaptivePoll.js'
 import { IconArrowLeft, IconSearch, IconUser, IconGauge, IconPalette, IconBell, IconPlug, IconDatabase, IconArchive, IconRefresh, IconRobot, IconMessage, IconPhoto, IconVideo, IconShield, IconCode, IconCloud, IconInfoCircle, IconX, IconPuzzle } from '@tabler/icons-vue'
 import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import UsagePanel from '../components/UsagePanel.vue'
@@ -868,6 +870,7 @@ import semirLogoUrl from '../assets/llm-providers/semir-logo.png?inline'
 const OFFICIAL_RELEASE_URL = 'https://github.com/howtimeschange/crawshrimp-harness/releases/latest'
 
 const props = defineProps([
+  'active',
   'status',
   'focusPanelId',
   'focusRequestId',
@@ -884,6 +887,9 @@ const agentNotice = ref('')
 const agentNoticeOk = ref(true)
 const imSettingsFrame = ref(null)
 const imSettingsReady = ref(false)
+const imSettingsError = ref('')
+const imSettingsReload = ref(0)
+let agentRuntimeReadSeq = 0
 const agentRuntimeLabel = computed(() => {
   const state = String(agentRuntime.value?.state || '')
   if (state === 'ready') return '运行正常'
@@ -954,12 +960,21 @@ function onImSettingsMessage(event) {
   if (event.data?.__crawshrimp === 'workspace-ready') onImSettingsFrameLoad()
 }
 
-async function refreshAgentRuntime() {
+async function refreshAgentRuntime({ preserveOnError = false } = {}) {
+  const revision = ++agentRuntimeReadSeq
   try {
-    agentRuntime.value = await window.cs.agentApi('GET', '/agent/runtime')
+    const runtime = await window.cs.agentApi('GET', '/agent/runtime')
+    if (revision === agentRuntimeReadSeq) agentRuntime.value = runtime
   } catch {
+    if (revision !== agentRuntimeReadSeq || (preserveOnError && imSettingsUrl.value)) return
     agentRuntime.value = { state: 'offline', generation: 0, model: '', web_origin: '', web_verified: false, api_key_configured: false, error: '后端不可达' }
   }
+}
+
+function retryImSettings() {
+  imSettingsReady.value = false
+  imSettingsReload.value += 1
+  void refreshAgentRuntime({ preserveOnError: true })
 }
 
 async function onAgentRestartRuntime() {
@@ -2073,10 +2088,10 @@ onMounted(async () => {
   window.addEventListener('message', onImSettingsMessage)
   await load()
   if (activePanelId.value === 'storage-archived') await loadArchivedSessions()
-  if (activePanelId.value === 'im-bots') await refreshAgentRuntime()
 })
 
 onBeforeUnmount(() => {
+  agentRuntimeReadSeq += 1
   managedProvidersReadSeq += 1
   stopAccountUpdates?.()
   window.removeEventListener('message', onImSettingsMessage)
@@ -2093,7 +2108,6 @@ watch(activePanelId, panelId => {
   if (panelId === 'im-bots') {
     imSettingsPanelMountedOnce.value = true
     if (!imSettingsFrame.value) imSettingsReady.value = false
-    refreshAgentRuntime()
   }
   if (panelId === 'ai-agent') refreshAgentRuntime()
 })
@@ -2124,7 +2138,24 @@ watch(() => [props.effectiveTheme, props.themePreference], () => {
 
 watch(imSettingsUrl, () => {
   imSettingsReady.value = false
-})
+}, { flush: 'sync' })
+
+// The retained settings frame must follow runtime replacements, including
+// the account-model restart which can interrupt its initial ready handshake.
+const imSettingsActive = computed(() => props.active !== false && activePanelId.value === 'im-bots')
+watch(imSettingsActive, (active, _old, onCleanup) => {
+  if (!active) return
+  onCleanup(adaptivePoll(() => refreshAgentRuntime({ preserveOnError: true }), { immediate: true }))
+}, { immediate: true })
+
+watch([imSettingsActive, imSettingsUrl, imSettingsReload, imSettingsReady], ([active, url, _reload, ready], _old, onCleanup) => {
+  imSettingsError.value = ''
+  if (!active || !url || ready) return
+  const timer = setTimeout(() => {
+    imSettingsError.value = '机器人页面加载超时，请重试。'
+  }, 30000)
+  onCleanup(() => clearTimeout(timer))
+}, { immediate: true })
 </script>
 
 <style scoped src="./settingsPanel.css"></style>
