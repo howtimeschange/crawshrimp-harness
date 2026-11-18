@@ -4,7 +4,7 @@
 
 Crawshrimp Harness 把抓虾桌面应用与 DeepSeek Harness（DSH）组合成一个本地优先的电商运营智能体。DSH Web 会话是唯一主界面；抓虾提供任务、Adapter、文件、浏览器 CDP、媒体、审批和审计能力。
 
-本仓库是独立的 Harness 开发线，不是上游 `crawshrimp` 发布仓的 README 镜像。当前桌面版本为 **0.4.13**，DSH 依赖族精确锁定在 `@deepseek-ai/dsh@0.2.1-rc.2` 与 `@xmanrui/dsh-im@4.11.0`；升级时必须重新验证 Web Profile/RPC、插件和 hash 类名。
+本仓库独立维护 Harness 桌面应用，当前源码版本为 **0.4.14**。DSH 依赖锁定在 `@deepseek-ai/dsh@0.2.1-rc.2` 与 `@xmanrui/dsh-im@4.11.0`。升级依赖时需重新验证 Web Profile/RPC、插件和 hash 类名。
 
 ## 合作交流与赞助
 
@@ -43,7 +43,15 @@ Harness 面向个人本地使用，本地功能免登录。个人账号通过 Mo
 
 ## 版本记录
 
-仅展示最近三个版本；历史版本见 [GitHub Releases](https://github.com/howtimeschange/crawshrimp-harness/releases)。
+这里展示最近三个版本。已发布的安装包和历史版本见 [GitHub Releases](https://github.com/howtimeschange/crawshrimp-harness/releases)。
+
+### v0.4.14
+
+- 机器人接入页持续断线时会提示重连。同一服务恢复后，自动或手动重连都保留未保存的表单。
+- 后台服务重启后，即使复用原端口，接入页也会在认证完成后重新载入。服务已停止时可从页面直接重启。
+- 恢复 Windows 应用图标的全部 10 档尺寸，改善不同缩放比例下的图标显示。
+
+完整说明见 [v0.4.14 更新说明](release-notes/v0.4.14.md)。
 
 ### v0.4.13
 
@@ -62,15 +70,6 @@ Harness 面向个人本地使用，本地功能免登录。个人账号通过 Mo
 - 增加快照用量提示与清理后重试，明确区分当前原文件和历史副本；过滤 Office 过程图片，清理过期过程缓存并改善资源列表布局。
 
 完整说明见 [v0.4.12 发布说明](release-notes/v0.4.12.md)。
-
-### v0.4.11
-
-- 国内 IP 优先腾讯云 COS、海外 IP 优先 GitHub；检查和下载失败自动切换备用源，并校验同一版本的 SHA512。
-- 更新说明跟随下载源读取，固定到待下载版本，支持备用源回退。
-- 未登录时，各入口先进入油画欢迎页，再打开 ModelJetty 授权；登录成功回原页面并保留会话与草稿，老用户不再重复进入首次引导完成页。
-- 正式版自动同步 COS，完整验证成功后清理旧安装包；GitHub 保留历史版本。
-
-完整说明见 [v0.4.11 发布说明](release-notes/v0.4.11.md)。
 
 发布渠道为本仓库 GitHub Release，提供 macOS Apple Silicon / Intel 和 Windows x64 安装包及自动更新元数据；国内优先腾讯云 COS，海外优先 GitHub。
 

@@ -204,3 +204,9 @@ Rollback evidence:
 - Classification: `PATCH`, covering upstream adapter synchronization, on-demand Bala specialist runtime installation and Windows console bootstrap recovery.
 - Source baseline: `1901e5340e835a05291904ee3215225afb9b7ae9`, local main ahead of origin/main by three commits.
 - CI build, installer publication and update metadata readback: `PENDING`.
+
+## v0.4.14 Version Decision (2026-11-18)
+
+- Target `v0.4.14`, following the published `v0.4.13`.
+- Classification is `PATCH`. This update repairs existing IM reconnection and editing behavior, restores Windows icon sizes and maintains release materials.
+- Source commits on local main are `7274e5e8b` and `1bd4650f7`. Pushing the version update to main triggers the desktop CI build.
