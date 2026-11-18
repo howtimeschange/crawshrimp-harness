@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export the approved C1 logo, with a native rounded macOS silhouette.
+"""Export the approved C1 logo with the rounded app icon silhouette.
 
 Run from the repository root with venv/bin/python3 app/scripts/export-brand-icons.py.
 Pillow and macOS iconutil are required. This does not build or publish the app.
@@ -25,20 +25,16 @@ def main():
             raise ValueError("Unexpected original dimensions")
         image = original.convert("RGBA")
 
-    # UI and Windows keep the entire square composition, including its dark background.
-    png = image.resize((1024, 1024), Image.Resampling.LANCZOS)
-    png.save(ASSETS / "icon.png")
-    png.save(ASSETS / "icon.ico", sizes=[(size, size) for size in ICO_SIZES])
-
-    # Supply the macOS silhouette ourselves. An opaque square inside the
-    # transparent margin is treated as a legacy icon and gains a light bezel.
-    # Use the approved source pixels and clip only the rounded outer corners.
+    # Use the approved artwork with transparent safety space and rounded corners.
     art = image.resize((824, 824), Image.Resampling.LANCZOS)
     mask = Image.new("L", (824 * 4, 824 * 4), 0)
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, 824 * 4 - 1, 824 * 4 - 1), radius=184 * 4, fill=255)
     art.putalpha(mask.resize((824, 824), Image.Resampling.LANCZOS))
-    mac = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
-    mac.alpha_composite(art, (100, 100))
+    icon = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
+    icon.alpha_composite(art, (100, 100))
+    icon.save(ASSETS / "icon.png")
+    icon.save(ASSETS / "icon.ico", sizes=[(size, size) for size in ICO_SIZES])
+
     with tempfile.TemporaryDirectory(prefix="crawshrimp-C1-icons-") as temporary:
         iconset = Path(temporary) / "C1.iconset"
         iconset.mkdir()
@@ -46,7 +42,7 @@ def main():
             for scale in (1, 2):
                 pixels = points * scale
                 suffix = "@2x" if scale == 2 else ""
-                mac.resize((pixels, pixels), Image.Resampling.LANCZOS).save(
+                icon.resize((pixels, pixels), Image.Resampling.LANCZOS).save(
                     iconset / f"icon_{points}x{points}{suffix}.png")
         subprocess.run(["iconutil", "-c", "icns", str(iconset),
                         "-o", str(ASSETS / "icon.icns")], check=True)

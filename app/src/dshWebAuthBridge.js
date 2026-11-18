@@ -28,7 +28,10 @@ function exchangeLaunchCookie(url) {
       }
       resolve({ cookie: cookie.split(';', 1)[0], expiresAt: Date.now() + maxAge * 1000 })
     })
-    req.setTimeout(10000, () => req.destroy(new Error('智能体页面认证超时')))
+    req.setTimeout(10000, () => {
+      reject(new Error('智能体页面认证超时'))
+      req.destroy()
+    })
     // Do not propagate errors that could contain the token-bearing URL.
     req.on('error', () => reject(new Error('无法连接智能体页面认证服务')))
   })
@@ -60,9 +63,10 @@ function isTrustedRequest(details, webContents, origin, isTrustedRendererUrl) {
 }
 
 function createDshWebAuthBridge({ session, getWebContents, isTrustedRendererUrl, exchange = exchangeLaunchCookie }) {
+  let runtime = null
+  let nextInstance = 0
   let current = null
   let pending = null
-  let revision = 0
   let disposed = false
   const listener = (details, callback) => {
     if (!current || current.expiresAt <= Date.now() ||
@@ -115,31 +119,33 @@ function createDshWebAuthBridge({ session, getWebContents, isTrustedRendererUrl,
       if (disposed) throw new Error('智能体窗口已关闭')
       const value = snapshot?.state === 'ready' ? snapshot.web_launch_url : ''
       if (!value) {
-        revision++
-        current = pending = null
+        runtime = current = pending = null
         return snapshot
       }
       const url = parseLaunchUrl(value)
-      if (!current || current.launchUrl !== value || current.expiresAt - Date.now() < 60000) {
-        if (!pending || pending.launchUrl !== value) {
-          const attempt = ++revision
-          current = null
-          const promise = exchange(url).then(auth => {
-            if (attempt !== revision || disposed) throw new Error('智能体服务已切换，请重试')
-            current = { ...auth, launchUrl: value, origin: url.origin }
-          }).finally(() => { if (pending?.promise === promise) pending = null })
-          pending = { launchUrl: value, promise }
-        }
-        await pending.promise
+      if (runtime?.launchUrl !== value) {
+        runtime = { launchUrl: value, instance: ++nextInstance }
+        current = pending = null
       }
+      const requestedRuntime = runtime
+      if (!current || current.expiresAt - Date.now() < 60000) {
+        if (!pending) {
+          const promise = exchange(url).then(auth => {
+            if (requestedRuntime !== runtime) throw new Error('智能体服务已切换，请重试')
+            current = { ...auth, origin: url.origin }
+          }).finally(() => { if (pending === promise) pending = null })
+          pending = promise
+        }
+        await pending
+      }
+      if (requestedRuntime !== runtime) throw new Error('智能体服务已切换，请重试')
       // The renderer only needs a clean URL. Keep the browser credential and
       // launch token in the trusted main process, scoped to this runtime/window.
-      return { ...snapshot, web_launch_url: url.origin + '/' }
+      return { ...snapshot, web_launch_url: url.origin + '/', web_runtime_instance: requestedRuntime.instance }
     },
     dispose() {
       disposed = true
-      revision++
-      current = pending = null
+      runtime = current = pending = null
       session.webRequest.onBeforeSendHeaders(null)
     },
   }

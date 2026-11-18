@@ -18,7 +18,7 @@ G01–G06 已修复并完成相关回归。G07（tldraw 许可提示）按用户
 
 ## 本轮业务执行
 
-使用原开发数据目录 `/private/tmp/crawshrimp-harness-main-dev-20260907/runtime-data`，前端5173、核心18768、DSH19069。沿用报告测试目录和款号，没有发送IM消息或新增自动化。
+使用独立本地 QA 工作区，沿用原报告的业务测试样本。
 
 | run | 场景 | 实际结果 |
 |---|---|---|
@@ -28,9 +28,9 @@ G01–G06 已修复并完成相关回归。G07（tldraw 许可提示）按用户
 | 18 | 即时停止 | stopped，0记录、无输出；客户端空结果 |
 | 19 | 停止后混合正常/无匹配重跑 | done，3条记录：下载2张，未匹配1个款号；ZIP+Excel |
 
-本轮复现导致任务 `9ef61bca9d6d47d3810ebada8519ead2` 被旧自动保存持久化为 running。确认其空Prompt、没有生成run后，通过本地API单独恢复为draft，未删除记录。修复后新测试任务 `caeffe9b03b74366a44d2933e40685c2` 同样为draft。
+旧版自动保存曾把一个空 Prompt 任务记录为 running。核对未产生运行后，通过本地 API 恢复为 draft。修复后的新测试任务保持 draft。
 
-图片保存于 `/private/tmp/crawshrimp-walkthrough-fix/download-after`：6,970,676及5,718,031 bytes，均完整解码2880×2880。完整SHA、测试任务状态和本轮Excel内容见 [只读证据](qa-2026-09-10-fixes/evidence.json)。可用 [采集脚本](qa-2026-09-10-fixes/collect_evidence.py) 重读。
+两张 2880 × 2880 PNG 均完整解码。匹配数、下载数和图片解码结果见 [只读证据](qa-2026-09-10-fixes/evidence.json)，可用 [采集脚本](qa-2026-09-10-fixes/collect_evidence.py) 重新统计。
 
 ## 自动验证与交付边界
 

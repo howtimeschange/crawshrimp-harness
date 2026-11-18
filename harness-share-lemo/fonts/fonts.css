@@ -1,0 +1,49 @@
+@font-face {
+  font-family: 'NotoSC';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(./NotoSC-0.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'NotoSC';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(./NotoSC-1.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(./Inter-0.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(./Inter-1.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(./Inter-2.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url(./Inter-3.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'JBMono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(./JBMono-0.ttf) format('truetype');
+}

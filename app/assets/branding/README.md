@@ -14,11 +14,11 @@ Re-export on macOS from the repository root:
 venv/bin/python3 app/scripts/export-brand-icons.py
 ```
 
-- `../icon.png`: 1024 × 1024 RGBA, full composition for the existing UI imports.
-- `../icon.icns`: all ten standard 16–512 pt/1×–2× representations (16–1024 px). The approved artwork occupies 824 × 824 px on a 1024 px transparent canvas, centered with 100 px outer safety space. A rounded outer-corner mask gives the artwork the native macOS icon silhouette without a separate light bezel.
-- `../icon.ico`: 16, 20, 24, 32, 40, 48, 64, 96, 128, 256 px RGBA representations, full composition.
+The approved artwork occupies 824 × 824 px on a 1024 px transparent canvas, centered with 100 px of outer space and a 184 px corner radius.
 
-Only format, size, external safety space and the macOS outer-corner mask change. No recoloring, redrawing, or new text is applied. The existing `app/build.yml` and renderer imports consume these assets. Exporting does not package, sign, install, commit, push, or release the application.
+- `../icon.png` is the 1024 × 1024 RGBA image used by the renderer.
+- `../icon.icns` contains all ten standard 16–512 pt representations at 1× and 2× (16–1024 px).
+- `../icon.ico` contains 16, 20, 24, 32, 40, 48, 64, 96, 128 and 256 px RGBA representations for Windows.
 
 ## Transparent in-app mark
 

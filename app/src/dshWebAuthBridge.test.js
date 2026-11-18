@@ -27,7 +27,9 @@ function fixture(exchange = async () => ({ cookie: 'dsh-auth-test=credential', e
 
 test('authenticates the shell iframe, API and websocket without exposing the launch token', async () => {
   const f = fixture()
-  assert.deepEqual(await f.bridge.prepare(snapshot), { state: 'ready', web_launch_url: 'http://127.0.0.1:19066/' })
+  assert.deepEqual(await f.bridge.prepare(snapshot), {
+    state: 'ready', web_launch_url: 'http://127.0.0.1:19066/', web_runtime_instance: 1,
+  })
   for (const request of [{ resourceType: 'subFrame' }, {}, { resourceType: 'webSocket', url: 'ws://127.0.0.1:19066/events' }]) {
     assert.equal(f.request(request).requestHeaders.Cookie, 'dsh-auth-test=credential')
   }
@@ -49,13 +51,33 @@ test('never supplies credentials to other windows, ports, hosts, top-level navig
 test('coalesces exchanges and removes old credentials when the runtime changes or stops', async () => {
   let calls = 0
   const f = fixture(async () => { calls++; return { cookie: `dsh-auth-test=value${calls}`, expiresAt: Date.now() + 120000 } })
-  await Promise.all([f.bridge.prepare(snapshot), f.bridge.prepare(snapshot)])
-  await f.bridge.prepare(snapshot)
+  const [first, concurrent] = await Promise.all([f.bridge.prepare(snapshot), f.bridge.prepare(snapshot)])
+  assert.equal(concurrent.web_runtime_instance, first.web_runtime_instance)
+  assert.equal((await f.bridge.prepare(snapshot)).web_runtime_instance, first.web_runtime_instance)
   assert.equal(calls, 1)
-  await f.bridge.prepare({ ...snapshot, web_launch_url: launch.replace('test-token', 'next-token') })
+  const nextSnapshot = { ...snapshot, web_launch_url: launch.replace('test-token', 'next-token') }
+  const replacement = await f.bridge.prepare(nextSnapshot)
+  assert.equal(replacement.web_launch_url, first.web_launch_url)
+  assert.notEqual(replacement.web_runtime_instance, first.web_runtime_instance)
   assert.equal(f.request().requestHeaders.Cookie, 'dsh-auth-test=value2')
   await f.bridge.prepare({ state: 'stopped' })
   assert.deepEqual(f.request(), {})
+  assert.notEqual((await f.bridge.prepare(nextSnapshot)).web_runtime_instance, replacement.web_runtime_instance)
+})
+
+test('renewing the current cookie keeps the runtime instance and the valid cookie during exchange', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 0 })
+  let completeRenewal
+  const auth = { cookie: 'dsh-auth-test=old', expiresAt: 120000 }
+  const f = fixture(async () => Date.now() === 0
+    ? auth : new Promise(resolve => { completeRenewal = resolve }))
+  const first = await f.bridge.prepare(snapshot)
+  t.mock.timers.tick(61000)
+  const renewal = f.bridge.prepare(snapshot)
+  assert.equal(f.request().requestHeaders.Cookie, auth.cookie)
+  completeRenewal({ cookie: 'dsh-auth-test=new', expiresAt: Date.now() + 120000 })
+  assert.equal((await renewal).web_runtime_instance, first.web_runtime_instance)
+  assert.equal(f.request().requestHeaders.Cookie, 'dsh-auth-test=new')
 })
 
 test('a late exchange cannot re-enable credentials after stop or disposal', async () => {

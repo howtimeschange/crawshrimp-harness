@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>抓虾 Harness 宣传片</title>
+<style>
+
+:root{
+  --orange:#FF6B2B;--orange-text:#FF8B5F;--orange-bg:rgba(255,107,43,.12);
+  --bg:#141418;--bg2:#1c1c22;--bg3:#242430;--bg4:#292932;
+  --border:#2e2e3a;--border-strong:#484858;
+  --text:#e2e0f0;--text2:#aaa8bd;--text3:#8e8ca4;
+  --green:#3ecf8e;--red:#ff5d6c;--yellow:#f5c451;--blue:#5aa9ff;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px;overflow:hidden;background:#0d0d10}
+body{font-family:Inter,'Noto Sans CJK SC',sans-serif;color:var(--text);-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+#stage{position:absolute;inset:0;overflow:hidden;background:radial-gradient(1200px 800px at 50% 45%,#1a1a20 0%,#0d0d10 70%)}
+.abs{position:absolute}
+.hidden{opacity:0}
+/* grid backdrop */
+#grid{position:absolute;inset:-200px;background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);background-size:64px 64px}
+#glow{position:absolute;left:50%;top:50%;width:1400px;height:1400px;margin:-700px 0 0 -700px;border-radius:50%;background:radial-gradient(circle,rgba(255,107,43,.20) 0%,rgba(255,107,43,0) 60%)}
+
+/* ===== S1 chaos ===== */
+.chip{position:absolute;left:0;top:0;transform-origin:50% 50%;padding:14px 22px;border-radius:12px;background:#1f1f27;border:1px solid var(--border);font-size:24px;font-weight:500;color:var(--text2);white-space:nowrap;display:flex;align-items:center;gap:12px;box-shadow:0 20px 40px rgba(0,0,0,.35)}
+.chip i{width:10px;height:10px;border-radius:50%;background:var(--text3);display:inline-block}
+.chip b{font-weight:500;color:var(--text3);font-size:18px}
+.bigline{position:absolute;left:0;right:0;text-align:center;font-weight:700;letter-spacing:-.01em}
+#h1{top:430px;font-size:88px;color:#fff}
+#h2{top:560px;font-size:40px;color:var(--text2);font-weight:500;letter-spacing:.08em}
+#h2 span{color:var(--orange-text)}
+
+/* ===== S2 logo ===== */
+#logoWrap{position:absolute;left:960px;top:430px;width:0;height:0}
+#logo{position:absolute;width:300px;height:300px;left:-150px;top:-150px;border-radius:64px;box-shadow:0 30px 80px rgba(0,0,0,.55)}
+#ring{position:absolute;left:-200px;top:-200px;width:400px;height:400px;border-radius:50%;border:2px solid var(--orange)}
+#title{top:640px;font-size:96px;color:#fff;font-weight:800;letter-spacing:-.02em}
+#title span{color:var(--orange)}
+#subtitle{top:775px;font-size:36px;color:var(--text2);font-weight:500;letter-spacing:.12em}
+
+/* ===== captions ===== */
+#cap{position:absolute;left:150px;top:40px;height:84px;display:flex;align-items:center;gap:20px;z-index:60;padding:0 30px 0 22px;border-radius:20px;background:rgba(16,16,20,.82);border:1px solid rgba(255,255,255,.08);box-shadow:0 20px 60px rgba(0,0,0,.5)}
+#capNum{font:600 22px Inter;color:var(--orange);border:1.5px solid var(--orange);border-radius:999px;padding:6px 14px}
+#capText{font-size:44px;font-weight:700;color:#fff;letter-spacing:.01em;white-space:nowrap}
+#capText em{font-style:normal;color:var(--orange)}
+
+/* ===== app window ===== */
+#cam{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0}
+#win{position:absolute;left:180px;top:150px;width:1560px;height:880px;border-radius:14px;background:var(--bg);border:1px solid #33333f;box-shadow:0 60px 160px rgba(0,0,0,.6),0 0 0 1px rgba(0,0,0,.4);overflow:hidden}
+#tbar{height:38px;background:#18181d;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 14px;gap:10px;font-size:14px;color:var(--text2)}
+#tbar img{width:18px;height:18px;border-radius:4px}
+.dots{display:flex;gap:8px;margin-right:8px}.dots i{width:12px;height:12px;border-radius:50%;display:block}
+#side{position:absolute;left:0;top:38px;bottom:0;width:64px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding-top:14px;gap:10px}
+.sbtn{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--text2)}
+.sbtn svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.sbtn.on{background:var(--orange-bg);color:var(--orange-text)}
+.sbtn.brand img{width:28px;height:28px;border-radius:7px}
+.ssep{width:28px;height:1px;background:var(--border);margin:4px 0}
+#main{position:absolute;left:64px;top:38px;right:0;bottom:0}
+/* chat view */
+#chat{position:absolute;inset:0}
+#chead{height:54px;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 28px;font-size:16px;font-weight:600;gap:12px}
+#chead .pill{font-size:12px;font-weight:500;color:var(--text2);background:var(--bg3);border-radius:999px;padding:3px 10px}
+#feed{position:absolute;left:0;top:54px;right:380px;bottom:150px;padding:30px 60px 0 70px}
+.ubub{margin-left:auto;width:max-content;max-width:640px;background:var(--orange-bg);color:#ffd9c7;border:1px solid rgba(255,107,43,.25);padding:14px 18px;border-radius:14px 14px 4px 14px;font-size:17px;line-height:1.5}
+.think{margin-top:26px;font-size:14px;color:var(--text3);display:flex;align-items:center;gap:8px}
+.steps{margin-top:16px;display:flex;flex-direction:column;gap:10px}
+.step{display:flex;align-items:center;gap:14px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:13px 16px;font-size:15.5px;width:640px}
+.step .st{width:22px;height:22px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;position:relative}
+.step .st .dot{width:10px;height:10px;border-radius:50%;background:var(--orange)}
+.step .st .halo{position:absolute;inset:0;border-radius:50%;border:2px solid var(--orange)}
+.step .st svg{width:22px;height:22px;display:none}
+.step.done .st .dot,.step.done .st .halo{display:none}
+.step.done .st svg{display:block}
+.step .tag{font-size:12.5px;color:var(--text3);background:var(--bg3);border-radius:6px;padding:2px 8px;font-family:Inter,'Noto Sans CJK SC'}
+.step .meta{margin-left:auto;font-size:13px;color:var(--text3)}
+.step.done .meta{color:var(--green)}
+.areply{margin-top:22px;font-size:17px;line-height:1.65;width:640px;color:var(--text)}
+.areply b{color:var(--orange-text);font-weight:600}
+#composer{position:absolute;left:70px;right:440px;bottom:34px;height:104px;background:var(--bg2);border:1.5px solid var(--border);border-radius:16px;padding:16px 18px}
+#composer.focus{border-color:var(--orange)}
+#ctext{font-size:17px;color:var(--text);height:26px;white-space:nowrap}
+#ctext.ph{color:var(--text3)}
+#caret{display:inline-block;width:2px;height:20px;background:var(--orange);vertical-align:-3px;margin-left:1px}
+#crow{position:absolute;left:18px;right:18px;bottom:12px;display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text2)}
+#crow .model{margin-left:auto;color:var(--text2)}
+#send{width:38px;height:38px;border-radius:50%;background:var(--orange);display:flex;align-items:center;justify-content:center}
+#send svg{width:18px;height:18px;stroke:#fff;fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.cbtn{border:1px solid var(--border);border-radius:8px;padding:4px 10px}
+/* resource panel */
+#res{position:absolute;right:22px;top:76px;width:340px;bottom:24px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px}
+#res h4{font-size:15px;font-weight:600;margin-bottom:14px}
+.rsec{font-size:13.5px;color:var(--text2);display:flex;align-items:center;gap:8px;margin:10px 0}
+.rsec .n{color:var(--text3)}
+.rsec .n.hot{color:var(--orange-text);font-weight:600}
+.empty{font-size:13px;color:var(--text3);padding:6px 0 4px}
+#mini{width:306px;height:236px;border-radius:10px;border:1px solid var(--border-strong);background:#fff;overflow:hidden;position:relative}
+#mini .ub{height:28px;background:#ececf0;display:flex;align-items:center;gap:6px;padding:0 10px;font-size:11px;color:#555}
+#mini .ub i{width:8px;height:8px;border-radius:50%;background:#ccc;display:block}
+#mini .ub .u{margin-left:8px;background:#fff;border-radius:6px;padding:2px 8px;flex:1;color:#666}
+#mini .bh{height:30px;background:#e1251b;color:#fff;font-size:12px;font-weight:600;display:flex;align-items:center;padding:0 10px}
+#mini table{width:100%;border-collapse:collapse;font-size:10.5px;color:#333}
+#mini td,#mini th{padding:4px 8px;border-bottom:1px solid #eee;text-align:left;white-space:nowrap}
+#mini th{color:#888;font-weight:500;background:#fafafa}
+#mini tr.hl td{background:rgba(255,107,43,.14)}
+#mini .scan{position:absolute;left:0;right:0;height:22px;background:linear-gradient(180deg,rgba(255,107,43,0),rgba(255,107,43,.25),rgba(255,107,43,0))}
+#mini .badge{position:absolute;right:8px;bottom:8px;background:rgba(20,20,24,.85);color:#fff;font-size:10.5px;border-radius:6px;padding:3px 7px;display:flex;align-items:center;gap:5px}
+#mini .badge i{width:6px;height:6px;border-radius:50%;background:var(--orange);display:block}
+.file{display:flex;align-items:center;gap:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:6px}
+.file .ic{width:38px;height:44px;border-radius:6px;background:#1d6f42;color:#fff;font:700 12px Inter;display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px}
+.file .fn{font-size:14.5px;font-weight:600}
+.file .fs{font-size:12px;color:var(--text3);margin-top:3px}
+.file.sel{border-color:var(--orange);background:var(--orange-bg)}
+/* workspace / sheet */
+#ws{position:absolute;top:0;bottom:0;right:0;width:1020px;background:var(--bg2);border-left:1px solid var(--border-strong);box-shadow:-40px 0 80px rgba(0,0,0,.45)}
+#wsTabs{height:46px;border-bottom:1px solid var(--border);display:flex;align-items:flex-end;padding:0 16px;gap:4px}
+.wtab{padding:10px 16px;font-size:14px;color:var(--text2);border-radius:8px 8px 0 0;display:flex;gap:8px;align-items:center}
+.wtab.on{background:var(--bg);color:var(--text);border:1px solid var(--border);border-bottom-color:var(--bg)}
+.wtab .x{width:10px;height:10px;border-radius:2px;background:#1d6f42}
+#sheet{position:absolute;left:24px;right:24px;top:70px;bottom:24px;background:#fff;border-radius:8px;overflow:hidden;color:#222}
+#sheet .fx{height:34px;border-bottom:1px solid #e3e3e3;display:flex;align-items:center;font:13px Inter;color:#666;padding:0 12px;gap:12px}
+#sheet .fx b{color:#1d6f42}
+#sheet table{border-collapse:collapse;width:100%;font-size:15px}
+#sheet th{background:#f3f3f5;color:#666;font-weight:500;font-size:13px;height:32px;border:1px solid #e3e3e3}
+#sheet td{height:46px;border:1px solid #ececec;padding:0 14px;white-space:nowrap}
+#sheet td.rn{background:#f7f7f9;color:#999;text-align:center;width:44px;font-size:13px;padding:0}
+#sheet tr.head td{font-weight:700;background:#fff4ee;color:#7a2f0a}
+#sheet td.num{text-align:right;font-family:Inter}
+#sheet .dn{color:#d22f3c;font-weight:600}
+#sheet .up{color:#139a5b;font-weight:600}
+#sheet .sug{display:inline-block;padding:3px 10px;border-radius:999px;font-size:13px;font-weight:600}
+#sheet .sug.a{background:#ffe7dc;color:#b33e00}
+#sheet .sug.k{background:#eef0f3;color:#666}
+#sheet tr.flash td{background:rgba(255,107,43,.10)}
+#sumbar{position:absolute;left:24px;right:24px;bottom:24px;height:54px;border-top:1px solid #e3e3e3;background:#fafafa;display:flex;align-items:center;gap:28px;padding:0 18px;font-size:14px;color:#555}
+#sumbar b{color:#111;font-size:18px;font-family:Inter;margin-left:6px}
+#sumbar b.o{color:#d24a00}
+/* scripts view */
+#scripts{position:absolute;inset:0;background:var(--bg)}
+#shead{height:70px;display:flex;align-items:center;padding:0 34px;gap:22px;border-bottom:1px solid var(--border)}
+#shead h3{font-size:22px;font-weight:700}
+#shead .search{width:380px;height:40px;border:1px solid var(--border);border-radius:10px;background:var(--bg2);font-size:14px;color:var(--text3);display:flex;align-items:center;padding:0 14px}
+#shead .imp{margin-left:auto;font-size:14px;color:var(--text2);border:1px solid var(--border);padding:8px 14px;border-radius:9px}
+#sgrid{position:absolute;left:34px;right:34px;top:96px;display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.card{height:206px;border-radius:12px;background:var(--bg2);border:1px solid var(--border);padding:20px;position:relative}
+.card .ct{display:flex;align-items:center;gap:12px}
+.card .ct img{width:34px;height:34px;border-radius:8px}
+.card .nm{font-size:18px;font-weight:700}
+.card .vv{font:600 12px Inter;color:var(--text2);background:var(--bg3);border-radius:999px;padding:2px 9px}
+.card .tk{font-size:13px;color:var(--text3);margin-top:3px}
+.card .tags{margin-top:18px;display:flex;flex-wrap:wrap;gap:8px}
+.card .tags span{font-size:13px;color:var(--text2);background:var(--bg3);border:1px solid var(--border);border-radius:999px;padding:4px 11px}
+.card .sch{position:absolute;right:18px;top:18px;height:34px;border-radius:9px;border:1px solid var(--border);display:flex;align-items:center;gap:6px;padding:0 12px;font-size:13.5px;color:var(--text2)}
+.card .sch svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2}
+.card.focus{border-color:var(--orange)}
+.card .sch.hot{border-color:var(--orange);color:var(--orange-text);background:var(--orange-bg)}
+#pop{position:absolute;width:420px;background:var(--bg4);border:1px solid var(--border-strong);border-radius:14px;padding:20px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+#pop h5{font-size:17px;font-weight:700;margin-bottom:16px}
+.prow{display:flex;justify-content:space-between;align-items:center;font-size:14.5px;color:var(--text2);padding:10px 0;border-bottom:1px solid var(--border)}
+.prow b{color:var(--text);font-weight:600}
+.seg{display:flex;background:var(--bg3);border-radius:8px;padding:3px}
+.seg span{padding:4px 12px;border-radius:6px;font-size:13.5px}
+.seg span.on{background:var(--orange);color:#fff;font-weight:600}
+#pop .note{font-size:12.5px;color:var(--text3);margin-top:12px;line-height:1.5}
+#pop .go{margin-top:16px;height:42px;border-radius:10px;background:var(--orange);color:#fff;font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center}
+#toast{position:absolute;left:50%;bottom:46px;transform:translateX(-50%);background:#202028;border:1px solid var(--border-strong);border-radius:12px;padding:14px 20px;display:flex;align-items:center;gap:12px;font-size:15.5px;box-shadow:0 20px 50px rgba(0,0,0,.5);white-space:nowrap}
+#toast svg{width:22px;height:22px}
+/* cursor */
+#cursor{position:absolute;left:0;top:0;width:34px;height:40px;z-index:50}
+#ripple{position:absolute;width:60px;height:60px;border-radius:50%;border:3px solid var(--orange);margin:-30px 0 0 -30px;z-index:49}
+/* ===== S6 tiles ===== */
+#tiles{position:absolute;left:150px;right:150px;top:300px;display:grid;grid-template-columns:repeat(4,1fr);gap:28px}
+.tile{height:420px;border-radius:20px;background:linear-gradient(180deg,#1f1f27,#18181e);border:1px solid var(--border);padding:38px 32px;position:relative;overflow:hidden}
+.tile .ti{width:64px;height:64px;border-radius:16px;background:var(--orange-bg);display:flex;align-items:center;justify-content:center}
+.tile .ti svg{width:32px;height:32px;stroke:var(--orange);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.tile h6{font-size:34px;font-weight:800;margin-top:40px;color:#fff}
+.tile p{font-size:19px;line-height:1.6;color:var(--text2);margin-top:14px}
+.tile .bar{position:absolute;left:0;bottom:0;height:4px;background:var(--orange)}
+#tilesHead{top:150px;font-size:56px;color:#fff;font-weight:800}
+#tilesHead span{color:var(--orange)}
+/* ===== S7 end ===== */
+#endLogo{position:absolute;left:810px;top:220px;width:300px;height:300px;border-radius:64px;box-shadow:0 30px 80px rgba(0,0,0,.55)}
+#endT{top:575px;font-size:92px;color:#fff;font-weight:800;letter-spacing:-.02em}
+#endT span{color:var(--orange)}
+#endS{top:705px;font-size:34px;color:var(--text2);font-weight:500;letter-spacing:.1em}
+#endU{top:800px;display:flex;justify-content:center;gap:18px}
+#endU span{font:600 24px Inter;color:var(--text);border:1px solid var(--border-strong);border-radius:999px;padding:12px 26px;background:#18181e}
+#endU span.o{background:var(--orange);border-color:var(--orange);color:#fff}
+#fade{position:absolute;inset:0;background:#000;pointer-events:none;z-index:100}
+#vign{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,rgba(0,0,0,0) 55%,rgba(0,0,0,.45) 100%);z-index:90}
+
+.w{display:inline-block;will-change:auto}
+#h1 .w,#h2 .w{margin:0 .12em}
+#s1,#s2,#s6,#s7{position:absolute;inset:0}
+#chips{position:absolute;inset:0}
+
+#h2 .w{color:var(--text2)} #h2 #v4 span{color:var(--orange-text)}
+#tilesHead{top:230px} #tiles{top:380px}
+
+/* ---------- v3 additions ---------- */
+#pop,#toast,#toast2{z-index:10}
+.drow .cb:not(.on) svg{opacity:0}
+#side{gap:8px}
+#side .bottom{margin-top:auto;margin-bottom:14px}
+.view{position:absolute;inset:0;background:var(--bg)}
+#chat{background:var(--bg)}
+/* fixed slots so toggling empty/full never shifts layout */
+.slot{position:relative}
+.slot .empty{position:absolute;left:0;top:0}
+#miniSlot{height:236px}
+#fileSlot{height:72px}
+/* step waiting state */
+.step.wait .st .dot{background:var(--yellow)}
+.step.wait .st .halo{border-color:var(--yellow)}
+.step.wait .meta{color:var(--yellow)}
+/* approval card */
+#appr{margin-top:12px;width:640px;border-radius:12px;border:1.5px solid rgba(245,196,81,.55);background:linear-gradient(180deg,rgba(245,196,81,.08),rgba(245,196,81,.03));padding:16px 18px}
+#appr .ah{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:700;color:#ffe2a0}
+#appr .ah svg{width:20px;height:20px;stroke:#f5c451;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+#appr .ab{font-size:14.5px;color:var(--text2);margin:10px 0 4px;line-height:1.6}
+#appr .ab b{color:var(--text);font-weight:600}
+#appr .kv{display:flex;gap:18px;font-size:13px;color:var(--text3);margin-top:6px}
+#appr .kv span b{color:var(--text2);font-weight:600;margin-left:6px}
+#appr .btns{display:flex;gap:10px;margin-top:14px;justify-content:flex-end}
+#appr .btns div{height:36px;border-radius:9px;padding:0 16px;display:flex;align-items:center;font-size:14px;font-weight:600}
+#apNo{border:1px solid var(--border-strong);color:var(--text2)}
+#apYes{background:var(--orange);color:#fff}
+#apOk{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--green);font-weight:600;margin-top:12px}
+/* workspace split */
+#wsTabs{position:relative}
+#splitBtn{position:absolute;right:16px;top:8px;height:30px;border-radius:8px;border:1px solid var(--border);display:flex;align-items:center;gap:7px;padding:0 12px;font-size:13px;color:var(--text2)}
+#splitBtn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2}
+#splitBtn.on{border-color:var(--orange);color:var(--orange-text);background:var(--orange-bg)}
+#pdfPane{position:absolute;top:70px;bottom:24px;right:24px;background:#3a3a44;border-radius:8px;overflow:hidden}
+#pdfPage{position:absolute;left:50%;top:22px;width:360px;height:510px;margin-left:-180px;background:#fff;border-radius:3px;box-shadow:0 10px 30px rgba(0,0,0,.4);padding:30px 30px;color:#222}
+#pdfPage h1{font-size:20px;font-weight:800;color:#111}
+#pdfPage .sub{font-size:11px;color:#888;margin-top:4px}
+#pdfPage .kp{display:flex;gap:10px;margin-top:18px}
+#pdfPage .kp div{flex:1;border:1px solid #eee;border-radius:6px;padding:8px}
+#pdfPage .kp i{display:block;font-style:normal;font-size:10px;color:#888}
+#pdfPage .kp b{font:700 18px Inter;color:#111}
+#pdfPage .kp b.o{color:#d24a00}
+#pdfPage .bars{margin-top:20px;height:150px;display:flex;align-items:flex-end;gap:12px;border-bottom:1px solid #ddd;padding:0 6px}
+#pdfPage .bars span{flex:1;background:#ffcfb8;border-radius:3px 3px 0 0}
+#pdfPage .bars span.h{background:#ff6b2b}
+#pdfPage .ln{height:7px;background:#eee;border-radius:4px;margin-top:10px}
+#pdfBar{position:absolute;left:0;right:0;bottom:0;height:34px;background:rgba(20,20,24,.9);color:#ccc;font:12px Inter;display:flex;align-items:center;justify-content:center;gap:14px}
+/* AI session */
+#chead2{height:54px;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 28px;font-size:16px;font-weight:600;gap:12px}
+#chead2 .pill{font-size:12px;font-weight:500;color:var(--text2);background:var(--bg3);border-radius:999px;padding:3px 10px}
+#feed2{position:absolute;left:0;top:54px;right:0;bottom:150px;padding:28px 70px 0 70px}
+#ubub2{margin-left:auto}
+#think2{margin-top:18px}
+#gal{margin-top:16px;display:flex;gap:22px;align-items:flex-start}
+#gimgs{display:grid;grid-template-columns:repeat(3,196px);gap:14px}
+.gi{width:196px;height:196px;border-radius:12px;overflow:hidden;position:relative;background:#f4f4f6;border:1px solid var(--border)}
+.gi svg.prod{position:absolute;left:28px;top:24px;width:140px;height:140px}
+.gi .shadow{position:absolute;left:48px;right:48px;bottom:22px;height:12px;border-radius:50%;background:rgba(0,0,0,.12);filter:blur(4px)}
+.gi .gen{position:absolute;inset:0;background:linear-gradient(110deg,#23232c 30%,#3a3442 50%,#23232c 70%);background-size:300% 100%}
+.gi .gen span{position:absolute;left:12px;bottom:10px;font:600 12px Inter;color:#cfcde0}
+.gi .gen i{position:absolute;left:12px;right:12px;bottom:32px;height:3px;border-radius:2px;background:rgba(255,255,255,.12)}
+.gi .gen i b{display:block;height:100%;border-radius:2px;background:var(--orange)}
+.gi .lab{position:absolute;left:8px;top:8px;font-size:11px;font-weight:600;color:#666;background:rgba(255,255,255,.85);border-radius:5px;padding:2px 6px}
+#gvid{width:236px;height:420px;border-radius:14px;overflow:hidden;position:relative;background:#111;border:1px solid var(--border-strong)}
+#gvid .vstrip{position:absolute;inset:0}
+#gvid .vframe{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+#gvid .vframe svg{width:170px;height:170px}
+#gvid .vcap{position:absolute;left:0;right:0;bottom:64px;text-align:center;color:#fff;font-size:20px;font-weight:800;text-shadow:0 2px 10px rgba(0,0,0,.5)}
+#gvid .vbar{position:absolute;left:14px;right:14px;bottom:20px;height:4px;border-radius:2px;background:rgba(255,255,255,.25)}
+#gvid .vbar b{display:block;height:100%;border-radius:2px;background:#fff}
+#gvid .vt{position:absolute;right:12px;top:12px;font:600 12px Inter;color:#fff;background:rgba(0,0,0,.45);border-radius:6px;padding:3px 7px}
+#gvid .gen{position:absolute;inset:0;background:linear-gradient(110deg,#23232c 30%,#3a3442 50%,#23232c 70%);background-size:300% 100%}
+#gvid .gen span{position:absolute;left:14px;bottom:14px;font:600 13px Inter;color:#cfcde0}
+#composer2{position:absolute;left:70px;right:70px;bottom:34px;height:104px;background:var(--bg2);border:1.5px solid var(--border);border-radius:16px;padding:16px 18px}
+#composer2.focus{border-color:var(--orange)}
+#ctext2{font-size:17px;color:var(--text);height:26px;white-space:nowrap}
+#ctext2.ph{color:var(--text3)}
+#composer2 .crow{position:absolute;left:18px;right:18px;bottom:12px;display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text2)}
+#send2{width:38px;height:38px;border-radius:50%;background:var(--orange);display:flex;align-items:center;justify-content:center;margin-left:auto}
+#send2 svg{width:18px;height:18px;stroke:#fff;fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.caret{display:inline-block;width:2px;height:20px;background:var(--orange);vertical-align:-3px;margin-left:1px}
+/* market */
+#mhead{height:70px;display:flex;align-items:center;padding:0 34px;gap:18px;border-bottom:1px solid var(--border)}
+#mhead h3{font-size:22px;font-weight:700}
+#mhead .cnt{font-size:14px;color:var(--text2);background:var(--bg3);border-radius:999px;padding:4px 12px}
+#mtabs{display:flex;gap:8px;padding:16px 34px 0}
+#mtabs span{font-size:14px;color:var(--text2);border:1px solid var(--border);border-radius:999px;padding:6px 14px}
+#mtabs span.on{background:var(--orange-bg);border-color:rgba(255,107,43,.4);color:var(--orange-text);font-weight:600}
+#mgrid{position:absolute;left:34px;right:34px;top:136px;display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.mc{height:196px;border-radius:12px;background:var(--bg2);border:1px solid var(--border);padding:20px;position:relative}
+.mc .ct{display:flex;align-items:center;gap:12px}
+.mc .ct img{width:40px;height:40px;border-radius:9px}
+.mc .nm{font-size:18px;font-weight:700}
+.mc .au{font-size:12.5px;color:var(--text3);margin-top:3px}
+.mc .ds{font-size:14px;color:var(--text2);margin-top:14px;line-height:1.55;height:44px;overflow:hidden}
+.mc .ft{position:absolute;left:20px;right:20px;bottom:16px;display:flex;align-items:center;gap:14px;font:500 13px Inter;color:var(--text3)}
+.mc .ft .star{color:var(--yellow)}
+.mc .ins{margin-left:auto;height:34px;min-width:84px;border-radius:9px;background:var(--orange);color:#fff;font:600 14px Inter,'Noto Sans CJK SC';display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;padding:0 14px}
+.mc .ins.done{background:transparent;border:1px solid rgba(62,207,142,.5);color:var(--green)}
+.mc .ins .prog{position:absolute;left:0;top:0;bottom:0;background:rgba(255,255,255,.25)}
+.mc.focus{border-color:var(--orange)}
+/* settings */
+#setNav{position:absolute;left:0;top:0;bottom:0;width:220px;border-right:1px solid var(--border);padding:22px 14px;background:var(--bg2)}
+#setNav h3{font-size:18px;font-weight:700;padding:0 10px 14px}
+#setNav div{font-size:14.5px;color:var(--text2);padding:9px 10px;border-radius:8px;margin-bottom:2px}
+#setNav div.on{background:var(--orange-bg);color:var(--orange-text);font-weight:600}
+#setBody{position:absolute;left:220px;top:0;right:0;bottom:0;padding:26px 34px}
+#setBody h4{font-size:20px;font-weight:700}
+#setBody .hint{font-size:13.5px;color:var(--text3);margin-top:6px}
+#provs{display:flex;gap:10px;margin-top:20px}
+#provs span{font-size:14px;color:var(--text2);border:1px solid var(--border);border-radius:10px;padding:9px 16px;background:var(--bg2)}
+#provs span.on{border-color:var(--orange);color:var(--text);background:var(--orange-bg);font-weight:600}
+#mtable{margin-top:20px;border:1px solid var(--border);border-radius:12px;overflow:hidden;width:860px}
+.mrow{height:54px;display:flex;align-items:center;padding:0 18px;gap:14px;border-bottom:1px solid var(--border);font-size:15px;background:var(--bg2)}
+.mrow:last-child{border-bottom:none}
+.mrow .id{font:13px Inter;color:var(--text3)}
+.mrow .tg{font-size:12px;border-radius:6px;padding:2px 8px;background:var(--bg3);color:var(--text2)}
+.mrow .tg.v{background:rgba(90,169,255,.12);color:#8cc2ff}
+.mrow .r{margin-left:auto;font-size:13px;color:var(--text3)}
+.mrow.new{background:rgba(255,107,43,.06)}
+#discBtn{position:absolute;right:34px;top:26px;height:40px;border-radius:10px;border:1px solid var(--orange);color:var(--orange-text);background:var(--orange-bg);display:flex;align-items:center;gap:8px;padding:0 16px;font-size:14.5px;font-weight:600}
+#disc{position:absolute;right:34px;top:76px;width:420px;background:var(--bg4);border:1px solid var(--border-strong);border-radius:14px;padding:18px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+#disc h5{font-size:16px;font-weight:700}
+#disc .hint{margin:4px 0 10px}
+.drow{display:flex;align-items:center;gap:12px;padding:11px 4px;border-bottom:1px solid var(--border);font-size:15px}
+.drow .cb{width:20px;height:20px;border-radius:6px;border:1.5px solid var(--border-strong);display:flex;align-items:center;justify-content:center}
+.drow .cb.on{background:var(--orange);border-color:var(--orange)}
+.drow .cb svg{width:14px;height:14px;stroke:#fff;fill:none;stroke-width:3}
+.drow .id{font:12.5px Inter;color:var(--text3);margin-left:auto}
+#impBtn{margin-top:14px;height:42px;border-radius:10px;background:var(--orange);color:#fff;font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center}
+#toast2{position:absolute;left:50%;bottom:46px;transform:translateX(-50%);background:#202028;border:1px solid var(--border-strong);border-radius:12px;padding:14px 20px;display:flex;align-items:center;gap:12px;font-size:15.5px;box-shadow:0 20px 50px rgba(0,0,0,.5);white-space:nowrap}
+#toast2 svg{width:22px;height:22px}
+/* phone / IM */
+#phone{position:absolute;left:1250px;top:120px;width:440px;height:900px;border-radius:58px;background:#0b0b0e;border:2px solid #3a3a46;box-shadow:0 60px 140px rgba(0,0,0,.7);padding:14px;z-index:20}
+#scr{position:absolute;inset:14px;border-radius:46px;background:#f2f2f5;overflow:hidden;color:#1b1b20}
+#scr .sb{height:46px;display:flex;align-items:center;justify-content:space-between;padding:0 30px;font:600 15px Inter}
+#scr .isl{position:absolute;left:50%;top:10px;width:120px;height:32px;margin-left:-60px;border-radius:20px;background:#000}
+#scr .hd{height:58px;display:flex;align-items:center;gap:12px;padding:0 18px;border-bottom:1px solid #e2e2e7;background:#fafafb}
+#scr .hd img{width:34px;height:34px;border-radius:9px}
+#scr .hd b{font-size:16px}
+#scr .hd span{font-size:12px;color:#2e9e64;display:block;font-weight:500}
+#msgs{position:absolute;left:0;right:0;top:104px;bottom:70px;padding:16px 14px;display:flex;flex-direction:column;gap:12px}
+.im{max-width:300px;font-size:15px;line-height:1.5;padding:11px 14px;border-radius:16px}
+.im.me{align-self:flex-end;background:#ff6b2b;color:#fff;border-bottom-right-radius:5px}
+.im.bot{align-self:flex-start;background:#fff;border:1px solid #e3e3e8;border-bottom-left-radius:5px}
+.im.bot .p{display:flex;align-items:center;gap:8px;font-size:13.5px;color:#666;margin-top:6px}
+.im.bot .p i{width:8px;height:8px;border-radius:50%;background:#ff6b2b;display:block}
+.im.card{align-self:flex-start;width:300px;background:#fff;border:1.5px solid #f2c45a;border-radius:16px;padding:14px}
+.im.card .t{font-weight:700;font-size:15px;color:#7a5200}
+.im.card .d{font-size:13.5px;color:#555;margin-top:6px;line-height:1.5}
+.im.card .bt{display:flex;gap:8px;margin-top:12px}
+.im.card .bt div{flex:1;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600}
+#imNo{border:1px solid #ddd;color:#666}
+#imYes{background:#ff6b2b;color:#fff}
+.im.file{display:flex;align-items:center;gap:10px}
+.im.file .ic{width:32px;height:38px;border-radius:5px;background:#1d6f42;color:#fff;font:700 10px Inter;display:flex;align-items:flex-end;justify-content:center;padding-bottom:4px}
+#scr .ib{position:absolute;left:12px;right:12px;bottom:14px;height:44px;border-radius:22px;background:#fff;border:1px solid #e2e2e7;font-size:14px;color:#aaa;display:flex;align-items:center;padding:0 16px}
+#tap{position:absolute;width:56px;height:56px;border-radius:50%;background:rgba(40,40,50,.28);border:2px solid rgba(255,255,255,.8);margin:-28px 0 0 -28px;z-index:30}
+/* stats */
+#stats{position:absolute;left:0;right:0;top:300px;display:flex;justify-content:center;gap:120px}
+.stat{text-align:center}
+.stat b{display:block;font:800 150px Inter;letter-spacing:-.04em;color:#fff;line-height:1}
+.stat b em{font-style:normal;color:var(--orange)}
+.stat span{display:block;font-size:30px;color:var(--text2);margin-top:14px;font-weight:500}
+#ticker{top:690px;font-size:34px;color:var(--text);font-weight:600;letter-spacing:.06em;white-space:nowrap}
+#ticker .w{margin:0 .35em}
+#ticker .dotsep{color:var(--orange)}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="s1">
+    <div id="chips"></div>
+    <div class="bigline" id="h1"><span class="w" id="w1">每天打开</span><span class="w" id="w2"><span style="color:var(--orange)">20</span> 个后台</span></div>
+    <div class="bigline" id="h2"><span class="w" id="v1">复制</span><span class="w" id="v2">导出</span><span class="w" id="v3">下载</span><span class="w" id="v4"><span>再整理一遍</span></span></div>
+  </div>
+  <div id="s2">
+    <div id="logoWrap"><img id="logo" src="icon.png"></div>
+    <div class="bigline" id="title">抓虾 <span>Harness</span></div>
+    <div class="bigline" id="subtitle">会看网页、会跑脚本、会等你确认的电商运营智能体</div>
+  </div>
+  <div id="cap"><span id="capNum">01</span><span id="capText"></span></div>
+
+  <div id="cam">
+   <div id="win">
+    <div id="tbar"><div class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div><img src="icon.png">抓虾 Harness</div>
+    <div id="side">
+      <div class="sbtn brand"><img id="sbBrand" src="icon.png"></div>
+      <div class="sbtn" id="sbNew"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg></div>
+      <div class="ssep"></div>
+      <div class="sbtn" id="sbChat"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg></div>
+      <div class="sbtn" id="sbMarket"><svg viewBox="0 0 24 24"><path d="M4 9l1.5-5h13L20 9"/><path d="M4 9h16v11H4z"/><path d="M9 13h6"/></svg></div>
+      <div class="sbtn" id="sbScripts"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg></div>
+      <div class="sbtn" id="sbTask"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+      <div class="sbtn bottom" id="sbSet"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></div>
+    </div>
+    <div id="main">
+      <!-- view: chat session 1 -->
+      <div class="view" id="chat">
+        <div id="chead">京东调价 · 会话 <span class="pill">工作区内修改</span></div>
+        <div id="feed">
+          <div class="ubub" id="ubub">导出京东全店价格，和上周对比，生成调价建议表</div>
+          <div class="think" id="think">已思考 4 秒 ›</div>
+          <div class="steps" id="steps"></div>
+          <div id="appr">
+            <div class="ah"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/><path d="M12 8v5M12 16h.01"/></svg>需要你确认 · 提交操作</div>
+            <div class="ab">智能体将在 <b>京东商家后台</b> 提交 <b>37 个 SKU</b> 的新价格，提交后立即生效</div>
+            <div class="kv"><span>工具<b>browser_click · 提交</b></span><span>权限策略<b>ask</b></span></div>
+            <div class="btns" id="apBtns"><div id="apNo">拒绝</div><div id="apYes">允许本次</div></div>
+            <div id="apOk"><svg width="18" height="18" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="#3ecf8e"/><path d="M7 12.5l3.2 3L17 9" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>已允许 · 审计已记录</div>
+          </div>
+          <div class="areply" id="areply">完成，37 个 SKU 已改价，明细写入右侧 <b>调价建议.xlsx</b></div>
+        </div>
+        <div id="composer">
+          <div id="ctext" class="ph">描述任务… / 调用指令 @ 文件或对话</div>
+          <div id="crow"><span class="cbtn">＋ 附件</span><span class="cbtn">@</span><span class="model">DeepSeek V4.1 Flash · High</span><div id="send"><svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></div></div>
+        </div>
+        <div id="res">
+          <h4>会话资源</h4>
+          <div class="rsec">⌄ 浏览器页面 <span class="n" id="bpn">0</span></div>
+          <div class="slot" id="miniSlot">
+            <div class="empty" id="bpe">当前会话暂无浏览器页面</div>
+            <div id="mini">
+              <div class="ub"><i></i><i></i><i></i><span class="u">商家后台 · 商品管理 · 价格</span></div>
+              <div class="bh">京东 · 商家后台 — 全店商品价格</div>
+              <table><thead><tr><th>SKU</th><th>商品</th><th>售价</th></tr></thead><tbody id="mrows"></tbody></table>
+              <div class="scan" id="scan"></div>
+              <div class="badge"><i id="bdot"></i><span id="bdtx">智能体正在操作</span></div>
+            </div>
+          </div>
+          <div class="rsec" style="margin-top:18px">⌄ 产物 <span class="n" id="apn">0</span></div>
+          <div class="slot" id="fileSlot">
+            <div class="empty" id="ape">生成的文件会显示在这里</div>
+            <div class="file" id="file"><div class="ic">XLSX</div><div><div class="fn">调价建议.xlsx</div><div class="fs">37 行改价 · 刚刚生成</div></div></div>
+          </div>
+        </div>
+        <div id="ws">
+          <div id="wsTabs"><div class="wtab on"><i class="x"></i>调价建议.xlsx</div><div class="wtab" id="pdfTab">价格周报.pdf</div>
+            <div id="splitBtn"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>双栏对比</div></div>
+          <div id="sheet">
+            <div class="fx"><b>fx</b> =IF(ABS(E2)&gt;5%,"建议调价","保持")</div>
+            <table><thead><tr><th></th><th>A</th><th>B</th><th>C</th><th>D</th><th>E</th><th>F</th></tr></thead><tbody id="srows"></tbody></table>
+          </div>
+          <div id="pdfPane"><div id="pdfPage">
+            <h1>京东店铺价格周报</h1><div class="sub">第 42 周 · 自动生成</div>
+            <div class="kp"><div><i>对比 SKU</i><b>312</b></div><div><i>改价</i><b class="o">37</b></div><div><i>平均变动</i><b>-3.2%</b></div></div>
+            <div class="bars"><span style="height:40%"></span><span style="height:62%"></span><span class="h" style="height:88%"></span><span style="height:55%"></span><span style="height:70%"></span><span class="h" style="height:95%"></span><span style="height:48%"></span></div>
+            <div class="ln" style="width:92%"></div><div class="ln" style="width:80%"></div><div class="ln" style="width:86%"></div><div class="ln" style="width:60%"></div>
+          </div><div id="pdfBar">1 / 4 · 连续阅读</div></div>
+          <div id="sumbar">对比 SKU<b>312</b>变动 &gt;5%<b class="o">37</b>平均变动<b>-3.2%</b></div>
+        </div>
+      </div>
+      <!-- view: AI materials session -->
+      <div class="view" id="chat2">
+        <div id="chead2">新品素材 · 会话 <span class="pill">AI 生图 · 生视频</span></div>
+        <div id="feed2">
+          <div class="ubub" id="ubub2">给这 6 款新品做白底主图，再剪一条 15 秒短视频</div>
+          <div class="think" id="think2">已思考 3 秒 › 调用 电商生图 · 图生视频</div>
+          <div id="gal"><div id="gimgs"></div>
+            <div id="gvid"><div class="vstrip" id="vstrip"></div><div class="vcap" id="vcap">夏季新品 上新</div><div class="vbar"><b id="vprog"></b></div><div class="vt">0:15 · 9:16</div><div class="gen" id="vgen"><span id="vgentx">视频生成中…</span></div></div>
+          </div>
+        </div>
+        <div id="composer2">
+          <div id="ctext2" class="ph">描述任务… / 调用指令 @ 文件或对话</div>
+          <div class="crow"><span class="cbtn">＋ 附件</span><span class="cbtn">@</span><span style="margin-left:auto">GLM 5.3 · Default</span><div id="send2" style="margin-left:10px"><svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></div></div>
+        </div>
+      </div>
+      <!-- view: market -->
+      <div class="view" id="market">
+        <div id="mhead"><h3>脚本市场</h3><span class="cnt">80+ 个脚本场景 · 20+ 平台</span></div>
+        <div id="mtabs"><span class="on">全部</span><span>天猫</span><span>京东</span><span>抖店</span><span>唯品会</span><span>Temu</span><span>SHEIN</span><span>跨境</span><span>素材</span></div>
+        <div id="mgrid"></div>
+      </div>
+      <!-- view: my scripts -->
+      <div class="view" id="scripts">
+        <div id="shead"><h3>我的脚本</h3><div class="search">搜索脚本名称或适配器名称</div><div class="imp">＋ 导入脚本</div></div>
+        <div id="sgrid"></div>
+      </div>
+      <!-- view: settings / models -->
+      <div class="view" id="settings">
+        <div id="setNav"><h3>设置</h3><div>通用</div><div class="on">模型</div><div>IM 机器人</div><div>个人账号</div><div>归档会话</div></div>
+        <div id="setBody">
+          <h4>供应商模型</h4><div class="hint">内置与自定义供应商，逐模型配置预算与推理协议</div>
+          <div id="provs"><span>DeepSeek</span><span class="on">GLM</span><span>OpenAI 网关</span><span>自定义供应商</span></div>
+          <div id="mtable">
+            <div class="mrow"><b>GLM 5.2</b><span class="id">glm-5.2</span><span class="tg">推理 Default</span><span class="r">默认</span></div>
+            <div class="mrow"><b>GLM 5.2 Flash</b><span class="id">glm-5.2-flash</span><span class="tg v">识图桥接</span><span class="r">已启用</span></div>
+            <div class="mrow new" id="nr1"><b>GLM 5.3</b><span class="id">glm-5.3</span><span class="tg">推理 Default</span><span class="r">新导入</span></div>
+            <div class="mrow new" id="nr2"><b>GLM 5.3 Flash</b><span class="id">glm-5.3-flash</span><span class="tg v">识图桥接</span><span class="r">新导入</span></div>
+          </div>
+          <div id="discBtn">⟳ 发现上游模型</div>
+          <div id="disc"><h5>发现 3 个上游模型</h5><div class="hint">选择要导入的型号，草稿 Key 不会保存</div>
+            <div class="drow"><div class="cb" id="cb1"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4L19 7"/></svg></div>GLM 5.3<span class="id">glm-5.3</span></div>
+            <div class="drow"><div class="cb" id="cb2"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4L19 7"/></svg></div>GLM 5.3 Flash<span class="id">glm-5.3-flash</span></div>
+            <div class="drow"><div class="cb" id="cb3"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4L19 7"/></svg></div>GLM 5.2 FlashX<span class="id">glm-5.2-flashx</span></div>
+            <div id="impBtn">导入所选模型</div>
+          </div>
+        </div>
+      </div>
+      <div id="pop">
+        <h5>新建脚本定时任务</h5>
+        <div class="prow">脚本<b>京东价格监控 · 导出全店价格</b></div>
+        <div class="prow">频率<div class="seg"><span class="on">每天</span><span>每周</span></div></div>
+        <div class="prow">时间<b style="font-family:Inter">09:00</b></div>
+        <div class="note">直接运行已安装的 Adapter，保存运行结果和输出文件，无需每轮调用模型</div>
+        <div class="go" id="goBtn">创建定时任务</div>
+      </div>
+      <div id="toast"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="#3ecf8e"/><path d="M7 12.5l3.2 3L17 9" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>已创建：每天 09:00 自动导出京东全店价格</div>
+      <div id="toast2"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="#3ecf8e"/><path d="M7 12.5l3.2 3L17 9" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>已导入 2 个模型，会话中即可选择</div>
+    </div>
+   </div>
+   <svg id="cursor" viewBox="0 0 34 40"><path d="M3 2 L3 32 L11 25 L16.5 37 L21.5 35 L16 23.5 L27 23.5 Z" fill="#fff" stroke="#111" stroke-width="2" stroke-linejoin="round"/></svg>
+  </div>
+
+  <!-- phone / IM -->
+  <div id="phone"><div id="scr">
+    <div class="isl"></div>
+    <div class="sb"><span>9:41</span><span>●●● ▮</span></div>
+    <div class="hd"><img src="icon.png"><div><b>抓虾 Harness 机器人</b><span>● 电脑在线</span></div></div>
+    <div id="msgs">
+      <div class="im me" id="m1">把今天抖店的退款订单导出来，发我一份</div>
+      <div class="im bot" id="m2">收到，正在电脑上执行<div class="p"><i id="m2dot"></i><span id="m2tx">打开抖店后台 · 筛选今日退款</span></div></div>
+      <div class="im card" id="m3"><div class="t">需要你确认</div><div class="d">导出 38 条退款订单并保存到本机「下载」文件夹</div><div class="bt"><div id="imNo">拒绝</div><div id="imYes">确认</div></div></div>
+      <div class="im bot" id="m4">已完成，38 条订单已导出</div>
+      <div class="im bot file" id="m5"><div class="ic">XLSX</div><div><b style="font-size:14px">抖店退款订单_今日.xlsx</b><div style="font-size:12px;color:#888">38 行 · 已同步到电脑会话</div></div></div>
+    </div>
+    <div class="ib">发消息给抓虾…</div>
+  </div><div id="tap"></div></div>
+
+  <!-- stats -->
+  <div id="s6">
+    <div id="stats">
+      <div class="stat" id="st1"><b>20<em>+</em></b><span>平台 / 业务域</span></div>
+      <div class="stat" id="st2"><b>80<em>+</em></b><span>脚本场景</span></div>
+      <div class="stat" id="st3"><b>0</b><span>本地功能免登录</span></div>
+    </div>
+    <div class="bigline" id="ticker"><span class="w" id="k1">会看网页</span><span class="dotsep">·</span><span class="w" id="k2">会跑脚本</span><span class="dotsep">·</span><span class="w" id="k3">会做图做视频</span><span class="dotsep">·</span><span class="w" id="k4">会等你确认</span></div>
+  </div>
+
+  <div id="s7">
+    <img id="endLogo" src="icon.png">
+    <div class="bigline" id="endT">抓虾 <span>Harness</span></div>
+    <div class="bigline" id="endS">说一句话，把运营交给智能体</div>
+    <div class="bigline" id="endU"><span class="o">v0.4.0</span><span>harness.crawshrimp.com</span><span>macOS · Windows</span></div>
+  </div>
+  <div id="vign"></div>
+  <div id="fade"></div>
+</div>
+<script>
+document.fonts.ready.then(()=>{
+// =====================================================================
+// 抓虾 Harness promo v3 — 63s, 120 BPM (beat 0.5s). seek(t) is pure:
+// no CSS transitions, no timers, no state carried between frames.
+// Closed-form springs; summed springs for camera & cursor; log-space zoom.
+// Cursor targets are measured from the DOM once, before the first seek.
+// =====================================================================
+const $=id=>document.getElementById(id);
+const BEAT=0.5, DUR=63;
+const b=n=>n*BEAT;
+const clamp=(x,a=0,c=1)=>Math.min(c,Math.max(a,x));
+const lerp=(a,c,p)=>a+(c-a)*p;
+const seg=(t,a,c)=>clamp((t-a)/(c-a));
+const hash=n=>{const x=Math.sin(n*127.1+311.7)*43758.5453;return x-Math.floor(x)};
+function spr(x,w=14,z=0.82){if(x<=0)return 0;const wd=w*Math.sqrt(1-z*z);
+  return 1-Math.exp(-z*w*x)*(Math.cos(wd*x)+(z*w/wd)*Math.sin(wd*x));}
+const S=(t,a,w,z)=>clamp(spr(t-a,w,z));                 // clamped spring 0..1
+const st=(el,o)=>{for(const k in o)el.style[k]=o[k]};
+function vis(el,op,extra){el.style.opacity=op;el.style.visibility=op<=0.002?'hidden':'visible';if(extra)st(el,extra);}
+const blurf=v=>v>0.05?`blur(${v.toFixed(2)}px)`:'none';
+// enter at a / exit at e, short blur on both, text moves on its own timing
+function swap(el,t,a,e,dy=18,w=14){const ei=S(t,a,w),eo=e==null?0:S(t,e,w*1.2,0.95);
+  vis(el,ei*(1-eo),{transform:`translateY(${(1-ei)*dy-eo*dy*0.6}px)`,filter:blurf((1-ei)*8+eo*8)});}
+function sumSpring(keys,t,w,z){const n=keys[0].length-1,out=[];
+  for(let j=0;j<n;j++){let v=keys[0][j+1];for(let i=1;i<keys.length;i++)v+=(keys[i][j+1]-keys[i-1][j+1])*spr(t-keys[i][0],w,z);out.push(v);}return out;}
+const press=(t,c)=>clamp(1-Math.abs(t-c)/0.12);
+
+// ---------------- products (generic silhouettes, drawn in SVG) ----------------
+const PROD=[
+ ['T恤','#ff8a50','<path d="M35 25l20-10h30l20 10 15 25-20 10-5-8v68H45V62l-5 8-20-10z"/>'],
+ ['卫衣','#7c8cff','<path d="M38 28l17-12c5 8 25 8 30 0l17 12 16 32-18 8-5-10v68H45V58l-5 10-18-8z"/><path d="M58 16c0 10 24 10 24 0" fill="none" stroke="rgba(0,0,0,.25)" stroke-width="4"/>'],
+ ['牛仔裤','#4a78c2','<path d="M42 18h56l6 108H80l-10-70-10 70H36z"/>'],
+ ['棒球帽','#2bb673','<path d="M30 80c0-28 18-46 40-46s40 18 40 46z"/><path d="M28 80h92c0 8-10 12-30 12H28z" fill="rgba(0,0,0,.2)"/>'],
+ ['运动鞋','#ff5d6c','<path d="M20 92c0-20 6-36 18-40l14 10c10 6 22 8 34 10 20 3 34 10 36 22v10H20z"/><path d="M20 102h102v8H20z" fill="#fff" stroke="#ddd"/>'],
+ ['托特包','#c99a5b','<path d="M30 52h80l-6 70H36z"/><path d="M50 52c0-28 40-28 40 0" fill="none" stroke="currentColor" stroke-width="6"/>'],
+];
+const prodSVG=(p,cls='prod')=>`<svg class="${cls}" viewBox="0 0 140 140" style="color:${p[1]}"><g fill="${p[1]}">${p[2]}</g></svg>`;
+
+// ---------------- static DOM ----------------
+const PLAT=['天猫','京东','抖店','拼多多','Shopee','Lazada','TikTok Shop','Temu','SHEIN','速卖通','Amazon','Shopify','唯品会','微盟','1688','小红书','视频号','供应链 SCM','PLM','云盘','天猫','京东','抖店','Shopee'];
+const VERB=['导出订单','下载图包','批量上新','价格巡检','竞品调研','素材下载','回复买家','报表整理'];
+const chips=[];
+for(let i=0;i<24;i++){const d=document.createElement('div');d.className='chip';d.innerHTML=`<i></i>${PLAT[i]}<b>${VERB[i%8]}</b>`;$('chips').appendChild(d);chips.push(d);}
+const STEPS=[['打开浏览器','京东 · 商家后台','已就绪'],['运行脚本','京东价格监控 / 导出全店价格','312 个 SKU'],['对比数据','本周 vs 上周','37 个变动'],['提交改价','37 个 SKU','已提交']];
+const stepEls=STEPS.map(s=>{const d=document.createElement('div');d.className='step';
+  d.innerHTML=`<div class="st"><div class="halo"></div><div class="dot"></div><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="#3ecf8e"/><path d="M7 12.5l3.2 3L17 9" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div><span>${s[0]}</span><span class="tag">${s[1]}</span><span class="meta"></span>`;
+  $('steps').appendChild(d);return d;});
+const MROWS=[['100231','圆领短袖T恤 白 M','¥79'],['100232','圆领短袖T恤 黑 L','¥79'],['100458','直筒牛仔裤 浅蓝','¥169'],['100512','连帽卫衣 灰 XL','¥199'],['100603','休闲短裤 卡其','¥89'],['100777','针织开衫 米白','¥229'],['100819','运动袜 三双装','¥29']];
+const mrowEls=MROWS.map(r=>{const tr=document.createElement('tr');tr.innerHTML=r.map(c=>`<td>${c}</td>`).join('');$('mrows').appendChild(tr);return tr;});
+const SROWS=[['100458','直筒牛仔裤 浅蓝','169','189','-10.6%','已改价'],['100512','连帽卫衣 灰 XL','199','179','+11.2%','已改价'],['100231','圆领短袖T恤 白 M','79','79','0.0%','保持'],['100777','针织开衫 米白','229','259','-11.6%','已改价'],['100603','休闲短裤 卡其','89','92','-3.3%','保持'],['100819','运动袜 三双装','29','25','+16.0%','已改价'],['100232','圆领短袖T恤 黑 L','79','82','-3.7%','保持'],['100915','防晒外套 浅粉','259','299','-13.4%','已改价']];
+{const h=document.createElement('tr');h.className='head';h.innerHTML='<td class="rn">1</td><td>SKU</td><td>商品</td><td>本周价</td><td>上周价</td><td>变化</td><td>状态</td>';$('srows').appendChild(h);}
+const srowEls=SROWS.map((r,i)=>{const tr=document.createElement('tr');const cls=r[4].startsWith('-')?'dn':(r[4].startsWith('+')?'up':'');
+  tr.innerHTML=`<td class="rn">${i+2}</td><td style="font-family:Inter">${r[0]}</td><td>${r[1]}</td><td class="num">¥${r[2]}</td><td class="num">¥${r[3]}</td><td class="num ${cls}">${r[4]}</td><td><span class="sug ${r[5]==='保持'?'k':'a'}">${r[5]}</span></td>`;$('srows').appendChild(tr);return tr;});
+// gallery
+const giEls=PROD.map((p,i)=>{const d=document.createElement('div');d.className='gi';
+  d.innerHTML=`<div class="shadow"></div>${prodSVG(p)}<span class="lab">${p[0]} · 主图</span><div class="gen"><i><b></b></i><span>生成中</span></div>`;$('gimgs').appendChild(d);return d;});
+PROD.forEach((p,i)=>{const f=document.createElement('div');f.className='vframe';f.style.background=`radial-gradient(circle at 50% 45%,${p[1]}55,#111 70%)`;f.innerHTML=prodSVG(p,'');$('vstrip').appendChild(f);});
+const vframes=[...document.querySelectorAll('.vframe')];
+// market
+const MC=[['京东价格监控','抓虾官方','导出全店价格、破价巡检，结果直接进表格','4.9','1.3k',true],['抖店运营助手','抓虾官方','商城竞品排名监控、竞店订单复盘','4.8','986',false],['天猫图片工具','抓虾官方','批量下载商品图、AI 生图与参考素材准备','4.9','1.1k',true],['唯品会运营助手','抓虾官方','PDC 图片持久化、热销策略汇总报表','4.7','642',false],['Temu 运营助手','抓虾官方','SCM 水洗标附件、上新核对与导出','4.8','758',false],['巴拉 AI 视频助手','抓虾官方','AI 生成视频标题和文案、短视频批量上传','4.8','903',true],['跨境调研','抓虾官方','品类调研、上新与促销调研，自动成表','4.6','512',false],['SHEIN 助手','抓虾官方','图包下载、上新核对','4.7','430',false],['速卖通运营助手','抓虾官方','成交分析、商品排行、商品抠图下载','4.7','575',false]];
+const mcEls=MC.map(c=>{const d=document.createElement('div');d.className='mc';
+  d.innerHTML=`<div class="ct"><img src="icon.png"><div><div class="nm">${c[0]}</div><div class="au">${c[1]}</div></div></div><div class="ds">${c[2]}</div><div class="ft"><span class="star">★ ${c[3]}</span><span>${c[4]} 安装</span><div class="ins${c[5]?' done':''}">${c[5]?'已安装':'<div class="prog"></div><span>安装</span>'}</div></div>`;
+  $('mgrid').appendChild(d);return d;});
+// my scripts
+const CARDS=[['京东价格监控','v1.1.0','2 个任务',['导出全店价格','破价巡检']],['抖店运营助手','v0.1.0','2 个任务',['商城竞品排名监控','商城竞店订单复盘']],['巴拉 AI 视频助手','v0.1.1','5 个任务',['AI 生成视频标题和文案','短视频批量上传']],['天猫图片工具','v0.1.4','6 个任务',['批量下载图片并打包','AI 买家秀全链路']],['跨境调研','v0.2.1','3 个任务',['品类调研','上新与促销调研']],['上新运营助手','v1.3.6','5 个任务',['生成分图审核表','审核后上传云盘']],['Shopee Plus','v2.0','4 个任务',['订单导出','买家消息批量回复']],['TikTok 运营助手','v0.1.0','3 个任务',['达人数据','商品表现']],['SHEIN 助手','v0.1.0','2 个任务',['图包下载','上新核对']]];
+const cardEls=CARDS.map(c=>{const d=document.createElement('div');d.className='card';
+  d.innerHTML=`<div class="ct"><img src="icon.png"><div><div style="display:flex;gap:10px;align-items:center"><span class="nm">${c[0]}</span><span class="vv">${c[1]}</span></div><div class="tk">${c[2]}</div></div></div><div class="tags">${c[3].map(x=>`<span>${x}</span>`).join('')}</div><div class="sch"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>定时</div>`;
+  $('sgrid').appendChild(d);return d;});
+// pop anchored below card 0's 定时 button (main coords)
+st($('pop'),{left:'404px',top:'158px',transformOrigin:'60px 0'});
+
+// ---------------- measure targets (camera at identity, before any seek) ----------------
+function ctr(el,dx=0,dy=0){const r=el.getBoundingClientRect();return[r.x+r.width/2+dx,r.y+r.height/2+dy];}
+const P={
+  composer:ctr($('composer'),-200),send:ctr($('send')),apYes:ctr($('apYes')),file:ctr($('file')),split:ctr($('splitBtn')),
+  sbNew:ctr($('sbNew')),composer2:ctr($('composer2'),-300),send2:ctr($('send2')),
+  sbMarket:ctr($('sbMarket')),install:ctr(mcEls[1].querySelector('.ins')),
+  sbScripts:ctr($('sbScripts')),sched:ctr(cardEls[0].querySelector('.sch')),go:ctr($('goBtn')),
+  sbSet:ctr($('sbSet')),disc:ctr($('discBtn')),cb1:ctr($('cb1')),cb2:ctr($('cb2')),imp:ctr($('impBtn')),
+  appr:ctr($('appr')),gal:ctr($('gal')),res:ctr($('res')),pdf:ctr($('pdfPane'))
+};
+// approval card sits in the feed: measure it with steps fully laid out (they are, opacity only)
+const IMYES=(()=>{const r=$('imYes').getBoundingClientRect(),ph=$('phone').getBoundingClientRect();return[r.x+r.width/2-ph.x,r.y+r.height/2-ph.y];})();
+
+// ---------------- beat-grid timeline ----------------
+const PROMPT='导出京东全店价格，和上周对比，生成调价建议表';
+const PROMPT2='给这 6 款新品做白底主图，再剪一条 15 秒短视频';
+function keyTimes(str,a,z,seed){const g=[...str].map((ch,i)=>0.7+0.6*hash(i*3.1+seed)+(/[，, ]/.test(ch)?0.8:0));const s=g.reduce((x,y)=>x+y,0);let c=a;return g.map(x=>(c+=x/s*(z-a)));}
+const KEYS=keyTimes(PROMPT,b(15),b(19),0), KEYS2=keyTimes(PROMPT2,b(53),b(55.5),7);
+const C={composer:b(14),send:b(20),apYes:b(33),file:b(40),split:b(46),sbNew:b(52),composer2:b(52.5),send2:b(56),
+  sbMarket:b(68),install:b(71),sbScripts:b(76),sched:b(78),go:b(81),sbSet:b(97),disc:b(99),cb1:b(100),cb2:b(101),imp:b(102)};
+const STEP_T=[b(22),b(24),b(26),b(28)], STEP_DONE=[b(23),b(25),b(27),b(34)];
+const GEN_T=PROD.map((_,i)=>b(58+i*0.5)), GEN_DONE=PROD.map((_,i)=>b(61+i*0.75));
+const VID_T=b(60), VID_DONE=b(65);
+const PH={in:b(84),m1:b(85),m2:b(86),m3:b(88),tap:b(90),m4:b(91),m5:b(92),out:b(95)};
+// cursor keys: each move starts ~0.55s before its click
+const mv=(name,lead=0.55)=>[C[name]-lead,...P[name]];
+const CUR=[[0,1640,1120],mv('composer',0.6),mv('send'),[b(24),1180,800],mv('apYes',0.7),mv('file',0.6),mv('split'),
+  mv('sbNew',0.6),mv('composer2',0.3),mv('send2'),[b(60),1300,900],mv('sbMarket',0.7),mv('install'),mv('sbScripts',0.6),mv('sched'),mv('go'),
+  [b(83),1000,820],[b(97)-0.7,...P.sbSet],[C.sbSet+0.01,...P.sbSet],mv('disc',0.6),mv('cb1',0.4),mv('cb2',0.4),mv('imp',0.4),[b(105),1100,840]];
+// camera keys [t, zoom, fx, fy]
+const REST=[1,960,590];
+const CAM=[[0,0.9,960,600],[b(12),...REST],
+  [C.composer,1.28,800,890],[b(20)+0.1,...REST],
+  [b(22),1.16,1100,580],[b(29),1.3,P.appr[0]+120,P.appr[1]-80],[b(35),...REST],
+  [C.file,1.18,1230,630],[C.split,1.08,1050,620],[b(51),...REST],
+  [b(53),1.22,800,880],[b(56)+0.1,...REST],[b(57.5),1.15,P.gal[0]+40,P.gal[1]-60],[b(66),...REST],
+  [b(69),1.15,900,520],[b(74),...REST],[b(77),1.2,760,440],[C.sched,1.2,800,520],[C.go,1.2,940,720],
+  [PH.in,0.72,1180,590],[PH.out,...REST],[b(99),1.25,1180,430],[b(103),...REST]];
+function camAt(t){const v=sumSpring(CAM.map(k=>[k[0],Math.log(k[1]),k[2],k[3]]),t,6.5,0.95);return[Math.exp(v[0]),v[1],v[2]];}
+const CAPS=[[b(14),b(20),'01','说一句话，<em>智能体</em>接手'],[b(20),b(28),'02','打开真实网页，<em>实时执行</em>'],[b(28),b(38),'03','关键动作，<em>停下来等你确认</em>'],
+  [b(38),b(52),'04','结果直接变成 <em>文件</em>'],[b(52),b(68),'05','商品图、短视频，<em>一句话生成</em>'],[b(68),b(76),'06','<em>80+</em> 脚本场景，一键安装'],
+  [b(76),b(83),'07','常用脚本，<em>定时</em>直接跑'],[b(84),b(96),'08','人不在电脑前，<em>手机上</em>下任务'],[b(96),b(105),'09','模型 <em>随你选</em>']];
+// which view is on screen
+const VIEWS=[['chat',b(12),C.sbNew],['chat2',C.sbNew,C.sbMarket],['market',C.sbMarket,C.sbScripts],['scripts',C.sbScripts,C.sbSet],['settings',C.sbSet,999]];
+const SB={chat:'sbChat',chat2:'sbChat',market:'sbMarket',scripts:'sbScripts',settings:'sbSet'};
+
+// sound events
+const EV=[];const ev=(t,type,i)=>EV.push({t,type,i});
+[1,2].forEach(k=>{ev(b(k),'word');ev(b(k),'tick');});[3,4,5,6].forEach(k=>ev(b(k),'word'));
+ev(b(7),'whoosh');ev(b(8),'impact');ev(b(9),'word');ev(b(10),'word');ev(b(12),'whoosh');
+Object.values(C).forEach(t=>ev(t,'click'));KEYS.forEach(t=>ev(t,'key'));KEYS2.forEach(t=>ev(t,'key'));
+ev(C.send,'send');ev(C.send2,'send');STEP_DONE.forEach((t,i)=>ev(t,'done',i));ev(b(29),'alert');ev(b(36),'chime');
+[C.file,C.sbNew,C.sbMarket,C.sbScripts,C.sbSet].forEach(t=>ev(t,'whoosh'));GEN_DONE.forEach((t,i)=>ev(t,'pop',i));ev(VID_DONE,'chime');
+ev(b(73),'done',2);ev(b(82),'success');ev(PH.in,'whoosh');[PH.m1,PH.m2,PH.m3,PH.m4,PH.m5].forEach(t=>ev(t,'msg'));ev(PH.tap,'click');ev(b(103),'success');
+ev(b(106),'whoosh');[107,109,111].forEach(k=>ev(b(k),'impact_s'));[112,113,114,115].forEach(k=>ev(b(k),'word'));
+ev(b(118),'whoosh');ev(b(119),'impact');[120,121,122].forEach(k=>ev(b(k),'word'));
+
+function seek(t){
+  // ===== S1 hook (bars 0-1) =====
+  const s1on=t<b(9);vis($('s1'),s1on?1:0);
+  if(s1on){
+    chips.forEach((c,i)=>{const born=b(1+Math.floor(i/6))+(i%6)*0.04,ei=S(t,born,16);
+      const bx=hash(i)*1660+40,by0=hash(i+50)*900+60,by=(by0>350&&by0<660)?(by0<505?by0-270:by0+240):by0;
+      const col=S(t,b(7)+hash(i+9)*0.12,11,0.9);
+      const x=lerp(bx+Math.sin(t*0.9+i)*14,860,col),y=lerp(by+Math.cos(t*0.7+i*1.7)*10,402,col);
+      st(c,{transform:`translate(${x}px,${y}px) rotate(${(hash(i+7)-.5)*12*(1-col)}deg) scale(${lerp(0.88+hash(i+3)*0.3,0.15,col)*lerp(0.8,1,ei)})`,opacity:ei*(1-clamp((col-0.6)/0.4))*(0.5+0.5*hash(i+2))});});
+    swap($('w1'),t,b(1),b(7),26);swap($('w2'),t,b(2),b(7),26);['v1','v2','v3','v4'].forEach((id,k)=>swap($(id),t,b(3+k),b(7),20));
+  }
+  // ===== S2 logo, then shared-element handoff into the sidebar =====
+  const HAND=b(12);const s2on=t>b(7)&&t<b(14);vis($('s2'),s2on?1:0);
+  if(s2on){const pin=clamp(spr(t-b(8),12,0.8),0,1.2),ph=S(t,HAND,10,0.92);
+    let [z,fx,fy]=camAt(t);z*=lerp(0.95,1,S(t,b(12),11,0.9));
+    const BR=[212,222],lx=lerp(960,BR[0]*z+960-fx*z,ph),ly=lerp(430,BR[1]*z+540-fy*z,ph);
+    st($('logoWrap'),{transform:`translate(${lx-960}px,${ly-430}px)`});
+    st($('logo'),{transform:`scale(${lerp(0.25,1,pin)*lerp(1,28*z/300,ph)})`,opacity:S(t,b(8)-0.1,20)*(t>HAND+0.62?0:1)});
+    swap($('title'),t,b(9),b(11)+0.25,36);swap($('subtitle'),t,b(10),b(11)+0.25,22);}
+
+  // ===== app (beats 12–106) =====
+  const camOn=t>b(11.5)&&t<b(107);
+  if(camOn){
+    const ain=S(t,b(12),11,0.9),aout=S(t,b(106),10,0.95);
+    vis($('cam'),ain*(1-aout));
+    let [z,fx,fy]=camAt(t);z*=lerp(0.95,1,ain)*lerp(1,0.9,aout);
+    st($('cam'),{transform:`translate(${960-fx*z}px,${540-fy*z}px) scale(${z})`,filter:blurf(aout*10)});
+    $('sbBrand').style.opacity=t>HAND+0.6?1:0;
+    // dim the desktop while the phone is in front
+    const dim=S(t,PH.in,10,0.95)*(1-S(t,PH.out,10,0.95));
+    $('win').style.filter=dim>0.01?`brightness(${(1-dim*0.45).toFixed(3)})`:'none';
+
+    // views: blur-swap on each sidebar click
+    let cur='chat';VIEWS.forEach(v=>{const ei=v[1]<=b(12)?1:S(t,v[1],16),eo=S(t,v[2],16);const op=ei*(1-eo);
+      vis($(v[0]),op,{filter:blurf((1-ei)*8+eo*8),zIndex:op>0.5?2:1});if(op>0.5)cur=v[0];});
+    ['sbChat','sbMarket','sbScripts','sbSet'].forEach(id=>$(id).className='sbtn'+(SB[cur]===id?' on':'')+(id==='sbSet'?' bottom':''));
+    $('sbNew').className='sbtn'+(Math.abs(t-C.sbNew)<0.25?' on':'');
+
+    // --- chat 1: composer & typing
+    const typing=t>=C.composer&&t<C.send;$('composer').className=typing?'focus':'';
+    if(typing){const n=KEYS.filter(k=>k<=t).length;$('ctext').className='';$('ctext').innerHTML=PROMPT.slice(0,n)+'<span class="caret"></span>';}
+    else{$('ctext').className='ph';$('ctext').textContent='描述任务… / 调用指令 @ 文件或对话';}
+    st($('send'),{transform:`scale(${1-0.14*press(t,C.send)})`});
+    swap($('ubub'),t,C.send,null,16,16);swap($('think'),t,b(21),null,8);
+    stepEls.forEach((el,i)=>{const a=STEP_T[i],d=STEP_DONE[i],ei=S(t,a,15);
+      vis(el,ei,{transform:`translateX(${(1-ei)*-22}px)`,filter:blurf((1-ei)*6)});
+      const done=t>=d,wait=i===3&&t>=b(29)&&!done;el.className='step'+(done?' done':'')+(wait?' wait':'');
+      const ph=((t-a)/BEAT)%1,h=el.querySelector('.halo');h.style.transform=`scale(${1+ph*0.8})`;h.style.opacity=done?0:1-ph;
+      el.querySelector('.meta').textContent=done?STEPS[i][2]:(wait?'等待确认':'运行中…');
+      if(done)el.querySelector('svg').style.transform=`scale(${clamp(spr(t-d,18,0.75),0,1.1)})`;});
+    // approval card: appears on beat 29, user allows on beat 33
+    const ai=S(t,b(29),14,0.85);vis($('appr'),ai,{transform:`translateY(${(1-ai)*16}px)`,filter:blurf((1-ai)*6)});
+    st($('apYes'),{transform:`scale(${1-0.08*press(t,C.apYes)})`});
+    const ok=S(t,C.apYes+0.1,16);vis($('apBtns'),1-ok,{display:ok>0.99?'none':'flex'});vis($('apOk'),ok,{display:ok>0.01?'flex':'none'});
+    swap($('areply'),t,b(36),null,12);
+    // resource panel
+    const bOn=t>=STEP_T[0];$('bpn').textContent=bOn?'1':'0';$('bpn').className='n'+(bOn?' hot':'');
+    vis($('bpe'),bOn?0:1);const mi=S(t,STEP_T[0],14);vis($('mini'),bOn?mi:0,{transform:`scale(${lerp(0.93,1,mi)})`});
+    mrowEls.forEach((r,i)=>{const a=b(23)+i*BEAT/2;vis(r,S(t,a,20));r.className=(t>=a&&t<a+BEAT/2&&t<b(27))||(t>=b(34)&&t<b(36)&&i%2===0)?'hl':'';});
+    const sp=seg(t,b(23),b(23)+7*BEAT/2);st($('scan'),{top:`${58+sp*175}px`,opacity:(sp>0&&sp<1)?1:0});
+    $('bdot').style.opacity=0.4+0.6*(1-((t/BEAT)%1));$('bdtx').textContent=(t>=b(29)&&t<C.apYes)?'等待你确认':'智能体正在操作';
+    const fOn=t>=b(36);$('apn').textContent=fOn?'1':'0';$('apn').className='n'+(fOn?' hot':'');
+    vis($('ape'),fOn?0:1);const fi=clamp(spr(t-b(36),16,0.78),0,1.05);vis($('file'),fOn?clamp(fi):0,{transform:`scale(${lerp(0.9,1,fi)})`});
+    $('file').className='file'+(t>=C.file?' sel':'');
+    // workspace: opens on beat 40, splits on beat 46 (xlsx | pdf)
+    const wi=S(t,C.file,13,0.9),spl=S(t,C.split,12,0.9);
+    vis($('ws'),t>=C.file?1:0,{transform:`translateX(${(1-wi)*1460}px)`,width:`${lerp(1020,1440,spl)}px`});
+    const sheetR=24+spl*(560+16);st($('sheet'),{right:sheetR+'px'});st($('sumbar'),{right:sheetR+'px'});
+    vis($('pdfPane'),spl,{width:'560px',transform:`translateX(${(1-spl)*80}px)`,filter:blurf((1-spl)*8)});
+    $('splitBtn').className=t>=C.split?'on':'';$('pdfTab').className='wtab'+(t>=C.split?' on':'');
+    st($('splitBtn'),{transform:`scale(${1-0.08*press(t,C.split)})`});
+    st($('pdfPage'),{transform:`translateY(${-S(t,b(48),4,1)*40}px)`});
+    srowEls.forEach((r,i)=>{vis(r,S(t,b(40)+0.25+i*BEAT/4,22));r.className=(SROWS[i][5]!=='保持'&&t>=b(42)+i*BEAT/4&&t<b(46))?'flash':'';});
+
+    // --- chat 2: AI materials
+    const typing2=t>=C.composer2&&t<C.send2;$('composer2').className=typing2?'focus':'';
+    if(typing2){const n=KEYS2.filter(k=>k<=t).length;$('ctext2').className='';$('ctext2').innerHTML=PROMPT2.slice(0,n)+'<span class="caret"></span>';}
+    else{$('ctext2').className='ph';$('ctext2').textContent='描述任务… / 调用指令 @ 文件或对话';}
+    st($('send2'),{transform:`scale(${1-0.14*press(t,C.send2)})`});
+    swap($('ubub2'),t,C.send2,null,16,16);swap($('think2'),t,b(57),null,8);
+    giEls.forEach((g,i)=>{const a=GEN_T[i],d=GEN_DONE[i],ei=S(t,a,15);vis(g,ei,{transform:`scale(${lerp(0.9,1,ei)})`});
+      const gen=g.querySelector('.gen'),rv=S(t,d,14,0.9);vis(gen,1-rv,{backgroundPosition:`${(1-((t*0.8+i*0.17)%1))*150}% 0`});
+      g.querySelector('.gen b').style.width=(clamp((t-a)/(d-a))*100)+'%';g.querySelector('.gen span').textContent=`生成中 ${Math.floor(clamp((t-a)/(d-a))*100)}%`;
+      const svg=g.querySelector('svg.prod');st(svg,{filter:blurf((1-rv)*10),transform:`scale(${lerp(0.85,1,rv)})`});});
+    const vi=S(t,VID_T,14),vr=S(t,VID_DONE,12,0.9);vis($('gvid'),vi,{transform:`scale(${lerp(0.92,1,vi)})`});
+    vis($('vgen'),1-vr,{backgroundPosition:`${(1-((t*0.8)%1))*150}% 0`});$('vgentx').textContent=`视频生成中 ${Math.floor(clamp((t-VID_T)/(VID_DONE-VID_T))*100)}%`;
+    const vp=clamp((t-VID_DONE)/3);$('vprog').style.width=(vp*100)+'%';
+    vframes.forEach((f,i)=>{const pos=(t-VID_DONE)*2-i;const o=clamp(1-Math.abs(pos))*(t>=VID_DONE?1:(i===0?1:0));st(f,{opacity:o,transform:`scale(${1+clamp(pos+1,0,2)*0.04})`});});
+
+    // --- market: install on beat 71, done on beat 73
+    mcEls.forEach((c,i)=>{const ei=S(t,C.sbMarket+0.15+i*BEAT/8,15);vis(c,ei,{transform:`translateY(${(1-ei)*26}px)`});});
+    mcEls[1].className='mc'+(t>=C.install-0.3&&t<C.sbScripts?' focus':'');
+    {const ins=mcEls[1].querySelector('.ins');const done=t>=b(73);
+      if(done){ins.className='ins done';ins.innerHTML='✓ 已安装';}
+      else{ins.className='ins';const pr=clamp((t-C.install)/(b(73)-C.install));ins.innerHTML=`<div class="prog" style="width:${pr*100}%"></div><span>${t>=C.install?'安装中 '+Math.floor(pr*100)+'%':'安装'}</span>`;}
+      st(ins,{transform:`scale(${1-0.06*press(t,C.install)+(done?0.06*(1-S(t,b(73),18,0.6)):0)})`});}
+
+    // --- my scripts + schedule
+    cardEls.forEach((c,i)=>{const ei=S(t,C.sbScripts+0.15+i*BEAT/8,15);vis(c,ei,{transform:`translateY(${(1-ei)*26}px)`});});
+    cardEls[0].className='card'+(t>=C.sched-0.3&&t<C.sbSet?' focus':'');
+    cardEls[0].querySelector('.sch').className='sch'+(t>=C.sched&&t<C.sbSet?' hot':'');
+    const pi=clamp(spr(t-C.sched,16,0.85),0,1.03),po=S(t,C.go+0.12,18,0.95);
+    vis($('pop'),t>=C.sched&&t<C.sbSet?clamp(pi)*(1-po):0,{transform:`translateY(${(1-pi)*-10}px) scale(${lerp(0.95,1,pi)})`,filter:blurf((1-clamp(pi))*6+po*6)});
+    st($('goBtn'),{transform:`scale(${1-0.05*press(t,C.go)})`});
+    const ti=clamp(spr(t-b(82),15,0.8),0,1.05),to=S(t,PH.in,14,0.95);
+    vis($('toast'),t>=b(82)?clamp(ti)*(1-to):0,{transform:`translateX(-50%) translateY(${(1-ti)*28}px)`});
+
+    // --- settings / models
+    st($('discBtn'),{transform:`scale(${1-0.06*press(t,C.disc)})`});
+    const di=clamp(spr(t-C.disc,15,0.85),0,1.03),dO=S(t,C.imp+0.15,18,0.95);
+    vis($('disc'),t>=C.disc?clamp(di)*(1-dO):0,{transform:`translateY(${(1-di)*-10}px) scale(${lerp(0.96,1,di)})`,transformOrigin:'90% 0',filter:blurf((1-clamp(di))*6+dO*6)});
+    $('cb1').className='cb'+(t>=C.cb1?' on':'');$('cb2').className='cb'+(t>=C.cb2?' on':'');
+    st($('impBtn'),{transform:`scale(${1-0.05*press(t,C.imp)})`});
+    ['nr1','nr2'].forEach((id,k)=>{const ei=S(t,C.imp+0.2+k*0.12,15);vis($(id),ei,{height:`${ei*54}px`,borderBottomWidth:ei>0.02?'1px':'0',overflow:'hidden'});});
+    const t2=clamp(spr(t-b(103),15,0.8),0,1.05);vis($('toast2'),t>=b(103)?clamp(t2):0,{transform:`translateX(-50%) translateY(${(1-t2)*28}px)`});
+
+    // --- cursor (summed springs); hidden while the phone is in front
+    const [cx,cy]=sumSpring(CUR,t,9,0.9);const pr=Object.values(C).some(c=>t>c-0.05&&t<c+0.1);
+    vis($('cursor'),S(t,b(13),14)*(1-S(t,b(83),14))+S(t,b(96),14)*(1-S(t,b(105),14)),{transform:`translate(${cx-3}px,${cy-2}px) scale(${pr?0.84:1})`});
+  } else vis($('cam'),0);
+
+  // ===== phone / IM (beats 84–96) =====
+  const phon=t>b(83.5)&&t<b(97);
+  if(phon){const pi=clamp(spr(t-PH.in,11,0.85),0,1.03),po=S(t,PH.out,11,0.95);
+    vis($('phone'),clamp(pi)*(1-po),{transform:`translateY(${(1-pi)*220+po*160}px) rotate(${(1-pi)*4}deg)`,filter:blurf((1-clamp(pi))*6+po*8)});
+    [['m1',PH.m1],['m2',PH.m2],['m3',PH.m3],['m4',PH.m4],['m5',PH.m5]].forEach(([id,a])=>{const ei=clamp(spr(t-a,16,0.8),0,1.04);vis($(id),clamp(ei),{transform:`translateY(${(1-ei)*18}px) scale(${lerp(0.94,1,ei)})`});});
+    $('m2dot').style.opacity=0.4+0.6*(1-((t/BEAT)%1));$('m2tx').textContent=t<PH.m3?'打开抖店后台 · 筛选今日退款':(t<PH.tap?'等待你确认…':'已导出 38 条');
+    st($('imYes'),{transform:`scale(${1-0.08*press(t,PH.tap)})`,background:t>=PH.tap?'#2e9e64':'#ff6b2b'});$('imYes').textContent=t>=PH.tap?'已确认':'确认';
+    const tp=S(t,PH.tap-0.45,10,0.9)*(1-S(t,PH.tap+0.25,12,0.95));
+    vis($('tap'),tp,{left:IMYES[0]+'px',top:(IMYES[1]+(1-S(t,PH.tap-0.45,10,0.9))*60)+'px',transform:`scale(${1-0.18*press(t,PH.tap)})`});
+  } else vis($('phone'),0);
+
+  // captions
+  let any=false;CAPS.forEach(c=>{if(t>=c[0]-0.01&&t<c[1]){any=true;$('capNum').textContent=c[2];$('capText').innerHTML=c[3];
+    const ei=S(t,c[0],15),eo=S(t,c[1]-0.3,18,0.95);vis($('cap'),ei*(1-eo),{transform:`translateY(${(1-ei)*-14}px)`,filter:blurf((1-ei)*6+eo*6)});}});
+  if(!any)vis($('cap'),0);
+
+  // ===== stats (beats 107–117) =====
+  const s6on=t>b(106)&&t<b(118);vis($('s6'),s6on?1:0);
+  if(s6on){[['st1',107],['st2',109],['st3',111]].forEach(([id,k])=>{const ei=clamp(spr(t-b(k),13,0.85),0,1.03),eo=S(t,b(117),16,0.95);
+      vis($(id),clamp(ei)*(1-eo),{transform:`translateY(${(1-ei)*60-eo*20}px) scale(${lerp(0.9,1,ei)})`,filter:blurf((1-clamp(ei))*10+eo*8)});});
+    swap($('k1'),t,b(112),b(117),18);swap($('k2'),t,b(113),b(117),18);swap($('k3'),t,b(114),b(117),18);swap($('k4'),t,b(115),b(117),18);
+    document.querySelectorAll('#ticker .dotsep').forEach((d,i)=>vis(d,S(t,b(112.5+i),15)*(1-S(t,b(117),16))));}
+
+  // ===== end card (beat 119) =====
+  const s7on=t>b(118.5);vis($('s7'),s7on?1:0);
+  if(s7on){const p=clamp(spr(t-b(119),12,0.8),0,1.02);st($('endLogo'),{transform:`scale(${lerp(0.4,1,p)})`,opacity:S(t,b(119)-0.08,22)});
+    swap($('endT'),t,b(120),null,30);swap($('endS'),t,b(121),null,20);swap($('endU'),t,b(122),null,20);}
+
+  vis($('fade'),Math.max(1-seg(t,0,0.4),seg(t,DUR-1.0,DUR)));
+}
+window.seek=seek;window.render=seek;window.DUR=DUR;window.EVENTS=EV.sort((x,y)=>x.t-y.t);
+(function(){const q=new URLSearchParams(location.search);if(q.has('render'))return;
+  if(q.has('t')){seek(parseFloat(q.get('t')));return;}
+  const t0=performance.now();(function loop(){seek(((performance.now()-t0)/1000)%DUR);requestAnimationFrame(loop);})();})();
+
+});
+</script>
+</body>
+</html>

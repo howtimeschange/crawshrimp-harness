@@ -1,0 +1,7 @@
+{
+  "name": "crawshrimp-harness-promo",
+  "private": true,
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

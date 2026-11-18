@@ -609,8 +609,8 @@
               <p class="panel-kicker">IM机器人</p>
               <h3>机器人接入</h3><p class="panel-description">{{ activePanelDescription }}</p>
             </div>
-            <span :class="['badge', agentRuntime.state === 'ready' ? 'on' : 'neutral']">
-              {{ agentRuntime.state === 'ready' ? '服务常驻' : agentRuntimeLabel }}
+            <span :class="['badge', agentRuntime.state === 'ready' && !imSettingsConnectionError ? 'on' : 'neutral']">
+              {{ imSettingsConnectionError ? '连接中断' : agentRuntime.state === 'ready' ? '服务常驻' : agentRuntimeLabel }}
             </span>
           </div>
 
@@ -620,16 +620,25 @@
             <span><i aria-hidden="true"></i>远程审批默认关闭</span>
           </div>
 
+          <div v-if="imSettingsError && (imSettingsReady || !imSettingsUrl)" class="im-runtime-placeholder" role="alert">
+            <strong>机器人渠道连接中断</strong>
+            <p>{{ imSettingsError }}</p>
+            <button class="btn-orange" type="button" :disabled="imSettingsRetrying" @click="retryImSettings">
+              {{ imSettingsRetrying ? '正在连接…' : '重新连接' }}
+            </button>
+          </div>
           <div v-if="imSettingsUrl" class="im-settings-shell">
             <div v-if="!imSettingsReady" class="im-settings-loading" :role="imSettingsError ? 'alert' : 'status'" aria-live="polite">
               <span v-if="!imSettingsError" class="im-settings-loading-spinner" aria-hidden="true"></span>
               <strong>{{ imSettingsError ? '暂时无法打开机器人渠道' : '正在载入机器人渠道' }}</strong>
               <p>{{ imSettingsError || '正在准备接入页面，请稍候…' }}</p>
-              <button v-if="imSettingsError" class="btn-orange" type="button" @click="retryImSettings">重新加载</button>
+              <button v-if="imSettingsError" class="btn-orange" type="button" :disabled="imSettingsRetrying" @click="retryImSettings">
+                {{ imSettingsRetrying ? '正在连接…' : '重新加载' }}
+              </button>
             </div>
             <iframe
               ref="imSettingsFrame"
-              :key="`${imSettingsUrl}:${imSettingsReload}`"
+              :key="imSettingsFrameKey"
               :class="['im-settings-frame', { 'is-ready': imSettingsReady }]"
               :src="imSettingsUrl"
               title="抓虾 IM机器人设置"
@@ -638,9 +647,9 @@
               @load="onImSettingsFrameLoad"
             />
           </div>
-          <div v-else class="im-runtime-placeholder">
-            <strong>正在启动 IM 常驻服务</strong>
-            <p>IM机器人随抓虾核心服务启动；首次准备运行时可能需要一些时间。</p>
+          <div v-else-if="!imSettingsError" class="im-runtime-placeholder">
+            <strong>{{ imSettingsWaitingForStartup ? '正在启动 IM 常驻服务' : 'IM 常驻服务尚未就绪' }}</strong>
+            <p>{{ imSettingsWaitingForStartup ? '首次准备运行时可能需要一些时间。' : agentRuntimeDescription }}</p>
             <button class="btn-orange" type="button" :disabled="Boolean(agentBusy)" @click="onAgentRestartRuntime">
               {{ agentBusy === 'runtime' ? '启动中…' : '重新启动 IM 服务' }}
             </button>
@@ -887,8 +896,12 @@ const agentNotice = ref('')
 const agentNoticeOk = ref(true)
 const imSettingsFrame = ref(null)
 const imSettingsReady = ref(false)
-const imSettingsError = ref('')
+const imSettingsConnectionError = ref('')
+const imSettingsLoadError = ref('')
+const imSettingsError = computed(() => imSettingsConnectionError.value || imSettingsLoadError.value)
+const imSettingsRetrying = ref(false)
 const imSettingsReload = ref(0)
+let imSettingsProbeFailures = 0
 let agentRuntimeReadSeq = 0
 const agentRuntimeLabel = computed(() => {
   const state = String(agentRuntime.value?.state || '')
@@ -937,6 +950,9 @@ const imSettingsUrl = computed(() => {
     return ''
   }
 })
+const imSettingsFrameKey = computed(() =>
+  `${imSettingsUrl.value}:${agentRuntime.value?.web_runtime_instance ?? 0}:${imSettingsReload.value}`)
+const imSettingsWaitingForStartup = computed(() => ['unknown', 'starting'].includes(agentRuntime.value?.state))
 
 function onImSettingsFrameLoad(event) {
   const frameWindow = event?.target?.contentWindow || imSettingsFrame.value?.contentWindow
@@ -960,21 +976,44 @@ function onImSettingsMessage(event) {
   if (event.data?.__crawshrimp === 'workspace-ready') onImSettingsFrameLoad()
 }
 
-async function refreshAgentRuntime({ preserveOnError = false } = {}) {
+async function refreshAgentRuntime({ im = false, retry = false } = {}) {
+  if (imSettingsRetrying.value && !retry) return
   const revision = ++agentRuntimeReadSeq
+  const previousFrameKey = imSettingsFrameKey.value
   try {
     const runtime = await window.cs.agentApi('GET', '/agent/runtime')
-    if (revision === agentRuntimeReadSeq) agentRuntime.value = runtime
-  } catch {
-    if (revision !== agentRuntimeReadSeq || (preserveOnError && imSettingsUrl.value)) return
+    if (revision !== agentRuntimeReadSeq) return
+    agentRuntime.value = runtime
+    imSettingsProbeFailures = 0
+    imSettingsConnectionError.value = ''
+    // A reconnect to a ready frame keeps the user's unsaved settings.
+    if (retry && !imSettingsReady.value && imSettingsUrl.value && previousFrameKey === imSettingsFrameKey.value) {
+      imSettingsReload.value += 1
+    }
+  } catch (error) {
+    if (revision !== agentRuntimeReadSeq) return
+    if (im) {
+      if (retry) {
+        const authError = /智能体页面认证(?:失败，请重新连接智能体|地址无效|超时)|无法连接智能体页面认证服务|智能体服务已切换，请重试/.exec(error?.message || '')
+        imSettingsConnectionError.value = authError?.[0] || '无法连接机器人服务，请重试。'
+      } else if (++imSettingsProbeFailures >= 3 && !imSettingsConnectionError.value) {
+        imSettingsConnectionError.value = '无法获取机器人服务状态，请重新连接。'
+      }
+      return
+    }
     agentRuntime.value = { state: 'offline', generation: 0, model: '', web_origin: '', web_verified: false, api_key_configured: false, error: '后端不可达' }
   }
 }
 
-function retryImSettings() {
-  imSettingsReady.value = false
-  imSettingsReload.value += 1
-  void refreshAgentRuntime({ preserveOnError: true })
+async function retryImSettings() {
+  if (imSettingsRetrying.value) return
+  imSettingsRetrying.value = true
+  try {
+    // The main process installs the current iframe cookie before this read resolves.
+    await refreshAgentRuntime({ im: true, retry: true })
+  } finally {
+    imSettingsRetrying.value = false
+  }
 }
 
 async function onAgentRestartRuntime() {
@@ -2136,7 +2175,7 @@ watch(() => [props.effectiveTheme, props.themePreference], () => {
   if (activePanelId.value === 'im-bots') onImSettingsFrameLoad()
 })
 
-watch(imSettingsUrl, () => {
+watch(imSettingsFrameKey, () => {
   imSettingsReady.value = false
 }, { flush: 'sync' })
 
@@ -2145,14 +2184,14 @@ watch(imSettingsUrl, () => {
 const imSettingsActive = computed(() => props.active !== false && activePanelId.value === 'im-bots')
 watch(imSettingsActive, (active, _old, onCleanup) => {
   if (!active) return
-  onCleanup(adaptivePoll(() => refreshAgentRuntime({ preserveOnError: true }), { immediate: true }))
+  onCleanup(adaptivePoll(() => refreshAgentRuntime({ im: true }), { immediate: true }))
 }, { immediate: true })
 
-watch([imSettingsActive, imSettingsUrl, imSettingsReload, imSettingsReady], ([active, url, _reload, ready], _old, onCleanup) => {
-  imSettingsError.value = ''
-  if (!active || !url || ready) return
+watch([imSettingsActive, imSettingsFrameKey, imSettingsReady], ([active, _key, ready], _old, onCleanup) => {
+  imSettingsLoadError.value = ''
+  if (!active || !imSettingsUrl.value || ready) return
   const timer = setTimeout(() => {
-    imSettingsError.value = '机器人页面加载超时，请重试。'
+    imSettingsLoadError.value = '机器人页面加载超时，请重试。'
   }, 30000)
   onCleanup(() => clearTimeout(timer))
 }, { immediate: true })

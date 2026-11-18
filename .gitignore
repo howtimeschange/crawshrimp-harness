@@ -62,3 +62,6 @@ app/src/renderer/public/pdfjs/
 
 # Admin dashboard is a separate local-only Git repository.
 /cloud/harness-analytics/
+
+# Original release screenshots stay in private local storage.
+/docs/crawshrimp-harness/assets/v0.2.0-release/*-full.png

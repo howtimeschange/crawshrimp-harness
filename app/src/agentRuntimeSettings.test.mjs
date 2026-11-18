@@ -25,9 +25,10 @@ function fixture(cs = {}, props = {}) {
   return { app, state: vm.$.setupState, props: vm.$.props }
 }
 
-const imRuntime = (generation = 1) => ({
+const imRuntime = (generation = 1, instance = 1) => ({
   state: 'ready',
   generation,
+  web_runtime_instance: instance,
   web_origin: 'http://127.0.0.1:19065/',
 })
 
@@ -118,6 +119,21 @@ test('IM follows runtime generations without navigating away and preserves a hea
     await settle()
     assert.equal(f.state.imSettingsUrl, loadedUrl)
     assert.equal(f.state.imSettingsReady, true)
+
+    for (let i = 0; i < 2; i++) {
+      t.mock.timers.tick(5000)
+      await settle()
+    }
+    assert.match(f.state.imSettingsConnectionError, /无法获取机器人服务状态/)
+    assert.equal(f.state.imSettingsFrame.contentWindow, newFrame)
+    assert.equal(f.state.imSettingsReady, true)
+
+    offline = false
+    t.mock.timers.tick(5000)
+    await settle()
+    assert.equal(f.state.imSettingsConnectionError, '')
+    assert.equal(f.state.imSettingsFrame.contentWindow, newFrame)
+    assert.equal(f.state.imSettingsReady, true)
   } finally { f.app.unmount() }
 })
 
@@ -152,6 +168,67 @@ test('IM waits through runtime startup and stops polling when its retained setti
   t.mock.timers.tick(60000)
   await settle()
   assert.equal(calls, stoppedCalls)
+})
+
+test('manual reconnect to the same instance preserves a ready IM frame after an outage', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let offline = false
+  const f = fixture({ agentApi: async () => {
+    if (offline) throw Error('status probe timed out')
+    return imRuntime()
+  } }, { focusPanelId: 'im-bots', active: true })
+  try {
+    await settle()
+    const frame = markRaw({ postMessage() {} })
+    f.state.imSettingsFrame = { contentWindow: frame }
+    markImReady(f.state, frame)
+    const originalKey = f.state.imSettingsFrameKey
+
+    offline = true
+    for (let i = 0; i < 3; i++) {
+      t.mock.timers.tick(5000)
+      await settle()
+    }
+    assert.match(f.state.imSettingsConnectionError, /无法获取机器人服务状态/)
+    offline = false
+    await f.state.retryImSettings()
+
+    assert.equal(f.state.imSettingsConnectionError, '')
+    assert.equal(f.state.imSettingsFrameKey, originalKey)
+    assert.equal(f.state.imSettingsReady, true)
+    assert.equal(f.state.imSettingsFrame.contentWindow, frame)
+  } finally { f.app.unmount() }
+})
+
+test('a successful stopped or disabled snapshot replaces the stale IM outage and restores restart', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  for (const state of ['stopped', 'disabled_until_manual_restart']) {
+    let snapshot = imRuntime()
+    const f = fixture({ agentApi: async () => {
+      if (!snapshot) throw Error('status probe timed out')
+      return snapshot
+    } }, { focusPanelId: 'im-bots', active: true })
+    try {
+      await settle()
+      snapshot = null
+      for (let i = 0; i < 3; i++) {
+        t.mock.timers.tick(5000)
+        await settle()
+      }
+      assert.match(f.state.imSettingsError, /无法获取机器人服务状态/)
+      snapshot = { state }
+      if (state === 'stopped') {
+        t.mock.timers.tick(5000)
+        await settle()
+      } else {
+        await f.state.retryImSettings()
+      }
+      assert.equal(f.state.agentRuntime.state, state)
+      assert.equal(f.state.imSettingsUrl, '')
+      assert.equal(f.state.imSettingsError, '')
+      assert.equal(f.state.agentBusy, '')
+    } finally { f.app.unmount() }
+  }
 })
 
 test('IM load timeout offers a fresh frame attempt and a late valid handshake clears the error', async t => {
@@ -207,6 +284,54 @@ test('switching settings panels retains an authenticated IM frame when the runti
     assert.equal(f.state.imSettingsReload, 0)
     assert.equal(f.state.imSettingsReady, true)
     assert.equal(f.state.imSettingsError, '')
+  } finally { f.app.unmount() }
+})
+
+test('IM waits for a fresh handshake after a hidden same-port, same-generation runtime replacement', async () => {
+  let runtime = imRuntime()
+  const f = fixture({ agentApi: async () => runtime }, { focusPanelId: 'im-bots', active: true })
+  const frame = markRaw({ postMessage() {} })
+  try {
+    await settle()
+    f.state.imSettingsFrame = { contentWindow: frame }
+    markImReady(f.state, frame)
+    const { imSettingsUrl, imSettingsFrameKey } = f.state
+    f.props.active = false
+    await settle()
+    runtime = imRuntime(1, 2)
+    f.props.active = true
+    await settle()
+    assert.equal(f.state.imSettingsUrl, imSettingsUrl)
+    assert.notEqual(f.state.imSettingsFrameKey, imSettingsFrameKey)
+    assert.equal(f.state.imSettingsReady, false)
+  } finally { f.app.unmount() }
+})
+
+test('manual reload waits for authentication, reports an exchange failure and retries once', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let exchange
+  let probe = async () => imRuntime()
+  const f = fixture({ agentApi: () => probe() }, { focusPanelId: 'im-bots', active: true })
+  try {
+    await settle()
+    probe = () => new Promise((resolve, reject) => { exchange = { resolve, reject } })
+    const oldKey = f.state.imSettingsFrameKey
+    const failed = f.state.retryImSettings()
+    assert.equal(f.state.imSettingsRetrying, true)
+    assert.equal(f.state.imSettingsFrameKey, oldKey)
+    exchange.reject(new Error("Error invoking remote method 'agent:api': Error: 智能体页面认证失败，请重新连接智能体"))
+    await failed
+    assert.equal(f.state.imSettingsFrameKey, oldKey)
+    assert.match(f.state.imSettingsError, /^智能体页面认证失败/)
+
+    const succeeded = f.state.retryImSettings()
+    assert.equal(f.state.imSettingsFrameKey, oldKey)
+    exchange.resolve(imRuntime(1, 2))
+    await succeeded
+    assert.notEqual(f.state.imSettingsFrameKey, oldKey)
+    assert.equal(f.state.imSettingsReload, 0, 'changing the instance already remounts the frame')
+    assert.equal(f.state.imSettingsError, '')
+    assert.equal(f.state.imSettingsRetrying, false)
   } finally { f.app.unmount() }
 })
 

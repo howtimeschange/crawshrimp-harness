@@ -1,0 +1,24 @@
+{
+  "source": "historical_snapshot",
+  "database_mode": "read-only",
+  "script_runs": {
+    "total": 4,
+    "completed": 3
+  },
+  "match_reports": {
+    "worksheets": 3,
+    "rows": 5,
+    "matched": 4,
+    "downloaded": 4
+  },
+  "zip_checks": {
+    "archives": 2,
+    "crc_passed": 2,
+    "decoded_images": 4
+  },
+  "image_job_complete": true,
+  "decoded_downloaded_images": 2,
+  "office_summary_cache_verified": true,
+  "exported_zip_crc_verified": null,
+  "user_screenshot_recorded": true
+}
