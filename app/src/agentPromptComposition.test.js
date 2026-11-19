@@ -28,19 +28,28 @@ test('Web orientation keeps the actual URL without developer instructions; sourc
 })
 
 test('file guidance is registered with the available tool, and respects automatic delivery', async () => {
-  const { installOutboundArtifactTool } = await import(pathToFileURL(resolve(root, 'node_modules/@xmanrui/dsh-im/src/channels/shared/semantic/artifact.mjs')).href)
+  const { installOutboundArtifactTool, OutboundArtifactRegistry } = await import(pathToFileURL(resolve(root, 'node_modules/@xmanrui/dsh-im/src/channels/shared/semantic/artifact.mjs')).href)
   const sections = []
   const tools = []
-  const ctx = { systemPrompt: { section: value => sections.push(value) }, on() {} }
-  assert.equal(installOutboundArtifactTool(ctx), false)
+  const ctx = { systemPrompt: { context: value => sections.push(value) }, on() {} }
+  const registry = new OutboundArtifactRegistry()
+  assert.equal(installOutboundArtifactTool(ctx, { registry }), false)
   assert.equal(sections.length, 0)
   ctx.tools = { register: tool => tools.push(tool) }
-  assert.equal(installOutboundArtifactTool(ctx), true)
+  assert.equal(installOutboundArtifactTool(ctx, { registry }), true)
   assert.equal(tools.length, 1)
   assert.equal(sections.length, 1)
-  assert.match(sections[0].text, /requires_file_return=false/)
-  assert.match(sections[0].text, /当前工具目录包含 dsh_im_return_file/)
-  assert.doesNotMatch(sections[0].text, /When the user asks to receive/)
+  const session = { id: 'im-session', snapshotEvents: () => [{ type: 'turn/start', data: { turn: 1 } }] }
+  const assembly = { agent: { session } }
+  assert.equal(sections[0].text(assembly), '')
+  const closeConsumer = registry.openConsumer(session.id, 'im-prompt')
+  registry.observeClaimedMessage(session, { source: { rpcId: 'im-prompt' } }, 1)
+  const guidance = sections[0].text(assembly)
+  assert.match(guidance, /requires_file_return=false/)
+  assert.match(guidance, /当前工具目录包含 dsh_im_return_file/)
+  assert.doesNotMatch(guidance, /When the user asks to receive/)
+  closeConsumer()
+  assert.equal(sections[0].text(assembly), '')
   const bundle = readFileSync(resolve(root, 'node_modules/@xmanrui/dsh-im/lib/index.js'), 'utf8')
   assert.ok(bundle.includes('requires_file_return=false'))
   assert.ok(!bundle.includes('When the user asks to receive a file or generated image'))
