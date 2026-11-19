@@ -146,7 +146,7 @@ test('worker compacts image-heavy user message events before FastAPI notificatio
   assert.match(source, /function extractEventText\(data\)/)
 })
 
-test('staged DSH rc.1 runtime applies the small verified 4.11 source overlay after a clean install', () => {
+test('staged DSH rc.2 runtime applies the small verified 5.0 source overlay after a clean install', () => {
   const patcherPath = resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs')
   assert.equal(existsSync(patcherPath), true, 'runtime dependency patcher must be packaged from source')
   const patcher = readFileSync(patcherPath, 'utf8')
@@ -175,14 +175,14 @@ test('staged DSH rc.1 runtime applies the small verified 4.11 source overlay aft
   assert.match(patcher, /assertStandardPresetRootClosure/)
   assert.match(patcher, /agent-presets\/crawshrimp-standard\/agent\.cordis\.yml/)
   assert.match(patcher, /crawshrimp-standard\/agent\.cordis\.yml/)
-  assert.match(patcher, /@xmanrui\/dsh-im\/package\.json[\s\S]*4\.11\.0/)
+  assert.match(patcher, /@xmanrui\/dsh-im\/package\.json[\s\S]*5\.0\.0/)
   assert.match(patcher, /inbound-ttl\.mjs[\s\S]*DEFAULT_INBOUND_TTL_HOURS = 168/)
   assert.match(patcher, /harness-session-binding\.mjs/)
   assert.match(patcher, /model-setting\.mjs/)
   assert.match(staging, /patchRuntimeDependencies\(stageRoot\)/)
 })
 
-test('dsh-im brief-card patch accepts fresh upstream and already-branded 4.11 approval text', async () => {
+test('dsh-im brief-card patch accepts fresh upstream and already-branded 5.0 approval text', async () => {
   const patcherPath = resolve(appRoot, '../integrations/deepseek-harness/scripts/patch-runtime-dependencies.mjs')
   const { patchDshImApprovalBriefCardSource } = await import(`${pathToFileURL(patcherPath).href}?approval-brief-fresh-red=${Date.now()}`)
   const toolArguments = [
@@ -1121,10 +1121,10 @@ test('DSH rc.1 profile graph pins the supported Web and ACP runtime closure', ()
     assert.equal(harnessPackage.dependencies[packageName], '0.2.1-rc.2', `${packageName} must be pinned at the Cordis runtime root`)
     assert.equal(lock.packages[`node_modules/${packageName}`].version, '0.2.1-rc.2')
   }
-  assert.equal(harnessPackage.dependencies['@xmanrui/dsh-im'], '4.11.0')
+  assert.equal(harnessPackage.dependencies['@xmanrui/dsh-im'], '5.0.0')
   assert.equal(lock.packages['node_modules/@deepseek-ai/dsh'].version, '0.2.1-rc.2')
   assert.equal(lock.packages['node_modules/@deepseek-ai/dsh-web-app'].version, '0.2.1-rc.2')
-  assert.equal(lock.packages['node_modules/@xmanrui/dsh-im'].version, '4.11.0')
+  assert.equal(lock.packages['node_modules/@xmanrui/dsh-im'].version, '5.0.0')
   assert.equal(lock.packages['node_modules/@deepseek-ai/dsh-acp-app'].version, '0.2.1-rc.2')
   const dshPackage = JSON.parse(readFileSync(resolve(appRoot, '../integrations/deepseek-harness/node_modules/@deepseek-ai/dsh/package.json'), 'utf8'))
   assert.equal(dshPackage.dependencies['@deepseek-ai/dsh-acp-app'], '0.2.1-rc.2')

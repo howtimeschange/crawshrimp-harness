@@ -2317,15 +2317,15 @@ def test_dsh_messages_preserves_native_capabilities():
     assert settings["reasoningEffort"] == "high"
 
 
-def test_dsh_runtime_guard_checks_rc1_and_dsh_im_contracts_with_verified_source_overlay():
+def test_dsh_runtime_guard_checks_rc2_and_dsh_im_contracts_with_verified_source_overlay():
     patcher = (Path(__file__).resolve().parents[1] / "integrations" / "deepseek-harness" / "scripts" / "patch-runtime-dependencies.mjs").read_text(encoding="utf-8")
 
     assert "RUNTIME_GUARD_MARKER" in patcher
-    assert "crawshrimp-dsh-im-411-product-patch-v1" in patcher
+    assert "crawshrimp-dsh-im-500-product-patch-v1" in patcher
     assert "crawshrimp-dsh-im-411-natural-controls-v1" in patcher
     assert "crawshrimp-dsh-im-411-session-permission-v1" in patcher
     assert '"0.2.1-rc.2"' in patcher
-    assert '"4.11.0"' in patcher
+    assert '"5.0.0"' in patcher
     assert "DEFAULT_INBOUND_TTL_HOURS = 168" in patcher
     assert "harness-session-binding.mjs" in patcher
     assert "model-setting.mjs" in patcher

@@ -5,8 +5,8 @@
 // FastAPI 侧经 HTTP 调用本插件的 /api/crawshrimp/approval/request。
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { timingSafeEqual } from 'node:crypto'
-import { realpath, readFile } from 'node:fs/promises'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { realpath, readFile, stat } from 'node:fs/promises'
+import { basename, isAbsolute, relative, resolve } from 'node:path'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 
 export const name = 'crawshrimp-product-bridge'
@@ -1045,32 +1045,41 @@ export function apply(ctx) {
         error.code = 'IM_ARTIFACT_OUTSIDE_WORKSPACE'
         throw error
       }
-      if (!sessionRegistry.has(String(exec.agent?.id || ''))) {
-      const validationLease = await postMcpContext('acquire', { runtime_session_id: String(exec.agent?.id || ''), call_id: String(exec.callId || '') })
-      try {
-        await postMcpContext('validate-return-file', { lease_id: validationLease.lease_id, path: resolve(sessionWorkspace, requestedPath) })
-      } finally {
-        await postMcpContext('release', { lease_id: validationLease.lease_id })
-      }
-      }
-      const result = await next()
-      if (result?.isError) return result
-      // IM channels own provider delivery. Desktop Web uses Harness's artifact
-      // stream; registering only in the IM queue does not display a Web image.
       const runtimeSessionId = String(exec.agent?.id || '')
-      if (!sessionRegistry.has(runtimeSessionId)) {
-        const lease = await postMcpContext('acquire', { runtime_session_id: runtimeSessionId, call_id: String(exec.callId || '') })
+      const isImSession = sessionRegistry.has(runtimeSessionId)
+      const filePath = resolve(sessionWorkspace, requestedPath)
+      if (!isImSession) {
+        const validationLease = await postMcpContext('acquire', { runtime_session_id: runtimeSessionId, call_id: String(exec.callId || '') })
         try {
-          await postMcpContext('return-file', { lease_id: lease.lease_id, path: resolve(sessionWorkspace, requestedPath) })
+          await postMcpContext('validate-return-file', { lease_id: validationLease.lease_id, path: filePath })
         } finally {
-          try {
-            await postMcpContext('release', { lease_id: lease.lease_id })
-          } catch (error) {
-            ctx.logger?.error?.(`Crawshrimp file delivery context release failed: ${String(error?.message || error)}`)
-          }
+          await postMcpContext('release', { lease_id: validationLease.lease_id })
         }
       }
-      return result
+      const result = await next()
+      if (isImSession) return result
+      // dsh-im 5 only registers files for a Turn with an IM delivery consumer.
+      // On Web, use the existing session-bound artifact stream in that case.
+      const missingImConsumer = result?.isError
+        && result.error?.message?.startsWith('No active IM delivery consumer owns this turn.')
+      if (result?.isError && !missingImConsumer) return result
+      const fileInfo = missingImConsumer ? await stat(filePath) : null
+      const lease = await postMcpContext('acquire', { runtime_session_id: runtimeSessionId, call_id: String(exec.callId || '') })
+      try {
+        const delivery = await postMcpContext('return-file', { lease_id: lease.lease_id, path: filePath })
+        if (missingImConsumer) {
+          const artifactId = delivery.artifact_ids?.[0]
+          if (!artifactId) throw new Error('Crawshrimp file delivery returned no artifact ID')
+          return { isError: false, value: { artifactId, fileName: basename(filePath), size: fileInfo.size } }
+        }
+        return result
+      } finally {
+        try {
+          await postMcpContext('release', { lease_id: lease.lease_id })
+        } catch (error) {
+          ctx.logger?.error?.(`Crawshrimp file delivery context release failed: ${String(error?.message || error)}`)
+        }
+      }
     }
     if (!toolName.startsWith(MCP_TOOL_PREFIX)) return next()
     const runtimeSessionId = String(exec.agent?.id || '')

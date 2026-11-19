@@ -4,7 +4,7 @@
 
 Crawshrimp Harness 把抓虾桌面应用与 DeepSeek Harness（DSH）组合成一个本地优先的电商运营智能体。DSH Web 会话是唯一主界面；抓虾提供任务、Adapter、文件、浏览器 CDP、媒体、审批和审计能力。
 
-本仓库独立维护 Harness 桌面应用，当前源码版本为 **0.4.14**。DSH 依赖锁定在 `@deepseek-ai/dsh@0.2.1-rc.2` 与 `@xmanrui/dsh-im@4.11.0`。升级依赖时需重新验证 Web Profile/RPC、插件和 hash 类名。
+本仓库独立维护 Harness 桌面应用，当前源码版本为 **0.4.14**。DSH 依赖锁定在 `@deepseek-ai/dsh@0.2.1-rc.2` 与 `@xmanrui/dsh-im@5.0.0`。升级依赖时需重新验证 Web Profile/RPC、插件和 hash 类名。
 
 ## 合作交流与赞助
 

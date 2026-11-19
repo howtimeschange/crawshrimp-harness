@@ -5,13 +5,13 @@ import { prepareCompatibility } from '../compat/apply.mjs'
 import { patchDeepSeekFlash } from './deepseek-flash.mjs'
 import { patchSemirAnthropicAuth } from './semir-anthropic-auth.mjs'
 /**
- * DSH rc.1 / dsh-im 4.11 clean-install guard.
+ * DSH rc.2 / dsh-im 5.0 clean-install guard.
  *
  * The former rc.8 runtime needed binary edits to a flat Cordis + SDK graph.
  * rc.1 boots the supported Web profile instead: agent tools live in the
- * per-session `standard` preset and dsh-im 4.11 talks to current controllers.
+ * per-session `standard` preset and dsh-im 5.0 talks to current controllers.
  * The former broad rc.8 binary rewrites would either fail on a clean install
- * or quietly discard upstream capabilities. The compact 4.11 overlay below
+ * or quietly discard upstream capabilities. The compact 5.0 overlay below
  * changes only verified product copy and bridge source, including the shipped
  * client module that serves that copy; every change is anchored and idempotent.
  */
@@ -29,7 +29,7 @@ import { patchReasoningRecovery } from './reasoning-recovery.mjs'
 import { patchReasoningCompatibility } from './reasoning-compatibility.mjs'
 import { patchGlmVision } from './glm-vision.mjs'
 
-export const RUNTIME_GUARD_MARKER = 'crawshrimp-dsh-im-411-product-patch-v1'
+export const RUNTIME_GUARD_MARKER = 'crawshrimp-dsh-im-500-product-patch-v1'
 const DSH_IM_RUNTIME_ROOT = 'node_modules/@xmanrui/dsh-im'
 const DSH_IM_USER_VISIBLE_SOURCE_ROOTS = ['src', 'plugin-src', 'lib']
 const UPSTREAM_HARNESS_BRAND = 'DeepSeek Harness'
@@ -52,7 +52,7 @@ export const CRAWSHRIMP_DSH_IM_PRODUCT_MODEL_CATALOG_MARKER = 'crawshrimp-dsh-im
 export const CRAWSHRIMP_DSH_IM_APPROVAL_REPLIES_MARKER = 'crawshrimp-dsh-im-411-approval-replies-v2'
 export const CRAWSHRIMP_DSH_IM_APPROVAL_BRIEF_CARD_MARKER = 'crawshrimp-dsh-im-411-approval-brief-card-v1'
 export const CRAWSHRIMP_DSH_WEB_APPROVAL_ALLOW_ALL_MARKER = 'crawshrimp-dsh-im-411-web-approval-allow-all-v1'
-export const CRAWSHRIMP_DSH_IM_BUILT_OVERLAY_MARKER = 'crawshrimp-dsh-im-411-built-overlay-v2'
+export const CRAWSHRIMP_DSH_IM_BUILT_OVERLAY_MARKER = 'crawshrimp-dsh-im-500-built-overlay-v1'
 export const CRAWSHRIMP_DEEPSEEK_VISION_BRIDGE_MARKER = 'crawshrimp-deepseek-vision-bridge-v3'
 export const CRAWSHRIMP_DEEPSEEK_VISION_AUDIT_MARKER = 'crawshrimp-deepseek-vision-audit-v1'
 export const CRAWSHRIMP_DEEPSEEK_VISION_ADMISSION_MARKER = 'crawshrimp-deepseek-vision-admission-v1'
@@ -610,7 +610,7 @@ function javascriptFiles(root) {
 // in class names, constructors, RPC identifiers, and package internals; those
 // are protocol/runtime implementation details and must stay untouched. The
 // small lexer below walks JS literals instead of matching a whole template with
-// a regular expression: generated 4.11 bundles contain `${...}` expressions,
+// a regular expression: generated 5.0 bundles contain `${...}` expressions,
 // so a broad template match can accidentally rewrite an identifier inside one.
 function replaceImUserVisibleText(text) {
   const next = text
@@ -943,7 +943,7 @@ function patchHarnessSessionPrompts(root) {
 
 function replaceRequired(source, expected, replacement, label) {
   if (!source.includes(expected)) {
-    throw new Error(`dsh-im 4.11 product patch anchor changed: ${label}`)
+    throw new Error(`dsh-im 5.0 product patch anchor changed: ${label}`)
   }
   return source.replace(expected, replacement)
 }
@@ -951,7 +951,7 @@ function replaceRequired(source, expected, replacement, label) {
 function insertAfterRequired(source, pattern, insertion, label) {
   const match = pattern.exec(source)
   if (!match || typeof match.index !== 'number') {
-    throw new Error(`dsh-im 4.11 product patch anchor changed: ${label}`)
+    throw new Error(`dsh-im 5.0 product patch anchor changed: ${label}`)
   }
   const end = match.index + match[0].length
   return source.slice(0, end) + insertion + source.slice(end)
@@ -970,7 +970,7 @@ function patchDshImNaturalModelControls(root) {
   if (existsSync(controls)) {
     const source = readFileSync(controls, 'utf8')
     if (!source.includes(CRAWSHRIMP_DSH_IM_NATURAL_CONTROLS_MARKER)) {
-      throw new Error('dsh-im 4.11 natural controls path is unexpectedly occupied')
+      throw new Error('dsh-im 5.0 natural controls path is unexpectedly occupied')
     }
     if (source !== NATURAL_MODEL_CONTROLS_SOURCE) writeFileSync(controls, NATURAL_MODEL_CONTROLS_SOURCE)
   } else {
@@ -999,7 +999,7 @@ function patchDshImNaturalModelControls(root) {
       '  #approvals;\n  #permissionCommands = new PermissionCommandManager();\n  #batches = new BatchInputManager();',
       'TextHarnessBridge permission state',
     )
-  // A clean 4.11 install starts with its native /models + /model dispatch.
+  // A clean 5.0 install starts with its native /models + /model dispatch.
   // Apply the product controls in two explicit, idempotent phases: first add
   // natural-language model selection, then wrap that result with permission
   // control.  Collapsing these into a single anchor makes staging depend on a
@@ -1013,28 +1013,12 @@ function patchDshImNaturalModelControls(root) {
   const nextDispatch = nextNaturalModelDispatch.includes(permissionDispatch)
     ? nextNaturalModelDispatch
     : replaceRequired(nextNaturalModelDispatch, modelDispatch, permissionDispatch, 'TextHarnessBridge permission dispatch')
-  const nextCaller = nextDispatch.includes('key,\n        commandRunner,\n        senderId,')
+  const next = nextDispatch.includes('permissionManager: this.#permissionCommands,')
     ? nextDispatch
     : replaceRequired(
       nextDispatch,
-      'key,\n        commandRunner,\n      ).finally',
-      'key,\n        commandRunner,\n        senderId,\n      ).finally',
-      'TextHarnessBridge command actor',
-    )
-  const nextSignature = nextCaller.includes('async #processFastCommand(message, messageId, key, runner, actor)')
-    ? nextCaller
-    : replaceRequired(
-      nextCaller,
-      'async #processFastCommand(message, messageId, key, runner) {',
-      'async #processFastCommand(message, messageId, key, runner, actor) {',
-      'TextHarnessBridge command actor signature',
-    )
-  const next = nextSignature.includes('permissionManager: this.#permissionCommands,')
-    ? nextSignature
-    : replaceRequired(
-      nextSignature,
       '          signal: this.#signal,\n          isDirect: message.kind === \'direct\',',
-      "          signal: this.#signal,\n          actor,\n          permissionManager: this.#permissionCommands,\n          isDirect: message.kind === 'direct',",
+      "          signal: this.#signal,\n          actor: senderId,\n          permissionManager: this.#permissionCommands,\n          isDirect: message.kind === 'direct',",
       'TextHarnessBridge permission options',
     )
   const nextApproval = next.includes('onAllowAll: async ({ key, actor }) =>')
@@ -1084,15 +1068,14 @@ function patchDshImApprovalControls(root) {
     )
     source = replaceRequired(
       source,
-      '  constructor({ label = \'IM\', logger = console } = {}) {\n    this.#label = label;\n    this.#logger = logger;\n  }',
-      `  constructor({ label = 'IM', logger = console, onAllowAll } = {}) {
+      '  constructor({ label = \'IM\', logger = console, approvalTimeoutMs = DEFAULT_APPROVAL_TIMEOUT_MS } = {}) {\n    this.#label = label;\n    this.#logger = logger;',
+      `  constructor({ label = 'IM', logger = console, approvalTimeoutMs = DEFAULT_APPROVAL_TIMEOUT_MS, onAllowAll } = {}) {
     if (onAllowAll !== undefined && typeof onAllowAll !== 'function') {
       throw new TypeError('onAllowAll must be a function');
     }
     this.#label = label;
     this.#logger = logger;
-    this.#onAllowAll = onAllowAll;
-  }`,
+    this.#onAllowAll = onAllowAll;`,
       'HarnessApprovalQueue allow-all callback constructor',
     )
     source = replaceRequired(
@@ -1302,7 +1285,7 @@ function toolArguments(toolCall) {
   const reason = printableText(payload.reason);
   if (reason) lines.push(t('原因：{reason}', { reason }));`).find((candidate) => source.includes(candidate))
   if (!briefCardTextAnchor) {
-    throw new Error('dsh-im 4.11 product patch anchor changed: dsh-im approval brief card text')
+    throw new Error('dsh-im 5.0 product patch anchor changed: dsh-im approval brief card text')
   }
   return replaceRequired(
     source,
@@ -1446,9 +1429,7 @@ function patchDshImNativeChannelControls(root) {
   runNaturalPermissionCommand,
 } from '../shared/crawshrimp-natural-controls.mjs'; // ${CRAWSHRIMP_DSH_IM_NATIVE_CONTROLS_MARKER}
 `
-  const modelDispatch = `: (isModelCommand(commandText)
-          ? runModelCommand
-          : (isPresetCommand(commandText) ? runPresetCommand : null));`
+  const modelDispatch = ': (isModelCommand(commandText)'
 
   for (const bridge of bridges) {
     const path = join(packageRoot, bridge.relativePath)
@@ -1460,15 +1441,13 @@ function patchDshImNativeChannelControls(root) {
       naturalImport,
       `${bridge.relativePath} natural control imports`,
     )
-    const dispatch = `: (isNaturalPermissionCommand(commandText)
-          ? (text, harness, state, key, options) => runNaturalPermissionCommand(
-            text, harness, state, key, { ...options, actor: ${bridge.actor} },
-          )
-          : (isNaturalModelCommand(commandText)
-            ? runNaturalModelCommand
-            : (isModelCommand(commandText)
-              ? runModelCommand
-              : (isPresetCommand(commandText) ? runPresetCommand : null))));`
+    const dispatch = `: isNaturalPermissionCommand(commandText)
+      ? (text, harness, state, key, options) => runNaturalPermissionCommand(
+        text, harness, state, key, { ...options, actor: ${bridge.actor} },
+      )
+      : isNaturalModelCommand(commandText)
+        ? runNaturalModelCommand
+        ${modelDispatch}`
     source = replaceRequired(
       source,
       modelDispatch,
@@ -1499,7 +1478,7 @@ function patchDshImNativeChannelControls(root) {
 }
 
 /**
- * dsh-im 4.11 removed the old command executor. Re-expose permission controls
+ * dsh-im 5.0 removed the old command executor. Re-expose permission controls
  * through its typed Host RPC surface, where the product bridge can verify the
  * live Session and apply its native permission preset service.
  */
@@ -1617,10 +1596,12 @@ function validateProductModelCatalog(value) {
     storeSource = replaceRequired(
       storeSource,
       `      if ((property === 'listWorkspaces'
+        || property === 'listWorkspaceEntries'
         || property === 'listWorkspaceSessions'
         || property === 'listModels')`,
       `      // ${CRAWSHRIMP_DSH_IM_PRODUCT_MODEL_CATALOG_MARKER}
       if ((property === 'listWorkspaces'
+        || property === 'listWorkspaceEntries'
         || property === 'listWorkspaceSessions'
         || property === 'listModels'
         || property === 'listCrawshrimpModelCatalog')`,
@@ -2119,20 +2100,17 @@ function patchDeepSeekVisionAdmission(root, visionBridge) {
   return { entry, patched: true }
 }
 
-// Local read_image has a separate capability gate before attaching file bytes.
-// Keep the actual filesystem, media validation and attachment handling upstream.
-function patchDshImArtifactSessionEvents(root) {
-  const entry = requireFile(root, 'node_modules/@xmanrui/dsh-im/src/channels/shared/semantic/artifact.mjs')
-  let source = readFileSync(entry, 'utf8')
-  if (source.includes('crawshrimp-artifact-session-events-v1')) return
-  source = replaceRequired(source,
-    '  const events = agent?.session?.events;',
-    '  // crawshrimp-artifact-session-events-v1: rc.1 exposes durable events through snapshotEvents().\n  const session = agent?.session;\n  const events = typeof session?.snapshotEvents === "function" ? session.snapshotEvents() : session?.events;',
-    'IM artifact Session events compatibility')
-  source = source.replace('for IM delivery.', 'for delivery in the current conversation.')
-  writeFileSync(entry, source, 'utf8')
+function patchDshImArtifactDeliveryWording(root) {
+  const entry = requireFile(root, `${DSH_IM_RUNTIME_ROOT}/src/channels/shared/semantic/artifact.mjs`)
+  const source = readFileSync(entry, 'utf8')
+  const wording = 'for delivery in the current conversation.'
+  if (source.includes(wording)) return
+  const updated = replaceRequired(source, 'for IM delivery after this turn.', wording, 'IM and Desktop artifact delivery wording')
+  writeFileSync(entry, updated, 'utf8')
 }
 
+// Local read_image has a separate capability gate before attaching file bytes.
+// Keep the actual filesystem, media validation and attachment handling upstream.
 export function patchDeepSeekReadImageSource(source) {
   const marker = 'crawshrimp-deepseek-read-image-vision-v1'
   if (source.includes(marker)) return source
@@ -2313,9 +2291,9 @@ async function probeWorkspaceDirectoryAccess(directory) {
 }
 
 /**
- * Validate and apply product-owned 4.11 overlays to a freshly installed
+ * Validate and apply product-owned 5.0 overlays to a freshly installed
  * runtime. The old rc.8 binary graph is deliberately not revived: every
- * mutation below targets readable 4.11 source and is idempotent.
+ * mutation below targets readable 5.0 source and is idempotent.
  *
  * @returns source paths used as current-release evidence for staging/tests.
  */
@@ -2378,7 +2356,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const timeContext = patchTimeContext(root)
   const reasoningRecovery = patchReasoningRecovery(root)
   const dshSchedule = requireText(root, 'node_modules/@deepseek-ai/dsh-schedule/package.json', '"0.2.1-rc.2"')
-  const dshImManifest = requireText(root, 'node_modules/@xmanrui/dsh-im/package.json', '"4.11.0"')
+  const dshImManifest = requireText(root, 'node_modules/@xmanrui/dsh-im/package.json', '"5.0.0"')
   const dshImEntry = requireFile(root, 'node_modules/@xmanrui/dsh-im/lib/index.js')
   const dshImNaturalModelControls = patchDshImNaturalModelControls(root)
   const dshImApprovalControls = patchDshImApprovalControls(root)
@@ -2389,7 +2367,7 @@ export function patchRuntimeDependencies(runtimeRoot) {
   const dshImBrand = patchDshImUserVisibleBrand(root)
   const harnessPromptBrand = patchHarnessPromptBrand(root)
   patchHarnessSessionPrompts(root)
-  patchDshImArtifactSessionEvents(root)
+  patchDshImArtifactDeliveryWording(root)
   const dshImBuiltEntry = buildPatchedDshImBundle(root)
   const dshWebApprovalAllowAll = patchDshWebApprovalAllowAll(root)
   const nativeWebTools = patchNativeWebToolRegistration(root)

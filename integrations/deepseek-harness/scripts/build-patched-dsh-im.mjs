@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { build } from 'esbuild'
 
-export const CRAWSHRIMP_DSH_IM_BUILT_OVERLAY_MARKER = 'crawshrimp-dsh-im-411-built-overlay-v2'
+export const CRAWSHRIMP_DSH_IM_BUILT_OVERLAY_MARKER = 'crawshrimp-dsh-im-500-built-overlay-v1'
 
 export const CRAWSHRIMP_DSH_IM_SECURITY_MARKER = 'crawshrimp-dsh-im-external-axios-v1'
 

@@ -29,7 +29,7 @@ function sourceFiles(root) {
   return files
 }
 
-test('DSH rc.1 Web profile pins dsh-im 4.11 and registers it as a product-owned profile plugin', () => {
+test('DSH rc.2 Web profile pins dsh-im 5.0 and registers it as a product-owned profile plugin', () => {
   const runtimePackage = JSON.parse(readFileSync(resolve(harnessRoot, 'package.json'), 'utf8'))
   const runtimeLock = JSON.parse(readFileSync(resolve(harnessRoot, 'package-lock.json'), 'utf8'))
   const profilePackage = JSON.parse(readFileSync(resolve(harnessRoot, 'profile/web/package.json'), 'utf8'))
@@ -38,14 +38,14 @@ test('DSH rc.1 Web profile pins dsh-im 4.11 and registers it as a product-owned 
 
   assert.equal(runtimePackage.dependencies['@deepseek-ai/dsh'], '0.2.1-rc.2')
   assert.equal(runtimeLock.packages['node_modules/@deepseek-ai/dsh']?.version, '0.2.1-rc.2')
-  assert.equal(runtimePackage.dependencies['@xmanrui/dsh-im'], '4.11.0')
-  assert.equal(runtimeLock.packages['node_modules/@xmanrui/dsh-im']?.version, '4.11.0')
+  assert.equal(runtimePackage.dependencies['@xmanrui/dsh-im'], '5.0.0')
+  assert.equal(runtimeLock.packages['node_modules/@xmanrui/dsh-im']?.version, '5.0.0')
   assert.deepEqual(profilePackage.dsh.profile.bundles, [
     '@deepseek-ai/dsh-base',
     '@deepseek-ai/dsh-web-app',
     '@xmanrui/dsh-im',
   ])
-  assert.equal(profilePackage.dependencies['@xmanrui/dsh-im'], '4.11.0')
+  assert.equal(profilePackage.dependencies['@xmanrui/dsh-im'], '5.0.0')
   assert.match(profilePatch, /- id: xmanrui-dsh-im\s+disabled: true/)
   assert.match(profilePatch, /- id: crawshrimp-dsh-im\s+name: '@xmanrui\/dsh-im'/)
   assert.match(staging, /node_modules\/@xmanrui\/dsh-im\/lib\/index\.js/)
@@ -324,7 +324,7 @@ test('IM approval guard retains native approval for registered remote Sessions',
   assert.equal(await disabled.decide({ agent: { session: { id: 'im-session' } } }, {}), 'rejected')
 })
 
-test('dsh-im 4.11 preserves the seven-day inbound attachment retention policy', async () => {
+test('dsh-im 5.0 preserves the seven-day inbound attachment retention policy', async () => {
   const ttl = await import(moduleUrl('src/channels/shared/inbound-ttl.mjs', 'inbound-ttl'))
   assert.equal(ttl.DEFAULT_INBOUND_TTL_HOURS, 168)
   assert.equal(ttl.normalizeInboundTtlHours(undefined), null)
@@ -333,7 +333,7 @@ test('dsh-im 4.11 preserves the seven-day inbound attachment retention policy', 
   assert.equal(ttl.normalizeInboundTtlHours(8761), null)
 })
 
-test('dsh-im 4.11 adopts only an unambiguous registered workspace Session', async () => {
+test('dsh-im 5.0 adopts only an unambiguous registered workspace Session', async () => {
   const binding = await import(moduleUrl('src/channels/shared/harness-session-binding.mjs', 'session-binding'))
   const calls = []
   const client = {
@@ -421,7 +421,7 @@ test('dsh-im private Session sync delivers DSH-originated user and final assista
   // the idempotent product overlay. Branding itself is asserted separately by
   // the clean-install test below.
   assert.deepEqual(
-    sent.map((entry) => entry.text.replace(/^\[[^\]]+\]\n/u, '')),
+    sent.map((entry) => entry.text.replace(/^\[[^\]]+\]\n/u, '').trim()),
     ['来自 DSH 的输入', '最终答复'],
   )
 
@@ -446,8 +446,16 @@ test('dsh-im modern compatibility bridge uses DSH Session snapshots and current 
   const streamCalls = []
   const invokeCalls = []
   const root = {}
+  const peerLifetime = new AbortController()
+  const peer = { signal: peerLifetime.signal, dispose: () => peerLifetime.abort() }
   const ctx = {
     root,
+    connection: {
+      createPeer(options) {
+        assert.deepEqual(options, { principal: { kind: 'owner' }, interactions: 'none' })
+        return peer
+      },
+    },
     typertGateway: {
       async stream(request) {
         streamCalls.push(request)
@@ -471,12 +479,15 @@ test('dsh-im modern compatibility bridge uses DSH Session snapshots and current 
   assert.equal(history.result.value.events[0].event.seq, 5)
   assert.equal(streamCalls[0].namespace, 'session')
   assert.equal(streamCalls[0].method, 'follow')
+  assert.equal(streamCalls[0].peer, peer)
   const selected = await api.sessions.selectModel({
     rpcId: 'model-1', payload: { sessionId: 'session-1', provider: 'provider-1', model: 'model-1' },
   })
   assert.deepEqual(selected.result.value.selected, { provider: 'provider-1', model: 'model-1' })
   assert.equal(invokeCalls[0].method, 'selectModel')
+  assert.equal(invokeCalls[0].peer, peer)
   api.dispose()
+  assert.equal(peer.signal.aborted, true)
 })
 
 test('clean-install runtime guard verifies upstream dsh-im contracts and the small product patch', () => {
@@ -498,7 +509,7 @@ test('clean-install dsh-im runtime exposes only the Crawshrimp Harness brand to 
   const result = patcher.patchRuntimeDependencies(harnessRoot)
 
   assert.equal(result.patched, true)
-  assert.equal(result.marker, 'crawshrimp-dsh-im-411-product-patch-v1')
+  assert.equal(result.marker, 'crawshrimp-dsh-im-500-product-patch-v1')
   const patchSource = readFileSync(resolve(harnessRoot, 'scripts/patch-runtime-dependencies.mjs'), 'utf8')
   const constants = ['UPSTREAM_HARNESS_BRAND', 'CRAWSHRIMP_HARNESS_BRAND', 'GENERIC_HARNESS_LABEL']
     .map(name => patchSource.match(new RegExp(`^const ${name} = .*$`, 'm'))?.[0])
@@ -1107,9 +1118,9 @@ test('dsh-im modern host exposes the product model catalog to natural IM control
   assert.deepEqual(await client.listCrawshrimpModelCatalog(), catalog)
 })
 
-test('runtime dsh-im host entry is rebuilt from the product-patched 4.11 sources', () => {
+test('runtime dsh-im host entry is rebuilt from the product-patched 5.0 sources', () => {
   const bundle = readFileSync(resolve(dshImRoot, 'lib/index.js'), 'utf8')
-  assert.match(bundle, /crawshrimp-dsh-im-411-built-overlay-v2/)
+  assert.match(bundle, /crawshrimp-dsh-im-500-built-overlay-v1/)
   assert.match(bundle, /getSessionPermission/)
   assert.match(bundle, /setSessionPermission/)
   assert.match(bundle, /crawshrimp-approval-display-arguments-v4/)

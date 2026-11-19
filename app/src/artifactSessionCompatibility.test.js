@@ -5,7 +5,7 @@ const { tmpdir } = require('node:os')
 const { resolve } = require('node:path')
 const { pathToFileURL } = require('node:url')
 
-test('file return uses rc.1 snapshotEvents and rejects closed turns', async () => {
+test('file return uses Session snapshots and rejects closed turns', async () => {
   const root = resolve(__dirname, '../../integrations/deepseek-harness')
   const patcher = await import(pathToFileURL(resolve(root, 'scripts/patch-runtime-dependencies.mjs')).href)
   patcher.patchRuntimeDependencies(root)
@@ -16,6 +16,8 @@ test('file return uses rc.1 snapshotEvents and rejects closed turns', async () =
   const events = [{ type: 'turn/start', data: { turn: 1 } }]
   const session = { id: 'web-session', header: { id: 'web-session', cwd: dir }, snapshotEvents: () => events }
   const registry = new OutboundArtifactRegistry()
+  const closeConsumer = registry.openConsumer(session.id, 'wechat-prompt')
+  registry.observeClaimedMessage(session, { source: { rpcId: 'wechat-prompt' } }, 1)
   try {
     const artifact = await registry.stage({ path: file }, { agent: { session }, callId: 'return-call' })
     assert.equal(artifact.origin.sessionId, 'web-session')
@@ -23,7 +25,7 @@ test('file return uses rc.1 snapshotEvents and rejects closed turns', async () =
     registry.release(artifact)
     events.push({ type: 'turn/end', data: { turn: 1 } })
     await assert.rejects(registry.stage({ path: file }, { agent: { session } }), /live/)
-  } finally { registry.disposeSession(session); await rm(dir, { recursive: true, force: true }) }
+  } finally { closeConsumer(); registry.disposeSession(session); await rm(dir, { recursive: true, force: true }) }
 })
 
 test('desktop file return forwards in the active session workspace and releases failed deliveries', async () => {
@@ -41,7 +43,11 @@ test('desktop file return forwards in the active session workspace and releases 
   globalThis.fetch = async (url, init) => {
     const action = new URL(url).pathname
     requests.push({ action, body: JSON.parse(init.body) })
-    return new Response(JSON.stringify(action.endsWith('/acquire') ? { ok: true, lease_id: 'file-lease' } : { ok: !(failDelivery && action.endsWith('/return-file')) }), { status: failDelivery && action.endsWith('/return-file') ? 409 : 200 })
+    const delivery = action.endsWith('/return-file')
+    const response = action.endsWith('/acquire') ? { ok: true, lease_id: 'file-lease' }
+      : delivery && !failDelivery ? { ok: true, artifact_ids: ['file-test'] }
+        : { ok: !(delivery && failDelivery) }
+    return new Response(JSON.stringify(response), { status: failDelivery && delivery ? 409 : 200 })
   }
   const hooks = {}
   try {
@@ -53,6 +59,12 @@ test('desktop file return forwards in the active session workspace and releases 
     assert.deepEqual(requests[0].body, { runtime_session_id: 'web-session', call_id: 'send-call' })
     assert.equal(requests[1].body.path, file)
     assert.equal(requests[4].body.path, file)
+    requests.length = 0
+    const missingConsumer = { isError: true, error: { message: 'No active IM delivery consumer owns this turn. The file was not queued.' } }
+    assert.deepEqual(await hooks['tools/execute'](exec, async () => missingConsumer), {
+      isError: false, value: { artifactId: 'file-test', fileName: 'existing.png', size: 14 },
+    })
+    assert.equal(requests.at(-1).action, '/context/release')
     requests.length = 0
     failDelivery = true
     await assert.rejects(hooks['tools/execute'](exec, async () => nativeResult))

@@ -3,7 +3,7 @@
   "private": true,
   "description": "Crawshrimp's persisted DSH Web profile. Runtime links these exact staged plugins into the mutable user-data profile.",
   "dependencies": {
-    "@xmanrui/dsh-im": "4.11.0",
+    "@xmanrui/dsh-im": "5.0.0",
     "crawshrimp-product-bridge": "file:../../../crawshrimp-product-bridge",
     "crawshrimp-slots": "file:../../../crawshrimp-slots"
   },
