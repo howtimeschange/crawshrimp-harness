@@ -10,6 +10,7 @@ import threading
 from types import SimpleNamespace
 import unittest
 from unittest import mock
+import urllib.error
 import urllib.parse
 
 
@@ -218,6 +219,33 @@ class MirrorTests(unittest.TestCase):
         response.read.return_value = b'A' * 4096
         with mock.patch.object(mirror.urllib.request, 'urlopen', return_value=response), self.assertRaises(ValueError):
             mirror.verify_public_range(BASE, path)
+
+    def test_public_range_retries_tls_timeout_and_still_checks_download_bytes(self):
+        path = self.root / 'range-fixture'
+        path.write_bytes(b'A' * 5000)
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.status = 206
+        response.headers = {'Content-Range': 'bytes 0-4095/5000'}
+        response.read.return_value = b'B' * 4096
+        timeout = urllib.error.URLError(TimeoutError('TLS handshake timed out'))
+        with mock.patch.object(mirror.urllib.request, 'urlopen', side_effect=[timeout, response]) as open_url, \
+             mock.patch.object(mirror.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(ValueError, 'Public COS download'):
+                mirror.verify_public_range(BASE, path)
+        self.assertEqual(open_url.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    def test_public_read_stops_after_bounded_retries_and_fails_fast_on_not_found(self):
+        timeout = urllib.error.URLError(TimeoutError('TLS handshake timed out'))
+        missing = urllib.error.HTTPError(BASE, 404, 'not found', {}, None)
+        for error, attempts in [(timeout, 4), (missing, 1)]:
+            with self.subTest(error=error), \
+                 mock.patch.object(mirror.urllib.request, 'urlopen', side_effect=error) as open_url, \
+                 mock.patch.object(mirror.time, 'sleep'):
+                with self.assertRaises(type(error)):
+                    mirror.open_public_download(BASE)
+                self.assertEqual(open_url.call_count, attempts)
 
     def test_cleanup_only_deletes_older_formal_asset_keys_after_promotion(self):
         plan, store = self.plan(), MemoryStore()

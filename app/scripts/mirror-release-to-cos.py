@@ -8,9 +8,11 @@ import json
 import os
 from pathlib import Path
 import re
+import ssl
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -331,10 +333,30 @@ class CosStore:
         self.client.delete_object(Bucket=self.bucket, Key=key)
 
 
+def open_public_download(request):
+    delays = (1, 3, 7)
+    for attempt in range(len(delays) + 1):
+        try:
+            return urllib.request.urlopen(request, timeout=30)
+        except (urllib.error.URLError, TimeoutError, ConnectionError, ssl.SSLEOFError) as error:
+            if isinstance(error, urllib.error.HTTPError):
+                retryable = error.code in (408, 429, 500, 502, 503, 504)
+            else:
+                reason = error.reason if isinstance(error, urllib.error.URLError) else error
+                retryable = isinstance(reason, (TimeoutError, ConnectionError, ssl.SSLEOFError))
+            if not retryable or attempt == len(delays):
+                raise
+            if isinstance(error, urllib.error.HTTPError):
+                error.close()
+            print(f"Retrying public COS read after {type(error).__name__} (attempt {attempt + 1})",
+                  file=sys.stderr, flush=True)
+            time.sleep(delays[attempt])
+
+
 def verify_public_range(url, path):
     size = path.stat().st_size
     request = urllib.request.Request(url, headers={"Range": f"bytes=0-{min(size, 4096) - 1}"})
-    with urllib.request.urlopen(request, timeout=30) as response, path.open("rb") as source:
+    with open_public_download(request) as response, path.open("rb") as source:
         actual = response.read(4097)
         expected = source.read(min(size, 4096))
         valid_range = (response.status == 206 and
@@ -347,7 +369,7 @@ def verify_public_range(url, path):
 
 def verify_public_file(url, path):
     digest, size = hashlib.sha256(), 0
-    with urllib.request.urlopen(url, timeout=30) as response:
+    with open_public_download(url) as response:
         if response.status != 200:
             raise ValueError(f"Public COS download verification failed: {url}")
         for chunk in iter(lambda: response.read(8 * 1024 * 1024), b""):
@@ -393,10 +415,10 @@ def main():
         # Verify that public update metadata agrees with this completed promotion.
         if report["promoted"]:
             for name, expected in plan["metadata"].items():
-                with urllib.request.urlopen(report["update_feed"] + name, timeout=30) as response:
+                with open_public_download(report["update_feed"] + name) as response:
                     if response.read() != expected:
                         raise ValueError(f"Public update metadata mismatch: {name}")
-            with urllib.request.urlopen(report["download_manifest"], timeout=30) as response:
+            with open_public_download(report["download_manifest"]) as response:
                 if json.load(response) != plan["manifest"]:
                     raise ValueError("Public download manifest mismatch")
             report["cleanup_skipped"] = args.skip_cleanup
